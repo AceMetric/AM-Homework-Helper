@@ -3,18 +3,34 @@
 #import "DDLCore.h"
 
 static NSColor *RGB(unsigned value) { return [NSColor colorWithSRGBRed:((value >> 16) & 255) / 255.0 green:((value >> 8) & 255) / 255.0 blue:(value & 255) / 255.0 alpha:1]; }
-static NSColor *Adaptive(unsigned light, unsigned dark) {
-    return [NSColor colorWithName:nil dynamicProvider:^NSColor *(NSAppearance *appearance) {
-        return RGB([[appearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]] isEqual:NSAppearanceNameDarkAqua] ? dark : light);
-    }];
+// Every palette keeps light surfaces, including when macOS uses dark appearance.
+static NSColor *Adaptive(unsigned light, unsigned dark) { return RGB(light); }
+typedef struct { unsigned canvas, panel, tint, emphasis, line, ink, muted, accent; } PastelPalette;
+static const PastelPalette Palettes[] = {
+    {0xF8FAF7, 0xEFF4EC, 0xE5EFE1, 0xD3E5CB, 0xDCE5D7, 0x2E3C30, 0x5E6D60, 0x3D6245},
+    {0xF7FAFC, 0xEDF3F8, 0xE1EDF7, 0xCDDFEF, 0xD8E3EC, 0x2D3C49, 0x596E7E, 0x385F7D},
+    {0xFAF8FC, 0xF2EEF8, 0xEAE3F4, 0xDED2ED, 0xE3DCED, 0x3D344A, 0x6D617B, 0x665080},
+    {0xFCF8FA, 0xF8EEF2, 0xF5E2EA, 0xEED0DD, 0xEEDCE4, 0x4A3540, 0x7B606D, 0x7C4B63},
+    {0xFCF9F6, 0xF8F0E9, 0xF6E6D9, 0xEFD7C2, 0xECDDCE, 0x48392E, 0x796555, 0x795334},
+    {0xFCFBF6, 0xF7F3E5, 0xF2ECD3, 0xE9DFAF, 0xE8E1CA, 0x423E2E, 0x726B50, 0x726032}
+};
+static NSInteger CurrentTheme = 0;
+static NSString * const ThemePreferenceKey = @"ddl-manager.theme.v1";
+static NSArray<NSString *> *ThemeIDs(void) { return @[@"sage", @"blue", @"lavender", @"rose", @"peach", @"cream"]; }
+static NSArray<NSString *> *ThemeNames(void) { return @[@"鼠尾草", @"雾蓝", @"薰衣草", @"樱花", @"蜜桃", @"奶油"]; }
+static NSInteger ThemeIndex(id identifier) {
+    NSUInteger index = [ThemeIDs() indexOfObject:identifier ?: @""];
+    return index == NSNotFound ? 0 : (NSInteger)index;
 }
-static NSColor *Ink(void) { return Adaptive(0x26352E, 0xE6EEE8); }
-static NSColor *Muted(void) { return Adaptive(0x77827B, 0x9BAAA0); }
-static NSColor *Accent(void) { return Adaptive(0x426C54, 0x9DCFAD); }
-static NSColor *Canvas(void) { return Adaptive(0xF9FAF7, 0x1B211D); }
-static NSColor *Card(void) { return Adaptive(0xFFFFFF, 0x252D28); }
-static NSColor *Line(void) { return Adaptive(0xE5EAE3, 0x39433B); }
-static NSColor *Tint(void) { return Adaptive(0xEAF0E7, 0x304437); }
+static NSColor *Ink(void) { return RGB(Palettes[CurrentTheme].ink); }
+static NSColor *Muted(void) { return RGB(Palettes[CurrentTheme].muted); }
+static NSColor *Accent(void) { return RGB(Palettes[CurrentTheme].accent); }
+static NSColor *Canvas(void) { return RGB(Palettes[CurrentTheme].canvas); }
+static NSColor *Card(void) { return RGB(0xFFFFFF); }
+static NSColor *Line(void) { return RGB(Palettes[CurrentTheme].line); }
+static NSColor *Tint(void) { return RGB(Palettes[CurrentTheme].tint); }
+static NSColor *Panel(void) { return RGB(Palettes[CurrentTheme].panel); }
+static NSColor *Emphasis(void) { return RGB(Palettes[CurrentTheme].emphasis); }
 static NSCalendar *Cal(void) { NSCalendar *c = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian]; c.firstWeekday = 2; return c; }
 
 static NSTextField *Text(NSString *text, CGFloat size, NSFontWeight weight, NSColor *color) {
@@ -70,11 +86,11 @@ static void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight wei
 - (void)mouseEntered:(NSEvent *)event { self.hovered = YES; self.needsDisplay = YES; }
 - (void)mouseExited:(NSEvent *)event { self.hovered = NO; self.needsDisplay = YES; }
 - (void)drawRect:(NSRect)dirtyRect {
-    NSColor *fill = self.tone == 1 ? RGB(0x426C54) : (self.selected || self.tone == 2 ? Tint() : Card());
+    NSColor *fill = self.tone == 1 ? Emphasis() : (self.selected || self.tone == 2 ? Tint() : Card());
     if (self.tone == 3 && !self.selected && !self.hovered) fill = NSColor.clearColor;
     if (self.hovered || self.highlighted) fill = [fill blendedColorWithFraction:0.09 ofColor:Accent()];
     [fill setFill]; [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 1, 1) xRadius:8 yRadius:8] fill];
-    NSColor *color = self.tone == 1 ? NSColor.whiteColor : (self.selected ? Accent() : Ink());
+    NSColor *color = self.tone == 1 ? Accent() : (self.selected ? Accent() : Ink());
     if (!self.enabled) color = Muted();
     BOOL iconOnly = self.symbol.length && self.title.length == 0;
     CGFloat tx = self.symbol.length ? 35 : 8;
@@ -98,15 +114,15 @@ static Surface *Box(NSColor *fill, CGFloat radius) { Surface *v = [Surface new];
 @implementation ThemeSegmentedControl
 - (void)drawRect:(NSRect)dirtyRect {
     NSRect bounds = NSInsetRect(self.bounds, 0.5, 0.5);
-    [Adaptive(0xECEFEB, 0x2A332D) setFill]; [[NSBezierPath bezierPathWithRoundedRect:bounds xRadius:9 yRadius:9] fill];
+    [Panel() setFill]; [[NSBezierPath bezierPathWithRoundedRect:bounds xRadius:9 yRadius:9] fill];
     NSInteger count = self.segmentCount; if (!count) return;
     CGFloat width = NSWidth(bounds) / count;
     for (NSInteger index = 0; index < count; index++) {
         NSRect segment = NSMakeRect(NSMinX(bounds) + index * width, NSMinY(bounds), width, NSHeight(bounds));
         BOOL selected = index == self.selectedSegment;
-        if (selected) { [Accent() setFill]; [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(segment, 1, 1) xRadius:8 yRadius:8] fill]; }
+        if (selected) { [Emphasis() setFill]; [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(segment, 1, 1) xRadius:8 yRadius:8] fill]; }
         else if (index > 0) { [Line() setStroke]; NSBezierPath *divider = [NSBezierPath bezierPath]; [divider moveToPoint:NSMakePoint(NSMinX(segment), NSMinY(segment) + 7)]; [divider lineToPoint:NSMakePoint(NSMinX(segment), NSMaxY(segment) - 7)]; [divider stroke]; }
-        DrawText([self labelForSegment:index], NSInsetRect(segment, 4, 5), 12, selected ? NSFontWeightSemibold : NSFontWeightMedium, selected ? NSColor.whiteColor : Ink(), NSTextAlignmentCenter);
+        DrawText([self labelForSegment:index], NSInsetRect(segment, 4, 5), 12, selected ? NSFontWeightSemibold : NSFontWeightMedium, selected ? Accent() : Ink(), NSTextAlignmentCenter);
     }
     if (self.window.firstResponder == self) { [Accent() setStroke]; [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(bounds, 1.5, 1.5) xRadius:8 yRadius:8] stroke]; }
 }
@@ -135,9 +151,9 @@ static ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, S
     [bg setFill]; [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 2, 2) xRadius:8 yRadius:8] fill];
     CGFloat numberX = self.compact ? (self.bounds.size.width - 24) / 2 : 8;
     if (self.today) {
-        [RGB(0x426C54) setFill]; [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(numberX, 4, 24, 24) xRadius:12 yRadius:12] fill];
+        [Emphasis() setFill]; [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(numberX, 4, 24, 24) xRadius:12 yRadius:12] fill];
     }
-    DrawText(DDLFormatDate(self.date, @"d"), NSMakeRect(numberX, 7, 24, 19), 12, self.today || self.chosen ? NSFontWeightSemibold : NSFontWeightRegular, self.today ? NSColor.whiteColor : (self.inMonth ? Ink() : Muted()), NSTextAlignmentCenter);
+    DrawText(DDLFormatDate(self.date, @"d"), NSMakeRect(numberX, 7, 24, 19), 12, self.today || self.chosen ? NSFontWeightSemibold : NSFontWeightRegular, self.today ? Accent() : (self.inMonth ? Ink() : Muted()), NSTextAlignmentCenter);
     if (self.compact && self.tasks.count) {
         [Accent() setFill]; [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect((self.bounds.size.width - 3) / 2, self.bounds.size.height - 6, 3, 3)] fill];
     } else if (!self.compact && self.tasks.count) {
@@ -256,7 +272,7 @@ static NSColor *EventFill(NSDictionary *task) {
         if (![view isKindOfClass:CalendarDayCell.class]) continue;
         CalendarDayCell *cell = (CalendarDayCell *)view;
         BOOL selected = [calendar isDate:cell.date inSameDayAsDate:selection];
-        cell.fill = selected ? Adaptive(0xF3F7F0, 0x2B3A2F) : (cell.inMonth ? Card() : Canvas());
+        cell.fill = selected ? Panel() : (cell.inMonth ? Card() : Canvas());
         cell.stroke = selected ? Accent() : Line(); cell.needsDisplay = YES;
     }
 }
@@ -280,7 +296,7 @@ static NSColor *EventFill(NSDictionary *task) {
         BOOL today = [calendar isDateInToday:date];
         NSArray *tasks = self.tasksByDay[[calendar startOfDayForDate:date]] ?: @[];
         CalendarDayCell *cell = [CalendarDayCell new]; cell.date = date; cell.inMonth = inMonth; cell.radius = 9;
-        cell.fill = selected ? Adaptive(0xF3F7F0, 0x2B3A2F) : (inMonth ? Card() : Canvas());
+        cell.fill = selected ? Panel() : (inMonth ? Card() : Canvas());
         cell.stroke = selected ? Accent() : Line();
         Put(self, cell, 8 + (i % 7) * cellW + 2, 36 + (i / 7) * cellH + 2, cellW - 4, cellH - 4);
         CallbackButton *hit = [[CallbackButton alloc] initWithFrame:cell.bounds]; hit.title = @""; hit.tone = 3; hit.accessibilityLabel = [NSString stringWithFormat:@"%@，%lu 项任务", DDLFormatDate(date, @"yyyy年M月d日 EEEE"), tasks.count]; hit.onClick = ^{ if (weakSelf.onSelect) weakSelf.onSelect(date, nil); }; [cell addSubview:hit];
@@ -355,6 +371,7 @@ static NSColor *EventFill(NSDictionary *task) {
 @property Surface *agendaDocument;
 @property NSString *focusedTaskID;
 @property NSPopUpButton *sortMenu;
+@property NSPopUpButton *themePicker;
 @property NSMutableArray<NSMutableDictionary *> *tasks;
 @property NSUndoManager *taskUndo;
 @property NSStatusItem *statusItem;
@@ -511,8 +528,8 @@ static NSColor *EventFill(NSDictionary *task) {
 @implementation AppDelegate
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     self.preview = [NSProcessInfo.processInfo.arguments containsObject:@"--preview"];
-    if (self.preview && [NSProcessInfo.processInfo.arguments containsObject:@"--dark"]) NSApp.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
-    if (self.preview && [NSProcessInfo.processInfo.arguments containsObject:@"--light"]) NSApp.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+    NSApp.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+    CurrentTheme = self.preview ? 0 : ThemeIndex([NSUserDefaults.standardUserDefaults objectForKey:ThemePreferenceKey]);
     if (!self.preview) {
         NSArray *running = [NSRunningApplication runningApplicationsWithBundleIdentifier:NSBundle.mainBundle.bundleIdentifier];
         for (NSRunningApplication *other in running) if (other.processIdentifier != NSProcessInfo.processInfo.processIdentifier) {
@@ -545,7 +562,7 @@ static NSColor *EventFill(NSDictionary *task) {
     if (self.preview && [NSProcessInfo.processInfo.arguments containsObject:@"--compact"]) [self.window setContentSize:NSMakeSize(1100, 760)];
     self.window.backgroundColor = Canvas();
     self.root = Box(Canvas(), 0); self.root.frame = NSMakeRect(0, 0, 1280, 840); self.window.contentView = self.root;
-    self.sidebar = Box(Adaptive(0xF0F3ED, 0x222C25), 0); [self.root addSubview:self.sidebar];
+    self.sidebar = Box(Panel(), 0); [self.root addSubview:self.sidebar];
     self.header = Box(Canvas(), 0); [self.root addSubview:self.header];
     self.search = [[NSSearchField alloc] initWithFrame:NSZeroRect]; self.search.placeholderString = @"搜索任务、学科、备注"; self.search.delegate = self; self.search.sendsSearchStringImmediately = YES; self.search.font = [NSFont systemFontOfSize:12]; [self.root addSubview:self.search];
     self.viewMode = Segments(@[@"清单", @"总日历"], self, @selector(changeView:)); [self.root addSubview:self.viewMode];
@@ -557,9 +574,24 @@ static NSColor *EventFill(NSDictionary *task) {
     self.calendarScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; self.calendarScroll.hasVerticalScroller = YES; self.calendarScroll.autohidesScrollers = NO; self.calendarScroll.drawsBackground = NO; self.calendarScroll.borderType = NSNoBorder;
     self.calendarDocument = Box(Canvas(), 0); self.calendarScroll.documentView = self.calendarDocument; [self.root addSubview:self.calendarScroll]; self.calendarBaseMonth = self.month; self.calendarNeedsCenter = YES;
     self.calendarScroll.contentView.postsBoundsChangedNotifications = YES; [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(calendarScrolled:) name:NSViewBoundsDidChangeNotification object:self.calendarScroll.contentView];
-    self.agenda = Box(Adaptive(0xF0F4EE, 0x222E26), 14); [self.root addSubview:self.agenda];
+    self.agenda = Box(Panel(), 14); [self.root addSubview:self.agenda];
     self.agendaScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; self.agendaScroll.hasVerticalScroller = YES; self.agendaScroll.autohidesScrollers = YES; self.agendaScroll.drawsBackground = NO;
     self.agendaDocument = Box(NSColor.clearColor, 0); self.agendaScroll.documentView = self.agendaDocument;
+    self.themePicker = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    self.themePicker.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
+    self.themePicker.target = self; self.themePicker.action = @selector(changeTheme:);
+    self.themePicker.accessibilityLabel = @"界面配色";
+    self.themePicker.toolTip = @"六种淡色配色，选择后立即应用并记住偏好";
+    for (NSInteger i = 0; i < (NSInteger)ThemeNames().count; i++) {
+        [self.themePicker addItemWithTitle:[@"配色 · " stringByAppendingString:ThemeNames()[i]]];
+        NSMenuItem *item = self.themePicker.lastItem; item.representedObject = ThemeIDs()[i];
+        unsigned swatch = Palettes[i].emphasis, outline = Palettes[i].accent;
+        item.image = [NSImage imageWithSize:NSMakeSize(14, 14) flipped:NO drawingHandler:^BOOL(NSRect rect) {
+            NSBezierPath *circle = [NSBezierPath bezierPathWithOvalInRect:NSInsetRect(rect, 1, 1)];
+            [RGB(swatch) setFill]; [circle fill]; [RGB(outline) setStroke]; [circle stroke]; return YES;
+        }];
+    }
+    [self.themePicker selectItemAtIndex:CurrentTheme]; [self.root addSubview:self.themePicker];
     __weak typeof(self) weakSelf = self;
     self.root.onResize = ^{ [weakSelf layout]; };
     self.statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
@@ -569,6 +601,19 @@ static NSColor *EventFill(NSDictionary *task) {
     if (!self.preview) { UNUserNotificationCenter.currentNotificationCenter.delegate = self; [self refreshPermission]; [self refreshReminders]; }
     self.ticker = [NSTimer timerWithTimeInterval:60 target:self selector:@selector(tick:) userInfo:nil repeats:YES]; [NSRunLoop.mainRunLoop addTimer:self.ticker forMode:NSRunLoopCommonModes];
     [NSWorkspace.sharedWorkspace.notificationCenter addObserver:self selector:@selector(woke:) name:NSWorkspaceDidWakeNotification object:nil];
+}
+- (void)changeTheme:(NSPopUpButton *)sender {
+    CurrentTheme = ThemeIndex(sender.selectedItem.representedObject);
+    if (!self.preview) [NSUserDefaults.standardUserDefaults setObject:ThemeIDs()[CurrentTheme] forKey:ThemePreferenceKey];
+    self.window.backgroundColor = Canvas();
+    for (Surface *surface in @[self.root, self.header, self.document, self.calendarDocument]) { surface.fill = Canvas(); surface.needsDisplay = YES; }
+    self.sidebar.fill = Panel(); self.sidebar.needsDisplay = YES;
+    self.agenda.fill = Panel(); self.agenda.needsDisplay = YES;
+    self.calendarHint.textColor = Muted();
+    // Rebuild cached colors while preserving the date, scroll position and filters.
+    self.overviewSnapshot = nil;
+    [self render]; self.root.needsDisplay = YES;
+    self.viewMode.needsDisplay = YES; self.calendarStatus.needsDisplay = YES;
 }
 - (void)loadPreview {
     NSArray *samples = @[
@@ -628,6 +673,7 @@ static NSColor *EventFill(NSDictionary *task) {
 - (void)layout {
     if (!self.scroll) return;
     CGFloat w = self.root.bounds.size.width, h = self.root.bounds.size.height;
+    self.themePicker.frame = NSMakeRect(w - 198, 47, 166, 26);
     self.sidebar.hidden = self.calendarMode; self.scroll.hidden = self.calendarMode; self.viewMode.hidden = self.calendarMode; self.sortMenu.hidden = self.calendarMode;
     self.calendarScroll.hidden = !self.calendarMode; self.agenda.hidden = !self.calendarMode; self.calendarStatus.hidden = !self.calendarMode; self.calendarHint.hidden = !self.calendarMode;
     if (self.calendarMode) {
@@ -680,8 +726,8 @@ static NSColor *EventFill(NSDictionary *task) {
 }
 - (void)renderSidebar {
     Clear(self.sidebar); CGFloat h = self.sidebar.bounds.size.height;
-    Surface *logo = Box(RGB(0x426C54), 10); Put(self.sidebar, logo, 23, 64, 37, 37);
-    NSTextField *mark = Text(@"✓", 23, NSFontWeightMedium, NSColor.whiteColor); mark.alignment = NSTextAlignmentCenter; Put(logo, mark, 0, 4, 37, 30);
+    Surface *logo = Box(Emphasis(), 10); Put(self.sidebar, logo, 23, 64, 37, 37);
+    NSTextField *mark = Text(@"✓", 23, NSFontWeightMedium, Accent()); mark.alignment = NSTextAlignmentCenter; Put(logo, mark, 0, 4, 37, 30);
     Put(self.sidebar, Text(@"DDL Manager", 15, NSFontWeightSemibold, Ink()), 70, 64, 130, 24);
     Put(self.sidebar, Text(@"一点计划，很多从容", 10, NSFontWeightRegular, Muted()), 70, 90, 130, 17);
     Put(self.sidebar, Text(@"我的计划", 10, NSFontWeightMedium, Muted()), 25, 143, 160, 18);
@@ -692,12 +738,12 @@ static NSColor *EventFill(NSDictionary *task) {
         ActionButton *b = Button([NSString stringWithFormat:@"%@     %ld", names[i], (long)[self countFilter:i]], self, @selector(changeFilter:), 3); b.symbol = icons[i]; b.tag = i; b.selected = self.filter == i;
         Put(self.sidebar, b, 14, 216 + i * 41, 182, 36);
     }
-    Surface *tip = Box(Adaptive(0xE5ECE0, 0x2B3B30), 12); Put(self.sidebar, tip, 18, h - 223, 174, 96);
+    Surface *tip = Box(Tint(), 12); Put(self.sidebar, tip, 18, h - 223, 174, 96);
     Put(tip, Text(@"留一点空白", 12, NSFontWeightSemibold, Accent()), 14, 14, 146, 20);
     NSTextField *tipText = Text(@"专注眼前的一件事。\n完成之后，记得休息一下。", 10, NSFontWeightRegular, Muted()); tipText.maximumNumberOfLines = 2; tipText.lineBreakMode = NSLineBreakByWordWrapping; Put(tip, tipText, 14, 42, 150, 42);
     ActionButton *notification = Button(@"提醒设置", self, @selector(showNotificationSettings:), 3); notification.symbol = @"bell"; Put(self.sidebar, notification, 16, h - 105, 176, 32);
     NSTextField *status = Text(self.notificationStatus, 9, NSFontWeightRegular, Muted()); status.toolTip = self.notificationStatus; Put(self.sidebar, status, 27, h - 68, 163, 16);
-    Put(self.sidebar, Text(self.preview ? @"预览数据 · 不会保存" : @"仅存于此 Mac · v5.0", 9, NSFontWeightRegular, Muted()), 27, h - 35, 168, 17);
+    Put(self.sidebar, Text(self.preview ? @"预览数据 · 不会保存" : @"仅存于此 Mac · v5.2", 9, NSFontWeightRegular, Muted()), 27, h - 35, 168, 17);
 }
 - (void)renderHeader {
     Clear(self.header); CGFloat w = self.header.bounds.size.width;

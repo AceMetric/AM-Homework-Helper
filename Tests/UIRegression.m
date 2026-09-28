@@ -68,6 +68,35 @@ int main(int argc, const char *argv[]) {
         [app.monthPicker selectItemWithTitle:@"1 月"]; [app jumpCalendar:nil];
         CheckUI([Cal() component:NSCalendarUnitMonth fromDate:app.month] == 1, @"exact month jump rebuilds correct window");
         CheckUI([Cal() isDate:app.overviewBaseMonth equalToDate:app.month toUnitGranularity:NSCalendarUnitMonth], @"cached month matches jump target");
+        CheckUI(app.themePicker.numberOfItems == 6, @"six named pastel themes available");
+        CheckUI(ThemeIndex(@"unknown-theme") == 0 && ThemeIndex(@42) == 0, @"invalid preference falls back to sage");
+        NSButton *today = [NSButton new]; today.tag = 0; [app navigateCalendar:today];
+        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.4]];
+        NSDate *selectedDay = app.selectedDay, *month = app.month;
+        NSArray *tasksBeforeTheme = [app.tasks copy];
+        NSPoint scrollBeforeTheme = app.calendarScroll.contentView.bounds.origin;
+        for (NSInteger i = 0; i < 6; i++) {
+            OverviewGrid *oldGrid = FirstGrid(app);
+            [app.themePicker selectItemAtIndex:i]; [app changeTheme:app.themePicker];
+            CheckUI(CurrentTheme == i && [app.root.fill isEqual:Canvas()] && [app.agenda.fill isEqual:Panel()], @"theme recolors persistent surfaces");
+            CheckUI(FirstGrid(app) != oldGrid, @"theme invalidates cached calendar colors");
+            CheckUI([app.selectedDay isEqual:selectedDay] && [app.month isEqual:month] && [app.tasks isEqual:tasksBeforeTheme], @"theme preserves dates and tasks");
+            CheckUI(NSEqualPoints(app.calendarScroll.contentView.bounds.origin, scrollBeforeTheme), @"theme preserves calendar scroll");
+            [app.window displayIfNeeded];
+            NSBitmapImageRep *bitmap = [app.root bitmapImageRepForCachingDisplayInRect:app.root.bounds];
+            [app.root cacheDisplayInRect:app.root.bounds toBitmapImageRep:bitmap];
+            NSString *path = [NSString stringWithFormat:@"QA/theme-%@.png", ThemeIDs()[i]];
+            CheckUI([[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:NO], @"theme preview exported");
+        }
+        [app openList:nil];
+        [app.themePicker selectItemAtIndex:1]; [app changeTheme:app.themePicker];
+        CheckUI([app.sidebar.fill isEqual:Panel()] && !app.themePicker.hidden, @"list shares theme and picker");
+        [app.window setContentSize:NSMakeSize(1100, 760)]; [app layout];
+        CheckUI(NSMaxX(app.themePicker.frame) <= NSWidth(app.root.bounds), @"theme picker fits compact window");
+        [app.window displayIfNeeded];
+        NSBitmapImageRep *listBitmap = [app.root bitmapImageRepForCachingDisplayInRect:app.root.bounds];
+        [app.root cacheDisplayInRect:app.root.bounds toBitmapImageRep:listBitmap];
+        [[listBitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:@"QA/theme-list-compact.png" atomically:NO];
         [app.ticker invalidate]; [app.searchTimer invalidate];
         [app.window orderOut:nil]; [NSStatusBar.systemStatusBar removeStatusItem:app.statusItem];
         printf("PASS: %ld AppKit assertions\n", (long)assertions);
