@@ -76,12 +76,14 @@ static void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight wei
     [fill setFill]; [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 1, 1) xRadius:8 yRadius:8] fill];
     NSColor *color = self.tone == 1 ? NSColor.whiteColor : (self.selected ? Accent() : Ink());
     if (!self.enabled) color = Muted();
+    BOOL iconOnly = self.symbol.length && self.title.length == 0;
     CGFloat tx = self.symbol.length ? 35 : 8;
     if (self.symbol.length) {
         NSImage *image = [[NSImage imageWithSystemSymbolName:self.symbol accessibilityDescription:nil] imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithHierarchicalColor:color]];
-        [image drawInRect:NSMakeRect(12, (self.bounds.size.height - 16) / 2, 16, 16) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:self.enabled ? 1 : 0.5 respectFlipped:YES hints:nil];
+        CGFloat imageX = iconOnly ? (self.bounds.size.width - 16) / 2 : 12;
+        [image drawInRect:NSMakeRect(imageX, (self.bounds.size.height - 16) / 2, 16, 16) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:self.enabled ? 1 : 0.5 respectFlipped:YES hints:nil];
     }
-    DrawText(self.title, NSMakeRect(tx, (self.bounds.size.height - 17) / 2, self.bounds.size.width - tx - 8, 18), self.font.pointSize, NSFontWeightMedium, color, self.symbol.length ? NSTextAlignmentLeft : NSTextAlignmentCenter);
+    if (!iconOnly) DrawText(self.title, NSMakeRect(tx, (self.bounds.size.height - 17) / 2, self.bounds.size.width - tx - 8, 18), self.font.pointSize, NSFontWeightMedium, color, self.symbol.length ? NSTextAlignmentLeft : NSTextAlignmentCenter);
     if (self.window.firstResponder == self) { [Accent() setStroke]; [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 2, 2) xRadius:7 yRadius:7] stroke]; }
 }
 - (void)viewDidChangeEffectiveAppearance { self.needsDisplay = YES; }
@@ -321,6 +323,10 @@ static NSColor *EventFill(NSDictionary *task) {
 @property CGFloat calendarSectionHeight;
 @property NSPopUpButton *yearPicker;
 @property NSPopUpButton *monthPicker;
+@property NSTextField *calendarMonthTitle;
+@property NSArray<NSTextField *> *calendarSummaryLabels;
+@property NSTextField *calendarProgressText;
+@property Surface *calendarProgressTrack;
 @property Surface *agenda;
 @property NSScrollView *agendaScroll;
 @property Surface *agendaDocument;
@@ -356,6 +362,8 @@ static NSColor *EventFill(NSDictionary *task) {
 - (void)showWindow;
 - (void)refreshReminders;
 - (void)refreshPermission;
+- (void)updateCalendarHeaderState;
+- (void)scrollCalendarToMonth:(NSDate *)targetMonth animated:(BOOL)animated;
 @end
 
 @implementation EditorController
@@ -722,7 +730,7 @@ static NSColor *EventFill(NSDictionary *task) {
 - (void)renderCalendarHeader {
     CGFloat w = self.header.bounds.size.width;
     Put(self.header, Text(@"日程总览  /  DDL MANAGER", 10, NSFontWeightMedium, Muted()), 0, 0, 290, 20);
-    Put(self.header, Text(DDLFormatDate(self.month, @"yyyy 年 M 月"), 28, NSFontWeightSemibold, Ink()), 0, 28, 205, 44);
+    self.calendarMonthTitle = Text(@"", 28, NSFontWeightSemibold, Ink()); Put(self.header, self.calendarMonthTitle, 0, 28, 205, 44);
     self.yearPicker = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     for (NSInteger year = 1900; year <= 2200; year++) [self.yearPicker addItemWithTitle:[NSString stringWithFormat:@"%ld 年", (long)year]];
     [self.yearPicker selectItemWithTitle:DDLFormatDate(self.month, @"yyyy 年")]; self.yearPicker.target = self; self.yearPicker.action = @selector(jumpCalendar:); self.yearPicker.toolTip = @"精确跳转到年份";
@@ -730,26 +738,36 @@ static NSColor *EventFill(NSDictionary *task) {
     for (NSInteger month = 1; month <= 12; month++) [self.monthPicker addItemWithTitle:[NSString stringWithFormat:@"%ld 月", (long)month]];
     [self.monthPicker selectItemWithTitle:DDLFormatDate(self.month, @"M 月")]; self.monthPicker.target = self; self.monthPicker.action = @selector(jumpCalendar:); self.monthPicker.toolTip = @"精确跳转到月份";
     Put(self.header, self.yearPicker, 208, 34, 88, 30); Put(self.header, self.monthPicker, 300, 34, 66, 30);
-    ActionButton *prev = Button(@"‹", self, @selector(navigateCalendar:), 3); prev.tag = -1; prev.font = [NSFont systemFontOfSize:24]; prev.accessibilityLabel = @"上个月";
+    ActionButton *prev = Button(@"", self, @selector(navigateCalendar:), 3); prev.tag = -1; prev.symbol = @"chevron.up"; prev.accessibilityLabel = @"上个月"; prev.toolTip = @"向上翻到上个月";
     ActionButton *today = Button(@"今天", self, @selector(navigateCalendar:), 2); today.tag = 0;
-    ActionButton *next = Button(@"›", self, @selector(navigateCalendar:), 3); next.tag = 1; next.font = [NSFont systemFontOfSize:24]; next.accessibilityLabel = @"下个月";
+    ActionButton *next = Button(@"", self, @selector(navigateCalendar:), 3); next.tag = 1; next.symbol = @"chevron.down"; next.accessibilityLabel = @"下个月"; next.toolTip = @"向下翻到下个月";
     Put(self.header, prev, 374, 34, 32, 32); Put(self.header, today, 410, 34, 52, 32); Put(self.header, next, 466, 34, 32, 32);
     ActionButton *list = Button(@"返回清单", self, @selector(openList:), 3); list.symbol = @"list.bullet"; Put(self.header, list, w - 252, 29, 112, 38);
     ActionButton *add = Button(@"新建 DDL", self, @selector(addTask:), 1); add.symbol = @"plus"; Put(self.header, add, w - 126, 29, 126, 38);
-    NSDictionary *summary = DDLMonthSummary(self.tasks, self.month, NSDate.date, Cal());
-    NSArray *labels = @[[NSString stringWithFormat:@"本月 %@ 项", summary[@"total"]], [NSString stringWithFormat:@"○ 待完成  %@", summary[@"pending"]], [NSString stringWithFormat:@"✓ 已完成  %@", summary[@"completed"]], [NSString stringWithFormat:@"! 已逾期  %@", summary[@"overdue"]]];
     NSArray *colors = @[Ink(), Accent(), Adaptive(0x568369, 0xA6D5B6), Adaptive(0xB86154, 0xEFACA0)];
-    for (NSInteger i = 0; i < (NSInteger)labels.count; i++) {
+    NSMutableArray<NSTextField *> *summaryLabels = [NSMutableArray array];
+    for (NSInteger i = 0; i < 4; i++) {
         Surface *badge = Box(i == 0 ? Tint() : Card(), 7); Put(self.header, badge, i * 127, 82, 117, 28);
-        Put(badge, Text(labels[i], 11, NSFontWeightMedium, colors[i]), 10, 6, 100, 18);
+        NSTextField *label = Text(@"", 11, NSFontWeightMedium, colors[i]); Put(badge, label, 10, 6, 100, 18); [summaryLabels addObject:label];
     }
-    double ratio = [summary[@"total"] doubleValue] > 0 ? [summary[@"completed"] doubleValue] / [summary[@"total"] doubleValue] : 0;
-    NSString *progressText = [summary[@"total"] integerValue] ? [NSString stringWithFormat:@"本月完成度  %.0f%%", ratio * 100] : @"这个月，等待新的计划";
-    Put(self.header, Text(progressText, 10, NSFontWeightMedium, Muted()), w - 210, 78, 210, 18);
-    Surface *track = Box(Line(), 3); Put(self.header, track, w - 210, 104, 210, 5);
-    if (ratio > 0) Put(track, Box(Accent(), 3), 0, 0, MAX(5, 210 * ratio), 5);
+    self.calendarSummaryLabels = summaryLabels;
+    self.calendarProgressText = Text(@"", 10, NSFontWeightMedium, Muted()); Put(self.header, self.calendarProgressText, w - 210, 78, 210, 18);
+    self.calendarProgressTrack = Box(Line(), 3); Put(self.header, self.calendarProgressTrack, w - 210, 104, 210, 5);
+    [self updateCalendarHeaderState];
     self.calendarHint.stringValue = self.notice.length ? self.notice : @"上下滚动浏览月份；点击日期或任务，在右侧查看详情。";
     self.calendarHint.toolTip = self.calendarHint.stringValue;
+}
+- (void)updateCalendarHeaderState {
+    if (!self.calendarMode || !self.calendarMonthTitle) return;
+    self.calendarMonthTitle.stringValue = DDLFormatDate(self.month, @"yyyy 年 M 月");
+    [self.yearPicker selectItemWithTitle:DDLFormatDate(self.month, @"yyyy 年")];
+    [self.monthPicker selectItemWithTitle:DDLFormatDate(self.month, @"M 月")];
+    NSDictionary *summary = DDLMonthSummary(self.tasks, self.month, NSDate.date, Cal());
+    NSArray *labels = @[[NSString stringWithFormat:@"本月 %@ 项", summary[@"total"]], [NSString stringWithFormat:@"○ 待完成  %@", summary[@"pending"]], [NSString stringWithFormat:@"✓ 已完成  %@", summary[@"completed"]], [NSString stringWithFormat:@"! 已逾期  %@", summary[@"overdue"]]];
+    for (NSInteger i = 0; i < MIN((NSInteger)labels.count, (NSInteger)self.calendarSummaryLabels.count); i++) self.calendarSummaryLabels[i].stringValue = labels[i];
+    double ratio = [summary[@"total"] doubleValue] > 0 ? [summary[@"completed"] doubleValue] / [summary[@"total"] doubleValue] : 0;
+    self.calendarProgressText.stringValue = [summary[@"total"] integerValue] ? [NSString stringWithFormat:@"本月完成度  %.0f%%", ratio * 100] : @"这个月，等待新的计划";
+    Clear(self.calendarProgressTrack); if (ratio > 0) Put(self.calendarProgressTrack, Box(Accent(), 3), 0, 0, MAX(5, 210 * ratio), 5);
 }
 - (Surface *)agendaRow:(NSDictionary *)task width:(CGFloat)w {
     BOOL done = [task[@"completed"] boolValue];
@@ -819,15 +837,35 @@ static NSColor *EventFill(NSDictionary *task) {
     [self.agendaScroll.contentView scrollToPoint:position]; [self.agendaScroll reflectScrolledClipView:self.agendaScroll.contentView];
 }
 - (void)navigateCalendar:(NSButton *)sender {
-    if (sender.tag == 0) { self.month = NSDate.date; self.selectedDay = NSDate.date; }
+    NSDate *targetMonth = nil;
+    if (sender.tag == 0) {
+        targetMonth = NSDate.date; self.selectedDay = NSDate.date; self.month = targetMonth;
+        self.focusedTaskID = nil; self.notice = @""; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [self render];
+    }
     else {
         NSDate *first; [Cal() rangeOfUnit:NSCalendarUnitMonth startDate:&first interval:NULL forDate:self.month];
-        self.month = [Cal() dateByAddingUnit:NSCalendarUnitMonth value:sender.tag toDate:first options:0];
-        NSInteger lastDay = [Cal() rangeOfUnit:NSCalendarUnitDay inUnit:NSCalendarUnitMonth forDate:self.month].length;
-        NSInteger day = MIN(lastDay, [Cal() component:NSCalendarUnitDay fromDate:self.selectedDay]);
-        self.selectedDay = [Cal() dateByAddingUnit:NSCalendarUnitDay value:day - 1 toDate:self.month options:0];
+        targetMonth = [Cal() dateByAddingUnit:NSCalendarUnitMonth value:sender.tag toDate:first options:0];
     }
-    self.calendarBaseMonth = self.month; self.calendarNeedsCenter = YES; self.focusedTaskID = nil; self.notice = @""; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [self render];
+    [self scrollCalendarToMonth:targetMonth animated:YES];
+}
+- (void)scrollCalendarToMonth:(NSDate *)targetMonth animated:(BOOL)animated {
+    if (!targetMonth || self.calendarSectionHeight <= 0 || !self.calendarBaseMonth) return;
+    NSDate *baseStart = nil, *targetStart = nil;
+    [Cal() rangeOfUnit:NSCalendarUnitMonth startDate:&baseStart interval:NULL forDate:self.calendarBaseMonth];
+    [Cal() rangeOfUnit:NSCalendarUnitMonth startDate:&targetStart interval:NULL forDate:targetMonth];
+    NSInteger offset = [[Cal() components:NSCalendarUnitMonth fromDate:baseStart toDate:targetStart options:0] month];
+    self.month = targetStart;
+    if (offset < -6 || offset > 6) {
+        self.calendarBaseMonth = targetStart; self.calendarNeedsCenter = YES; [self render]; return;
+    }
+    CGFloat maximumY = MAX(0, self.calendarDocument.frame.size.height - self.calendarScroll.contentSize.height);
+    NSPoint point = NSMakePoint(0, MAX(0, MIN((offset + 6) * self.calendarSectionHeight, maximumY)));
+    [self updateCalendarHeaderState];
+    if (!animated) { [self.calendarScroll.contentView scrollToPoint:point]; [self.calendarScroll reflectScrolledClipView:self.calendarScroll.contentView]; return; }
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+        context.duration = 0.24; context.allowsImplicitAnimation = YES;
+        [[self.calendarScroll.contentView animator] setBoundsOrigin:point];
+    } completionHandler:^{ [self.calendarScroll reflectScrolledClipView:self.calendarScroll.contentView]; }];
 }
 - (void)jumpCalendar:(id)sender {
     NSInteger year = self.yearPicker.titleOfSelectedItem.integerValue;
@@ -846,7 +884,7 @@ static NSColor *EventFill(NSDictionary *task) {
     NSDate *baseStart = nil; [Cal() rangeOfUnit:NSCalendarUnitMonth startDate:&baseStart interval:NULL forDate:self.calendarBaseMonth];
     NSDate *visibleMonth = [Cal() dateByAddingUnit:NSCalendarUnitMonth value:index - 6 toDate:baseStart options:0];
     if ([Cal() isDate:visibleMonth equalToDate:self.month toUnitGranularity:NSCalendarUnitMonth]) return;
-    self.month = visibleMonth; [self renderHeader];
+    self.month = visibleMonth; [self updateCalendarHeaderState];
 }
 - (void)changeCalendarStatus:(id)sender { self.focusedTaskID = nil; self.notice = @""; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [self render]; }
 - (void)openCalendar:(id)sender {
