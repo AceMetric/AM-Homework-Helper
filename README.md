@@ -4,11 +4,21 @@
 
 ## 下载
 
-[下载 DDL Manager 5.0（macOS Apple Silicon）](https://github.com/123456p-df/DDL-Manager/raw/refs/heads/main/Releases/DDL%20Manager%205.0-macOS-arm64.zip)
+[本地 DDL Manager 5.1 优化版（macOS Apple Silicon）](Releases/DDL%20Manager%205.1-macOS-arm64.zip)
+
+此目录为独立优化副本；可运行应用位于 `build/DDL Manager.app`。
 
 系统要求：macOS 13 或更高版本、Apple 芯片 Mac（M1 / M2 / M3 / M4 等）。
 
 解压后，将 `DDL Manager.app` 拖入“应用程序”文件夹。由于当前公开构建未经过 Apple 公证，首次启动时请按住 Control 键点按应用，选择“打开”；如仍被拦截，请前往“系统设置 → 隐私与安全性”并选择“仍要打开”。
+
+## 5.1 优化
+
+- 日历任务按本地日期建立索引，13 个月共享索引，减少反复扫描。
+- 重复刷新与日期选择复用日历控件；任务变化、尺寸变化、月份窗口、时区或分钟变化会重新构建。
+- 日期格式器按线程缓存，并跟随默认时区变化。
+- 搜索连续输入等待 180 毫秒合并刷新，清空立即生效；清单和日历统一忽略首尾空格，切换视图取消待处理搜索。
+- 修正已删除任务仍计入清单页逾期提示的问题。
 
 ## 功能
 
@@ -25,6 +35,8 @@
 ```sh
 ./build.sh
 zsh test.sh
+# 包含基准测试和真实 AppKit 预览回归，需要 macOS 图形会话
+zsh verify-optimization.sh
 ```
 
 构建产物位于 `build/DDL Manager.app`。当前构建目标为 macOS 13+。

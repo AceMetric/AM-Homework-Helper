@@ -58,10 +58,20 @@ NSDate *DDLParseDate(NSString *input, NSDate *now, NSCalendar *calendar) {
 }
 
 NSString *DDLFormatDate(NSDate *date, NSString *format) {
-    NSDateFormatter *formatter = [NSDateFormatter new];
-    formatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
-    formatter.calendar = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
-    formatter.dateFormat = format;
+    // Formatters are expensive to construct. Keep a bounded cache per thread.
+    NSMutableDictionary *thread = NSThread.currentThread.threadDictionary;
+    NSCache *cache = thread[@"DDLDateFormatters"];
+    if (!cache) { cache = [NSCache new]; cache.countLimit = 32; thread[@"DDLDateFormatters"] = cache; }
+    NSDateFormatter *formatter = [cache objectForKey:format];
+    if (!formatter) {
+        formatter = [NSDateFormatter new];
+        formatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
+        formatter.calendar = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];
+        formatter.dateFormat = format;
+        [cache setObject:formatter forKey:format];
+    }
+    NSTimeZone *zone = NSTimeZone.defaultTimeZone;
+    if (![formatter.timeZone isEqual:zone]) formatter.timeZone = zone;
     return [formatter stringFromDate:date];
 }
 
@@ -188,6 +198,7 @@ NSArray<NSMutableDictionary *> *DDLNormalizeTasks(NSArray *items) {
 
 BOOL DDLMatchesFilter(NSDictionary *task, NSInteger filter, NSString *query, NSDate *now, NSCalendar *calendar) {
     BOOL deleted = [task[@"deleted"] boolValue];
+    query = [query stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     NSString *searchable = [NSString stringWithFormat:@"%@ %@ %@", task[@"subject"], task[@"title"], task[@"notes"] ?: @""];
     if (filter == 5) return deleted && (query.length == 0 || [searchable localizedStandardContainsString:query]);
     if (deleted) return NO;
@@ -218,6 +229,16 @@ NSArray<NSMutableDictionary *> *DDLMergeTasks(NSArray *existing, NSArray *incomi
         [merged addObject:task];
     }
     return merged;
+}
+
+NSDictionary<NSDate *, NSArray<NSDictionary *> *> *DDLTasksByDay(NSArray<NSDictionary *> *items, NSCalendar *calendar) {
+    NSMutableDictionary<NSDate *, NSMutableArray<NSDictionary *> *> *days = [NSMutableDictionary dictionary];
+    for (NSDictionary *task in items) {
+        NSDate *day = [calendar startOfDayForDate:task[@"due"]];
+        if (!days[day]) days[day] = [NSMutableArray array];
+        [days[day] addObject:task];
+    }
+    return days;
 }
 
 NSArray<NSDate *> *DDLMonthGrid(NSDate *month, NSCalendar *calendar) {

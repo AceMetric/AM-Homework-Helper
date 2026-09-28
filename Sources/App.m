@@ -173,6 +173,7 @@ static ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, S
         Put(self, label, 8 + i * cellW, top - 24, cellW, 18);
     }
     NSCalendar *calendar = Cal(); NSDate *start;
+    NSDictionary *tasksByDay = DDLTasksByDay(self.tasks, calendar);
     [calendar rangeOfUnit:NSCalendarUnitMonth startDate:&start interval:NULL forDate:self.month];
     NSInteger offset = ([calendar component:NSCalendarUnitWeekday fromDate:start] + 5) % 7;
     for (NSInteger i = 0; i < 42; i++) {
@@ -180,7 +181,7 @@ static ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, S
         DayButton *b = [[DayButton alloc] initWithFrame:NSZeroRect]; b.date = date; b.bordered = NO; b.title = DDLFormatDate(date, @"M月d日");
         b.inMonth = [calendar component:NSCalendarUnitMonth fromDate:date] == [calendar component:NSCalendarUnitMonth fromDate:self.month];
         b.chosen = [calendar isDate:date inSameDayAsDate:self.selection]; b.today = [calendar isDateInToday:date]; b.compact = self.compact;
-        b.tasks = [self.tasks filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *t, NSDictionary *bindings) { return [calendar isDate:t[@"due"] inSameDayAsDate:date]; }]];
+        b.tasks = tasksByDay[[calendar startOfDayForDate:date]] ?: @[];
         b.target = self; b.action = @selector(selectDay:);
         b.toolTip = [NSString stringWithFormat:@"%@ · %lu 项", DDLFormatDate(date, @"yyyy年M月d日 EEEE"), b.tasks.count]; b.accessibilityLabel = b.toolTip;
         Put(self, b, 8 + (i % 7) * cellW, top + (i / 7) * cellH, cellW, cellH);
@@ -231,17 +232,38 @@ static NSColor *EventFill(NSDictionary *task) {
 }
 @end
 
+@interface CalendarDayCell : Surface
+@property NSDate *date;
+@property BOOL inMonth;
+@end
+@implementation CalendarDayCell
+@end
+
 @interface OverviewGrid : Surface
 @property NSDate *month;
 @property NSDate *selection;
-@property NSArray<NSDictionary *> *tasks;
+@property NSDictionary<NSDate *, NSArray<NSDictionary *> *> *tasksByDay;
+- (void)updateSelection:(NSDate *)selection;
 @property(copy) void (^onSelect)(NSDate *date, NSString *taskID);
 - (void)reload;
 @end
 @implementation OverviewGrid
+- (void)updateSelection:(NSDate *)selection {
+    NSCalendar *calendar = Cal();
+    if ([calendar isDate:self.selection inSameDayAsDate:selection]) return;
+    self.selection = selection;
+    for (NSView *view in self.subviews) {
+        if (![view isKindOfClass:CalendarDayCell.class]) continue;
+        CalendarDayCell *cell = (CalendarDayCell *)view;
+        BOOL selected = [calendar isDate:cell.date inSameDayAsDate:selection];
+        cell.fill = selected ? Adaptive(0xF3F7F0, 0x2B3A2F) : (cell.inMonth ? Card() : Canvas());
+        cell.stroke = selected ? Accent() : Line(); cell.needsDisplay = YES;
+    }
+}
 - (void)reload {
     Clear(self);
-    NSArray<NSDate *> *dates = DDLMonthGrid(self.month, Cal());
+    NSCalendar *calendar = Cal();
+    NSArray<NSDate *> *dates = DDLMonthGrid(self.month, calendar);
     NSInteger rows = dates.count / 7;
     CGFloat width = self.bounds.size.width, height = self.bounds.size.height;
     CGFloat cellW = (width - 16) / 7, cellH = (height - 42) / rows;
@@ -253,11 +275,12 @@ static NSColor *EventFill(NSDictionary *task) {
     __weak typeof(self) weakSelf = self;
     for (NSInteger i = 0; i < (NSInteger)dates.count; i++) {
         NSDate *date = dates[i];
-        BOOL inMonth = [Cal() isDate:date equalToDate:self.month toUnitGranularity:NSCalendarUnitMonth];
-        BOOL selected = [Cal() isDate:date inSameDayAsDate:self.selection];
-        BOOL today = [Cal() isDateInToday:date];
-        NSArray *tasks = [self.tasks filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *t, NSDictionary *b) { return [Cal() isDate:t[@"due"] inSameDayAsDate:date]; }]];
-        Surface *cell = Box(selected ? Adaptive(0xF3F7F0, 0x2B3A2F) : (inMonth ? Card() : Canvas()), 9);
+        BOOL inMonth = [calendar isDate:date equalToDate:self.month toUnitGranularity:NSCalendarUnitMonth];
+        BOOL selected = [calendar isDate:date inSameDayAsDate:self.selection];
+        BOOL today = [calendar isDateInToday:date];
+        NSArray *tasks = self.tasksByDay[[calendar startOfDayForDate:date]] ?: @[];
+        CalendarDayCell *cell = [CalendarDayCell new]; cell.date = date; cell.inMonth = inMonth; cell.radius = 9;
+        cell.fill = selected ? Adaptive(0xF3F7F0, 0x2B3A2F) : (inMonth ? Card() : Canvas());
         cell.stroke = selected ? Accent() : Line();
         Put(self, cell, 8 + (i % 7) * cellW + 2, 36 + (i / 7) * cellH + 2, cellW - 4, cellH - 4);
         CallbackButton *hit = [[CallbackButton alloc] initWithFrame:cell.bounds]; hit.title = @""; hit.tone = 3; hit.accessibilityLabel = [NSString stringWithFormat:@"%@，%lu 项任务", DDLFormatDate(date, @"yyyy年M月d日 EEEE"), tasks.count]; hit.onClick = ^{ if (weakSelf.onSelect) weakSelf.onSelect(date, nil); }; [cell addSubview:hit];
@@ -351,6 +374,12 @@ static NSColor *EventFill(NSDictionary *task) {
 @property BOOL loading;
 @property BOOL renderBusy;
 @property NSTimer *ticker;
+@property NSTimer *searchTimer;
+@property NSArray<NSDictionary *> *overviewSnapshot;
+@property NSDate *overviewBaseMonth;
+@property NSString *overviewTimeZone;
+@property NSSize overviewSize;
+@property NSInteger overviewMinute;
 - (void)render;
 - (void)commitTask:(NSDictionary *)task originalID:(NSString *)identifier;
 - (void)closeEditor;
@@ -639,11 +668,13 @@ static NSColor *EventFill(NSDictionary *task) {
     }];
 }
 - (NSInteger)countFilter:(NSInteger)filter {
-    NSInteger n = 0; for (NSDictionary *task in self.tasks) if (DDLMatchesFilter(task, filter, @"", NSDate.date, Cal())) n++; return n;
+    NSDate *now = NSDate.date; NSCalendar *calendar = Cal();
+    NSInteger n = 0; for (NSDictionary *task in self.tasks) if (DDLMatchesFilter(task, filter, @"", now, calendar)) n++; return n;
 }
 - (void)render {
     if (self.renderBusy || !self.document) return; self.renderBusy = YES;
-    [self renderSidebar]; [self renderHeader]; [self renderContent];
+    if (!self.calendarMode) [self renderSidebar];
+    [self renderHeader]; [self renderContent];
     NSInteger pending = [self countFilter:0]; self.statusItem.button.title = pending ? [NSString stringWithFormat:@" %ld", (long)pending] : @""; self.statusItem.button.toolTip = [NSString stringWithFormat:@"%ld 项待完成 · 点击打开 / 右键菜单", (long)pending];
     self.renderBusy = NO;
 }
@@ -675,7 +706,7 @@ static NSColor *EventFill(NSDictionary *task) {
     NSArray *titles = @[@"把重要的事，安排好。", @"今天，专注眼前。", @"为接下来的一周留白。", @"每一小步，都算数。", @"暂时收起，也好找回。", @"删掉的，先在这里歇一会儿。"];
     Put(self.header, Text(titles[self.filter], 28, NSFontWeightSemibold, Ink()), 0, 32, w - 148, 42);
     NSInteger overdue = 0;
-    for (NSDictionary *task in self.tasks) if (![task[@"completed"] boolValue] && ![task[@"archived"] boolValue] && [task[@"due"] timeIntervalSinceNow] < 0) overdue++;
+    for (NSDictionary *task in self.tasks) if (![task[@"completed"] boolValue] && ![task[@"archived"] boolValue] && ![task[@"deleted"] boolValue] && [task[@"due"] timeIntervalSinceNow] < 0) overdue++;
     NSString *subtitle = overdue ? [NSString stringWithFormat:@"有 %ld 项已逾期，给它们一个新的安排吧。", (long)overdue] : @"清单记住截止时间，你只管做好每一步。";
     Put(self.header, Text(self.notice.length ? self.notice : subtitle, 12, NSFontWeightRegular, Muted()), 0, 81, w, 23);
     ActionButton *add = Button(@"新建 DDL", self, @selector(addTask:), 1); add.symbol = @"plus"; add.toolTip = @"新建 DDL（⌘N）"; Put(self.header, add, w - 122, 37, 122, 38);
@@ -789,22 +820,35 @@ static NSColor *EventFill(NSDictionary *task) {
 - (void)renderOverview {
     NSArray *visible = DDLCalendarTasks(self.tasks, self.calendarStatus.selectedSegment, self.query);
     NSPoint calendarPosition = self.calendarScroll.contentView.bounds.origin;
-    Clear(self.calendarDocument);
+    NSCalendar *calendar = Cal();
+    NSDictionary *tasksByDay = DDLTasksByDay(visible, calendar);
     if (!self.calendarBaseMonth) self.calendarBaseMonth = self.month;
     NSDate *baseStart = nil; [Cal() rangeOfUnit:NSCalendarUnitMonth startDate:&baseStart interval:NULL forDate:self.calendarBaseMonth];
     CGFloat calendarWidth = self.calendarScroll.contentSize.width;
     self.calendarSectionHeight = MAX(510, self.calendarScroll.contentSize.height);
+    NSInteger minute = (NSInteger)floor(NSDate.date.timeIntervalSince1970 / 60);
+    BOOL rebuild = ![self.overviewSnapshot isEqualToArray:visible] || ![self.overviewBaseMonth isEqual:baseStart]
+        || !NSEqualSizes(self.overviewSize, self.calendarScroll.contentSize) || self.overviewMinute != minute
+        || ![self.overviewTimeZone isEqual:calendar.timeZone.name];
     __weak typeof(self) weakSelf = self;
-    for (NSInteger offset = -6; offset <= 6; offset++) {
-        NSDate *month = [Cal() dateByAddingUnit:NSCalendarUnitMonth value:offset toDate:baseStart options:0];
-        CGFloat sectionY = (offset + 6) * self.calendarSectionHeight;
-        NSTextField *monthTitle = Text(DDLFormatDate(month, @"yyyy 年 M 月"), 18, NSFontWeightSemibold, Ink()); Put(self.calendarDocument, monthTitle, 4, sectionY + 6, calendarWidth - 8, 28);
-        OverviewGrid *grid = [OverviewGrid new]; grid.fill = Card(); grid.stroke = Line(); grid.radius = 14; grid.month = month; grid.selection = self.selectedDay; grid.tasks = visible;
-        grid.onSelect = ^(NSDate *date, NSString *taskID) {
-            weakSelf.selectedDay = date; weakSelf.month = date; weakSelf.focusedTaskID = taskID; weakSelf.notice = @"";
-            [weakSelf.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [weakSelf render];
-        };
-        Put(self.calendarDocument, grid, 0, sectionY + 38, calendarWidth - 6, self.calendarSectionHeight - 48); [grid reload];
+    if (rebuild) {
+        Clear(self.calendarDocument);
+        for (NSInteger offset = -6; offset <= 6; offset++) {
+            NSDate *month = [Cal() dateByAddingUnit:NSCalendarUnitMonth value:offset toDate:baseStart options:0];
+            CGFloat sectionY = (offset + 6) * self.calendarSectionHeight;
+            NSTextField *monthTitle = Text(DDLFormatDate(month, @"yyyy 年 M 月"), 18, NSFontWeightSemibold, Ink()); Put(self.calendarDocument, monthTitle, 4, sectionY + 6, calendarWidth - 8, 28);
+            OverviewGrid *grid = [OverviewGrid new]; grid.fill = Card(); grid.stroke = Line(); grid.radius = 14; grid.month = month; grid.selection = self.selectedDay; grid.tasksByDay = tasksByDay;
+            grid.onSelect = ^(NSDate *date, NSString *taskID) {
+                weakSelf.selectedDay = date; weakSelf.month = date; weakSelf.focusedTaskID = taskID; weakSelf.notice = @"";
+                [weakSelf.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [weakSelf render];
+            };
+            Put(self.calendarDocument, grid, 0, sectionY + 38, calendarWidth - 6, self.calendarSectionHeight - 48); [grid reload];
+        }
+        self.overviewSnapshot = [[NSArray alloc] initWithArray:visible copyItems:YES];
+        self.overviewBaseMonth = baseStart; self.overviewSize = self.calendarScroll.contentSize; self.overviewMinute = minute;
+        self.overviewTimeZone = calendar.timeZone.name;
+    } else {
+        for (NSView *view in self.calendarDocument.subviews) if ([view isKindOfClass:OverviewGrid.class]) [(OverviewGrid *)view updateSelection:self.selectedDay];
     }
     self.calendarDocument.frame = NSMakeRect(0, 0, calendarWidth, self.calendarSectionHeight * 13);
     if (self.calendarNeedsCenter) calendarPosition.y = self.calendarSectionHeight * 6;
@@ -814,7 +858,7 @@ static NSColor *EventFill(NSDictionary *task) {
     Clear(self.agenda); Clear(self.agendaDocument);
     Put(self.agenda, Text(DDLFormatDate(self.selectedDay, @"M 月 d 日"), 23, NSFontWeightSemibold, Ink()), 18, 20, 223, 32);
     ActionButton *add = Button(@"+", self, @selector(addTask:), 2); add.accessibilityLabel = [NSString stringWithFormat:@"为 %@ 新建任务", DDLFormatDate(self.selectedDay, @"M月d日")]; add.font = [NSFont systemFontOfSize:20]; Put(self.agenda, add, 248, 19, 32, 32);
-    NSArray *dayTasks = [visible filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *task, NSDictionary *b) { return [Cal() isDate:task[@"due"] inSameDayAsDate:self.selectedDay]; }]];
+    NSArray *dayTasks = tasksByDay[[calendar startOfDayForDate:self.selectedDay]] ?: @[];
     NSInteger completed = 0; for (NSDictionary *task in dayTasks) if ([task[@"completed"] boolValue]) completed++;
     NSString *detail = [NSString stringWithFormat:@"%@ · %lu 项待做 · %ld 项已完成", DDLFormatDate(self.selectedDay, @"EEEE"), dayTasks.count - completed, (long)completed];
     Put(self.agenda, Text(detail, 10, NSFontWeightRegular, Muted()), 18, 62, 264, 18);
@@ -888,9 +932,10 @@ static NSColor *EventFill(NSDictionary *task) {
 }
 - (void)changeCalendarStatus:(id)sender { self.focusedTaskID = nil; self.notice = @""; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [self render]; }
 - (void)openCalendar:(id)sender {
+    [self.searchTimer invalidate]; self.searchTimer = nil;
     self.calendarMode = YES; self.calendarStatus.selectedSegment = 0; self.query = @""; self.search.stringValue = @""; self.notice = @""; self.focusedTaskID = nil; self.calendarBaseMonth = self.month; self.calendarNeedsCenter = YES; [self showWindow]; [self layout];
 }
-- (void)openList:(id)sender { self.calendarMode = NO; self.viewMode.selectedSegment = 0; self.query = @""; self.search.stringValue = @""; self.notice = @""; [self showWindow]; [self layout]; }
+- (void)openList:(id)sender { [self.searchTimer invalidate]; self.searchTimer = nil; self.calendarMode = NO; self.viewMode.selectedSegment = 0; self.query = @""; self.search.stringValue = @""; self.notice = @""; [self showWindow]; [self layout]; }
 - (void)renderContent {
     if (self.calendarMode) { [self renderOverview]; return; }
     NSPoint position = self.scroll.contentView.bounds.origin;
@@ -932,7 +977,20 @@ static NSColor *EventFill(NSDictionary *task) {
 - (void)changeFilter:(NSButton *)sender { self.filter = sender.tag; self.calendarMode = NO; self.notice = @""; [self.scroll.contentView scrollToPoint:NSZeroPoint]; [self layout]; }
 - (void)changeView:(NSSegmentedControl *)sender { if (sender.selectedSegment == 1) [self openCalendar:sender]; else [self openList:sender]; }
 - (void)sortChanged:(id)sender { [self renderContent]; }
-- (void)controlTextDidChange:(NSNotification *)notification { if (notification.object == self.search) { self.query = self.search.stringValue; self.focusedTaskID = nil; [self.scroll.contentView scrollToPoint:NSZeroPoint]; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [self render]; } }
+- (void)controlTextDidChange:(NSNotification *)notification {
+    if (notification.object != self.search) return;
+    [self.searchTimer invalidate]; self.searchTimer = nil;
+    self.query = [self.search.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    self.focusedTaskID = nil;
+    if (!self.query.length) { [self applySearch]; return; }
+    __weak typeof(self) weakSelf = self;
+    self.searchTimer = [NSTimer scheduledTimerWithTimeInterval:0.18 repeats:NO block:^(NSTimer *timer) { [weakSelf applySearch]; }];
+}
+- (void)applySearch {
+    [self.searchTimer invalidate]; self.searchTimer = nil;
+    [self.scroll.contentView scrollToPoint:NSZeroPoint]; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint];
+    [self renderContent];
+}
 - (void)focusSearch:(id)sender { [self showWindow]; [self.window makeFirstResponder:self.search]; }
 - (void)showWindow { [self.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES]; }
 - (void)showMain:(id)sender { [self showWindow]; }

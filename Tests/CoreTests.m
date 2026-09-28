@@ -98,6 +98,36 @@ int main(void) {
         Check([normalizedDeleted[0][@"deletedAt"] isKindOfClass:NSDate.class], @"normalize keeps deleted date");
         NSArray *missingDate = DDLNormalizeTasks(@[@{@"title":@"旧删除", @"due":now, @"deleted":@YES}]);
         Check([missingDate[0][@"deletedAt"] isKindOfClass:NSDate.class], @"normalize fills missing deleted date");
+        Check(DDLMatchesFilter(task, 0, @"  数学 \n", now, calendar), @"list search trims surrounding whitespace");
+        Check(DDLMatchesFilter(task, 0, @" \n ", now, calendar), @"whitespace-only list search shows all tasks");
+        NSDictionary *days = DDLTasksByDay(DDLCalendarTasks(overview, 0, @""), calendar);
+        Check([days[[calendar startOfDayForDate:now]] count] == 3, @"day index includes completed and pending tasks");
+        Check([days[[calendar startOfDayForDate:nextMonth[@"due"]]] count] == 1, @"day index crosses month boundary");
+        Check(DDLTasksByDay(@[], calendar).count == 0, @"empty day index");
+        NSArray *ordered = DDLCalendarTasks(overview, 0, @"");
+        for (NSDate *day in days) {
+            NSArray *expected = [ordered filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *item, NSDictionary *bindings) {
+                (void)bindings; return [calendar isDate:item[@"due"] inSameDayAsDate:day];
+            }]];
+            Check([days[day] isEqual:expected], @"day index preserves task display order");
+        }
+        NSDate *dstMorning = DDLParseDate(@"2026-03-08 00:30", now, dst);
+        NSDate *dstEvening = DDLParseDate(@"2026-03-08 23:30", now, dst);
+        NSDate *dstNext = DDLParseDate(@"2026-03-09 00:00", now, dst);
+        NSDictionary *dstDays = DDLTasksByDay(@[@{@"due":dstMorning}, @{@"due":dstEvening}, @{@"due":dstNext}], dst);
+        Check(dstDays.count == 2 && [dstDays[[dst startOfDayForDate:dstMorning]] count] == 2, @"day index respects 23-hour daylight-saving day");
+        NSCalendar *utc = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian]; utc.timeZone = [NSTimeZone timeZoneForSecondsFromGMT:0];
+        NSDate *localMidnight = DDLParseDate(@"2026-10-01 00:30", now, calendar);
+        Check(![[calendar startOfDayForDate:localMidnight] isEqual:[utc startOfDayForDate:localMidnight]], @"fixture spans local and UTC days");
+        NSDictionary *localDays = DDLTasksByDay(@[@{@"due":localMidnight}], calendar);
+        Check([localDays[[calendar startOfDayForDate:localMidnight]] count] == 1, @"day index uses supplied time zone");
+        NSTimeZone *originalZone = NSTimeZone.defaultTimeZone;
+        [NSTimeZone setDefaultTimeZone:calendar.timeZone];
+        Check([DDLFormatDate(localMidnight, @"yyyy-MM-dd HH:mm") isEqual:@"2026-10-01 00:30"], @"cached formatter first time zone");
+        [NSTimeZone setDefaultTimeZone:utc.timeZone];
+        Check([DDLFormatDate(localMidnight, @"yyyy-MM-dd HH:mm") isEqual:@"2026-09-30 16:30"], @"cached formatter follows time zone changes");
+        Check([DDLFormatDate(localMidnight, @"d") isEqual:@"30"], @"formatter caches distinct formats");
+        [NSTimeZone setDefaultTimeZone:originalZone];
         printf("PASS: %ld core assertions\n", (long)count);
     }
     return 0;
