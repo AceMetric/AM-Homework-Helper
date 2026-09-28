@@ -4,13 +4,20 @@
 
 ## 下载
 
-[打开 DDL Manager 5.2 淡色主题版](Releases/DDL%20Manager%205.2-macOS-arm64-release.zip)
+[下载 DDL Manager 5.3 表单配色版](Releases/DDL%20Manager%205.3-macOS-arm64.zip)
 
 此目录为独立优化副本；可运行应用位于 `build/DDL Manager.app`。
 
 系统要求：macOS 13 或更高版本、Apple 芯片 Mac（M1 / M2 / M3 / M4 等）。
 
 将 `DDL Manager.app` 拖入“应用程序”文件夹。由于当前公开构建未经过 Apple 公证，首次启动时请按住 Control 键点按应用，选择“打开”；如仍被拦截，请前往“系统设置 → 隐私与安全性”并选择“仍要打开”。
+
+## 5.3 表单配色
+
+- 输入框、备注、光标、文字选区和细焦点边框随六套主题统一变化。
+- 优先级、常用时间、提醒方案以及排序、年月、配色菜单采用统一圆角外观与主题色选项。
+- 菜单支持鼠标、方向键、回车确认与 Esc 退出。
+- 时间支持 24 小时制输入和分钟微调，保持日历、截止时间与提醒逻辑同步。
 
 ## 5.2 淡色主题
 
@@ -45,6 +52,8 @@
 zsh test.sh
 # 包含基准测试和真实 AppKit 预览回归，需要 macOS 图形会话
 zsh verify-optimization.sh
+# 表单配色与交互回归
+zsh verify-forms.sh
 ```
 
 构建产物位于 `build/DDL Manager.app`。当前构建目标为 macOS 13+。
@@ -52,6 +61,7 @@ zsh verify-optimization.sh
 项目结构：
 
 - `Sources/App.m`：应用界面和入口
+- `Sources/FormControls.inc`：主题化输入框、备注和下拉菜单控件
 - `Sources/DDLCore.m`：日期解析、提醒计划和数据兼容逻辑
 - `Tests/CoreTests.m`：核心测试
 - `Tools/Icon.m`：原生应用图标生成工具

@@ -74,7 +74,7 @@ static void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight wei
 @end
 @implementation ActionButton
 - (instancetype)initWithFrame:(NSRect)frame {
-    if ((self = [super initWithFrame:frame])) { self.bordered = NO; self.font = [NSFont systemFontOfSize:12 weight:NSFontWeightMedium]; [self setButtonType:NSButtonTypeMomentaryPushIn]; self.focusRingType = NSFocusRingTypeDefault; }
+    if ((self = [super initWithFrame:frame])) { self.bordered = NO; self.font = [NSFont systemFontOfSize:12 weight:NSFontWeightMedium]; [self setButtonType:NSButtonTypeMomentaryPushIn]; self.focusRingType = NSFocusRingTypeNone; }
     return self;
 }
 - (BOOL)isFlipped { return YES; }
@@ -96,8 +96,9 @@ static void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight wei
     CGFloat tx = self.symbol.length ? 35 : 8;
     if (self.symbol.length) {
         NSImage *image = [[NSImage imageWithSystemSymbolName:self.symbol accessibilityDescription:nil] imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithHierarchicalColor:color]];
-        CGFloat imageX = iconOnly ? (self.bounds.size.width - 16) / 2 : 12;
-        [image drawInRect:NSMakeRect(imageX, (self.bounds.size.height - 16) / 2, 16, 16) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:self.enabled ? 1 : 0.5 respectFlipped:YES hints:nil];
+        CGFloat imageSize = MIN(16, self.bounds.size.height - 6);
+        CGFloat imageX = iconOnly ? (self.bounds.size.width - imageSize) / 2 : 12;
+        [image drawInRect:NSMakeRect(imageX, (self.bounds.size.height - imageSize) / 2, imageSize, imageSize) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:self.enabled ? 1 : 0.5 respectFlipped:YES hints:nil];
     }
     if (!iconOnly) DrawText(self.title, NSMakeRect(tx, (self.bounds.size.height - 17) / 2, self.bounds.size.width - tx - 8, 18), self.font.pointSize, NSFontWeightMedium, color, self.symbol.length ? NSTextAlignmentLeft : NSTextAlignmentCenter);
     if (self.window.firstResponder == self) { [Accent() setStroke]; [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 2, 2) xRadius:7 yRadius:7] stroke]; }
@@ -108,6 +109,8 @@ static ActionButton *Button(NSString *title, id target, SEL action, NSInteger to
     ActionButton *b = [[ActionButton alloc] initWithFrame:NSZeroRect]; b.title = title; b.target = target; b.action = action; b.tone = tone; [b setAccessibilityLabel:title]; return b;
 }
 static Surface *Box(NSColor *fill, CGFloat radius) { Surface *v = [Surface new]; v.fill = fill; v.radius = radius; return v; }
+
+#import "FormControls.inc"
 
 @interface ThemeSegmentedControl : NSSegmentedControl
 @end
@@ -132,7 +135,7 @@ static Surface *Box(NSColor *fill, CGFloat radius) { Surface *v = [Surface new];
 static ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL action) {
     ThemeSegmentedControl *control = [[ThemeSegmentedControl alloc] initWithFrame:NSZeroRect]; control.segmentCount = labels.count;
     for (NSInteger index = 0; index < (NSInteger)labels.count; index++) [control setLabel:labels[index] forSegment:index];
-    control.trackingMode = NSSegmentSwitchTrackingSelectOne; control.target = target; control.action = action; control.selectedSegment = 0;
+    control.focusRingType = NSFocusRingTypeNone; control.trackingMode = NSSegmentSwitchTrackingSelectOne; control.target = target; control.action = action; control.selectedSegment = 0;
     return control;
 }
 
@@ -335,7 +338,7 @@ static NSColor *EventFill(NSDictionary *task) {
 @property NSTextView *notesField;
 @property NSTextField *validation;
 @property MonthView *calendar;
-@property NSDatePicker *timePicker;
+@property PastelTextField *timePicker;
 @property NSPopUpButton *priority;
 @property NSPopUpButton *reminderPreset;
 @property NSTextField *reminderField;
@@ -422,49 +425,54 @@ static NSColor *EventFill(NSDictionary *task) {
         Put(root, Text(task ? @"让计划更合适。" : @"给下一件事，留个位置。", 22, NSFontWeightSemibold, Ink()), 28, 23, 580, 32);
         Put(root, Text(@"写下任务，再选一个合适的截止时间。", 12, NSFontWeightRegular, Muted()), 28, 62, 580, 20);
         Put(root, Text(@"任务名称", 11, NSFontWeightMedium, Muted()), 28, 99, 380, 18);
-        self.titleField = [[NSTextField alloc] initWithFrame:NSZeroRect]; self.titleField.placeholderString = @"例如：完成数据结构实验报告"; self.titleField.stringValue = task[@"title"] ?: @"";
+        self.titleField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.titleField.placeholderString = @"例如：完成数据结构实验报告"; self.titleField.stringValue = task[@"title"] ?: @"";
         self.titleField.font = [NSFont systemFontOfSize:15]; Put(root, self.titleField, 28, 121, 586, 30);
         Put(root, Text(@"学科 / 分类", 11, NSFontWeightMedium, Muted()), 28, 163, 300, 18);
-        self.subjectField = [[NSTextField alloc] initWithFrame:NSZeroRect]; self.subjectField.placeholderString = @"例如：数据结构（选填）"; self.subjectField.stringValue = task[@"subject"] ?: @"";
+        self.subjectField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.subjectField.placeholderString = @"例如：数据结构（选填）"; self.subjectField.stringValue = task[@"subject"] ?: @"";
         Put(root, self.subjectField, 28, 185, 370, 28);
         Put(root, Text(@"优先级", 11, NSFontWeightMedium, Muted()), 420, 163, 180, 18);
-        self.priority = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.priority addItemsWithTitles:@[@"普通", @"重要", @"紧急"]]; [self.priority selectItemAtIndex:[task[@"priority"] integerValue]];
+        self.priority = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.priority addItemsWithTitles:@[@"普通", @"重要", @"紧急"]]; [self.priority selectItemAtIndex:[task[@"priority"] integerValue]];
         Put(root, self.priority, 418, 184, 198, 30);
         Put(root, Text(@"截止时间", 11, NSFontWeightMedium, Muted()), 28, 226, 300, 18);
         self.selectedDate = task[@"due"] ?: DDLParseDate(@"明天 23:59", NSDate.date, Cal());
-        self.deadlineField = [[NSTextField alloc] initWithFrame:NSZeroRect]; self.deadlineField.stringValue = DDLFormatDate(self.selectedDate, @"yyyy-MM-dd HH:mm"); self.deadlineField.placeholderString = @"明天 20:00 / 下周五 / 2026-10-01 23:59"; self.deadlineField.delegate = self;
+        self.deadlineField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.deadlineField.stringValue = DDLFormatDate(self.selectedDate, @"yyyy-MM-dd HH:mm"); self.deadlineField.placeholderString = @"明天 20:00 / 下周五 / 2026-10-01 23:59"; self.deadlineField.delegate = self;
         Put(root, self.deadlineField, 28, 248, 586, 28);
         self.calendar = [MonthView new]; self.calendar.fill = Card(); self.calendar.stroke = Line(); self.calendar.radius = 12; self.calendar.compact = YES; self.calendar.month = self.selectedDate; self.calendar.selection = self.selectedDate; self.calendar.tasks = @[];
         Put(root, self.calendar, 28, 289, 282, 280); [self.calendar reload];
         __weak typeof(self) weakSelf = self;
         self.calendar.onSelect = ^(NSDate *date) { [weakSelf chooseDate:date]; };
         Put(root, Text(@"具体时间", 11, NSFontWeightMedium, Muted()), 330, 291, 260, 18);
-        self.timePicker = [[NSDatePicker alloc] initWithFrame:NSZeroRect]; self.timePicker.datePickerStyle = NSDatePickerStyleTextFieldAndStepper; self.timePicker.datePickerElements = NSDatePickerElementFlagHourMinute; self.timePicker.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"]; self.timePicker.dateValue = self.selectedDate; self.timePicker.target = self; self.timePicker.action = @selector(timeChanged:);
-        Put(root, self.timePicker, 330, 315, 128, 28);
-        NSPopUpButton *quickTime = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [quickTime addItemsWithTitles:@[@"常用时间", @"09:00", @"12:00", @"18:00", @"20:00", @"22:00", @"23:59"]]; quickTime.target = self; quickTime.action = @selector(quickTime:); Put(root, quickTime, 470, 313, 144, 30);
+        self.timePicker = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.timePicker.stringValue = DDLFormatDate(self.selectedDate, @"HH:mm"); self.timePicker.delegate = self; self.timePicker.accessibilityLabel = @"具体时间，24 小时制";
+        Put(root, self.timePicker, 330, 313, 100, 30);
+        ActionButton *later = Button(@"", self, @selector(stepTime:), 2); later.symbol = @"chevron.up"; later.tag = 1; later.toolTip = @"增加一分钟"; later.accessibilityLabel = later.toolTip; Put(root, later, 434, 313, 25, 15);
+        ActionButton *earlier = Button(@"", self, @selector(stepTime:), 2); earlier.symbol = @"chevron.down"; earlier.tag = -1; earlier.toolTip = @"减少一分钟"; earlier.accessibilityLabel = earlier.toolTip; Put(root, earlier, 434, 328, 25, 15);
+        NSPopUpButton *quickTime = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [quickTime addItemsWithTitles:@[@"常用时间", @"09:00", @"12:00", @"18:00", @"20:00", @"22:00", @"23:59"]]; quickTime.target = self; quickTime.action = @selector(quickTime:); Put(root, quickTime, 470, 313, 144, 30);
         NSArray *days = @[@"今天", @"明天", @"一周后"];
         for (NSInteger i = 0; i < 3; i++) { ActionButton *b = Button(days[i], self, @selector(quickDay:), 2); Put(root, b, 330 + i * 96, 355, 89, 30); }
         Put(root, Text(@"电脑提醒 · 可设置多次", 11, NSFontWeightMedium, Muted()), 330, 399, 250, 18);
-        self.reminderField = [[NSTextField alloc] initWithFrame:NSZeroRect]; self.reminderField.placeholderString = @"例如：5小时、1小时、到期"; self.reminderField.delegate = self;
+        self.reminderField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.reminderField.placeholderString = @"例如：5小时、1小时、到期"; self.reminderField.delegate = self;
         NSArray *initialOffsets = task ? DDLReminderOffsetsForTask(task) : @[@1440, @60, @0]; self.reminderField.stringValue = DDLFormatReminderOffsets(initialOffsets); Put(root, self.reminderField, 328, 421, 288, 28);
-        self.reminderPreset = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.reminderPreset addItemsWithTitles:@[@"选择常用方案…", @"1天、1小时、到期", @"5小时、1小时、到期", @"仅到期", @"不提醒"]]; self.reminderPreset.target = self; self.reminderPreset.action = @selector(reminderPresetChanged:); Put(root, self.reminderPreset, 328, 452, 146, 28);
+        self.reminderPreset = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.reminderPreset addItemsWithTitles:@[@"选择常用方案…", @"1天、1小时、到期", @"5小时、1小时、到期", @"仅到期", @"不提醒"]]; self.reminderPreset.target = self; self.reminderPreset.action = @selector(reminderPresetChanged:); Put(root, self.reminderPreset, 328, 452, 146, 28);
         self.reminderValidation = Text(@"", 9, NSFontWeightRegular, Muted()); Put(root, self.reminderValidation, 482, 456, 134, 18); [self validateReminders];
         Put(root, Text(@"备注（选填）", 11, NSFontWeightMedium, Muted()), 330, 488, 250, 18);
-        NSScrollView *notesScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; notesScroll.borderType = NSBezelBorder; notesScroll.hasVerticalScroller = YES;
-        self.notesField = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 266, 49)]; self.notesField.font = [NSFont systemFontOfSize:12]; self.notesField.textContainerInset = NSMakeSize(7, 7); self.notesField.richText = NO; self.notesField.allowsUndo = YES; self.notesField.string = task[@"notes"] ?: @"";
-        self.notesField.autoresizingMask = NSViewWidthSizable; self.notesField.textContainer.widthTracksTextView = YES; notesScroll.documentView = self.notesField; Put(root, notesScroll, 330, 510, 284, 59);
+        Surface *notesSurface = Box(Panel(), 8); notesSurface.stroke = Line(); Put(root, notesSurface, 330, 510, 284, 59);
+        NSScrollView *notesScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; notesScroll.borderType = NSNoBorder; notesScroll.drawsBackground = NO; notesScroll.hasVerticalScroller = YES; notesScroll.autohidesScrollers = YES;
+        self.notesField = [[PastelNotesView alloc] initWithFrame:NSMakeRect(0, 0, 266, 49)]; self.notesField.font = [NSFont systemFontOfSize:12]; self.notesField.textContainerInset = NSMakeSize(7, 7); self.notesField.drawsBackground = NO; self.notesField.textColor = Ink(); ThemeEditor(self.notesField); self.notesField.richText = NO; self.notesField.allowsUndo = YES; self.notesField.string = task[@"notes"] ?: @"";
+        self.notesField.autoresizingMask = NSViewWidthSizable; self.notesField.textContainer.widthTracksTextView = YES; notesScroll.documentView = self.notesField; Put(notesSurface, notesScroll, 3, 3, 278, 53);
         self.validation = Text(@"", 11, NSFontWeightRegular, Muted()); Put(root, self.validation, 28, 580, 580, 19); [self validateDate];
         ActionButton *cancel = Button(@"取消", self, @selector(cancel:), 3); cancel.keyEquivalent = @"\033"; Put(root, cancel, 418, 610, 82, 32);
         ActionButton *save = Button(task ? @"保存修改" : @"添加任务", self, @selector(save:), 1); save.keyEquivalent = @"\r"; Put(root, save, 510, 608, 104, 36);
         self.titleField.nextKeyView = self.subjectField; self.subjectField.nextKeyView = self.priority; self.priority.nextKeyView = self.deadlineField;
+        self.titleField.accessibilityLabel = @"任务名称"; self.subjectField.accessibilityLabel = @"学科 / 分类"; self.deadlineField.accessibilityLabel = @"截止时间"; self.reminderField.accessibilityLabel = @"电脑提醒"; self.notesField.accessibilityLabel = @"备注";
         panel.initialFirstResponder = self.titleField;
     }
     return self;
 }
 - (void)controlTextDidChange:(NSNotification *)notification {
+    if (notification.object == self.timePicker) { [self timeChanged:self.timePicker]; return; }
     if (notification.object == self.reminderField) { [self validateReminders]; return; }
     NSDate *date = DDLParseDate(self.deadlineField.stringValue, NSDate.date, Cal());
-    if (date) { self.selectedDate = date; self.calendar.selection = date; self.calendar.month = date; [self.calendar reload]; self.timePicker.dateValue = date; }
+    if (date) { self.selectedDate = date; self.calendar.selection = date; self.calendar.month = date; [self.calendar reload]; self.timePicker.stringValue = DDLFormatDate(date, @"HH:mm"); }
     [self validateDate];
 }
 - (void)validateReminders {
@@ -485,17 +493,31 @@ static NSColor *EventFill(NSDictionary *task) {
     else { self.validation.stringValue = [NSString stringWithFormat:@"%@ · %@", DDLFormatDate(date, @"M月d日 EEEE HH:mm"), DDLRemaining(date, NSDate.date, NO)]; self.validation.textColor = Accent(); }
 }
 - (void)updateDate:(NSDate *)date {
-    if (!date) return; self.selectedDate = date; self.deadlineField.stringValue = DDLFormatDate(date, @"yyyy-MM-dd HH:mm"); self.calendar.selection = date; self.calendar.month = date; self.timePicker.dateValue = date; [self.calendar reload]; [self validateDate];
+    if (!date) return; self.selectedDate = date; self.deadlineField.stringValue = DDLFormatDate(date, @"yyyy-MM-dd HH:mm"); self.calendar.selection = date; self.calendar.month = date; self.timePicker.stringValue = DDLFormatDate(date, @"HH:mm"); [self.calendar reload]; [self validateDate];
 }
 - (void)chooseDate:(NSDate *)date {
-    NSDateComponents *time = [Cal() components:NSCalendarUnitHour | NSCalendarUnitMinute fromDate:self.timePicker.dateValue];
+    NSDateComponents *time = [Cal() components:NSCalendarUnitHour | NSCalendarUnitMinute fromDate:self.selectedDate];
     [self updateDate:[Cal() dateBySettingHour:time.hour minute:time.minute second:0 ofDate:date options:0]];
 }
-- (void)timeChanged:(id)sender {
+- (NSDate *)parsedTime {
+    NSString *value = [self.timePicker.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+    NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:@"^([01]?[0-9]|2[0-3]):[0-5][0-9]$" options:0 error:nil];
+    if (![pattern numberOfMatchesInString:value options:0 range:NSMakeRange(0, value.length)]) return nil;
+    NSArray *parts = [value componentsSeparatedByString:@":"];
     NSDate *base = DDLParseDate(self.deadlineField.stringValue, NSDate.date, Cal());
-    if (!base) { [self validateDate]; return; }
-    NSDateComponents *time = [Cal() components:NSCalendarUnitHour | NSCalendarUnitMinute fromDate:self.timePicker.dateValue];
-    [self updateDate:[Cal() dateBySettingHour:time.hour minute:time.minute second:0 ofDate:base options:0]];
+    return base ? [Cal() dateBySettingHour:[parts[0] integerValue] minute:[parts[1] integerValue] second:0 ofDate:base options:0] : nil;
+}
+- (void)timeChanged:(id)sender {
+    NSDate *date = [self parsedTime];
+    if (!date) { self.validation.stringValue = @"时间格式：00:00–23:59"; self.validation.textColor = NSColor.systemRedColor; return; }
+    // Keep the active field editor and caret intact while typing.
+    self.selectedDate = date; self.deadlineField.stringValue = DDLFormatDate(date, @"yyyy-MM-dd HH:mm");
+    self.calendar.selection = date; self.calendar.month = date; [self.calendar reload]; [self validateDate];
+}
+- (void)stepTime:(NSButton *)sender {
+    NSDate *date = [self parsedTime];
+    if (!date) { [self timeChanged:self.timePicker]; return; }
+    [self updateDate:[Cal() dateByAddingUnit:NSCalendarUnitMinute value:sender.tag toDate:date options:0]];
 }
 - (void)quickTime:(NSPopUpButton *)sender {
     if (sender.indexOfSelectedItem == 0) return;
@@ -515,6 +537,7 @@ static NSColor *EventFill(NSDictionary *task) {
     if (!title.length) { self.validation.stringValue = @"先写一个任务名称。"; self.validation.textColor = NSColor.systemRedColor; [self.window makeFirstResponder:self.titleField]; return; }
     NSDate *date = DDLParseDate(self.deadlineField.stringValue, NSDate.date, Cal());
     if (!date) { [self validateDate]; [self.window makeFirstResponder:self.deadlineField]; return; }
+    if (![self parsedTime]) { [self timeChanged:self.timePicker]; [self.window makeFirstResponder:self.timePicker]; return; }
     NSArray<NSNumber *> *reminderOffsets = DDLParseReminderOffsets(self.reminderField.stringValue);
     if (!reminderOffsets) { [self validateReminders]; [self.window makeFirstResponder:self.reminderField]; return; }
     NSMutableDictionary *task = self.task ? [self.task mutableCopy] : [@{@"id":NSUUID.UUID.UUIDString, @"completed":@NO, @"archived":@NO} mutableCopy];
@@ -568,7 +591,7 @@ static NSColor *EventFill(NSDictionary *task) {
     self.viewMode = Segments(@[@"清单", @"总日历"], self, @selector(changeView:)); [self.root addSubview:self.viewMode];
     self.calendarStatus = Segments(@[@"全部", @"待完成", @"已完成"], self, @selector(changeCalendarStatus:)); [self.root addSubview:self.calendarStatus];
     self.calendarHint = Text(@"", 10, NSFontWeightRegular, Muted()); [self.root addSubview:self.calendarHint];
-    self.sortMenu = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.sortMenu addItemsWithTitles:@[@"按截止时间", @"按优先级"]]; self.sortMenu.target = self; self.sortMenu.action = @selector(sortChanged:); [self.root addSubview:self.sortMenu];
+    self.sortMenu = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.sortMenu addItemsWithTitles:@[@"按截止时间", @"按优先级"]]; self.sortMenu.target = self; self.sortMenu.action = @selector(sortChanged:); [self.root addSubview:self.sortMenu];
     self.scroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; self.scroll.hasVerticalScroller = YES; self.scroll.autohidesScrollers = YES; self.scroll.drawsBackground = NO;
     self.document = Box(Canvas(), 0); self.scroll.documentView = self.document; [self.root addSubview:self.scroll];
     self.calendarScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; self.calendarScroll.hasVerticalScroller = YES; self.calendarScroll.autohidesScrollers = NO; self.calendarScroll.drawsBackground = NO; self.calendarScroll.borderType = NSNoBorder;
@@ -577,7 +600,7 @@ static NSColor *EventFill(NSDictionary *task) {
     self.agenda = Box(Panel(), 14); [self.root addSubview:self.agenda];
     self.agendaScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; self.agendaScroll.hasVerticalScroller = YES; self.agendaScroll.autohidesScrollers = YES; self.agendaScroll.drawsBackground = NO;
     self.agendaDocument = Box(NSColor.clearColor, 0); self.agendaScroll.documentView = self.agendaDocument;
-    self.themePicker = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    self.themePicker = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     self.themePicker.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
     self.themePicker.target = self; self.themePicker.action = @selector(changeTheme:);
     self.themePicker.accessibilityLabel = @"界面配色";
@@ -614,6 +637,7 @@ static NSColor *EventFill(NSDictionary *task) {
     self.overviewSnapshot = nil;
     [self render]; self.root.needsDisplay = YES;
     self.viewMode.needsDisplay = YES; self.calendarStatus.needsDisplay = YES;
+    for (NSView *control in @[self.themePicker, self.sortMenu, self.yearPicker, self.monthPicker]) control.needsDisplay = YES;
 }
 - (void)loadPreview {
     NSArray *samples = @[
@@ -808,10 +832,10 @@ static NSColor *EventFill(NSDictionary *task) {
     CGFloat w = self.header.bounds.size.width;
     Put(self.header, Text(@"日程总览  /  DDL MANAGER", 10, NSFontWeightMedium, Muted()), 0, 0, 290, 20);
     self.calendarMonthTitle = Text(@"", 28, NSFontWeightSemibold, Ink()); Put(self.header, self.calendarMonthTitle, 0, 28, 205, 44);
-    self.yearPicker = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    self.yearPicker = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     for (NSInteger year = 1900; year <= 2200; year++) [self.yearPicker addItemWithTitle:[NSString stringWithFormat:@"%ld 年", (long)year]];
     [self.yearPicker selectItemWithTitle:DDLFormatDate(self.month, @"yyyy 年")]; self.yearPicker.target = self; self.yearPicker.action = @selector(jumpCalendar:); self.yearPicker.toolTip = @"精确跳转到年份";
-    self.monthPicker = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    self.monthPicker = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     for (NSInteger month = 1; month <= 12; month++) [self.monthPicker addItemWithTitle:[NSString stringWithFormat:@"%ld 月", (long)month]];
     [self.monthPicker selectItemWithTitle:DDLFormatDate(self.month, @"M 月")]; self.monthPicker.target = self; self.monthPicker.action = @selector(jumpCalendar:); self.monthPicker.toolTip = @"精确跳转到月份";
     Put(self.header, self.yearPicker, 208, 34, 88, 30); Put(self.header, self.monthPicker, 300, 34, 66, 30);
