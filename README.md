@@ -1,2 +1,41 @@
-# DDL-Manager
-Helps with dealing with deadlines
+# DDL Manager
+
+轻量的 macOS 本地截止日期管理工具。使用原生 AppKit 构建，无账号、无联网依赖。
+
+## 下载
+
+[下载 DDL Manager 5.0（macOS Apple Silicon）](https://github.com/123456p-df/DDL-Manager/raw/refs/heads/main/Releases/DDL%20Manager%205.0-macOS-arm64.zip)
+
+系统要求：macOS 13 或更高版本、Apple 芯片 Mac（M1 / M2 / M3 / M4 等）。
+
+解压后，将 `DDL Manager.app` 拖入“应用程序”文件夹。由于当前公开构建未经过 Apple 公证，首次启动时请按住 Control 键点按应用，选择“打开”；如仍被拦截，请前往“系统设置 → 隐私与安全性”并选择“仍要打开”。
+
+## 功能
+
+- 待办、今天、未来 7 天、已完成和归档视图
+- 连续多月日历以及 1900—2200 年精确跳转
+- 中文自然语言截止时间输入
+- 每项任务最多 10 个本机通知提醒
+- 搜索、排序、优先级、撤销和重做
+- 本机 plist 备份导入与导出
+- 菜单栏常驻，无账号和网络依赖
+
+## 构建与测试
+
+```sh
+./build.sh
+zsh test.sh
+```
+
+构建产物位于 `build/DDL Manager.app`。当前构建目标为 macOS 13+。
+
+项目结构：
+
+- `Sources/App.m`：应用界面和入口
+- `Sources/DDLCore.m`：日期解析、提醒计划和数据兼容逻辑
+- `Tests/CoreTests.m`：核心测试
+- `Tools/Icon.m`：原生应用图标生成工具
+
+## 数据与隐私
+
+任务数据仅保存在用户自己的 Mac 上。安装包和仓库均不包含用户任务数据。
