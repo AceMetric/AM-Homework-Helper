@@ -1,7 +1,7 @@
 // Shared AppKit form surfaces; native editing and menu keyboard behavior are retained.
 static void DrawFieldChrome(NSRect bounds, BOOL focused, BOOL filled) {
     NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(bounds, 1, 1) xRadius:8 yRadius:8];
-    [(filled ? Tint() : Panel()) setFill]; [path fill];
+    [[[NSGradient alloc] initWithStartingColor:(filled ? Tint() : Panel()) endingColor:Card()] drawInBezierPath:path angle:-70];
     [(focused ? Accent() : Line()) setStroke]; path.lineWidth = focused ? 1.5 : 1; [path stroke];
 }
 static void ThemeEditor(NSTextView *editor) {
@@ -84,8 +84,7 @@ static void ThemeEditor(NSTextView *editor) {
     [Canvas() setFill]; NSRectFill(self.bounds);
     BOOL highlighted = self.hovered || self.keyboardHighlighted || item.highlighted;
     if (highlighted || item.state == NSControlStateValueOn) {
-        [(highlighted ? Emphasis() : Tint()) setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 4, 1) xRadius:6 yRadius:6] fill];
+        [[[NSGradient alloc] initWithStartingColor:(highlighted ? Emphasis() : Tint()) endingColor:(highlighted ? Tint() : Panel())] drawInBezierPath:[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 4, 1) xRadius:6 yRadius:6] angle:-70];
     }
     CGFloat y = floor((NSHeight(self.bounds) - 18) / 2);
     if (item.state == NSControlStateValueOn) DrawText(@"✓", NSMakeRect(10, y, 17, 18), 12, NSFontWeightSemibold, Accent(), NSTextAlignmentCenter);

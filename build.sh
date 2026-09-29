@@ -10,8 +10,7 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 mkdir -p "$SCRIPT_DIR/build/DDL.iconset"
 
 clang -fobjc-arc -mmacosx-version-min=13.0 -framework Cocoa "$SCRIPT_DIR/Tools/Icon.m" -o "$SCRIPT_DIR/build/render-icon"
-"$SCRIPT_DIR/build/render-icon" "$SCRIPT_DIR/build/DDL.iconset"
-iconutil -c icns "$SCRIPT_DIR/build/DDL.iconset" -o "$CONTENTS/Resources/AppIcon.icns"
+"$SCRIPT_DIR/build/render-icon" "$SCRIPT_DIR/build/DDL.iconset" "$CONTENTS/Resources/AppIcon.icns"
 
 clang \
   -fobjc-arc \
