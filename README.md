@@ -4,9 +4,20 @@
 
 ## 下载
 
-[下载 DDL Manager 5.3 表单配色版](Releases/DDL%20Manager%205.3-macOS-arm64.zip)
+[下载 DDL Manager 5.5 macOS arm64 安装包](Releases/DDL%20Manager%205.5-macOS-arm64.zip)
 
-此目录为独立优化副本；可运行应用位于 `build/DDL Manager.app`。
+## 5.5 老师截止时间与我的 DDL
+
+- 识别到老师的截止时间后，可选「按老师截止时间」「提前 1 天」「提前 2 天」「提前 3 天」「提前 7 天」或「手动设置」。
+- 例如老师要求 10 月 8 日 23:59 提交，选「提前 1 天」后，我的 DDL 设为 10 月 7 日 23:59；老师原定时间保留在任务中，编辑时仍可查看。
+- 日历和通知提醒以「我的 DDL」为准。直接改日期或时间会切换为「手动设置」。
+
+## 5.4 从微信通知导入
+
+- 在微信中复制老师发的文字或截图，在 DDL Manager 选择「任务 → 粘贴并识别 DDL」（⌘⇧V），也可先打开「新建 DDL」并点击「粘贴并识别」。
+- 已保存在 Mac 上的截图可在新建表单中点击「选截图…」；图片文字通过 macOS 本地 Vision 识别。
+- 应用尝试提取任务名称、课程和截止日期，原通知保存在备注中。识别后需在新建表单核对并点击「添加任务」，不会自动保存。
+- 若没有明确识别到截止日期，截止时间栏会留空，必须手动填写才能保存。
 
 系统要求：macOS 13 或更高版本、Apple 芯片 Mac（M1 / M2 / M3 / M4 等）。
 
@@ -54,6 +65,8 @@ zsh test.sh
 zsh verify-optimization.sh
 # 表单配色与交互回归
 zsh verify-forms.sh
+# 截图识别与通知解析
+zsh verify-import.sh
 ```
 
 构建产物位于 `build/DDL Manager.app`。当前构建目标为 macOS 13+。
@@ -62,6 +75,7 @@ zsh verify-forms.sh
 
 - `Sources/App.m`：应用界面和入口
 - `Sources/FormControls.inc`：主题化输入框、备注和下拉菜单控件
+- `Sources/DDLImport.m`：剪贴板导入、公告解析与截图文字识别
 - `Sources/DDLCore.m`：日期解析、提醒计划和数据兼容逻辑
 - `Tests/CoreTests.m`：核心测试
 - `Tools/Icon.m`：原生应用图标生成工具

@@ -21,8 +21,11 @@ clang \
   -O2 \
   -framework Cocoa \
   -framework UserNotifications \
+  -framework Vision \
+  -framework UniformTypeIdentifiers \
   "$SCRIPT_DIR/Sources/App.m" \
   "$SCRIPT_DIR/Sources/DDLCore.m" \
+  "$SCRIPT_DIR/Sources/DDLImport.m" \
   -o "$CONTENTS/MacOS/DDLManager"
 
 cp "$SCRIPT_DIR/Info.plist" "$CONTENTS/Info.plist"

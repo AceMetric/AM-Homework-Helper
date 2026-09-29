@@ -1,6 +1,8 @@
 #import <Cocoa/Cocoa.h>
 #import <UserNotifications/UserNotifications.h>
 #import "DDLCore.h"
+#import "DDLImport.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 static NSColor *RGB(unsigned value) { return [NSColor colorWithSRGBRed:((value >> 16) & 255) / 255.0 green:((value >> 8) & 255) / 255.0 blue:(value & 255) / 255.0 alpha:1]; }
 // Every palette keeps light surfaces, including when macOS uses dark appearance.
@@ -337,6 +339,11 @@ static NSColor *EventFill(NSDictionary *task) {
 @property NSTextField *deadlineField;
 @property NSTextView *notesField;
 @property NSTextField *validation;
+@property NSTextField *importStatus;
+@property NSTextField *deadlineLabel;
+@property NSPopUpButton *leadMenu;
+@property NSDate *announcedDue;
+@property NSInteger leadDays;
 @property MonthView *calendar;
 @property PastelTextField *timePicker;
 @property NSPopUpButton *priority;
@@ -345,6 +352,7 @@ static NSColor *EventFill(NSDictionary *task) {
 @property NSTextField *reminderValidation;
 @property NSDate *selectedDate;
 - (instancetype)initWithTask:(NSDictionary *)task owner:(AppDelegate *)owner;
+- (void)importClipboard:(id)sender;
 @end
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSSearchFieldDelegate, UNUserNotificationCenterDelegate>
@@ -408,6 +416,7 @@ static NSColor *EventFill(NSDictionary *task) {
 - (void)restoreTask:(id)sender;
 - (void)purgeTask:(id)sender;
 - (void)addTask:(id)sender;
+- (void)importClipboard:(id)sender;
 - (void)showWindow;
 - (void)refreshReminders;
 - (void)refreshPermission;
@@ -420,10 +429,18 @@ static NSColor *EventFill(NSDictionary *task) {
     NSPanel *panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 642, 652) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     if ((self = [super initWithWindow:panel])) {
         self.appDelegate = owner; self.task = task;
+        self.announcedDue = [task[@"announcedDue"] isKindOfClass:NSDate.class] ? task[@"announcedDue"] : nil;
+        self.leadDays = self.announcedDue && [task[@"leadDays"] respondsToSelector:@selector(integerValue)] ? [task[@"leadDays"] integerValue] : -1;
         panel.title = task ? @"编辑 DDL" : @"新建 DDL"; panel.releasedWhenClosed = NO;
         Surface *root = Box(Canvas(), 0); root.frame = NSMakeRect(0, 0, 642, 652); panel.contentView = root;
         Put(root, Text(task ? @"让计划更合适。" : @"给下一件事，留个位置。", 22, NSFontWeightSemibold, Ink()), 28, 23, 580, 32);
-        Put(root, Text(@"写下任务，再选一个合适的截止时间。", 12, NSFontWeightRegular, Muted()), 28, 62, 580, 20);
+        Put(root, Text(@"写下任务，再选一个合适的截止时间。", 12, NSFontWeightRegular, Muted()), 28, 62, 350, 20);
+        if (!task) {
+            ActionButton *pasteImport = Button(@"粘贴并识别", self, @selector(importClipboard:), 2); pasteImport.toolTip = @"识别微信复制的文字或图片（⌘⇧V）"; Put(root, pasteImport, 386, 57, 126, 28);
+            ActionButton *imageImport = Button(@"选截图…", self, @selector(chooseScreenshot:), 2); Put(root, imageImport, 520, 57, 94, 28);
+        }
+        self.importStatus = Text(@"", 10, NSFontWeightRegular, Accent()); Put(root, self.importStatus, 28, 82, 586, 15);
+        if (self.announcedDue) self.importStatus.stringValue = [NSString stringWithFormat:@"老师截止：%@ · 下面可调整自己的 DDL", DDLFormatDate(self.announcedDue, @"M月d日 HH:mm")];
         Put(root, Text(@"任务名称", 11, NSFontWeightMedium, Muted()), 28, 99, 380, 18);
         self.titleField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.titleField.placeholderString = @"例如：完成数据结构实验报告"; self.titleField.stringValue = task[@"title"] ?: @"";
         self.titleField.font = [NSFont systemFontOfSize:15]; Put(root, self.titleField, 28, 121, 586, 30);
@@ -433,7 +450,13 @@ static NSColor *EventFill(NSDictionary *task) {
         Put(root, Text(@"优先级", 11, NSFontWeightMedium, Muted()), 420, 163, 180, 18);
         self.priority = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.priority addItemsWithTitles:@[@"普通", @"重要", @"紧急"]]; [self.priority selectItemAtIndex:[task[@"priority"] integerValue]];
         Put(root, self.priority, 418, 184, 198, 30);
-        Put(root, Text(@"截止时间", 11, NSFontWeightMedium, Muted()), 28, 226, 300, 18);
+        self.deadlineLabel = Text(self.announcedDue ? @"我的 DDL 截止时间" : @"截止时间", 11, NSFontWeightMedium, Muted()); Put(root, self.deadlineLabel, 28, 226, 300, 18);
+        self.leadMenu = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+        [self.leadMenu addItemsWithTitles:@[@"按老师截止时间", @"提前 1 天", @"提前 2 天", @"提前 3 天", @"提前 7 天", @"手动设置"]];
+        self.leadMenu.target = self; self.leadMenu.action = @selector(leadChanged:); self.leadMenu.hidden = !self.announcedDue;
+        self.leadMenu.accessibilityLabel = @"我的 DDL 比老师截止时间提前";
+        NSInteger leadIndex = self.leadDays == 0 ? 0 : (self.leadDays == 1 ? 1 : (self.leadDays == 2 ? 2 : (self.leadDays == 3 ? 3 : (self.leadDays == 7 ? 4 : 5))));
+        [self.leadMenu selectItemAtIndex:leadIndex]; Put(root, self.leadMenu, 398, 220, 216, 24);
         self.selectedDate = task[@"due"] ?: DDLParseDate(@"明天 23:59", NSDate.date, Cal());
         self.deadlineField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.deadlineField.stringValue = DDLFormatDate(self.selectedDate, @"yyyy-MM-dd HH:mm"); self.deadlineField.placeholderString = @"明天 20:00 / 下周五 / 2026-10-01 23:59"; self.deadlineField.delegate = self;
         Put(root, self.deadlineField, 28, 248, 586, 28);
@@ -471,6 +494,7 @@ static NSColor *EventFill(NSDictionary *task) {
 - (void)controlTextDidChange:(NSNotification *)notification {
     if (notification.object == self.timePicker) { [self timeChanged:self.timePicker]; return; }
     if (notification.object == self.reminderField) { [self validateReminders]; return; }
+    if (notification.object == self.deadlineField) [self markManualLead];
     NSDate *date = DDLParseDate(self.deadlineField.stringValue, NSDate.date, Cal());
     if (date) { self.selectedDate = date; self.calendar.selection = date; self.calendar.month = date; [self.calendar reload]; self.timePicker.stringValue = DDLFormatDate(date, @"HH:mm"); }
     [self validateDate];
@@ -495,8 +519,24 @@ static NSColor *EventFill(NSDictionary *task) {
 - (void)updateDate:(NSDate *)date {
     if (!date) return; self.selectedDate = date; self.deadlineField.stringValue = DDLFormatDate(date, @"yyyy-MM-dd HH:mm"); self.calendar.selection = date; self.calendar.month = date; self.timePicker.stringValue = DDLFormatDate(date, @"HH:mm"); [self.calendar reload]; [self validateDate];
 }
+- (void)markManualLead {
+    if (!self.announcedDue) return;
+    self.leadDays = -1;
+    [self.leadMenu selectItemAtIndex:5];
+}
+- (void)leadChanged:(NSPopUpButton *)sender {
+    if (!self.announcedDue) return;
+    NSArray<NSNumber *> *days = @[@0, @1, @2, @3, @7];
+    NSInteger index = sender.indexOfSelectedItem;
+    if (index >= (NSInteger)days.count) { [self markManualLead]; [self.window makeFirstResponder:self.deadlineField]; return; }
+    self.leadDays = days[index].integerValue;
+    [self updateDate:DDLPersonalDueDate(self.announcedDue, self.leadDays, Cal())];
+    self.importStatus.stringValue = [NSString stringWithFormat:@"老师截止：%@ · 我的 DDL：%@", DDLFormatDate(self.announcedDue, @"M月d日 HH:mm"), DDLFormatDate(self.selectedDate, @"M月d日 HH:mm")];
+    self.importStatus.textColor = Accent();
+}
 - (void)chooseDate:(NSDate *)date {
     NSDateComponents *time = [Cal() components:NSCalendarUnitHour | NSCalendarUnitMinute fromDate:self.selectedDate];
+    [self markManualLead];
     [self updateDate:[Cal() dateBySettingHour:time.hour minute:time.minute second:0 ofDate:date options:0]];
 }
 - (NSDate *)parsedTime {
@@ -510,6 +550,7 @@ static NSColor *EventFill(NSDictionary *task) {
 - (void)timeChanged:(id)sender {
     NSDate *date = [self parsedTime];
     if (!date) { self.validation.stringValue = @"时间格式：00:00–23:59"; self.validation.textColor = NSColor.systemRedColor; return; }
+    [self markManualLead];
     // Keep the active field editor and caret intact while typing.
     self.selectedDate = date; self.deadlineField.stringValue = DDLFormatDate(date, @"yyyy-MM-dd HH:mm");
     self.calendar.selection = date; self.calendar.month = date; [self.calendar reload]; [self validateDate];
@@ -517,6 +558,7 @@ static NSColor *EventFill(NSDictionary *task) {
 - (void)stepTime:(NSButton *)sender {
     NSDate *date = [self parsedTime];
     if (!date) { [self timeChanged:self.timePicker]; return; }
+    [self markManualLead];
     [self updateDate:[Cal() dateByAddingUnit:NSCalendarUnitMinute value:sender.tag toDate:date options:0]];
 }
 - (void)quickTime:(NSPopUpButton *)sender {
@@ -524,12 +566,70 @@ static NSColor *EventFill(NSDictionary *task) {
     NSDate *base = DDLParseDate(self.deadlineField.stringValue, NSDate.date, Cal());
     if (!base) { [self validateDate]; return; }
     NSArray *parts = [sender.titleOfSelectedItem componentsSeparatedByString:@":"];
+    [self markManualLead];
     [self updateDate:[Cal() dateBySettingHour:[parts[0] integerValue] minute:[parts[1] integerValue] second:0 ofDate:base options:0]];
     [sender selectItemAtIndex:0];
 }
 - (void)quickDay:(NSButton *)sender {
     NSDate *day = DDLParseDate(sender.title, NSDate.date, Cal());
     [self chooseDate:day];
+}
+- (void)applyImportedText:(NSString *)text source:(NSString *)source {
+    NSDictionary<NSString *, id> *fields = DDLFieldsFromAnnouncement(text, NSDate.date, Cal());
+    if (!fields.count) { self.importStatus.stringValue = @"没有识别到文字，请换一张清晰截图。"; self.importStatus.textColor = NSColor.systemRedColor; return; }
+    self.titleField.stringValue = fields[@"title"] ?: @"";
+    self.subjectField.stringValue = fields[@"subject"] ?: @"";
+    self.notesField.string = fields[@"notes"] ?: @"";
+    NSDate *due = fields[@"due"];
+    self.announcedDue = due; self.leadDays = due ? 0 : -1;
+    self.deadlineLabel.stringValue = due ? @"我的 DDL 截止时间" : @"截止时间";
+    self.leadMenu.hidden = !due; [self.leadMenu selectItemAtIndex:due ? 0 : 5];
+    if (due) [self updateDate:due];
+    else { self.deadlineField.stringValue = @""; [self validateDate]; }
+    self.importStatus.stringValue = due ? [NSString stringWithFormat:@"已识别%@ · 老师截止：%@ · 可选提前天数", source, DDLFormatDate(due, @"M月d日 HH:mm")] : [NSString stringWithFormat:@"已识别%@，但没有找到明确日期；请手动填写截止时间。", source];
+    self.importStatus.textColor = due ? Accent() : NSColor.systemOrangeColor;
+    [self.window makeFirstResponder:due ? self.titleField : self.deadlineField];
+}
+- (void)recognizeImage:(NSImage *)image {
+    NSData *imageData = image.TIFFRepresentation;
+    if (!imageData.length) { self.importStatus.stringValue = @"图片读取失败，请换一张截图。"; self.importStatus.textColor = NSColor.systemRedColor; return; }
+    self.importStatus.stringValue = @"正在识别截图中的文字…"; self.importStatus.textColor = Accent();
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        @autoreleasepool {
+            NSImage *copy = [[NSImage alloc] initWithData:imageData];
+            NSError *error = nil;
+            NSString *text = DDLOCRTextFromImage(copy, &error);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                EditorController *editor = weakSelf;
+                if (!editor || !editor.window.visible) return;
+                if (!text.length) { editor.importStatus.stringValue = error ? @"截图识别失败，请尝试更清晰的图片。" : @"截图中没有识别到文字。"; editor.importStatus.textColor = NSColor.systemRedColor; return; }
+                [editor applyImportedText:text source:@"截图"];
+            });
+        }
+    });
+}
+- (void)importClipboard:(id)sender {
+    NSPasteboard *pasteboard = NSPasteboard.generalPasteboard;
+    NSImage *image = [[NSImage alloc] initWithPasteboard:pasteboard];
+    if (image) { [self recognizeImage:image]; return; }
+    NSString *text = [pasteboard stringForType:NSPasteboardTypeString];
+    if (text.length) { [self applyImportedText:text source:@"文字"]; return; }
+    self.importStatus.stringValue = @"剪贴板里没有文字或图片。请先在微信中复制消息或截图。";
+    self.importStatus.textColor = NSColor.systemRedColor;
+}
+- (void)chooseScreenshot:(id)sender {
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.title = @"选择老师通知的截图";
+    panel.canChooseDirectories = NO; panel.allowsMultipleSelection = NO;
+    panel.allowedContentTypes = @[UTTypePNG, UTTypeJPEG, UTTypeHEIC, UTTypeTIFF];
+    __weak typeof(self) weakSelf = self;
+    [panel beginWithCompletionHandler:^(NSModalResponse response) {
+        if (response != NSModalResponseOK || !weakSelf) return;
+        NSImage *image = [[NSImage alloc] initWithContentsOfURL:panel.URL];
+        if (image) [weakSelf recognizeImage:image];
+        else { weakSelf.importStatus.stringValue = @"图片读取失败，请选择 PNG、JPEG、HEIC 或 TIFF。"; weakSelf.importStatus.textColor = NSColor.systemRedColor; }
+    }];
 }
 - (void)cancel:(id)sender { [self.appDelegate closeEditor]; }
 - (void)save:(id)sender {
@@ -544,6 +644,8 @@ static NSColor *EventFill(NSDictionary *task) {
     NSString *subject = [self.subjectField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     NSInteger legacyMode = reminderOffsets.count == 0 ? 4 : ([reminderOffsets isEqual:@[@0]] ? 0 : ([reminderOffsets isEqual:@[@60, @0]] ? 1 : ([reminderOffsets isEqual:@[@1440, @60, @0]] ? 2 : ([reminderOffsets isEqual:@[@4320, @1440, @60, @0]] ? 3 : 2))));
     task[@"title"] = title; task[@"subject"] = subject.length ? subject : @"其他"; task[@"due"] = date; task[@"notes"] = self.notesField.string; task[@"priority"] = @(self.priority.indexOfSelectedItem); task[@"reminder"] = @(legacyMode); task[@"reminderOffsets"] = reminderOffsets;
+    if (self.announcedDue) { task[@"announcedDue"] = self.announcedDue; task[@"leadDays"] = @(self.leadDays); }
+    else { [task removeObjectForKey:@"announcedDue"]; [task removeObjectForKey:@"leadDays"]; }
     [self.appDelegate commitTask:task originalID:self.task[@"id"]]; [self.appDelegate closeEditor];
 }
 @end
@@ -670,6 +772,7 @@ static NSColor *EventFill(NSDictionary *task) {
     [app addItemWithTitle:@"退出 DDL Manager" action:@selector(terminate:) keyEquivalent:@"q"];
     NSMenuItem *fileItem = [NSMenuItem new]; [menu addItem:fileItem]; NSMenu *file = [[NSMenu alloc] initWithTitle:@"任务"]; fileItem.submenu = file;
     NSMenuItem *add = [file addItemWithTitle:@"新建 DDL" action:@selector(addTask:) keyEquivalent:@"n"]; add.target = self;
+    NSMenuItem *import = [file addItemWithTitle:@"粘贴并识别 DDL" action:@selector(importClipboard:) keyEquivalent:@"v"]; import.target = self; import.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     NSMenuItem *search = [file addItemWithTitle:@"搜索任务" action:@selector(focusSearch:) keyEquivalent:@"f"]; search.target = self;
     NSMenuItem *calendar = [file addItemWithTitle:@"总览日历" action:@selector(openCalendar:) keyEquivalent:@"2"]; calendar.target = self;
     NSMenuItem *list = [file addItemWithTitle:@"返回清单" action:@selector(openList:) keyEquivalent:@"1"]; list.target = self;
@@ -1087,6 +1190,10 @@ static NSColor *EventFill(NSDictionary *task) {
     self.editor = [[EditorController alloc] initWithTask:nil owner:self];
     if (self.calendarMode) [self.editor chooseDate:self.selectedDay];
     [self.window beginSheet:self.editor.window completionHandler:nil];
+}
+- (void)importClipboard:(id)sender {
+    if (!self.editor) [self addTask:nil];
+    if (self.editor && !self.editor.task) [self.editor importClipboard:sender];
 }
 - (void)editTask:(id)sender {
     if (self.window.attachedSheet) return; NSDictionary *task = [self taskWithID:[self identifierForSender:sender]]; if (!task) return;
