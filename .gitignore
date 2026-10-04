@@ -15,3 +15,7 @@ credentials*
 secrets*
 .DDL-Manager*
 SS-Homework-Manager-*.zip
+
+# Local planning document and current release packages
+DEVELOPMENT_PLAN.md
+DDL-Manager-*-macOS-arm64*.zip

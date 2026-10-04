@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="${0:A:h}"
-APP_DIR="$SCRIPT_DIR/build/SS 作业管理器.app"
+APP_DIR="$SCRIPT_DIR/build/DDL-Manager.app"
 CONTENTS="$APP_DIR/Contents"
 export CLANG_MODULE_CACHE_PATH="$SCRIPT_DIR/build/module-cache"
 
@@ -33,13 +33,13 @@ clang \
   "$SCRIPT_DIR/Sources/SSGit.m" \
   "$SCRIPT_DIR/Sources/SSSecurity.m" \
   "$SCRIPT_DIR/Sources/SSCourseWindow.m" \
-  -o "$CONTENTS/MacOS/SSHomeworkManager"
+  -o "$CONTENTS/MacOS/DDLManager"
 
 cp "$SCRIPT_DIR/Info.plist" "$CONTENTS/Info.plist"
 python3 "$SCRIPT_DIR/Tools/configure-bundle.py" "$SCRIPT_DIR/Config/GitHubApp.plist" "$CONTENTS/Info.plist"
 cp "$SCRIPT_DIR/Tools/SSAskPass.sh" "$CONTENTS/Resources/SSAskPass.sh"
 chmod 700 "$CONTENTS/Resources/SSAskPass.sh"
-chmod +x "$CONTENTS/MacOS/SSHomeworkManager"
+chmod +x "$CONTENTS/MacOS/DDLManager"
 codesign --force --deep --sign - "$APP_DIR"
 
 echo "$APP_DIR"

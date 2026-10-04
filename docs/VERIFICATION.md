@@ -1,6 +1,6 @@
 # 验证与发布状态
 
-检查日期：2026-10-04；环境：Apple 芯片 Mac、macOS 图形会话、Command Line Tools。第一版最低 macOS 13，生成 arm64 二进制并使用 ad-hoc 签名。
+检查日期：2026-10-04；环境：Apple 芯片 Mac、macOS 图形会话、Command Line Tools。本分支最低 macOS 13，生成 arm64 二进制并使用 ad-hoc 签名。
 
 ## 已验证
 
@@ -29,9 +29,13 @@ Git 测试验证：私有上游拒绝、缓存、重复作业合并、截止变�
 
 ## 尚未完成的外部联调与发布
 
-- GitHub App 已注册并预置两项公开配置。维护者已自行完成首次私钥准备并安装到明确授权的三个个人课程 fork；密钥未进入应用或仓库。真实设备登录、钥匙串保存 / 刷新、真实私有课堂仓库与真实 GitHub push 仍待联调。
+- GitHub App 已注册并预置两项公开配置。维护者已自行完成首次私钥准备并安装到所选个人课程 fork；密钥未进入应用或仓库。真实设备登录、钥匙串保存 / 刷新、真实私有课堂仓库与真实 GitHub push 仍待联调。
 - 本机系统通知权限与实际通知送达需在安装后的应用中点“提醒测试”核对；此次回归验证通知计划与现有界面，没有向用户发送真实提醒。
 - 未配置 Apple Developer ID，未公证；初版 ZIP 明确说明此状态。
-- 开发改动已上传到 AceMetric/SS-HP-Manager 的 main 分支，尚未创建 GitHub Release。`release.sh --candidate` 生成本机候选包；预置公开配置不表示真实安装与登录联调已经通过。
+- 本分支准备提交给原作者审阅，尚未创建本分支的 GitHub Release。`release.sh --candidate` 生成本机候选包；预置公开配置不表示真实安装与登录联调已经通过。
 
 完整检查结果由发布脚本输出到 `build/security-audit.json` 和 `build/release-audit.json`，不把本机路径、日志或测试数据上传到源码仓库。
+
+## 名称与文档整理
+
+项目、桌面应用、菜单、通知、新构建目录和安装包名称统一为 DDL-Manager。内部 bundle ID、Application Support 目录和钥匙串服务继续沿用，以保留旧测试版的数据与授权。开发计划保存在本机并加入忽略规则；仓库中的使用说明、开发文档和授权记录均不附私人聊天或本机数据。

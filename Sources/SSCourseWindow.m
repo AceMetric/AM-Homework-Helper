@@ -42,7 +42,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable
         backing:NSBackingStoreBuffered defer:NO];
     if ((self = [super initWithWindow:window])) {
-        window.title = @"SS 作业管理器 · GitHub 课程";
+        window.title = @"DDL-Manager · GitHub 课程";
         window.minSize = NSMakeSize(1040, 700); window.releasedWhenClosed = NO;
         self.github = [SSGitHub new]; self.git = [SSGit new];
         NSArray *saved = SSReadPlist(@"courses.plist");

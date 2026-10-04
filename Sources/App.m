@@ -718,7 +718,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (!self.preview) {
         NSArray *running = [NSRunningApplication runningApplicationsWithBundleIdentifier:NSBundle.mainBundle.bundleIdentifier];
         for (NSRunningApplication *other in running) if (other.processIdentifier != NSProcessInfo.processInfo.processIdentifier) {
-            NSAlert *alert = [NSAlert new]; alert.messageText = @"另一个 SS 作业管理器 正在运行"; alert.informativeText = @"请先退出旧版本或预览窗口，再打开本版，避免两个版本同时保存任务。"; [alert addButtonWithTitle:@"知道了"]; [NSApp activateIgnoringOtherApps:YES]; [alert runModal]; [NSApp terminate:nil]; return;
+            NSAlert *alert = [NSAlert new]; alert.messageText = @"另一个 DDL-Manager 正在运行"; alert.informativeText = @"请先退出旧版本或预览窗口，再打开本版，避免两个版本同时保存任务。"; [alert addButtonWithTitle:@"知道了"]; [NSApp activateIgnoringOtherApps:YES]; [alert runModal]; [NSApp terminate:nil]; return;
         }
     }
     self.filter = 0; self.calendarMode = YES; self.query = @""; self.month = NSDate.date; self.selectedDay = NSDate.date; self.notice = @"";
@@ -742,7 +742,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     }
     [self installMenu];
     self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1280, 840) styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView) backing:NSBackingStoreBuffered defer:NO];
-    self.window.title = self.preview ? @"SS 作业管理器 · 界面预览" : @"SS 作业管理器"; self.window.titleVisibility = NSWindowTitleHidden; self.window.titlebarAppearsTransparent = YES;
+    self.window.title = self.preview ? @"DDL-Manager · 界面预览" : @"DDL-Manager"; self.window.titleVisibility = NSWindowTitleHidden; self.window.titlebarAppearsTransparent = YES;
     self.window.minSize = NSMakeSize(1100, 760); self.window.releasedWhenClosed = NO; self.window.delegate = self; self.window.movableByWindowBackground = YES;
     if (self.preview && [NSProcessInfo.processInfo.arguments containsObject:@"--compact"]) [self.window setContentSize:NSMakeSize(1100, 760)];
     self.window.backgroundColor = Canvas();
@@ -780,7 +780,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     __weak typeof(self) weakSelf = self;
     self.root.onResize = ^{ [weakSelf layout]; };
     self.statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
-    self.statusItem.button.image = [NSImage imageWithSystemSymbolName:@"checklist" accessibilityDescription:@"SS 作业管理器"];
+    self.statusItem.button.image = [NSImage imageWithSystemSymbolName:@"checklist" accessibilityDescription:@"DDL-Manager"];
     self.statusItem.button.imagePosition = NSImageLeft; self.statusItem.button.target = self; self.statusItem.button.action = @selector(statusClick:); [self.statusItem.button sendActionOn:NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp];
     [self layout]; [self.window center]; [self showWindow];
     if (!self.preview) { UNUserNotificationCenter.currentNotificationCenter.delegate = self; [self refreshPermission]; [self refreshReminders]; }
@@ -833,11 +833,11 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)installMenu {
     NSMenu *menu = [NSMenu new];
-    NSMenuItem *appItem = [NSMenuItem new]; [menu addItem:appItem]; NSMenu *app = [[NSMenu alloc] initWithTitle:@"SS 作业管理器"]; appItem.submenu = app;
-    [app addItemWithTitle:@"关于 SS 作业管理器" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
+    NSMenuItem *appItem = [NSMenuItem new]; [menu addItem:appItem]; NSMenu *app = [[NSMenu alloc] initWithTitle:@"DDL-Manager"]; appItem.submenu = app;
+    [app addItemWithTitle:@"关于 DDL-Manager" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
     NSMenuItem *settings = [app addItemWithTitle:@"提醒设置…" action:@selector(showNotificationSettings:) keyEquivalent:@","]; settings.target = self;
-    [app addItem:[NSMenuItem separatorItem]]; [app addItemWithTitle:@"隐藏 SS 作业管理器" action:@selector(hide:) keyEquivalent:@"h"];
-    [app addItemWithTitle:@"退出 SS 作业管理器" action:@selector(terminate:) keyEquivalent:@"q"];
+    [app addItem:[NSMenuItem separatorItem]]; [app addItemWithTitle:@"隐藏 DDL-Manager" action:@selector(hide:) keyEquivalent:@"h"];
+    [app addItemWithTitle:@"退出 DDL-Manager" action:@selector(terminate:) keyEquivalent:@"q"];
     NSMenuItem *fileItem = [NSMenuItem new]; [menu addItem:fileItem]; NSMenu *file = [[NSMenu alloc] initWithTitle:@"任务"]; fileItem.submenu = file;
     NSMenuItem *add = [file addItemWithTitle:@"新建 DDL" action:@selector(addTask:) keyEquivalent:@"n"]; add.target = self;
     NSMenuItem *courses = [file addItemWithTitle:@"GitHub 课程与作业…" action:@selector(openCourses:) keyEquivalent:@"g"]; courses.target = self;
@@ -854,7 +854,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     [edit addItem:[NSMenuItem separatorItem]];
     [edit addItemWithTitle:@"剪切" action:@selector(cut:) keyEquivalent:@"x"]; [edit addItemWithTitle:@"复制" action:@selector(copy:) keyEquivalent:@"c"]; [edit addItemWithTitle:@"粘贴" action:@selector(paste:) keyEquivalent:@"v"]; [edit addItemWithTitle:@"全选" action:@selector(selectAll:) keyEquivalent:@"a"];
     NSMenuItem *windowItem = [NSMenuItem new]; [menu addItem:windowItem]; NSMenu *windowMenu = [[NSMenu alloc] initWithTitle:@"窗口"]; windowItem.submenu = windowMenu;
-    NSMenuItem *show = [windowMenu addItemWithTitle:@"显示 SS 作业管理器" action:@selector(showMain:) keyEquivalent:@"0"]; show.target = self;
+    NSMenuItem *show = [windowMenu addItemWithTitle:@"显示 DDL-Manager" action:@selector(showMain:) keyEquivalent:@"0"]; show.target = self;
     [windowMenu addItemWithTitle:@"最小化" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
     NSApp.mainMenu = menu; NSApp.windowsMenu = windowMenu;
 }
@@ -924,7 +924,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     Clear(self.sidebar); CGFloat h = self.sidebar.bounds.size.height;
     Surface *logo = GradientBox(Emphasis(), Tint(), 10); Put(self.sidebar, logo, 23, 64, 37, 37);
     NSTextField *mark = Text(@"✓", 23, NSFontWeightMedium, Accent()); mark.alignment = NSTextAlignmentCenter; Put(logo, mark, 0, 4, 37, 30);
-    Put(self.sidebar, Text(@"SS 作业管理器", 15, NSFontWeightSemibold, Ink()), 70, 64, 130, 24);
+    Put(self.sidebar, Text(@"DDL-Manager", 15, NSFontWeightSemibold, Ink()), 70, 64, 130, 24);
     Put(self.sidebar, Text(@"一点计划，很多从容", 10, NSFontWeightRegular, Muted()), 70, 90, 130, 17);
     Put(self.sidebar, Text(@"我的计划", 10, NSFontWeightMedium, Muted()), 25, 143, 160, 18);
     ActionButton *calendar = Button(@"总览日历", self, @selector(openCalendar:), 2); calendar.symbol = @"calendar"; calendar.toolTip = @"查看整月待办与已完成任务（⌘2）"; Put(self.sidebar, calendar, 14, 167, 182, 39);
@@ -1003,7 +1003,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 
 - (void)renderCalendarHeader {
     CGFloat w = self.header.bounds.size.width;
-    Put(self.header, Text(@"日程总览  /  SS 作业管理器", 10, NSFontWeightMedium, Muted()), 0, 0, 290, 20);
+    Put(self.header, Text(@"日程总览  /  DDL-Manager", 10, NSFontWeightMedium, Muted()), 0, 0, 290, 20);
     ActionButton *courses = Button(@"GitHub 课程与作业", self, @selector(openCourses:), 2); courses.symbol = @"books.vertical"; Put(self.header, courses, w - 380, 0, 182, 24);
     self.calendarMonthTitle = Text(@"", 28, NSFontWeightSemibold, Ink()); Put(self.header, self.calendarMonthTitle, 0, 28, 205, 44);
     self.yearPicker = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
@@ -1257,7 +1257,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)statusClick:(id)sender {
     if (NSApp.currentEvent.type == NSEventTypeRightMouseUp) {
         NSMenu *menu = [NSMenu new];
-        NSMenuItem *show = [menu addItemWithTitle:@"打开 SS 作业管理器" action:@selector(showMain:) keyEquivalent:@""]; show.target = self;
+        NSMenuItem *show = [menu addItemWithTitle:@"打开 DDL-Manager" action:@selector(showMain:) keyEquivalent:@""]; show.target = self;
         NSMenuItem *add = [menu addItemWithTitle:@"新建 DDL" action:@selector(addTask:) keyEquivalent:@""]; add.target = self;
         [menu addItem:[NSMenuItem separatorItem]]; [menu addItemWithTitle:@"退出" action:@selector(terminate:) keyEquivalent:@"q"];
         [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, self.statusItem.button.bounds.size.height) inView:self.statusItem.button];
@@ -1473,7 +1473,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     }
     BOOL notDetermined = self.authorization == UNAuthorizationStatusNotDetermined;
     BOOL denied = self.authorization == UNAuthorizationStatusDenied;
-    alert.informativeText = [NSString stringWithFormat:@"%@\n\n每个任务可以设置最多 10 个提醒点，例如「5小时、1小时、到期」。点击测试后，约 5 秒会出现系统通知。\n\n请在系统通知设置中允许 SS 作业管理器 的横幅和声音。专注模式可能使提醒静音；电脑关机时不显示提醒。关闭窗口后应用仍在菜单栏运行。", self.notificationStatus];
+    alert.informativeText = [NSString stringWithFormat:@"%@\n\n每个任务可以设置最多 10 个提醒点，例如「5小时、1小时、到期」。点击测试后，约 5 秒会出现系统通知。\n\n请在系统通知设置中允许 DDL-Manager 的横幅和声音。专注模式可能使提醒静音；电脑关机时不显示提醒。关闭窗口后应用仍在菜单栏运行。", self.notificationStatus];
     [alert addButtonWithTitle:notDetermined ? @"允许电脑提醒" : (denied ? @"打开系统设置" : @"发送测试提醒")];
     [alert addButtonWithTitle:@"完成"]; if (!denied) [alert addButtonWithTitle:@"系统通知设置"];
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
@@ -1485,7 +1485,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)openSystemNotifications { [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.Notifications-Settings.extension"]]; }
 - (void)testNotification {
     if (self.preview) return;
-    UNMutableNotificationContent *content = [UNMutableNotificationContent new]; content.title = @"SS 作业管理器 · 提醒测试"; content.body = @"收到这条通知，就说明电脑提醒已准备好。"; content.sound = UNNotificationSound.defaultSound;
+    UNMutableNotificationContent *content = [UNMutableNotificationContent new]; content.title = @"DDL-Manager · 提醒测试"; content.body = @"收到这条通知，就说明电脑提醒已准备好。"; content.sound = UNNotificationSound.defaultSound;
     UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:@"ddl.test" content:content trigger:[UNTimeIntervalNotificationTrigger triggerWithTimeInterval:5 repeats:NO]];
     [UNUserNotificationCenter.currentNotificationCenter addNotificationRequest:request withCompletionHandler:^(NSError *error) {
         dispatch_async(dispatch_get_main_queue(), ^{ self.notice = error ? [NSString stringWithFormat:@"测试提醒失败：%@", error.localizedDescription] : @"测试提醒已安排，将在约 5 秒后显示。"; [self render]; });

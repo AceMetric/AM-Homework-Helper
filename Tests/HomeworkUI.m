@@ -63,7 +63,7 @@ int main(void) { @autoreleasepool {
     [courses.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO]; [courses candidateSelected:nil];
     Check([courses.detail.string containsString:@"牛顿定律"] && [courses.detail.string containsString:@"本周日 21:00"], @"relative deadline and assignment instructions are visible together");
     Capture(courses.window.contentView, @"build/qa/github-courses.png");
-    Capture(app.root, @"build/qa/ss-calendar.png");
+    Capture(app.root, @"build/qa/ddl-calendar.png");
     [courses.window orderOut:nil]; [app.window orderOut:nil]; [app.ticker invalidate]; [NSStatusBar.systemStatusBar removeStatusItem:app.statusItem];
     printf("PASS: %lu homework AppKit assertions\n", (unsigned long)checks);
 } return 0; }

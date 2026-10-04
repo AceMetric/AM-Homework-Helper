@@ -1,10 +1,12 @@
-# DDL Manager
+# DDL Manager 原版说明
+
+本文件保留原版 5.5 的说明；当前开发分支的安装、GitHub 功能和数据兼容方式见 [项目 README](../README.md)。
 
 轻量的 macOS 本地截止日期管理工具。使用原生 AppKit 构建，无账号、无联网依赖。
 
 ## 下载
 
-[下载 DDL Manager 5.5 macOS arm64 安装包](Releases/DDL%20Manager%205.5-macOS-arm64.zip)
+[下载 DDL Manager 5.5 macOS arm64 安装包](../Releases/DDL%20Manager%205.5-macOS-arm64.zip)
 
 ## 外观更新
 

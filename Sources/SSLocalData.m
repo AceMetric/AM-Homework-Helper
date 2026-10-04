@@ -2,6 +2,8 @@
 #import <Security/Security.h>
 
 NSURL *SSDataDirectory(void) {
+    // Keep the preview build's storage location when restoring the DDL-Manager
+    // display name, so existing tasks and course associations remain available.
     NSURL *base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
     return [base URLByAppendingPathComponent:@"SS Homework Manager" isDirectory:YES];
 }
@@ -25,6 +27,7 @@ BOOL SSWritePlist(NSString *name, id value, NSError **error) {
 }
 
 static NSMutableDictionary *KeychainQuery(NSString *account) {
+    // This service identifier is persistent data, not the public product name.
     return [@{(__bridge id)kSecClass:(__bridge id)kSecClassGenericPassword,
               (__bridge id)kSecAttrService:@"io.github.acemetric.sshomeworkmanager.github",
               (__bridge id)kSecAttrAccount:account} mutableCopy];

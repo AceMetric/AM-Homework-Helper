@@ -5,9 +5,9 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh_CN</string>
 	<key>CFBundleDisplayName</key>
-	<string>SS 作业管理器</string>
+	<string>DDL-Manager</string>
 	<key>CFBundleExecutable</key>
-	<string>SSHomeworkManager</string>
+	<string>DDLManager</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>SS 作业管理器</string>
+	<string>DDL-Manager</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -27,6 +27,6 @@
 	<key>LSUIElement</key>
 	<false/>
 	<key>NSHumanReadableCopyright</key>
-	<string>SS 作业管理器 · 基于 DDL Manager 改编</string>
+	<string>DDL-Manager · 原作者及贡献者署名见项目提交历史</string>
 </dict>
 </plist>
