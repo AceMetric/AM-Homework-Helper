@@ -26,9 +26,9 @@ Git 测试验证：私有上游拒绝、缓存、重复作业合并、截止变�
 
 ## 尚未完成的外部联调与发布
 
-- GitHub App 尚未注册，公开 Client ID 与安装 URL 为空；真实设备登录、钥匙串保存 / 刷新、真实私有课堂仓库与真实 GitHub push 仍待联调。
+- GitHub App 已注册并预置两项公开配置。GitHub 后台要求维护者首次生成私钥才能安装；该一步需本人完成，密钥不会进入应用或仓库。真实设备登录、钥匙串保存 / 刷新、真实私有课堂仓库与真实 GitHub push 仍待联调。
 - 本机系统通知权限与实际通知送达需在安装后的应用中点“提醒测试”核对；此次回归验证通知计划与现有界面，没有向用户发送真实提醒。
 - 未配置 Apple Developer ID，未公证；初版 ZIP 明确说明此状态。
-- 尚未创建 GitHub Release，未推送开发改动。`release.sh --candidate` 生成本机候选包；正式包需要公开 App 配置，发布后才能供同学直接登录。
+- 开发改动已上传到 AceMetric/SS-HP-Manager 的 main 分支，尚未创建 GitHub Release。`release.sh --candidate` 生成本机候选包；预置公开配置不表示真实安装与登录联调已经通过。
 
 完整检查结果由发布脚本输出到 `build/security-audit.json` 和 `build/release-audit.json`，不把本机路径、日志或测试数据上传到源码仓库。
