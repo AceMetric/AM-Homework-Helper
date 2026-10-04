@@ -24,5 +24,7 @@ jobs:
         run: >-
           clang -fobjc-arc -Wall -Wextra -Werror -mmacosx-version-min=13.0
           -framework Foundation -framework Vision Tools/PrivacyOCR.m -o build/tests/privacy-ocr
+      - name: Image metadata and binary audit regression
+        run: python3 Tests/SecurityAuditTests.py
       - name: Current files, full history, archives and screenshots
         run: python3 Tools/security-audit.py --history --artifacts 'build/SS 作业管理器.app' --ocr build/tests/privacy-ocr

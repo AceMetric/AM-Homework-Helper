@@ -7,6 +7,8 @@ from pathlib import Path
 import plistlib
 import re
 import subprocess
+import struct
+import zlib
 import tempfile
 import zipfile
 
@@ -32,6 +34,49 @@ def git(*args):
     return subprocess.check_output(['/usr/bin/git', *args], cwd=ROOT)
 
 
+def image_metadata(data):
+    """Privacy text lives in image metadata/OCR, not compressed pixel bytes."""
+    chunks = []
+    if data.startswith(b'\x89PNG\r\n\x1a\n'):
+        position = 8
+        while position + 12 <= len(data):
+            size = struct.unpack('>I', data[position:position + 4])[0]
+            kind = data[position + 4:position + 8]
+            payload = data[position + 8:position + 8 + size]
+            if len(payload) != size:
+                raise ValueError('truncated PNG')
+            if kind == b'tEXt':
+                chunks.append(payload)
+            elif kind == b'zTXt':
+                keyword, rest = payload.split(b'\0', 1)
+                chunks.append(keyword + b' ' + zlib.decompress(rest[1:]))
+            elif kind == b'iTXt':
+                keyword, rest = payload.split(b'\0', 1)
+                compressed = rest[0]
+                language, translated, text = rest[2:].split(b'\0', 2)
+                chunks.append(keyword + b' ' + language + b' ' + translated + b' ' + (zlib.decompress(text) if compressed else text))
+            elif kind == b'eXIf':
+                chunks.append(payload)
+            position += 12 + size
+            if kind == b'IEND':
+                break
+    elif data.startswith(b'\xff\xd8'):
+        position = 2
+        while position + 4 <= len(data):
+            if data[position] != 0xff:
+                break
+            marker = data[position + 1]
+            if marker in (0xda, 0xd9):  # Entropy-coded scan / end of image.
+                break
+            size = struct.unpack('>H', data[position + 2:position + 4])[0]
+            if size < 2 or position + 2 + size > len(data):
+                raise ValueError('invalid JPEG segment')
+            if 0xe0 <= marker <= 0xef or marker == 0xfe:
+                chunks.append(data[position + 4:position + 2 + size])
+            position += 2 + size
+    return chunks
+
+
 def inspect(data, label, depth=0, commit=False):
     counts['files'] += 1
     if SENSITIVE_NAMES.search(label):
@@ -44,8 +89,18 @@ def inspect(data, label, depth=0, commit=False):
             texts.append(data.decode('utf-16').encode())
     except (ValueError, UnicodeError, TypeError, plistlib.InvalidFileException):
         findings.add((label, 'unreadable-structured-file'))
+    privacy_texts = texts
+    if data.startswith((b'\x89PNG\r\n', b'\xff\xd8\xff')):
+        try:
+            privacy_texts = image_metadata(data)
+        except (ValueError, IndexError, zlib.error):
+            findings.add((label, 'unreadable-image-metadata'))
+            privacy_texts = []
+    elif data.startswith(b'PK\x03\x04'):
+        privacy_texts = []  # ZIP entries are scanned after decompression below.
     for category, regex in REGEXES.items():
-        if any(regex.search(text) for text in texts):
+        eligible = privacy_texts if category in ('personal-email', 'personal-home-path') else texts
+        if any(regex.search(text) for text in eligible):
             if category == 'personal-email' and commit:
                 counts['legacy_commit_email_objects'] += 1
             else:

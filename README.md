@@ -19,7 +19,7 @@
 4. “检查作业”后选择发现项，核对老师截止时间并保存。提醒和日历以“我的 DDL”为准。
 5. 拉取前处理本地修改；提交时勾选文件、填写说明。遇到冲突使用“继续冲突合并”中的引导。
 
-**GitHub App 已注册并预置公开配置：** [安装 SS Homework Manager](https://github.com/apps/ss-homework-manager/installations/new)。维护者首次启用安装前须按注册说明完成 GitHub 要求的私钥生成；密钥仅由维护者保管，应用不使用或分发。真实安装及课程仓库联调仍待完成。同学使用预配置的应用无需自行注册。
+**GitHub App 已注册并预置公开配置：** [安装 SS Homework Manager](https://github.com/apps/ss-homework-manager/installations/new)。维护者已完成首次注册准备与个人课程 fork 安装；密钥仅由维护者保管，应用不使用或分发。桌面设备登录和课程仓库联调仍待完成。同学使用预配置的应用无需自行注册。
 
 ## 下载与安装
 

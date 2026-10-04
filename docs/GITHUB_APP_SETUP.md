@@ -36,6 +36,6 @@ GitHub App 是软件在 GitHub 上的公开身份，不是你的账户密码。�
 - 公开 Client ID：`Iv23liW7trz271V8cdSb`。
 - [公开安装页面](https://github.com/apps/ss-homework-manager/installations/new)。
 - Contents read/write、Metadata read-only；Device Flow 已启用，Webhook 关闭，其余权限关闭。
-- 注册后台当前提示：需要先生成私钥才能安装。该一步须由维护者本人完成；本次开发未生成、读取或保存 App 私钥，也未创建 Client Secret。
+- 维护者已亲自完成首次私钥准备并确认保存在仓库之外，已将 App 安装到本人明确授权的三个个人课程 fork。开发工具未生成、读取或保存 App 私钥，也未创建 Client Secret。
 
-以上按 2026-10-04 官方说明及实际注册页面核对。真实安装、用户设备授权与课程仓库联调仍待完成。
+以上按 2026-10-04 官方说明及实际注册页面核对。用户设备授权与课程仓库联调仍待完成；网页登录及 App 安装不等于桌面应用已经登录。

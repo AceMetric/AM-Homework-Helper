@@ -22,6 +22,7 @@ zsh verify-import.sh
 zsh verify-homework.sh
 zsh verify-forms.sh
 zsh verify-course-ui.sh
+python3 Tests/SecurityAuditTests.py
 app='build/SS 作业管理器.app'
 codesign --verify --deep --strict "$app"
 [[ "$(lipo -archs "$app/Contents/MacOS/SSHomeworkManager")" == "arm64" ]]
