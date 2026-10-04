@@ -40,7 +40,7 @@ Path('build/releases/package/安装说明.txt').write_text('''DDL-Manager 1.0 ·
 
 此包使用临时签名，未经 Apple 公证。更新前退出旧测试版，解压后将 DDL-Manager.app 拖入“应用程序”。首次打开若被阻止，在系统设置 → 隐私与安全性中按系统提示选择“仍要打开”。
 
-GitHub 课程窗口可安装 App、设备码登录、关联个人 fork 和本地克隆。当前公开安装入口沿用 SS Homework Manager 的注册名称；它与桌面显示名称不同。未预置公开 Client ID 的包需先按 GITHUB_APP_SETUP.md 完成配置。
+从侧栏“课程”开始连接 GitHub、选择个人 fork 和关联本地文件夹；“待审核作业”集中查看所有课程建议。浅深外观自动跟随 macOS。当前公开安装入口沿用 SS Homework Manager 的注册名称；它与桌面显示名称不同。未预置公开 Client ID 的包需先按 GITHUB_APP_SETUP.md 完成配置。
 
 只从老师默认分支扫描作业；识别项须审核。“本周日”等相对日期需确认完整截止时间。所有推送只到已核验属于当前用户的个人 fork。提交前逐项选文件；冲突时使用引导。
 

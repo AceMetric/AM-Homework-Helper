@@ -1,6 +1,6 @@
 # 来源、署名与授权记录
 
-本分支源于 [123456p-df/DDL-Manager](https://github.com/123456p-df/DDL-Manager)，保留原有 Git 历史及 AppKit 界面、日期解析、提醒、备份和主题代码。新增 GitHub 课程作业功能作为贡献提交给原作者审阅，项目名称统一为 **DDL-Manager**。
+本分支源于 [123456p-df/DDL-Manager](https://github.com/123456p-df/DDL-Manager)，保留原有 Git 历史及 AppKit 界面、日期解析、提醒、备份代码；历史版本的配色材料仍作为来源记录保留。新增 GitHub 课程作业功能作为贡献提交给原作者审阅，项目名称统一为 **DDL-Manager**。
 
 原作者及既有贡献者的署名以原仓库和提交历史为准。[原版说明](UPSTREAM_README.md)保留原版功能、版本和使用方式。
 

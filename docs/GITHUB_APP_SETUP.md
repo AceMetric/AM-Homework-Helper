@@ -4,7 +4,7 @@ GitHub App 是软件在 GitHub 上的公开身份，不是你的账户密码。�
 
 ## 使用已配置的测试包
 
-同学可直接点击课程窗口的“安装授权…”和“登录”，无需自行注册。当前公开配置沿用已注册的 **SS Homework Manager**；桌面应用名称恢复为 DDL-Manager 后，Client ID、安装入口和已有授权继续沿用。
+同学可直接点击侧栏账户入口的“安装授权…”和“登录 GitHub”，无需自行注册。当前公开配置沿用已注册的 **SS Homework Manager**；桌面应用名称恢复为 DDL-Manager 后，Client ID、安装入口和已有授权继续沿用。
 
 原作者若采用独立的 GitHub App，只需按下面的流程注册并替换两项公开配置。
 
@@ -19,7 +19,7 @@ GitHub App 是软件在 GitHub 上的公开身份，不是你的账户密码。�
 7. Repository permissions 只设置 **Contents: Read and write**；**Metadata: Read-only** 自动保留。其他仓库、组织、账户权限均不申请。
 8. “Where can this GitHub App be installed?” 选择 **Any account**，然后 Create GitHub App。
 9. 注册页面复制公开 **Client ID**（不是数字 App ID）；公开安装 URL 形如 `https://github.com/apps/实际应用名称/installations/new`。
-10. 把两项填入 `Config/GitHubApp.plist`：`clientID` 和 `installationURL`。可公开提交这两项。开发期间也可在课程窗口“Client ID…”填写。
+10. 把两项填入 `Config/GitHubApp.plist`：`clientID` 和 `installationURL`。可公开提交这两项。开发期间也可在侧栏“设置 → 高级：GitHub App…”填写。
 11. **不要生成 Client Secret，也不要复制任何秘密到配置**。若注册成功页面要求先生成 Private Key 才能安装，由维护者本人点击 Generate a private key，将下载的 PEM 保存到仓库之外、限制读取权限。该密钥可签发安装令牌，不能上传、不能发给同学或发到开发聊天。本应用只使用设备授权，不读取这把密钥。
 12. 安装时选择 **Only select repositories**，只勾选自己的课程 fork。完成后运行发布前验证并用设备登录联调。
 

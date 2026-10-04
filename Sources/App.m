@@ -7,37 +7,10 @@
 #import "SSCourseWindow.h"
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
-static NSColor *RGB(unsigned value) { return [NSColor colorWithSRGBRed:((value >> 16) & 255) / 255.0 green:((value >> 8) & 255) / 255.0 blue:(value & 255) / 255.0 alpha:1]; }
-// Every palette keeps light surfaces, including when macOS uses dark appearance.
-static NSColor *Adaptive(unsigned light, unsigned dark) { return RGB(light); }
-typedef struct { unsigned canvas, panel, tint, emphasis, line, ink, muted, accent; } PastelPalette;
-static const PastelPalette Palettes[] = {
-    {0xF8FAF7, 0xEFF4EC, 0xE5EFE1, 0xD3E5CB, 0xDCE5D7, 0x2E3C30, 0x5E6D60, 0x3D6245},
-    {0xF7FAFF, 0xEAF3FE, 0xDCEBFD, 0xC9E0FB, 0xD7E5F5, 0x20334A, 0x62778E, 0x2766B0},
-    {0xFAF8FC, 0xF2EEF8, 0xEAE3F4, 0xDED2ED, 0xE3DCED, 0x3D344A, 0x6D617B, 0x665080},
-    {0xFCF8FA, 0xF8EEF2, 0xF5E2EA, 0xEED0DD, 0xEEDCE4, 0x4A3540, 0x7B606D, 0x7C4B63},
-    {0xFCF9F6, 0xF8F0E9, 0xF6E6D9, 0xEFD7C2, 0xECDDCE, 0x48392E, 0x796555, 0x795334},
-    {0xFCFBF6, 0xF7F3E5, 0xF2ECD3, 0xE9DFAF, 0xE8E1CA, 0x423E2E, 0x726B50, 0x726032}
-};
-static NSInteger CurrentTheme = 1;
-static NSString * const ThemePreferenceKey = @"ddl-manager.theme.v1";
-static NSArray<NSString *> *ThemeIDs(void) { return @[@"sage", @"blue", @"lavender", @"rose", @"peach", @"cream"]; }
-static NSArray<NSString *> *ThemeNames(void) { return @[@"鼠尾草", @"雾蓝", @"薰衣草", @"樱花", @"蜜桃", @"奶油"]; }
-static NSInteger ThemeIndex(id identifier) {
-    NSUInteger index = [ThemeIDs() indexOfObject:identifier ?: @""];
-    return index == NSNotFound ? 1 : (NSInteger)index;
-}
-static NSColor *Ink(void) { return RGB(Palettes[CurrentTheme].ink); }
-static NSColor *Muted(void) { return RGB(Palettes[CurrentTheme].muted); }
-static NSColor *Accent(void) { return RGB(Palettes[CurrentTheme].accent); }
-static NSColor *Canvas(void) { return RGB(Palettes[CurrentTheme].canvas); }
-static NSColor *Card(void) { return RGB(0xFFFFFF); }
-static NSColor *Line(void) { return RGB(Palettes[CurrentTheme].line); }
-static NSColor *Tint(void) { return RGB(Palettes[CurrentTheme].tint); }
-static NSColor *Panel(void) { return RGB(Palettes[CurrentTheme].panel); }
-static NSColor *Emphasis(void) { return RGB(Palettes[CurrentTheme].emphasis); }
+#import "DDLUI.h"
+
 static NSImage *ThemeIcon(void) {
-    unsigned accent = Palettes[CurrentTheme].accent;
+    unsigned accent = 0x2262B0;
     return [NSImage imageWithSize:NSMakeSize(512, 512) flipped:NO drawingHandler:^BOOL(NSRect bounds) {
         [NSGraphicsContext saveGraphicsState];
         NSAffineTransform *transform = [NSAffineTransform transform]; [transform scaleBy:NSWidth(bounds) / 1024.0]; [transform concat];
@@ -47,122 +20,6 @@ static NSImage *ThemeIcon(void) {
     }];
 }
 static NSCalendar *Cal(void) { NSCalendar *c = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian]; c.firstWeekday = 2; return c; }
-
-static NSTextField *Text(NSString *text, CGFloat size, NSFontWeight weight, NSColor *color) {
-    NSTextField *label = [NSTextField labelWithString:text ?: @""];
-    label.font = [NSFont systemFontOfSize:size weight:weight]; label.textColor = color ?: Ink();
-    label.lineBreakMode = NSLineBreakByTruncatingTail;
-    return label;
-}
-static void Put(NSView *parent, NSView *child, CGFloat x, CGFloat y, CGFloat w, CGFloat h) {
-    child.frame = NSMakeRect(x, y, w, h); [parent addSubview:child];
-}
-static void Clear(NSView *view) { for (NSView *child in view.subviews.copy) [child removeFromSuperview]; }
-static void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight weight, NSColor *color, NSTextAlignment alignment) {
-    NSMutableParagraphStyle *style = [NSMutableParagraphStyle new]; style.alignment = alignment; style.lineBreakMode = NSLineBreakByTruncatingTail;
-    [text drawInRect:rect withAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:size weight:weight], NSForegroundColorAttributeName:color, NSParagraphStyleAttributeName:style}];
-}
-
-@interface Surface : NSView
-@property NSColor *fill;
-@property NSColor *gradientEnd;
-@property NSColor *stroke;
-@property CGFloat radius;
-@property(copy) void (^onResize)(void);
-@end
-@implementation Surface
-- (BOOL)isFlipped { return YES; }
-- (void)drawRect:(NSRect)dirtyRect {
-    NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 0.5, 0.5) xRadius:self.radius yRadius:self.radius];
-    if (self.fill) {
-        if (self.gradientEnd) [[[NSGradient alloc] initWithStartingColor:self.fill endingColor:self.gradientEnd] drawInBezierPath:path angle:-70];
-        else { [self.fill setFill]; [path fill]; }
-    }
-    if (self.stroke) { [self.stroke setStroke]; [path stroke]; }
-}
-- (void)setFrameSize:(NSSize)size { [super setFrameSize:size]; if (self.onResize) self.onResize(); }
-- (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay = YES; }
-@end
-
-@interface ActionButton : NSButton
-@property NSInteger tone;
-@property BOOL selected;
-@property BOOL hovered;
-@property BOOL allowsHoverFill;
-@property NSString *symbol;
-@property NSTrackingArea *hoverArea;
-@end
-@implementation ActionButton
-- (instancetype)initWithFrame:(NSRect)frame {
-    if ((self = [super initWithFrame:frame])) { self.bordered = NO; self.font = [NSFont systemFontOfSize:12 weight:NSFontWeightMedium]; [self setButtonType:NSButtonTypeMomentaryPushIn]; self.focusRingType = NSFocusRingTypeNone; self.allowsHoverFill = YES; }
-    return self;
-}
-- (BOOL)isFlipped { return YES; }
-- (void)updateTrackingAreas {
-    if (self.hoverArea) [self removeTrackingArea:self.hoverArea];
-    self.hoverArea = [[NSTrackingArea alloc] initWithRect:self.bounds options:(NSTrackingMouseEnteredAndExited | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect) owner:self userInfo:nil];
-    [self addTrackingArea:self.hoverArea]; [super updateTrackingAreas];
-}
-- (void)mouseEntered:(NSEvent *)event { self.hovered = YES; self.needsDisplay = YES; }
-- (void)mouseExited:(NSEvent *)event { self.hovered = NO; self.needsDisplay = YES; }
-- (void)drawRect:(NSRect)dirtyRect {
-    NSColor *fill = self.tone == 1 ? Emphasis() : (self.selected || self.tone == 2 ? Tint() : Card());
-    BOOL hoverFill = self.allowsHoverFill && (self.hovered || self.highlighted);
-    if (self.tone == 3 && !self.selected && !hoverFill) fill = NSColor.clearColor;
-    if (hoverFill) fill = [fill blendedColorWithFraction:0.10 ofColor:Accent()];
-    NSBezierPath *buttonPath = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 1, 1) xRadius:8 yRadius:8];
-    NSColor *end = self.tone == 1 ? Tint() : (self.selected || self.tone == 2 ? Card() : fill);
-    if (self.tone == 1 || self.selected || self.tone == 2) [[[NSGradient alloc] initWithStartingColor:fill endingColor:end] drawInBezierPath:buttonPath angle:-70];
-    else { [fill setFill]; [buttonPath fill]; }
-    NSColor *color = self.tone == 1 ? Accent() : (self.selected ? Accent() : Ink());
-    if (!self.enabled) color = Muted();
-    BOOL iconOnly = self.symbol.length && self.title.length == 0;
-    CGFloat tx = self.symbol.length ? 35 : 8;
-    if (self.symbol.length) {
-        NSImage *image = [[NSImage imageWithSystemSymbolName:self.symbol accessibilityDescription:nil] imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithHierarchicalColor:color]];
-        CGFloat imageSize = MIN(16, self.bounds.size.height - 6);
-        CGFloat imageX = iconOnly ? (self.bounds.size.width - imageSize) / 2 : 12;
-        [image drawInRect:NSMakeRect(imageX, (self.bounds.size.height - imageSize) / 2, imageSize, imageSize) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:self.enabled ? 1 : 0.5 respectFlipped:YES hints:nil];
-    }
-    if (!iconOnly) DrawText(self.title, NSMakeRect(tx, (self.bounds.size.height - 17) / 2, self.bounds.size.width - tx - 8, 18), self.font.pointSize, NSFontWeightMedium, color, self.symbol.length ? NSTextAlignmentLeft : NSTextAlignmentCenter);
-    if (self.window.firstResponder == self) { [Accent() setStroke]; [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 2, 2) xRadius:7 yRadius:7] stroke]; }
-}
-- (void)viewDidChangeEffectiveAppearance { self.needsDisplay = YES; }
-@end
-static ActionButton *Button(NSString *title, id target, SEL action, NSInteger tone) {
-    ActionButton *b = [[ActionButton alloc] initWithFrame:NSZeroRect]; b.title = title; b.target = target; b.action = action; b.tone = tone; [b setAccessibilityLabel:title]; return b;
-}
-static Surface *Box(NSColor *fill, CGFloat radius) { Surface *v = [Surface new]; v.fill = fill; v.radius = radius; return v; }
-static Surface *GradientBox(NSColor *start, NSColor *end, CGFloat radius) { Surface *v = Box(start, radius); v.gradientEnd = end; return v; }
-
-#import "FormControls.inc"
-
-@interface ThemeSegmentedControl : NSSegmentedControl
-@end
-@implementation ThemeSegmentedControl
-- (void)drawRect:(NSRect)dirtyRect {
-    NSRect bounds = NSInsetRect(self.bounds, 0.5, 0.5);
-    [[[NSGradient alloc] initWithStartingColor:Panel() endingColor:Canvas()] drawInBezierPath:[NSBezierPath bezierPathWithRoundedRect:bounds xRadius:9 yRadius:9] angle:-70];
-    NSInteger count = self.segmentCount; if (!count) return;
-    CGFloat width = NSWidth(bounds) / count;
-    for (NSInteger index = 0; index < count; index++) {
-        NSRect segment = NSMakeRect(NSMinX(bounds) + index * width, NSMinY(bounds), width, NSHeight(bounds));
-        BOOL selected = index == self.selectedSegment;
-        if (selected) [[[NSGradient alloc] initWithStartingColor:Emphasis() endingColor:Tint()] drawInBezierPath:[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(segment, 1, 1) xRadius:8 yRadius:8] angle:-70];
-        else if (index > 0) { [Line() setStroke]; NSBezierPath *divider = [NSBezierPath bezierPath]; [divider moveToPoint:NSMakePoint(NSMinX(segment), NSMinY(segment) + 7)]; [divider lineToPoint:NSMakePoint(NSMinX(segment), NSMaxY(segment) - 7)]; [divider stroke]; }
-        DrawText([self labelForSegment:index], NSInsetRect(segment, 4, 5), 12, selected ? NSFontWeightSemibold : NSFontWeightMedium, selected ? Accent() : Ink(), NSTextAlignmentCenter);
-    }
-    if (self.window.firstResponder == self) { [Accent() setStroke]; [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(bounds, 1.5, 1.5) xRadius:8 yRadius:8] stroke]; }
-}
-- (void)mouseDown:(NSEvent *)event { [super mouseDown:event]; self.needsDisplay = YES; }
-- (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay = YES; }
-@end
-static ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL action) {
-    ThemeSegmentedControl *control = [[ThemeSegmentedControl alloc] initWithFrame:NSZeroRect]; control.segmentCount = labels.count;
-    for (NSInteger index = 0; index < (NSInteger)labels.count; index++) [control setLabel:labels[index] forSegment:index];
-    control.focusRingType = NSFocusRingTypeNone; control.trackingMode = NSSegmentSwitchTrackingSelectOne; control.target = target; control.action = action; control.selectedSegment = 0;
-    return control;
-}
 
 @interface DayButton : NSButton
 @property NSDate *date;
@@ -390,6 +247,11 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @interface EditorController : NSWindowController <NSTextFieldDelegate>
 @property(weak) AppDelegate *appDelegate;
 @property NSDictionary *task;
+@property NSDictionary *candidate;
+@property NSTextField *teacherField;
+@property NSScrollView *sourceScroll;
+@property NSPopover *datePopover;
+@property NSButton *saveButton;
 @property NSTextField *titleField;
 @property NSTextField *subjectField;
 @property NSTextField *deadlineField;
@@ -419,9 +281,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property Surface *document;
 @property NSScrollView *scroll;
 @property NSSearchField *search;
-@property NSSegmentedControl *viewMode;
 @property NSSegmentedControl *calendarStatus;
-@property NSTextField *calendarHint;
 @property NSScrollView *calendarScroll;
 @property Surface *calendarDocument;
 @property NSDate *calendarBaseMonth;
@@ -430,20 +290,20 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSPopUpButton *yearPicker;
 @property NSPopUpButton *monthPicker;
 @property NSTextField *calendarMonthTitle;
-@property NSArray<NSTextField *> *calendarSummaryLabels;
 @property NSTextField *calendarProgressText;
-@property Surface *calendarProgressTrack;
 @property Surface *agenda;
 @property NSScrollView *agendaScroll;
 @property Surface *agendaDocument;
 @property NSString *focusedTaskID;
 @property NSPopUpButton *sortMenu;
-@property NSPopUpButton *themePicker;
+@property NSPopUpButton *taskFilter;
+@property NSInteger page;
+@property NSMutableDictionary *pageStates;
 @property NSMutableArray<NSMutableDictionary *> *tasks;
 @property NSUndoManager *taskUndo;
 @property NSStatusItem *statusItem;
 @property EditorController *editor;
-@property SSCourseWindow *courseWindow;
+@property SSCourseController *courseWindow;
 @property NSInteger filter;
 @property BOOL calendarMode;
 @property NSDate *month;
@@ -475,6 +335,9 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)addTask:(id)sender;
 - (void)importClipboard:(id)sender;
 - (void)openCourses:(id)sender;
+- (void)navigate:(id)sender;
+- (void)refreshAppearance;
+- (void)renderDashboard;
 - (void)reviewGitHubCandidate:(NSDictionary *)candidate;
 - (void)showWindow;
 - (void)refreshReminders;
@@ -485,72 +348,86 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 
 @implementation EditorController
 - (instancetype)initWithTask:(NSDictionary *)task owner:(AppDelegate *)owner {
-    NSPanel *panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 642, 652) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+    DDLFormPanel *panel = [[DDLFormPanel alloc] initWithContentRect:NSMakeRect(0, 0, 680, 580) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     if ((self = [super initWithWindow:panel])) {
-        self.appDelegate = owner; self.task = task;
+        self.appDelegate = owner; self.task = task; self.candidate = task[@"_reviewCandidate"];
         self.announcedDue = [task[@"announcedDue"] isKindOfClass:NSDate.class] ? task[@"announcedDue"] : nil;
-        self.leadDays = self.announcedDue && [task[@"leadDays"] respondsToSelector:@selector(integerValue)] ? [task[@"leadDays"] integerValue] : -1;
-        panel.title = task ? @"编辑 DDL" : @"新建 DDL"; panel.releasedWhenClosed = NO;
-        Surface *root = GradientBox(Canvas(), Panel(), 0); root.frame = NSMakeRect(0, 0, 642, 652); panel.contentView = root;
-        Put(root, Text(task ? @"让计划更合适。" : @"给下一件事，留个位置。", 22, NSFontWeightSemibold, Ink()), 28, 23, 580, 32);
-        Put(root, Text(@"写下任务，再选一个合适的截止时间。", 12, NSFontWeightRegular, Muted()), 28, 62, 350, 20);
+        self.leadDays = self.announcedDue || self.candidate ? [task[@"leadDays"] integerValue] : -1;
+        panel.title = self.candidate ? ([task[@"_existing"] boolValue] ? @"审核更新" : @"审核作业") : (task ? @"编辑任务" : @"新建任务"); panel.releasedWhenClosed = NO;
+        Surface *root = Box(Canvas(), 0); root.frame = NSMakeRect(0, 0, 680, 580); panel.contentView = root;
+        NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 680, 504)]; scroll.hasVerticalScroller = YES; scroll.autohidesScrollers = YES; scroll.drawsBackground = NO;
+        Surface *body = Box(Canvas(), 0); scroll.documentView = body; [root addSubview:scroll]; CGFloat y = 24;
+        Put(body, Text(panel.title, 23, NSFontWeightSemibold, Ink()), 24, y, 632, 32); y += 48;
+        self.importStatus = Text(@"", 12, NSFontWeightRegular, Muted());
         if (!task) {
-            ActionButton *pasteImport = Button(@"粘贴并识别", self, @selector(importClipboard:), 2); pasteImport.toolTip = @"识别微信复制的文字或图片（⌘⇧V）"; Put(root, pasteImport, 386, 57, 126, 28);
-            ActionButton *imageImport = Button(@"选截图…", self, @selector(chooseScreenshot:), 2); Put(root, imageImport, 520, 57, 94, 28);
+            ActionButton *paste = Button(@"粘贴并识别", self, @selector(importClipboard:), 2); Put(body, paste, 24, y, 152, 36);
+            ActionButton *image = Button(@"选择截图…", self, @selector(chooseScreenshot:), 2); Put(body, image, 184, y, 152, 36); y += 44;
         }
-        self.importStatus = Text(@"", 10, NSFontWeightRegular, Accent()); Put(root, self.importStatus, 28, 82, 586, 15);
-        if (self.announcedDue) self.importStatus.stringValue = [NSString stringWithFormat:@"老师截止：%@ · 下面可调整自己的 DDL", DDLFormatDate(self.announcedDue, @"M月d日 HH:mm")];
-        Put(root, Text(@"任务名称", 11, NSFontWeightMedium, Muted()), 28, 99, 380, 18);
-        self.titleField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.titleField.placeholderString = @"例如：完成数据结构实验报告"; self.titleField.stringValue = task[@"title"] ?: @"";
-        self.titleField.font = [NSFont systemFontOfSize:15]; Put(root, self.titleField, 28, 121, 586, 30);
-        Put(root, Text(@"学科 / 分类", 11, NSFontWeightMedium, Muted()), 28, 163, 300, 18);
-        self.subjectField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.subjectField.placeholderString = @"例如：数据结构（选填）"; self.subjectField.stringValue = task[@"subject"] ?: @"";
-        Put(root, self.subjectField, 28, 185, 370, 28);
-        Put(root, Text(@"优先级", 11, NSFontWeightMedium, Muted()), 420, 163, 180, 18);
-        self.priority = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.priority addItemsWithTitles:@[@"普通", @"重要", @"紧急"]]; [self.priority selectItemAtIndex:[task[@"priority"] integerValue]];
-        Put(root, self.priority, 418, 184, 198, 30);
-        self.deadlineLabel = Text(self.announcedDue ? @"我的 DDL 截止时间" : @"截止时间", 11, NSFontWeightMedium, Muted()); Put(root, self.deadlineLabel, 28, 226, 300, 18);
-        self.leadMenu = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
-        [self.leadMenu addItemsWithTitles:@[@"按老师截止时间", @"提前 1 天", @"提前 2 天", @"提前 3 天", @"提前 7 天", @"手动设置"]];
-        self.leadMenu.target = self; self.leadMenu.action = @selector(leadChanged:); self.leadMenu.hidden = !self.announcedDue;
-        self.leadMenu.accessibilityLabel = @"我的 DDL 比老师截止时间提前";
-        NSInteger leadIndex = self.leadDays == 0 ? 0 : (self.leadDays == 1 ? 1 : (self.leadDays == 2 ? 2 : (self.leadDays == 3 ? 3 : (self.leadDays == 7 ? 4 : 5))));
-        [self.leadMenu selectItemAtIndex:leadIndex]; Put(root, self.leadMenu, 398, 220, 216, 24);
+        Put(body, self.importStatus, 24, y, 632, 24); if (!task) y += 32; else self.importStatus.hidden = YES;
+        Put(body, Text(@"任务信息", 15, NSFontWeightSemibold, Ink()), 24, y, 632, 24); y += 32;
+        Put(body, Text(@"任务名称", 12, NSFontWeightMedium, Muted()), 24, y, 632, 20); y += 24;
+        self.titleField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.titleField.stringValue = task[@"title"] ?: @""; self.titleField.placeholderString = @"例如：完成物理第四次作业"; Put(body, self.titleField, 24, y, 632, 36); y += 48;
+        Put(body, Text(@"课程 / 分类", 12, NSFontWeightMedium, Muted()), 24, y, 400, 20); Put(body, Text(@"优先级", 12, NSFontWeightMedium, Muted()), 448, y, 208, 20); y += 24;
+        self.subjectField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.subjectField.stringValue = task[@"subject"] ?: @""; self.subjectField.placeholderString = @"选填"; Put(body, self.subjectField, 24, y, 408, 36);
+        self.priority = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.priority addItemsWithTitles:@[@"普通", @"重要", @"紧急"]]; [self.priority selectItemAtIndex:[task[@"priority"] integerValue]]; Put(body, self.priority, 448, y, 208, 36); y += 56;
+        if (self.candidate) {
+            Put(body, Text(@"老师原文", 15, NSFontWeightSemibold, Ink()), 24, y, 632, 24); y += 32;
+            NSString *location = [NSString stringWithFormat:@"%@ · %@:%@", self.candidate[@"repository"], self.candidate[@"path"], self.candidate[@"line"]];
+            NSTextField *label = Text(location, 12, NSFontWeightRegular, Muted()); label.toolTip = location; Put(body, label, 24, y, 632, 24); y += 32;
+            self.sourceScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(24, y, 632, 104)]; self.sourceScroll.hasVerticalScroller = YES; self.sourceScroll.autohidesScrollers = YES;
+            NSTextView *source = [[PastelNotesView alloc] initWithFrame:NSMakeRect(0, 0, 612, 104)]; source.editable = NO; source.richText = NO; source.autoresizingMask = NSViewWidthSizable; source.textContainer.widthTracksTextView = YES; source.font = [NSFont systemFontOfSize:13]; source.textColor = Ink(); source.backgroundColor = Card(); source.textContainerInset = NSMakeSize(10, 10); source.string = self.candidate[@"snippet"] ?: @""; ThemeEditor(source); self.sourceScroll.documentView = source; [body addSubview:self.sourceScroll]; y += 120;
+            Put(body, Text(@"老师截止时间", 12, NSFontWeightMedium, Muted()), 24, y, 632, 20); y += 24;
+            self.teacherField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.teacherField.delegate = self; self.teacherField.placeholderString = @"请填写完整日期和时间，例如 2026-10-11 21:00";
+            if (![self.candidate[@"needsDate"] boolValue] && ![self.candidate[@"needsTime"] boolValue]) self.teacherField.stringValue = self.announcedDue ? [self formatTeacherDate:self.announcedDue] : @"";
+            Put(body, self.teacherField, 24, y, 632, 36); y += 44;
+            NSString *hint = self.candidate[@"deadlineText"] ? [NSString stringWithFormat:@"老师写的是“%@”，请依据布置时间确认具体日期。", self.candidate[@"deadlineText"]] : ([self.candidate[@"needsTime"] boolValue] ? @"老师未写明时间，请补全具体截止时间。" : ([self.candidate[@"needsDate"] boolValue] ? @"日期不完整，请确认年份、日期和时间。" : @"请核对老师原文中的日期和时间。"));
+            NSTextField *help = Text(hint, 12, NSFontWeightRegular, Muted()); help.toolTip = hint; Put(body, help, 24, y, 632, 24); y += 40;
+        }
+        if (!self.candidate && self.announcedDue) { Put(body, Text([NSString stringWithFormat:@"老师截止时间：%@", DDLFormatDate(self.announcedDue, @"yyyy-MM-dd HH:mm")], 13, NSFontWeightMedium, Accent()), 24, y, 632, 24); y += 32; }
+        Put(body, Text(@"截止时间", 15, NSFontWeightSemibold, Ink()), 24, y, 632, 24); y += 32;
+        self.deadlineLabel = Text(self.announcedDue || self.candidate ? @"我的 DDL" : @"任务截止时间", 12, NSFontWeightMedium, Muted()); Put(body, self.deadlineLabel, 24, y, 350, 20); y += 24;
+        self.leadMenu = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.leadMenu addItemsWithTitles:@[@"按老师截止时间", @"提前 1 天", @"提前 2 天", @"提前 3 天", @"提前 7 天", @"手动设置"]]; self.leadMenu.target = self; self.leadMenu.action = @selector(leadChanged:); self.leadMenu.hidden = !self.announcedDue && !self.candidate;
+        NSInteger leadIndex = self.leadDays == 0 ? 0 : self.leadDays == 1 ? 1 : self.leadDays == 2 ? 2 : self.leadDays == 3 ? 3 : self.leadDays == 7 ? 4 : 5; [self.leadMenu selectItemAtIndex:leadIndex];
+        Put(body, self.leadMenu, 24, y, 632, 36); if (!self.leadMenu.hidden) y += 44;
         self.selectedDate = task[@"due"] ?: DDLParseDate(@"明天 23:59", NSDate.date, Cal());
-        self.deadlineField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.deadlineField.stringValue = DDLFormatDate(self.selectedDate, @"yyyy-MM-dd HH:mm"); self.deadlineField.placeholderString = @"明天 20:00 / 下周五 / 2026-10-01 23:59"; self.deadlineField.delegate = self;
-        Put(root, self.deadlineField, 28, 248, 586, 28);
-        self.calendar = [MonthView new]; self.calendar.fill = Card(); self.calendar.gradientEnd = Canvas(); self.calendar.stroke = Line(); self.calendar.radius = 12; self.calendar.compact = YES; self.calendar.month = self.selectedDate; self.calendar.selection = self.selectedDate; self.calendar.tasks = @[];
-        Put(root, self.calendar, 28, 289, 282, 280); [self.calendar reload];
-        __weak typeof(self) weakSelf = self;
-        self.calendar.onSelect = ^(NSDate *date) { [weakSelf chooseDate:date]; };
-        Put(root, Text(@"具体时间", 11, NSFontWeightMedium, Muted()), 330, 291, 260, 18);
-        self.timePicker = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.timePicker.stringValue = DDLFormatDate(self.selectedDate, @"HH:mm"); self.timePicker.delegate = self; self.timePicker.accessibilityLabel = @"具体时间，24 小时制";
-        Put(root, self.timePicker, 330, 313, 100, 30);
-        ActionButton *later = Button(@"", self, @selector(stepTime:), 2); later.symbol = @"chevron.up"; later.tag = 1; later.toolTip = @"增加一分钟"; later.accessibilityLabel = later.toolTip; Put(root, later, 434, 313, 25, 15);
-        ActionButton *earlier = Button(@"", self, @selector(stepTime:), 2); earlier.symbol = @"chevron.down"; earlier.tag = -1; earlier.toolTip = @"减少一分钟"; earlier.accessibilityLabel = earlier.toolTip; Put(root, earlier, 434, 328, 25, 15);
-        NSPopUpButton *quickTime = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [quickTime addItemsWithTitles:@[@"常用时间", @"09:00", @"12:00", @"18:00", @"20:00", @"22:00", @"23:59"]]; quickTime.target = self; quickTime.action = @selector(quickTime:); Put(root, quickTime, 470, 313, 144, 30);
-        NSArray *days = @[@"今天", @"明天", @"一周后"];
-        for (NSInteger i = 0; i < 3; i++) { ActionButton *b = Button(days[i], self, @selector(quickDay:), 2); Put(root, b, 330 + i * 96, 355, 89, 30); }
-        Put(root, Text(@"电脑提醒 · 可设置多次", 11, NSFontWeightMedium, Muted()), 330, 399, 250, 18);
-        self.reminderField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.reminderField.placeholderString = @"例如：5小时、1小时、到期"; self.reminderField.delegate = self;
-        NSArray *initialOffsets = task ? DDLReminderOffsetsForTask(task) : @[@1440, @60, @0]; self.reminderField.stringValue = DDLFormatReminderOffsets(initialOffsets); Put(root, self.reminderField, 328, 421, 288, 28);
-        self.reminderPreset = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.reminderPreset addItemsWithTitles:@[@"选择常用方案…", @"1天、1小时、到期", @"5小时、1小时、到期", @"仅到期", @"不提醒"]]; self.reminderPreset.target = self; self.reminderPreset.action = @selector(reminderPresetChanged:); Put(root, self.reminderPreset, 328, 452, 146, 28);
-        self.reminderValidation = Text(@"", 9, NSFontWeightRegular, Muted()); Put(root, self.reminderValidation, 482, 456, 134, 18); [self validateReminders];
-        Put(root, Text(@"备注（选填）", 11, NSFontWeightMedium, Muted()), 330, 488, 250, 18);
-        Surface *notesSurface = GradientBox(Panel(), Card(), 8); notesSurface.stroke = Line(); Put(root, notesSurface, 330, 510, 284, 59);
-        NSScrollView *notesScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; notesScroll.borderType = NSNoBorder; notesScroll.drawsBackground = NO; notesScroll.hasVerticalScroller = YES; notesScroll.autohidesScrollers = YES;
-        self.notesField = [[PastelNotesView alloc] initWithFrame:NSMakeRect(0, 0, 266, 49)]; self.notesField.font = [NSFont systemFontOfSize:12]; self.notesField.textContainerInset = NSMakeSize(7, 7); self.notesField.drawsBackground = NO; self.notesField.textColor = Ink(); ThemeEditor(self.notesField); self.notesField.richText = NO; self.notesField.allowsUndo = YES; self.notesField.string = task[@"notes"] ?: @"";
-        self.notesField.autoresizingMask = NSViewWidthSizable; self.notesField.textContainer.widthTracksTextView = YES; notesScroll.documentView = self.notesField; Put(notesSurface, notesScroll, 3, 3, 278, 53);
-        self.validation = Text(@"", 11, NSFontWeightRegular, Muted()); Put(root, self.validation, 28, 580, 580, 19); [self validateDate];
-        ActionButton *cancel = Button(@"取消", self, @selector(cancel:), 3); cancel.keyEquivalent = @"\033"; Put(root, cancel, 418, 610, 82, 32);
-        ActionButton *save = Button(task ? @"保存修改" : @"添加任务", self, @selector(save:), 1); save.keyEquivalent = @"\r"; Put(root, save, 510, 608, 104, 36);
-        self.titleField.nextKeyView = self.subjectField; self.subjectField.nextKeyView = self.priority; self.priority.nextKeyView = self.deadlineField;
-        self.titleField.accessibilityLabel = @"任务名称"; self.subjectField.accessibilityLabel = @"学科 / 分类"; self.deadlineField.accessibilityLabel = @"截止时间"; self.reminderField.accessibilityLabel = @"电脑提醒"; self.notesField.accessibilityLabel = @"备注";
-        panel.initialFirstResponder = self.titleField;
-    }
-    return self;
+        self.deadlineField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.deadlineField.delegate = self; self.deadlineField.stringValue = self.candidate && !task[@"due"] ? @"" : DDLFormatDate(self.selectedDate, @"yyyy-MM-dd HH:mm"); self.deadlineField.placeholderString = @"明天 20:00 / 2026-10-11 21:00"; Put(body, self.deadlineField, 24, y, 496, 36);
+        ActionButton *calendarButton = Button(@"选日期", self, @selector(showDatePicker:), 2); calendarButton.symbol = @"calendar"; Put(body, calendarButton, 536, y, 120, 36); y += 48;
+        self.calendar = MonthView.new; self.calendar.fill = Card(); self.calendar.stroke = Line(); self.calendar.radius = 10; self.calendar.compact = YES; self.calendar.month = self.selectedDate; self.calendar.selection = self.selectedDate; self.calendar.tasks = @[]; self.calendar.frame = NSMakeRect(0, 0, 312, 288); [self.calendar reload];
+        __weak typeof(self) weakSelf = self; panel.onConfirm = ^{ [weakSelf save:nil]; }; panel.onCancel = ^{ [weakSelf cancel:nil]; }; self.calendar.onSelect = ^(NSDate *date) { [weakSelf chooseDate:date]; [weakSelf.datePopover close]; };
+        self.timePicker = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.timePicker.delegate = self; self.timePicker.stringValue = DDLFormatDate(self.selectedDate, @"HH:mm"); self.timePicker.accessibilityLabel = @"具体时间，24 小时制"; Put(body, self.timePicker, 24, y, 96, 36);
+        NSPopUpButton *quickTime = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [quickTime addItemsWithTitles:@[@"常用时间", @"09:00", @"12:00", @"18:00", @"20:00", @"22:00", @"23:59"]]; quickTime.target = self; quickTime.action = @selector(quickTime:); Put(body, quickTime, 136, y, 144, 36);
+        for (NSInteger i = 0; i < 3; i++) { ActionButton *day = Button(@[@"今天", @"明天", @"一周后"][i], self, @selector(quickDay:), 2); Put(body, day, 296 + i * 120, y, 112, 36); } y += 56;
+        Put(body, Text(@"提醒", 15, NSFontWeightSemibold, Ink()), 24, y, 632, 24); y += 32;
+        self.reminderField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.reminderField.delegate = self; self.reminderField.placeholderString = @"例如：1天、1小时、到期"; self.reminderField.stringValue = DDLFormatReminderOffsets(task ? DDLReminderOffsetsForTask(task) : @[@1440, @60, @0]); Put(body, self.reminderField, 24, y, 352, 36);
+        self.reminderPreset = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.reminderPreset addItemsWithTitles:@[@"常用方案…", @"1天、1小时、到期", @"5小时、1小时、到期", @"仅到期", @"不提醒"]]; self.reminderPreset.target = self; self.reminderPreset.action = @selector(reminderPresetChanged:); Put(body, self.reminderPreset, 392, y, 264, 36); y += 44;
+        self.reminderValidation = Text(@"", 12, NSFontWeightRegular, Muted()); Put(body, self.reminderValidation, 24, y, 632, 24); y += 40;
+        Put(body, Text(@"备注（选填）", 15, NSFontWeightSemibold, Ink()), 24, y, 632, 24); y += 32;
+        Surface *notesSurface = Box(Card(), 8); notesSurface.stroke = Line(); Put(body, notesSurface, 24, y, 632, 112);
+        NSScrollView *notesScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(4, 4, 624, 104)]; notesScroll.hasVerticalScroller = YES; notesScroll.autohidesScrollers = YES; notesScroll.drawsBackground = NO;
+        self.notesField = [[PastelNotesView alloc] initWithFrame:NSMakeRect(0, 0, 604, 104)]; self.notesField.font = [NSFont systemFontOfSize:13]; self.notesField.textColor = Ink(); self.notesField.drawsBackground = NO; self.notesField.textContainerInset = NSMakeSize(8, 8); self.notesField.richText = NO; self.notesField.allowsUndo = YES; self.notesField.string = task[@"notes"] ?: @""; self.notesField.autoresizingMask = NSViewWidthSizable; self.notesField.textContainer.widthTracksTextView = YES; ThemeEditor(self.notesField); notesScroll.documentView = self.notesField; [notesSurface addSubview:notesScroll]; y += 136;
+        body.frame = NSMakeRect(0, 0, 680, y);
+        self.validation = Text(@"", 12, NSFontWeightRegular, Muted()); Put(root, self.validation, 24, 516, 400, 44); self.validation.maximumNumberOfLines = 2; self.validation.lineBreakMode = NSLineBreakByWordWrapping;
+        ActionButton *cancel = Button(@"取消", self, @selector(cancel:), 3); cancel.keyEquivalent = @"\033"; cancel.keyEquivalentModifierMask = 0; Put(root, cancel, 448, 524, 88, 36);
+        self.saveButton = Button(self.candidate ? @"确认并保存" : (task ? @"保存修改" : @"添加任务"), self, @selector(save:), 1); self.saveButton.keyEquivalent = @"\r"; self.saveButton.keyEquivalentModifierMask = 0; Put(root, self.saveButton, 544, 524, 112, 36);
+        [self validateReminders]; [self validateDate]; if (self.candidate && !self.teacherField.stringValue.length) { self.validation.stringValue = @"核对原文后补全老师截止时间，向下滚动设置我的 DDL。"; self.validation.textColor = Muted(); }
+        self.titleField.nextKeyView = self.subjectField; self.subjectField.nextKeyView = self.priority; self.priority.nextKeyView = self.teacherField ?: self.deadlineField; if (self.teacherField) self.teacherField.nextKeyView = self.leadMenu;
+        self.titleField.accessibilityLabel = @"任务名称"; self.subjectField.accessibilityLabel = @"课程或分类"; self.deadlineField.accessibilityLabel = @"我的截止时间"; self.teacherField.accessibilityLabel = @"老师截止时间，需完整日期和时间"; self.reminderField.accessibilityLabel = @"提醒时间"; self.notesField.accessibilityLabel = @"备注"; panel.initialFirstResponder = self.titleField; panel.defaultButtonCell = self.saveButton.cell; panel.autorecalculatesKeyViewLoop = YES;
+    } return self;
+}
+- (NSCalendar *)teacherCalendar { NSCalendar *calendar = Cal(); calendar.timeZone = [NSTimeZone timeZoneWithName:self.candidate[@"timeZone"] ?: NSTimeZone.localTimeZone.name] ?: NSTimeZone.localTimeZone; return calendar; }
+- (NSString *)formatTeacherDate:(NSDate *)date { NSDateFormatter *formatter = NSDateFormatter.new; formatter.dateFormat = @"yyyy-MM-dd HH:mm"; formatter.timeZone = self.teacherCalendar.timeZone; return [formatter stringFromDate:date]; }
+- (void)showDatePicker:(NSButton *)sender { self.datePopover = NSPopover.new; NSViewController *controller = NSViewController.new; controller.view = self.calendar; self.datePopover.contentViewController = controller; self.datePopover.behavior = NSPopoverBehaviorTransient; [self.datePopover showRelativeToRect:sender.bounds ofView:sender preferredEdge:NSRectEdgeMaxY]; }
+- (BOOL)confirmTeacherDate {
+    if (!self.candidate) return YES;
+    NSString *text = [self.teacherField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSDate *teacher = [text rangeOfString:@"^20\\d{2}[-/]\\d{1,2}[-/]\\d{1,2}\\s+(?:[01]?\\d|2[0-3]):[0-5]\\d$" options:NSRegularExpressionSearch].location == NSNotFound ? nil : DDLParseDate(text, NSDate.date, self.teacherCalendar);
+    if (!teacher) { self.validation.stringValue = @"请核对老师原文，填写完整的截止日期和时间。"; self.validation.textColor = NSColor.systemRedColor; return NO; }
+    self.announcedDue = teacher;
+    if (self.leadDays >= 0) [self updateDate:DDLPersonalDueDate(teacher, self.leadDays, Cal())];
+    return YES;
 }
 - (void)controlTextDidChange:(NSNotification *)notification {
+    if (notification.object == self.teacherField) { [self confirmTeacherDate]; return; }
     if (notification.object == self.timePicker) { [self timeChanged:self.timePicker]; return; }
     if (notification.object == self.reminderField) { [self validateReminders]; return; }
     if (notification.object == self.deadlineField) [self markManualLead];
@@ -579,16 +456,16 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (!date) return; self.selectedDate = date; self.deadlineField.stringValue = DDLFormatDate(date, @"yyyy-MM-dd HH:mm"); self.calendar.selection = date; self.calendar.month = date; self.timePicker.stringValue = DDLFormatDate(date, @"HH:mm"); [self.calendar reload]; [self validateDate];
 }
 - (void)markManualLead {
-    if (!self.announcedDue) return;
+    if (!self.announcedDue && !self.candidate) return;
     self.leadDays = -1;
     [self.leadMenu selectItemAtIndex:5];
 }
 - (void)leadChanged:(NSPopUpButton *)sender {
-    if (!self.announcedDue) return;
     NSArray<NSNumber *> *days = @[@0, @1, @2, @3, @7];
     NSInteger index = sender.indexOfSelectedItem;
-    if (index >= (NSInteger)days.count) { [self markManualLead]; [self.window makeFirstResponder:self.deadlineField]; return; }
+    if (index >= (NSInteger)days.count) { [self markManualLead]; [self focusInput:self.deadlineField]; return; }
     self.leadDays = days[index].integerValue;
+    if (!self.announcedDue) return;
     [self updateDate:DDLPersonalDueDate(self.announcedDue, self.leadDays, Cal())];
     self.importStatus.stringValue = [NSString stringWithFormat:@"老师截止：%@ · 我的 DDL：%@", DDLFormatDate(self.announcedDue, @"M月d日 HH:mm"), DDLFormatDate(self.selectedDate, @"M月d日 HH:mm")];
     self.importStatus.textColor = Accent();
@@ -633,6 +510,12 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSDate *day = DDLParseDate(sender.title, NSDate.date, Cal());
     [self chooseDate:day];
 }
+- (void)setLeadVisible:(BOOL)visible {
+    if (visible == !self.leadMenu.hidden) return;
+    CGFloat shift = visible ? 44 : -44, origin = NSMinY(self.leadMenu.frame); NSView *body = self.leadMenu.superview;
+    for (NSView *view in body.subviews) if (view != self.leadMenu && NSMinY(view.frame) >= origin) { NSRect frame = view.frame; frame.origin.y += shift; view.frame = frame; }
+    NSRect frame = body.frame; frame.size.height += shift; body.frame = frame; self.leadMenu.hidden = !visible;
+}
 - (void)applyImportedText:(NSString *)text source:(NSString *)source {
     NSDictionary<NSString *, id> *fields = DDLFieldsFromAnnouncement(text, NSDate.date, Cal());
     if (!fields.count) { self.importStatus.stringValue = @"没有识别到文字，请换一张清晰截图。"; self.importStatus.textColor = NSColor.systemRedColor; return; }
@@ -642,7 +525,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSDate *due = fields[@"due"];
     self.announcedDue = due; self.leadDays = due ? 0 : -1;
     self.deadlineLabel.stringValue = due ? @"我的 DDL 截止时间" : @"截止时间";
-    self.leadMenu.hidden = !due; [self.leadMenu selectItemAtIndex:due ? 0 : 5];
+    [self setLeadVisible:due != nil]; [self.leadMenu selectItemAtIndex:due ? 0 : 5];
     if (due) [self updateDate:due];
     else { self.deadlineField.stringValue = @""; [self validateDate]; }
     self.importStatus.stringValue = due ? [NSString stringWithFormat:@"已识别%@ · 老师截止：%@ · 可选提前天数", source, DDLFormatDate(due, @"M月d日 HH:mm")] : [NSString stringWithFormat:@"已识别%@，但没有找到明确日期；请手动填写截止时间。", source];
@@ -691,20 +574,23 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     }];
 }
 - (void)cancel:(id)sender { [self.appDelegate closeEditor]; }
+- (void)focusInput:(NSView *)field { [field scrollRectToVisible:field.bounds]; [self.window makeFirstResponder:field]; }
 - (void)save:(id)sender {
     NSString *title = [self.titleField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (!title.length) { self.validation.stringValue = @"先写一个任务名称。"; self.validation.textColor = NSColor.systemRedColor; [self.window makeFirstResponder:self.titleField]; return; }
+    if (!title.length) { self.validation.stringValue = @"先写一个任务名称。"; self.validation.textColor = NSColor.systemRedColor; [self focusInput:self.titleField]; return; }
+    if (![self confirmTeacherDate]) { [self focusInput:self.teacherField]; return; }
     NSDate *date = DDLParseDate(self.deadlineField.stringValue, NSDate.date, Cal());
-    if (!date) { [self validateDate]; [self.window makeFirstResponder:self.deadlineField]; return; }
-    if (![self parsedTime]) { [self timeChanged:self.timePicker]; [self.window makeFirstResponder:self.timePicker]; return; }
+    if (!date) { [self validateDate]; [self focusInput:self.deadlineField]; return; }
+    if (![self parsedTime]) { [self timeChanged:self.timePicker]; [self focusInput:self.timePicker]; return; }
     NSArray<NSNumber *> *reminderOffsets = DDLParseReminderOffsets(self.reminderField.stringValue);
-    if (!reminderOffsets) { [self validateReminders]; [self.window makeFirstResponder:self.reminderField]; return; }
+    if (!reminderOffsets) { [self validateReminders]; [self focusInput:self.reminderField]; return; }
     NSMutableDictionary *task = self.task ? [self.task mutableCopy] : [@{@"id":NSUUID.UUID.UUIDString, @"completed":@NO, @"archived":@NO} mutableCopy];
     NSString *subject = [self.subjectField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     NSInteger legacyMode = reminderOffsets.count == 0 ? 4 : ([reminderOffsets isEqual:@[@0]] ? 0 : ([reminderOffsets isEqual:@[@60, @0]] ? 1 : ([reminderOffsets isEqual:@[@1440, @60, @0]] ? 2 : ([reminderOffsets isEqual:@[@4320, @1440, @60, @0]] ? 3 : 2))));
     task[@"title"] = title; task[@"subject"] = subject.length ? subject : @"其他"; task[@"due"] = date; task[@"notes"] = self.notesField.string; task[@"priority"] = @(self.priority.indexOfSelectedItem); task[@"reminder"] = @(legacyMode); task[@"reminderOffsets"] = reminderOffsets;
     if (self.announcedDue) { task[@"announcedDue"] = self.announcedDue; task[@"leadDays"] = @(self.leadDays); }
     else { [task removeObjectForKey:@"announcedDue"]; [task removeObjectForKey:@"leadDays"]; }
+    [task removeObjectForKey:@"_reviewCandidate"]; [task removeObjectForKey:@"_existing"];
     [self.appDelegate commitTask:task originalID:self.task[@"id"]]; [self.appDelegate closeEditor];
 }
 @end
@@ -712,8 +598,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @implementation AppDelegate
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     self.preview = [NSProcessInfo.processInfo.arguments containsObject:@"--preview"];
-    NSApp.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
-    CurrentTheme = self.preview ? 1 : ThemeIndex([NSUserDefaults.standardUserDefaults objectForKey:ThemePreferenceKey]);
+    // Leave appearance unset so macOS controls light/dark mode.
+    self.page = 0; self.pageStates = NSMutableDictionary.dictionary;
     NSApp.applicationIconImage = ThemeIcon();
     if (!self.preview) {
         NSArray *running = [NSRunningApplication runningApplicationsWithBundleIdentifier:NSBundle.mainBundle.bundleIdentifier];
@@ -721,7 +607,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
             NSAlert *alert = [NSAlert new]; alert.messageText = @"另一个 DDL-Manager 正在运行"; alert.informativeText = @"请先退出旧版本或预览窗口，再打开本版，避免两个版本同时保存任务。"; [alert addButtonWithTitle:@"知道了"]; [NSApp activateIgnoringOtherApps:YES]; [alert runModal]; [NSApp terminate:nil]; return;
         }
     }
-    self.filter = 0; self.calendarMode = YES; self.query = @""; self.month = NSDate.date; self.selectedDay = NSDate.date; self.notice = @"";
+    self.filter = 0; self.calendarMode = NO; self.query = @""; self.month = NSDate.date; self.selectedDay = NSDate.date; self.notice = @"";
     self.taskUndo = [NSUndoManager new]; self.taskUndo.levelsOfUndo = 30;
     self.notificationStatus = self.preview ? @"演示模式 · 提醒未发送" : @"正在检查通知权限…";
     self.authorization = -1;
@@ -742,17 +628,15 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     }
     [self installMenu];
     self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1280, 840) styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView) backing:NSBackingStoreBuffered defer:NO];
-    self.window.title = self.preview ? @"DDL-Manager · 界面预览" : @"DDL-Manager"; self.window.titleVisibility = NSWindowTitleHidden; self.window.titlebarAppearsTransparent = YES;
-    self.window.minSize = NSMakeSize(1100, 760); self.window.releasedWhenClosed = NO; self.window.delegate = self; self.window.movableByWindowBackground = YES;
-    if (self.preview && [NSProcessInfo.processInfo.arguments containsObject:@"--compact"]) [self.window setContentSize:NSMakeSize(1100, 760)];
+    self.window.title = self.preview ? @"DDL-Manager · 界面预览" : @"DDL-Manager"; self.window.titleVisibility = NSWindowTitleVisible; self.window.titlebarAppearsTransparent = YES;
+    self.window.minSize = NSMakeSize(960, 640); self.window.releasedWhenClosed = NO; self.window.delegate = self; self.window.movableByWindowBackground = YES;
+    if (self.preview && [NSProcessInfo.processInfo.arguments containsObject:@"--compact"]) [self.window setContentSize:NSMakeSize(960, 640)];
     self.window.backgroundColor = Canvas();
     self.root = GradientBox(Canvas(), Panel(), 0); self.root.frame = NSMakeRect(0, 0, 1280, 840); self.window.contentView = self.root;
     self.sidebar = GradientBox(Panel(), Canvas(), 0); [self.root addSubview:self.sidebar];
     self.header = GradientBox(Canvas(), Panel(), 0); [self.root addSubview:self.header];
     self.search = [[NSSearchField alloc] initWithFrame:NSZeroRect]; self.search.placeholderString = @"搜索任务、学科、备注"; self.search.delegate = self; self.search.sendsSearchStringImmediately = YES; self.search.font = [NSFont systemFontOfSize:12]; [self.root addSubview:self.search];
-    self.viewMode = Segments(@[@"清单", @"总日历"], self, @selector(changeView:)); [self.root addSubview:self.viewMode];
     self.calendarStatus = Segments(@[@"全部", @"待完成", @"已完成"], self, @selector(changeCalendarStatus:)); [self.root addSubview:self.calendarStatus];
-    self.calendarHint = Text(@"", 10, NSFontWeightRegular, Muted()); [self.root addSubview:self.calendarHint];
     self.sortMenu = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.sortMenu addItemsWithTitles:@[@"按截止时间", @"按优先级"]]; self.sortMenu.target = self; self.sortMenu.action = @selector(sortChanged:); [self.root addSubview:self.sortMenu];
     self.scroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; self.scroll.hasVerticalScroller = YES; self.scroll.autohidesScrollers = YES; self.scroll.drawsBackground = NO;
     self.document = GradientBox(Canvas(), Panel(), 0); self.scroll.documentView = self.document; [self.root addSubview:self.scroll];
@@ -762,21 +646,9 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.agenda = GradientBox(Panel(), Canvas(), 14); [self.root addSubview:self.agenda];
     self.agendaScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; self.agendaScroll.hasVerticalScroller = YES; self.agendaScroll.autohidesScrollers = YES; self.agendaScroll.drawsBackground = NO;
     self.agendaDocument = Box(NSColor.clearColor, 0); self.agendaScroll.documentView = self.agendaDocument;
-    self.themePicker = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
-    self.themePicker.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium];
-    self.themePicker.target = self; self.themePicker.action = @selector(changeTheme:);
-    self.themePicker.accessibilityLabel = @"界面配色";
-    self.themePicker.toolTip = @"六种淡色配色，选择后界面和程序坞图标立即变色，并记住偏好";
-    for (NSInteger i = 0; i < (NSInteger)ThemeNames().count; i++) {
-        [self.themePicker addItemWithTitle:[@"配色 · " stringByAppendingString:ThemeNames()[i]]];
-        NSMenuItem *item = self.themePicker.lastItem; item.representedObject = ThemeIDs()[i];
-        unsigned swatch = Palettes[i].emphasis, outline = Palettes[i].accent;
-        item.image = [NSImage imageWithSize:NSMakeSize(14, 14) flipped:NO drawingHandler:^BOOL(NSRect rect) {
-            NSBezierPath *circle = [NSBezierPath bezierPathWithOvalInRect:NSInsetRect(rect, 1, 1)];
-            [RGB(swatch) setFill]; [circle fill]; [RGB(outline) setStroke]; [circle stroke]; return YES;
-        }];
-    }
-    [self.themePicker selectItemAtIndex:CurrentTheme]; [self.root addSubview:self.themePicker];
+    self.taskFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    [self.taskFilter addItemsWithTitles:@[@"待完成", @"今天", @"未来 7 天", @"已完成", @"归档", @"最近删除"]];
+    self.taskFilter.target = self; self.taskFilter.action = @selector(changeFilter:); [self.root addSubview:self.taskFilter];
     __weak typeof(self) weakSelf = self;
     self.root.onResize = ^{ [weakSelf layout]; };
     self.statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
@@ -786,28 +658,25 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (!self.preview) { UNUserNotificationCenter.currentNotificationCenter.delegate = self; [self refreshPermission]; [self refreshReminders]; }
     self.ticker = [NSTimer timerWithTimeInterval:60 target:self selector:@selector(tick:) userInfo:nil repeats:YES]; [NSRunLoop.mainRunLoop addTimer:self.ticker forMode:NSRunLoopCommonModes];
     [NSWorkspace.sharedWorkspace.notificationCenter addObserver:self selector:@selector(woke:) name:NSWorkspaceDidWakeNotification object:nil];
-    if (!self.preview) {
-        self.courseWindow = [SSCourseWindow new];
-        self.courseWindow.tasksProvider = ^NSArray * { return [weakSelf snapshot]; };
-        self.courseWindow.reviewCandidate = ^(NSDictionary *candidate) { [weakSelf reviewGitHubCandidate:candidate]; };
-        [self.courseWindow startAutomaticChecks];
-    }
+    self.courseWindow = [[SSCourseController alloc] initWithPreview:self.preview];
+    self.courseWindow.tasksProvider = ^NSArray * { return [weakSelf snapshot]; };
+    self.courseWindow.reviewCandidate = ^(NSDictionary *candidate) { [weakSelf reviewGitHubCandidate:candidate]; };
+    self.courseWindow.editTask = ^(NSString *identifier) { NSMenuItem *item = NSMenuItem.new; item.representedObject = identifier; [weakSelf editTask:item]; };
+    self.courseWindow.stateChanged = ^{ [weakSelf renderSidebar]; if (weakSelf.page == 0) [weakSelf renderContent]; };
+    [self.root addSubview:self.courseWindow.view]; self.courseWindow.view.hidden = YES;
+    self.root.onAppearanceChange = ^{ [weakSelf refreshAppearance]; };
+    if (!self.preview) [self.courseWindow startAutomaticChecks];
+    [self layout];
 }
-- (void)changeTheme:(NSPopUpButton *)sender {
-    CurrentTheme = ThemeIndex(sender.selectedItem.representedObject);
-    if (!self.preview) [NSUserDefaults.standardUserDefaults setObject:ThemeIDs()[CurrentTheme] forKey:ThemePreferenceKey];
-    NSApp.applicationIconImage = ThemeIcon();
-    self.window.backgroundColor = Canvas();
-    for (Surface *surface in @[self.root, self.header, self.document]) { surface.fill = Canvas(); surface.gradientEnd = Panel(); surface.needsDisplay = YES; }
-    self.calendarDocument.fill = Panel(); self.calendarDocument.gradientEnd = Canvas(); self.calendarDocument.needsDisplay = YES;
-    self.sidebar.fill = Panel(); self.sidebar.gradientEnd = Canvas(); self.sidebar.needsDisplay = YES;
-    self.agenda.fill = Panel(); self.agenda.gradientEnd = Canvas(); self.agenda.needsDisplay = YES;
-    self.calendarHint.textColor = Muted();
-    // Rebuild cached colors while preserving the date, scroll position and filters.
-    self.overviewSnapshot = nil;
-    [self render]; self.root.needsDisplay = YES;
-    self.viewMode.needsDisplay = YES; self.calendarStatus.needsDisplay = YES;
-    for (NSView *control in @[self.themePicker, self.sortMenu, self.yearPicker, self.monthPicker]) control.needsDisplay = YES;
+- (void)refreshAppearance {
+    if (!self.window || self.renderBusy) return;
+    NSResponder *focus = self.window.firstResponder; NSInteger calendarFocus = focus == self.yearPicker ? 1 : (focus == self.monthPicker ? 2 : 0);
+    ActionButton *button = [focus isKindOfClass:ActionButton.class] ? (ActionButton *)focus : nil; NSView *scope = [button isDescendantOf:self.sidebar] ? self.sidebar : ([button isDescendantOf:self.header] ? self.header : nil); SEL action = button.action; NSInteger tag = button.tag;
+    self.overviewSnapshot = nil; self.window.backgroundColor = Canvas();
+    [self render]; [self.courseWindow refreshPresentation];
+    if (calendarFocus) [self.window makeFirstResponder:calendarFocus == 1 ? self.yearPicker : self.monthPicker];
+    else if (scope) for (NSView *view in scope.subviews) if ([view isKindOfClass:ActionButton.class] && ((ActionButton *)view).action == action && view.tag == tag) { [self.window makeFirstResponder:view]; break; }
+    if (self.editor) { ThemeEditor(self.editor.notesField); if (self.editor.window.firstResponder && [self.editor.window.firstResponder isKindOfClass:NSTextView.class]) ThemeEditor((NSTextView *)self.editor.window.firstResponder); }
 }
 - (void)loadPreview {
     NSArray *samples = @[
@@ -839,12 +708,14 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     [app addItem:[NSMenuItem separatorItem]]; [app addItemWithTitle:@"隐藏 DDL-Manager" action:@selector(hide:) keyEquivalent:@"h"];
     [app addItemWithTitle:@"退出 DDL-Manager" action:@selector(terminate:) keyEquivalent:@"q"];
     NSMenuItem *fileItem = [NSMenuItem new]; [menu addItem:fileItem]; NSMenu *file = [[NSMenu alloc] initWithTitle:@"任务"]; fileItem.submenu = file;
-    NSMenuItem *add = [file addItemWithTitle:@"新建 DDL" action:@selector(addTask:) keyEquivalent:@"n"]; add.target = self;
+    NSMenuItem *add = [file addItemWithTitle:@"新建任务" action:@selector(addTask:) keyEquivalent:@"n"]; add.target = self;
     NSMenuItem *courses = [file addItemWithTitle:@"GitHub 课程与作业…" action:@selector(openCourses:) keyEquivalent:@"g"]; courses.target = self;
     NSMenuItem *import = [file addItemWithTitle:@"粘贴并识别 DDL" action:@selector(importClipboard:) keyEquivalent:@"v"]; import.target = self; import.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     NSMenuItem *search = [file addItemWithTitle:@"搜索任务" action:@selector(focusSearch:) keyEquivalent:@"f"]; search.target = self;
-    NSMenuItem *calendar = [file addItemWithTitle:@"总览日历" action:@selector(openCalendar:) keyEquivalent:@"2"]; calendar.target = self;
-    NSMenuItem *list = [file addItemWithTitle:@"返回清单" action:@selector(openList:) keyEquivalent:@"1"]; list.target = self;
+    NSMenuItem *overview = [file addItemWithTitle:@"总览" action:@selector(navigate:) keyEquivalent:@"1"]; overview.target = self; overview.tag = 0;
+    NSMenuItem *calendar = [file addItemWithTitle:@"日历" action:@selector(openCalendar:) keyEquivalent:@"2"]; calendar.target = self;
+    NSMenuItem *list = [file addItemWithTitle:@"任务" action:@selector(openList:) keyEquivalent:@"3"]; list.target = self;
+    NSMenuItem *inbox = [file addItemWithTitle:@"待审核作业" action:@selector(navigate:) keyEquivalent:@"4"]; inbox.target = self; inbox.tag = 3;
     NSMenuItem *export = [file addItemWithTitle:@"导出任务备份…" action:@selector(exportTasks:) keyEquivalent:@""]; export.target = self;
     NSMenuItem *restore = [file addItemWithTitle:@"导入任务备份…" action:@selector(importTasks:) keyEquivalent:@""]; restore.target = self;
     [file addItemWithTitle:@"关闭窗口" action:@selector(performClose:) keyEquivalent:@"w"];
@@ -868,27 +739,50 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)layout {
     if (!self.scroll) return;
-    CGFloat w = self.root.bounds.size.width, h = self.root.bounds.size.height;
-    self.themePicker.frame = NSMakeRect(w - 198, 47, 166, 26);
-    self.sidebar.hidden = self.calendarMode; self.scroll.hidden = self.calendarMode; self.viewMode.hidden = self.calendarMode; self.sortMenu.hidden = self.calendarMode;
-    self.calendarScroll.hidden = !self.calendarMode; self.agenda.hidden = !self.calendarMode; self.calendarStatus.hidden = !self.calendarMode; self.calendarHint.hidden = !self.calendarMode;
+    CGFloat w = NSWidth(self.root.bounds), h = NSHeight(self.root.bounds), x = 216, content = w - x - 24;
+    self.sidebar.hidden = NO; self.sidebar.frame = NSMakeRect(0, 0, 192, h);
+    self.header.frame = NSMakeRect(x, 48, content, 88);
+    BOOL coursePage = self.page >= 3;
+    self.scroll.hidden = coursePage || self.calendarMode;
+    self.calendarScroll.hidden = coursePage || !self.calendarMode;
+    self.agenda.hidden = coursePage || !self.calendarMode;
+    self.calendarStatus.hidden = coursePage || !self.calendarMode;
+    self.search.hidden = coursePage; self.sortMenu.hidden = self.page != 2;
+    self.taskFilter.hidden = self.page != 2;
+    self.search.frame = NSMakeRect(w - 280, 140, 256, 32);
+    self.taskFilter.frame = NSMakeRect(x, 140, 160, 32); self.sortMenu.frame = NSMakeRect(x + 176, 140, 152, 32);
+    self.calendarStatus.frame = NSMakeRect(x, 140, 240, 32);
     if (self.calendarMode) {
-        self.header.frame = NSMakeRect(32, 48, w - 64, 112);
-        self.calendarStatus.frame = NSMakeRect(32, 177, 228, 28);
-        self.calendarHint.frame = NSMakeRect(280, 183, w - 634, 20);
-        self.search.frame = NSMakeRect(w - 326, 176, 294, 30);
-        self.calendarScroll.frame = NSMakeRect(32, 223, w - 384, h - 247);
-        self.agenda.frame = NSMakeRect(w - 332, 223, 300, h - 247);
-        [self render]; return;
-    }
-    self.sidebar.frame = NSMakeRect(0, 0, 210, h);
-    CGFloat toolbarY = self.calendarMode ? 178 : 283;
-    self.header.frame = NSMakeRect(240, 52, w - 272, self.calendarMode ? 112 : 212);
-    self.viewMode.frame = NSMakeRect(240, toolbarY, 124, 28);
-    self.sortMenu.frame = NSMakeRect(w - 168, toolbarY - 1, 136, 30);
-    self.search.frame = NSMakeRect(w - 443, toolbarY - 1, 262, 29);
-    self.scroll.frame = NSMakeRect(236, toolbarY + 47, w - 262, h - toolbarY - 87);
+        if (w >= 1180) {
+            self.calendarScroll.frame = NSMakeRect(x, 188, content - 304, h - 212);
+            self.agenda.frame = NSMakeRect(w - 304, 188, 280, h - 212);
+        } else {
+            CGFloat agendaHeight = 176;
+            self.calendarScroll.frame = NSMakeRect(x, 188, content, h - 228 - agendaHeight);
+            self.agenda.frame = NSMakeRect(x, h - 24 - agendaHeight, content, agendaHeight);
+        }
+    } else self.scroll.frame = NSMakeRect(x, 188, content, h - 212);
+    self.courseWindow.view.hidden = !coursePage;
+    if (self.courseWindow) { self.courseWindow.view.frame = NSMakeRect(x, 144, content, h - 168); [self.courseWindow layoutContent]; }
     [self render];
+}
+- (void)navigate:(id)sender {
+    NSInteger destination = [sender tag];
+    if (destination < 0 || destination > 4) return;
+    if (self.page != destination) {
+        self.pageStates[@(self.page)] = @{@"query":self.query ?: @"", @"scroll":[NSValue valueWithPoint:self.scroll.contentView.bounds.origin], @"filter":@(self.filter)};
+        NSDictionary *state = self.pageStates[@(destination)];
+        self.query = state[@"query"] ?: @""; self.search.stringValue = self.query;
+        if (state[@"filter"]) self.filter = [state[@"filter"] integerValue];
+        [self.taskFilter selectItemAtIndex:self.filter];
+        self.page = destination; self.notice = @"";
+        self.calendarMode = destination == 1;
+        [self.searchTimer invalidate]; self.searchTimer = nil;
+        if (destination >= 3) [self.courseWindow setInbox:destination == 3];
+        [self layout];
+        if (state[@"scroll"]) [self.scroll.contentView scrollToPoint:[state[@"scroll"] pointValue]];
+    }
+    [self showWindow];
 }
 - (NSArray *)visibleTasks {
     NSDate *now = NSDate.date; NSCalendar *calendar = Cal();
@@ -915,77 +809,89 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)render {
     if (self.renderBusy || !self.document) return; self.renderBusy = YES;
-    if (!self.calendarMode) [self renderSidebar];
+    [self renderSidebar];
     [self renderHeader]; [self renderContent];
     NSInteger pending = [self countFilter:0]; self.statusItem.button.title = pending ? [NSString stringWithFormat:@" %ld", (long)pending] : @""; self.statusItem.button.toolTip = [NSString stringWithFormat:@"%ld 项待完成 · 点击打开 / 右键菜单", (long)pending];
     self.renderBusy = NO;
 }
 - (void)renderSidebar {
-    Clear(self.sidebar); CGFloat h = self.sidebar.bounds.size.height;
-    Surface *logo = GradientBox(Emphasis(), Tint(), 10); Put(self.sidebar, logo, 23, 64, 37, 37);
-    NSTextField *mark = Text(@"✓", 23, NSFontWeightMedium, Accent()); mark.alignment = NSTextAlignmentCenter; Put(logo, mark, 0, 4, 37, 30);
-    Put(self.sidebar, Text(@"DDL-Manager", 15, NSFontWeightSemibold, Ink()), 70, 64, 130, 24);
-    Put(self.sidebar, Text(@"一点计划，很多从容", 10, NSFontWeightRegular, Muted()), 70, 90, 130, 17);
-    Put(self.sidebar, Text(@"我的计划", 10, NSFontWeightMedium, Muted()), 25, 143, 160, 18);
-    ActionButton *calendar = Button(@"总览日历", self, @selector(openCalendar:), 2); calendar.symbol = @"calendar"; calendar.toolTip = @"查看整月待办与已完成任务（⌘2）"; Put(self.sidebar, calendar, 14, 167, 182, 39);
-    NSArray *names = @[@"待办清单", @"今天", @"未来 7 天", @"已完成", @"已归档", @"最近删除"];
-    NSArray *icons = @[@"square.stack", @"sun.max", @"calendar", @"checkmark.circle", @"archivebox", @"trash"];
-    for (NSInteger i = 0; i < 6; i++) {
-        ActionButton *b = Button([NSString stringWithFormat:@"%@     %ld", names[i], (long)[self countFilter:i]], self, @selector(changeFilter:), 3); b.symbol = icons[i]; b.tag = i; b.selected = self.filter == i;
-        Put(self.sidebar, b, 14, 216 + i * 41, 182, 36);
+    Clear(self.sidebar); CGFloat h = NSHeight(self.sidebar.bounds);
+    Put(self.sidebar, Text(@"DDL-Manager", 17, NSFontWeightSemibold, Ink()), 20, 48, 160, 24);
+    NSArray *names = @[@"总览", @"日历", @"任务", @"待审核作业", @"课程"];
+    NSArray *icons = @[@"square.grid.2x2", @"calendar", @"checklist", @"tray", @"books.vertical"];
+    for (NSInteger i = 0; i < 5; i++) {
+        NSString *name = i == 3 && self.courseWindow.pendingCount ? [NSString stringWithFormat:@"%@  %lu", names[i], (unsigned long)self.courseWindow.pendingCount] : names[i];
+        ActionButton *button = Button(name, self, @selector(navigate:), 3); button.symbol = icons[i]; button.tag = i; button.selected = self.page == i;
+        Put(self.sidebar, button, 12, 104 + i * 44, 168, 36);
     }
-    ActionButton *courses = Button(@"GitHub 课程与作业", self, @selector(openCourses:), 2); courses.symbol = @"books.vertical"; Put(self.sidebar, courses, 14, 469, 182, 36);
-    Surface *tip = GradientBox(Tint(), Panel(), 12); Put(self.sidebar, tip, 18, h - 223, 174, 96);
-    Put(tip, Text(@"留一点空白", 12, NSFontWeightSemibold, Accent()), 14, 14, 146, 20);
-    NSTextField *tipText = Text(@"专注眼前的一件事。\n完成之后，记得休息一下。", 10, NSFontWeightRegular, Muted()); tipText.maximumNumberOfLines = 2; tipText.lineBreakMode = NSLineBreakByWordWrapping; Put(tip, tipText, 14, 42, 150, 42);
-    ActionButton *notification = Button(@"提醒设置", self, @selector(showNotificationSettings:), 3); notification.symbol = @"bell"; Put(self.sidebar, notification, 16, h - 105, 176, 32);
-    NSTextField *status = Text(self.notificationStatus, 9, NSFontWeightRegular, Muted()); status.toolTip = self.notificationStatus; Put(self.sidebar, status, 27, h - 68, 163, 16);
-    Put(self.sidebar, Text(self.preview ? @"预览数据 · 不会保存" : @"仅存于此 Mac · v1.0", 9, NSFontWeightRegular, Muted()), 27, h - 35, 168, 17);
+    ActionButton *account = Button(self.courseWindow.accountSummary ?: @"连接 GitHub", self, @selector(accountSettings:), 3); account.symbol = @"person.crop.circle";
+    Put(self.sidebar, account, 12, h - 124, 168, 36);
+    ActionButton *settings = Button(@"设置", self, @selector(showSettings:), 3); settings.symbol = @"gearshape"; Put(self.sidebar, settings, 12, h - 80, 168, 36);
+    Put(self.sidebar, Text(self.preview ? @"模拟数据 · 不会保存" : @"本机数据 · v1.0", 11, NSFontWeightRegular, Muted()), 20, h - 32, 164, 16);
+}
+- (void)accountSettings:(id)sender { [self.courseWindow accountSettings:sender]; }
+- (void)showSettings:(id)sender {
+    NSMenu *menu = NSMenu.new;
+    for (NSArray *entry in @[@[@"提醒设置…", NSStringFromSelector(@selector(showNotificationSettings:))], @[@"GitHub 账户…", NSStringFromSelector(@selector(accountSettings:))], @[@"高级：GitHub App…", NSStringFromSelector(@selector(setClientID:))]]) {
+        NSMenuItem *item = [menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""]; item.target = [entry[1] isEqual:NSStringFromSelector(@selector(setClientID:))] ? self.courseWindow : self;
+    }
+    [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(12, NSHeight(self.sidebar.bounds) - 80) inView:self.sidebar];
 }
 - (void)renderHeader {
-    Clear(self.header); CGFloat w = self.header.bounds.size.width;
+    Clear(self.header); CGFloat w = NSWidth(self.header.bounds);
     if (self.calendarMode) { [self renderCalendarHeader]; return; }
-    Put(self.header, Text([DDLFormatDate(NSDate.date, @"M月d日 · EEEE") uppercaseString], 11, NSFontWeightMedium, Muted()), 0, 0, 380, 22);
-    NSArray *titles = @[@"把重要的事，安排好。", @"今天，专注眼前。", @"为接下来的一周留白。", @"每一小步，都算数。", @"暂时收起，也好找回。", @"删掉的，先在这里歇一会儿。"];
-    Put(self.header, Text(titles[self.filter], 28, NSFontWeightSemibold, Ink()), 0, 32, w - 148, 42);
-    NSInteger overdue = 0;
-    for (NSDictionary *task in self.tasks) if (![task[@"completed"] boolValue] && ![task[@"archived"] boolValue] && ![task[@"deleted"] boolValue] && [task[@"due"] timeIntervalSinceNow] < 0) overdue++;
-    NSString *subtitle = overdue ? [NSString stringWithFormat:@"有 %ld 项已逾期，给它们一个新的安排吧。", (long)overdue] : @"清单记住截止时间，你只管做好每一步。";
-    Put(self.header, Text(self.notice.length ? self.notice : subtitle, 12, NSFontWeightRegular, Muted()), 0, 81, w, 23);
-    ActionButton *add = Button(@"新建 DDL", self, @selector(addTask:), 1); add.symbol = @"plus"; add.toolTip = @"新建 DDL（⌘N）"; Put(self.header, add, w - 122, 37, 122, 38);
-    if (self.calendarMode) return;
-    NSArray *values = @[@([self countFilter:0]), @([self countFilter:1]), @([self countFilter:3])];
-    NSArray *labels = @[@"待完成", @"今日截止", @"已经完成"];
-    NSArray *subtitles = @[@"一步一步，就会完成", @"给今天一个清晰的节奏", @"把进步好好记下来"];
-    CGFloat cardW = (w - 24) / 3;
-    for (NSInteger i = 0; i < 3; i++) {
-        Surface *card = GradientBox(i == 0 ? Emphasis() : Card(), i == 0 ? Tint() : Canvas(), 12); card.stroke = i == 0 ? nil : Line(); Put(self.header, card, i * (cardW + 12), 123, cardW, 88);
-        Put(card, Text(labels[i], 11, NSFontWeightMedium, i == 0 ? Accent() : Muted()), 16, 14, cardW - 74, 18);
-        Put(card, Text([values[i] stringValue], 28, NSFontWeightSemibold, Ink()), cardW - 64, 9, 47, 40);
-        Put(card, Text(subtitles[i], 10, NSFontWeightRegular, Muted()), 16, 58, cardW - 32, 17);
+    NSString *title = @[@"今日与近期安排", @"日历", @"任务", @"待审核作业", @"课程"][self.page];
+    Put(self.header, Text(title, 25, NSFontWeightSemibold, Ink()), 0, 4, w - 152, 32);
+    NSString *subtitle = (self.notice.length && self.page < 3) ? self.notice : (self.page == 0 ? DDLFormatDate(NSDate.date, @"M月d日 EEEE") : (self.page == 3 ? @"核对老师原文后，将作业加入日历与提醒" : (self.page == 4 ? @"管理课程仓库、更新与提交" : @"按截止时间安排任务")));
+    Put(self.header, Text(subtitle, 13, NSFontWeightRegular, Muted()), 0, 48, w, 24);
+    if (self.page < 3) { ActionButton *add = Button(@"新建任务", self, @selector(addTask:), 1); add.symbol = @"plus"; Put(self.header, add, w - 136, 0, 136, 36); }
+}
+- (void)renderDashboard {
+    NSPoint position = self.scroll.contentView.bounds.origin; Clear(self.document);
+    CGFloat w = self.scroll.contentSize.width - 8, y = 0;
+    if (self.courseWindow.pendingCount) {
+        ActionButton *inbox = Button([NSString stringWithFormat:@"%lu 项作业待审核", (unsigned long)self.courseWindow.pendingCount], self, @selector(navigate:), 2); inbox.tag = 3; inbox.symbol = @"tray";
+        Put(self.document, inbox, 4, y, w, 40); y += 56;
     }
+    NSDate *now = NSDate.date; NSDate *today = [Cal() startOfDayForDate:NSDate.date], *tomorrow = [Cal() dateByAddingUnit:NSCalendarUnitDay value:1 toDate:today options:0], *week = [Cal() dateByAddingUnit:NSCalendarUnitDay value:8 toDate:today options:0];
+    NSArray *labels = @[@"已逾期", @"今天", @"未来七天"];
+    for (NSInteger section = 0; section < 3; section++) {
+        NSMutableArray *tasks = NSMutableArray.array;
+        for (NSDictionary *task in self.tasks) {
+            if ([task[@"completed"] boolValue] || [task[@"archived"] boolValue] || [task[@"deleted"] boolValue]) continue;
+            NSDate *due = task[@"due"];
+            BOOL match = section == 0 ? [due compare:now] == NSOrderedAscending : (section == 1 ? [due compare:now] != NSOrderedAscending && [due compare:tomorrow] == NSOrderedAscending : [due compare:tomorrow] != NSOrderedAscending && [due compare:week] == NSOrderedAscending);
+            if (match && (!self.query.length || DDLMatchesFilter(task, 0, self.query, NSDate.date, Cal()))) [tasks addObject:task];
+        }
+        [tasks sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [a[@"due"] compare:b[@"due"]]; }];
+        Put(self.document, Text([NSString stringWithFormat:@"%@ · %lu", labels[section], (unsigned long)tasks.count], 15, NSFontWeightSemibold, Ink()), 4, y, w, 24); y += 32;
+        for (NSDictionary *task in tasks) { Put(self.document, [self taskRow:task width:w], 4, y, w, 80); y += 88; }
+        if (!tasks.count) { Put(self.document, Text(@"暂无任务", 13, NSFontWeightRegular, Muted()), 8, y, w - 16, 24); y += 40; }
+        y += 16;
+    }
+    self.document.frame = NSMakeRect(0, 0, self.scroll.contentSize.width, MAX(y, self.scroll.contentSize.height));
+    [self.scroll.contentView scrollToPoint:position];
 }
 - (Surface *)taskRow:(NSDictionary *)task width:(CGFloat)w {
-    BOOL completed = [task[@"completed"] boolValue], archived = [task[@"archived"] boolValue];
-    Surface *row = GradientBox(Card(), Canvas(), 12); row.stroke = Line(); row.frame = NSMakeRect(0, 0, w, 98);
-    NSButton *check = [NSButton checkboxWithTitle:@"" target:self action:@selector(toggleTask:)]; check.identifier = task[@"id"]; check.state = completed ? NSControlStateValueOn : NSControlStateValueOff; check.toolTip = completed ? @"恢复待完成" : @"标记完成"; check.accessibilityLabel = [NSString stringWithFormat:@"%@：%@", check.toolTip, task[@"title"]]; Put(row, check, 17, 36, 22, 26);
-    NSTextField *subject = Text(task[@"subject"], 10, NSFontWeightSemibold, Accent()); Put(row, subject, 53, 12, 155, 18);
-    NSInteger p = [task[@"priority"] integerValue]; if (p > 0) Put(row, Text(p == 2 ? @"● 紧急" : @"● 重要", 10, NSFontWeightMedium, p == 2 ? NSColor.systemRedColor : Adaptive(0xA27725, 0xDDBA6F)), 213, 12, 80, 18);
-    NSString *remaining = DDLRemaining(task[@"due"], NSDate.date, completed);
-    NSTextField *time = Text(remaining, 10, NSFontWeightMedium, !completed && [task[@"due"] timeIntervalSinceNow] < 0 ? NSColor.systemRedColor : Muted()); time.alignment = NSTextAlignmentRight; Put(row, time, w - 175, 12, 155, 18);
-    NSTextField *title = Text(task[@"title"], 15, NSFontWeightMedium, completed ? Muted() : Ink()); title.selectable = YES; title.toolTip = task[@"title"]; Put(row, title, 53, 37, completed ? w - 226 : w - 176, 23);
-    NSArray<NSNumber *> *offsets = DDLReminderOffsetsForTask(task);
-    NSString *reminderText = offsets.count ? [NSString stringWithFormat:@"提醒：%@", DDLFormatReminderOffsets(offsets)] : @"提醒已关闭";
-    if (completed || archived) reminderText = @"提醒已停止";
-    NSString *detail = [NSString stringWithFormat:@"%@   ·   %@", DDLFormatDate(task[@"due"], @"M月d日 E HH:mm"), reminderText];
-    if ([task[@"notes"] length]) detail = [detail stringByAppendingFormat:@"   ·   %@", [task[@"notes"] stringByReplacingOccurrencesOfString:@"\n" withString:@" "]];
-    NSTextField *description = Text(detail, 10, NSFontWeightRegular, Muted()); description.toolTip = task[@"notes"]; Put(row, description, 53, 70, w - 135, 17);
-    ActionButton *edit = Button(@"编辑", self, @selector(editTask:), 3); edit.identifier = task[@"id"]; edit.accessibilityLabel = [NSString stringWithFormat:@"编辑：%@", task[@"title"]]; Put(row, edit, w - 109, 38, 48, 28);
-    ActionButton *more = Button(archived ? @"恢复" : @"归档", self, @selector(archiveTask:), 3); more.identifier = task[@"id"]; more.toolTip = archived ? @"恢复到清单" : @"暂时收起此任务，可在已归档中恢复"; Put(row, more, w - 60, 38, 47, 28);
-    if (completed) { ActionButton *remove = Button(@"删除", self, @selector(deleteTask:), 3); remove.identifier = task[@"id"]; remove.accessibilityLabel = [NSString stringWithFormat:@"删除：%@", task[@"title"]]; Put(row, remove, w - 164, 38, 52, 28); }
-    NSMenu *context = [NSMenu new]; NSMenuItem *copy = [context addItemWithTitle:@"复制任务内容" action:@selector(copyTask:) keyEquivalent:@""]; copy.target = self; copy.representedObject = task[@"id"];
-    NSMenuItem *editItem = [context addItemWithTitle:@"编辑任务…" action:@selector(editTask:) keyEquivalent:@""]; editItem.target = self; editItem.representedObject = task[@"id"]; row.menu = context;
+    BOOL completed = [task[@"completed"] boolValue];
+    Surface *row = Box(Card(), 10); row.stroke = Line(); row.frame = NSMakeRect(0, 0, w, 80);
+    NSButton *check = [NSButton checkboxWithTitle:@"" target:self action:@selector(toggleTask:)]; check.identifier = task[@"id"]; check.state = completed ? NSControlStateValueOn : NSControlStateValueOff;
+    check.accessibilityLabel = [NSString stringWithFormat:@"%@：%@", completed ? @"恢复待完成" : @"标记完成", task[@"title"]]; Put(row, check, 16, 26, 24, 28);
+    NSTextField *title = Text(task[@"title"], 14, NSFontWeightMedium, completed ? Muted() : Ink()); title.toolTip = task[@"title"]; Put(row, title, 52, 12, w - 196, 24);
+    NSString *detail = [NSString stringWithFormat:@"%@ · %@%@", task[@"subject"], DDLFormatDate(task[@"due"], @"M月d日 HH:mm"), [task[@"priority"] integerValue] == 2 ? @" · 紧急" : ([task[@"priority"] integerValue] == 1 ? @" · 重要" : @"")];
+    NSTextField *description = Text(detail, 12, NSFontWeightRegular, Muted()); description.toolTip = task[@"notes"]; Put(row, description, 52, 44, w - 260, 20);
+    NSTextField *status = Text(DDLRemaining(task[@"due"], NSDate.date, completed), 12, NSFontWeightMedium, EventColor(task)); status.alignment = NSTextAlignmentRight; Put(row, status, w - 188, 44, 168, 20);
+    ActionButton *edit = Button(@"编辑", self, @selector(editTask:), 3); edit.identifier = task[@"id"]; Put(row, edit, w - 120, 12, 64, 32);
+    ActionButton *more = Button(@"", self, @selector(taskActions:), 3); more.symbol = @"ellipsis"; more.identifier = task[@"id"]; more.accessibilityLabel = @"任务更多操作"; Put(row, more, w - 52, 12, 36, 32);
     return row;
+}
+- (void)taskActions:(NSButton *)sender {
+    NSDictionary *task = [self taskWithID:sender.identifier]; if (!task) return;
+    NSMenu *menu = NSMenu.new;
+    for (NSArray *entry in @[@[@"复制任务内容", NSStringFromSelector(@selector(copyTask:))], @[[task[@"archived"] boolValue] ? @"恢复到任务" : @"归档", NSStringFromSelector(@selector(archiveTask:))], @[@"移到最近删除", NSStringFromSelector(@selector(deleteTask:))]]) {
+        NSMenuItem *item = [menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""]; item.target = self; item.representedObject = task[@"id"];
+    }
+    [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, NSHeight(sender.bounds)) inView:sender];
 }
 
 - (Surface *)deletedRow:(NSDictionary *)task width:(CGFloat)w {
@@ -1002,35 +908,22 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 
 - (void)renderCalendarHeader {
-    CGFloat w = self.header.bounds.size.width;
-    Put(self.header, Text(@"日程总览  /  DDL-Manager", 10, NSFontWeightMedium, Muted()), 0, 0, 290, 20);
-    ActionButton *courses = Button(@"GitHub 课程与作业", self, @selector(openCourses:), 2); courses.symbol = @"books.vertical"; Put(self.header, courses, w - 380, 0, 182, 24);
-    self.calendarMonthTitle = Text(@"", 28, NSFontWeightSemibold, Ink()); Put(self.header, self.calendarMonthTitle, 0, 28, 205, 44);
+    CGFloat w = NSWidth(self.header.bounds);
+    self.calendarMonthTitle = Text(@"", 25, NSFontWeightSemibold, Ink()); Put(self.header, self.calendarMonthTitle, 0, 4, w - 152, 32);
+    ActionButton *add = Button(@"新建任务", self, @selector(addTask:), 1); add.symbol = @"plus"; Put(self.header, add, w - 136, 0, 136, 36);
     self.yearPicker = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     for (NSInteger year = 1900; year <= 2200; year++) [self.yearPicker addItemWithTitle:[NSString stringWithFormat:@"%ld 年", (long)year]];
-    [self.yearPicker selectItemWithTitle:DDLFormatDate(self.month, @"yyyy 年")]; self.yearPicker.target = self; self.yearPicker.action = @selector(jumpCalendar:); self.yearPicker.toolTip = @"精确跳转到年份";
+    self.yearPicker.target = self; self.yearPicker.action = @selector(jumpCalendar:);
     self.monthPicker = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     for (NSInteger month = 1; month <= 12; month++) [self.monthPicker addItemWithTitle:[NSString stringWithFormat:@"%ld 月", (long)month]];
-    [self.monthPicker selectItemWithTitle:DDLFormatDate(self.month, @"M 月")]; self.monthPicker.target = self; self.monthPicker.action = @selector(jumpCalendar:); self.monthPicker.toolTip = @"精确跳转到月份";
-    Put(self.header, self.yearPicker, 208, 34, 88, 30); Put(self.header, self.monthPicker, 300, 34, 66, 30);
-    ActionButton *prev = Button(@"", self, @selector(navigateCalendar:), 3); prev.tag = -1; prev.symbol = @"chevron.up"; prev.accessibilityLabel = @"上个月"; prev.toolTip = @"向上翻到上个月";
-    ActionButton *today = Button(@"今天", self, @selector(navigateCalendar:), 2); today.tag = 0;
-    ActionButton *next = Button(@"", self, @selector(navigateCalendar:), 3); next.tag = 1; next.symbol = @"chevron.down"; next.accessibilityLabel = @"下个月"; next.toolTip = @"向下翻到下个月";
-    Put(self.header, prev, 374, 34, 32, 32); Put(self.header, today, 410, 34, 52, 32); Put(self.header, next, 466, 34, 32, 32);
-    ActionButton *list = Button(@"返回清单", self, @selector(openList:), 3); list.symbol = @"list.bullet"; Put(self.header, list, w - 252, 29, 112, 38);
-    ActionButton *add = Button(@"新建 DDL", self, @selector(addTask:), 1); add.symbol = @"plus"; Put(self.header, add, w - 126, 29, 126, 38);
-    NSArray *colors = @[Ink(), Accent(), Adaptive(0x568369, 0xA6D5B6), Adaptive(0xB86154, 0xEFACA0)];
-    NSMutableArray<NSTextField *> *summaryLabels = [NSMutableArray array];
-    for (NSInteger i = 0; i < 4; i++) {
-        Surface *badge = GradientBox(i == 0 ? Emphasis() : Card(), i == 0 ? Tint() : Canvas(), 7); Put(self.header, badge, i * 127, 82, 117, 28);
-        NSTextField *label = Text(@"", 11, NSFontWeightMedium, colors[i]); Put(badge, label, 10, 6, 100, 18); [summaryLabels addObject:label];
-    }
-    self.calendarSummaryLabels = summaryLabels;
-    self.calendarProgressText = Text(@"", 10, NSFontWeightMedium, Muted()); Put(self.header, self.calendarProgressText, w - 210, 78, 210, 18);
-    self.calendarProgressTrack = Box(Line(), 3); Put(self.header, self.calendarProgressTrack, w - 210, 104, 210, 5);
+    self.monthPicker.target = self; self.monthPicker.action = @selector(jumpCalendar:);
+    Put(self.header, self.yearPicker, 0, 48, 104, 32); Put(self.header, self.monthPicker, 112, 48, 80, 32);
+    ActionButton *prev = Button(@"", self, @selector(navigateCalendar:), 3); prev.tag = -1; prev.symbol = @"chevron.up"; prev.accessibilityLabel = @"上个月";
+    ActionButton *today = Button(@"今天", self, @selector(navigateCalendar:), 2);
+    ActionButton *next = Button(@"", self, @selector(navigateCalendar:), 3); next.tag = 1; next.symbol = @"chevron.down"; next.accessibilityLabel = @"下个月";
+    Put(self.header, prev, 208, 48, 32, 32); Put(self.header, today, 248, 48, 64, 32); Put(self.header, next, 320, 48, 32, 32);
+    self.calendarProgressText = Text(@"", 12, NSFontWeightRegular, Muted()); self.calendarProgressText.alignment = NSTextAlignmentRight; Put(self.header, self.calendarProgressText, w - 240, 48, 240, 24);
     [self updateCalendarHeaderState];
-    self.calendarHint.stringValue = self.notice.length ? self.notice : @"上下滚动浏览月份；点击日期或任务，在右侧查看详情。";
-    self.calendarHint.toolTip = self.calendarHint.stringValue;
 }
 - (void)updateCalendarHeaderState {
     if (!self.calendarMode || !self.calendarMonthTitle) return;
@@ -1038,11 +931,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     [self.yearPicker selectItemWithTitle:DDLFormatDate(self.month, @"yyyy 年")];
     [self.monthPicker selectItemWithTitle:DDLFormatDate(self.month, @"M 月")];
     NSDictionary *summary = DDLMonthSummary(self.tasks, self.month, NSDate.date, Cal());
-    NSArray *labels = @[[NSString stringWithFormat:@"本月 %@ 项", summary[@"total"]], [NSString stringWithFormat:@"○ 待完成  %@", summary[@"pending"]], [NSString stringWithFormat:@"✓ 已完成  %@", summary[@"completed"]], [NSString stringWithFormat:@"! 已逾期  %@", summary[@"overdue"]]];
-    for (NSInteger i = 0; i < MIN((NSInteger)labels.count, (NSInteger)self.calendarSummaryLabels.count); i++) self.calendarSummaryLabels[i].stringValue = labels[i];
     double ratio = [summary[@"total"] doubleValue] > 0 ? [summary[@"completed"] doubleValue] / [summary[@"total"] doubleValue] : 0;
-    self.calendarProgressText.stringValue = [summary[@"total"] integerValue] ? [NSString stringWithFormat:@"本月完成度  %.0f%%", ratio * 100] : @"这个月，等待新的计划";
-    Clear(self.calendarProgressTrack); if (ratio > 0) Put(self.calendarProgressTrack, Box(Accent(), 3), 0, 0, MAX(5, 210 * ratio), 5);
+    self.calendarProgressText.stringValue = [summary[@"total"] integerValue] ? [NSString stringWithFormat:@"本月完成度  %.0f%%", ratio * 100] : @"本月暂无任务";
 }
 - (Surface *)agendaRow:(NSDictionary *)task width:(CGFloat)w {
     BOOL done = [task[@"completed"] boolValue];
@@ -1081,7 +971,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
             NSDate *month = [Cal() dateByAddingUnit:NSCalendarUnitMonth value:offset toDate:baseStart options:0];
             CGFloat sectionY = (offset + 6) * self.calendarSectionHeight;
             NSTextField *monthTitle = Text(DDLFormatDate(month, @"yyyy 年 M 月"), 18, NSFontWeightSemibold, Ink()); Put(self.calendarDocument, monthTitle, 4, sectionY + 6, calendarWidth - 8, 28);
-            OverviewGrid *grid = [OverviewGrid new]; grid.fill = Panel(); grid.gradientEnd = Canvas(); grid.stroke = Line(); grid.radius = 14; grid.month = month; grid.selection = self.selectedDay; grid.tasksByDay = tasksByDay;
+            OverviewGrid *grid = [OverviewGrid new]; grid.fill = Panel(); grid.gradientEnd = nil; grid.stroke = Line(); grid.radius = 14; grid.month = month; grid.selection = self.selectedDay; grid.tasksByDay = tasksByDay;
             grid.onSelect = ^(NSDate *date, NSString *taskID) {
                 weakSelf.selectedDay = date; weakSelf.month = date; weakSelf.focusedTaskID = taskID; weakSelf.notice = @"";
                 [weakSelf.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [weakSelf render];
@@ -1102,20 +992,20 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSPoint position = self.agendaScroll.contentView.bounds.origin;
     Clear(self.agenda); Clear(self.agendaDocument);
     Put(self.agenda, Text(DDLFormatDate(self.selectedDay, @"M 月 d 日"), 23, NSFontWeightSemibold, Ink()), 18, 20, 223, 32);
-    ActionButton *add = Button(@"+", self, @selector(addTask:), 2); add.accessibilityLabel = [NSString stringWithFormat:@"为 %@ 新建任务", DDLFormatDate(self.selectedDay, @"M月d日")]; add.font = [NSFont systemFontOfSize:20]; Put(self.agenda, add, 248, 19, 32, 32);
+    ActionButton *add = Button(@"+", self, @selector(addTask:), 2); add.accessibilityLabel = [NSString stringWithFormat:@"为 %@ 新建任务", DDLFormatDate(self.selectedDay, @"M月d日")]; add.font = [NSFont systemFontOfSize:20]; Put(self.agenda, add, NSWidth(self.agenda.bounds) - 48, 16, 32, 32);
     NSArray *dayTasks = tasksByDay[[calendar startOfDayForDate:self.selectedDay]] ?: @[];
     NSInteger completed = 0; for (NSDictionary *task in dayTasks) if ([task[@"completed"] boolValue]) completed++;
     NSString *detail = [NSString stringWithFormat:@"%@ · %lu 项待做 · %ld 项已完成", DDLFormatDate(self.selectedDay, @"EEEE"), dayTasks.count - completed, (long)completed];
     Put(self.agenda, Text(detail, 10, NSFontWeightRegular, Muted()), 18, 62, 264, 18);
-    Put(self.agenda, self.agendaScroll, 12, 96, 276, self.agenda.bounds.size.height - 111);
+    Put(self.agenda, self.agendaScroll, 12, 80, NSWidth(self.agenda.bounds) - 24, MAX(64, NSHeight(self.agenda.bounds) - 96));
     CGFloat w = self.agendaScroll.contentSize.width - 4, y = 0, focusY = -1;
     for (NSDictionary *task in dayTasks) {
         if ([self.focusedTaskID isEqual:task[@"id"]]) focusY = y;
-        Put(self.agendaDocument, [self agendaRow:task width:w], 2, y, w, 159); y += 171;
+        BOOL compact = NSWidth(self.root.bounds) < 1180; Put(self.agendaDocument, compact ? [self taskRow:task width:w] : [self agendaRow:task width:w], 2, y, w, compact ? 80 : 159); y += compact ? 88 : 171;
     }
     if (!dayTasks.count) {
         NSTextField *mark = Text(@"☀", 32, NSFontWeightLight, Accent()); mark.alignment = NSTextAlignmentCenter; Put(self.agendaDocument, mark, 0, 42, w, 48);
-        NSString *message = self.query.length || self.calendarStatus.selectedSegment != 0 ? @"这一天没有匹配的任务" : @"这一天，留一点空白。";
+        NSString *message = self.query.length || self.calendarStatus.selectedSegment != 0 ? @"这一天没有匹配的任务" : @"这一天暂无任务";
         NSTextField *title = Text(message, 13, NSFontWeightMedium, Ink()); title.alignment = NSTextAlignmentCenter; Put(self.agendaDocument, title, 0, 100, w, 23);
         NSTextField *hint = Text(self.query.length || self.calendarStatus.selectedSegment != 0 ? @"试试切换到「全部」或清空搜索。" : @"也可以点 +，为这一天安排新任务。", 10, NSFontWeightRegular, Muted()); hint.alignment = NSTextAlignmentCenter; Put(self.agendaDocument, hint, 0, 137, w, 36);
         y = 185;
@@ -1186,51 +1076,35 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     }
 }
 - (void)changeCalendarStatus:(id)sender { self.focusedTaskID = nil; self.notice = @""; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [self render]; }
-- (void)openCalendar:(id)sender {
-    [self.searchTimer invalidate]; self.searchTimer = nil;
-    self.calendarMode = YES; self.calendarStatus.selectedSegment = 0; self.query = @""; self.search.stringValue = @""; self.notice = @""; self.focusedTaskID = nil; self.calendarBaseMonth = self.month; self.calendarNeedsCenter = YES; [self showWindow]; [self layout];
-}
-- (void)openList:(id)sender { [self.searchTimer invalidate]; self.searchTimer = nil; self.calendarMode = NO; self.viewMode.selectedSegment = 0; self.query = @""; self.search.stringValue = @""; self.notice = @""; [self showWindow]; [self layout]; }
+- (void)openCalendar:(id)sender { NSButton *route = NSButton.new; route.tag = 1; [self navigate:route]; }
+- (void)openList:(id)sender { NSButton *route = NSButton.new; route.tag = 2; [self navigate:route]; }
 - (void)renderContent {
+    if (self.page >= 3) return;
+    if (self.page == 0) { [self renderDashboard]; return; }
     if (self.calendarMode) { [self renderOverview]; return; }
     NSPoint position = self.scroll.contentView.bounds.origin;
     Clear(self.document); CGFloat w = self.scroll.contentSize.width - 8, y = 0;
     NSArray *tasks = [self visibleTasks];
-    if (self.calendarMode) {
-        MonthView *calendar = [MonthView new]; calendar.fill = Card(); calendar.gradientEnd = Canvas(); calendar.stroke = Line(); calendar.radius = 14; calendar.month = self.month; calendar.selection = self.selectedDay; calendar.tasks = tasks;
-        CGFloat calendarHeight = MAX(392, MIN(480, self.scroll.contentSize.height - 8));
-        Put(self.document, calendar, 4, 0, w, calendarHeight); [calendar reload];
-        __weak typeof(self) weakSelf = self;
-        calendar.onSelect = ^(NSDate *date) { weakSelf.month = date; weakSelf.selectedDay = date; [weakSelf renderContent]; };
-        calendar.onMonthChange = ^(NSDate *date) { weakSelf.month = date; };
-        // Preserve the navigated month when changing task filters or refreshing.
-        calendar.onResize = nil;
-        y = calendarHeight + 20;
-        tasks = [tasks filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *t, NSDictionary *b) { return [Cal() isDate:t[@"due"] inSameDayAsDate:self.selectedDay]; }]];
-        Put(self.document, Text([NSString stringWithFormat:@"%@ · %lu 项安排", DDLFormatDate(self.selectedDay, @"M月d日 EEEE"), tasks.count], 13, NSFontWeightSemibold, Ink()), 6, y, w - 12, 24); y += 38;
-    } else {
-        NSString *heading = self.query.length ? [NSString stringWithFormat:@"搜索结果 · %lu", tasks.count] : [NSString stringWithFormat:@"%@ · %lu", @[@"待办清单", @"今天的安排", @"未来 7 天", @"已完成", @"已归档", @"最近删除"][self.filter], tasks.count];
-        Put(self.document, Text(heading, 12, NSFontWeightSemibold, Muted()), 5, 0, w - 12, 22); y = 33;
-    }
+    NSString *heading = self.query.length ? [NSString stringWithFormat:@"搜索结果 · %lu", tasks.count] : [NSString stringWithFormat:@"%@ · %lu", @[@"待办清单", @"今天的安排", @"未来 7 天", @"已完成", @"已归档", @"最近删除"][self.filter], tasks.count];
+    Put(self.document, Text(heading, 12, NSFontWeightSemibold, Muted()), 5, 0, w - 12, 22); y = 33;
     if (tasks.count == 0) {
         Surface *empty = GradientBox(Card(), Canvas(), 14); empty.stroke = Line(); Put(self.document, empty, 4, y, w, 202);
         NSTextField *icon = Text(self.query.length ? @"⌕" : @"✓", 32, NSFontWeightLight, Accent()); icon.alignment = NSTextAlignmentCenter; Put(empty, icon, 0, 31, w, 42);
         NSString *emptyTitle = self.query.length ? @"没有找到匹配的任务" : (self.calendarMode ? @"这一天还没有安排" : (self.filter == 5 ? @"最近删除是空的" : @"这里暂时没有任务"));
-        NSString *emptyHint = self.query.length ? @"试试学科、任务名称，或清空搜索。" : (self.filter == 5 ? @"删除已完成的任务后会暂时放在这里，可随时恢复。" : @"点右上角「新建 DDL」，开始一份轻松的计划。");
+        NSString *emptyHint = self.query.length ? @"试试学科、任务名称，或清空搜索。" : (self.filter == 5 ? @"删除已完成的任务后会暂时放在这里，可随时恢复。" : @"点击“新建任务”添加安排。");
         NSTextField *title = Text(emptyTitle, 16, NSFontWeightSemibold, Ink()); title.alignment = NSTextAlignmentCenter; Put(empty, title, 0, 86, w, 25);
         NSTextField *hint = Text(emptyHint, 12, NSFontWeightRegular, Muted()); hint.alignment = NSTextAlignmentCenter; Put(empty, hint, 0, 124, w, 23);
         y += 218;
     } else {
         for (NSDictionary *task in tasks) {
             Surface *row = self.filter == 5 ? [self deletedRow:task width:w] : [self taskRow:task width:w];
-            Put(self.document, row, 4, y, w, 98); y += 109;
+            CGFloat height = self.filter == 5 ? 98 : 80; Put(self.document, row, 4, y, w, height); y += height + 8;
         }
     }
     self.document.frame = NSMakeRect(0, 0, self.scroll.contentSize.width, MAX(y + 12, self.scroll.contentSize.height));
     position.y = MIN(position.y, MAX(0, self.document.frame.size.height - self.scroll.contentSize.height)); [self.scroll.contentView scrollToPoint:position]; [self.scroll reflectScrolledClipView:self.scroll.contentView];
 }
-- (void)changeFilter:(NSButton *)sender { self.filter = sender.tag; self.calendarMode = NO; self.notice = @""; [self.scroll.contentView scrollToPoint:NSZeroPoint]; [self layout]; }
-- (void)changeView:(NSSegmentedControl *)sender { if (sender.selectedSegment == 1) [self openCalendar:sender]; else [self openList:sender]; }
+- (void)changeFilter:(id)sender { self.filter = [sender isKindOfClass:NSPopUpButton.class] ? [sender indexOfSelectedItem] : [sender tag]; self.page = 2; self.calendarMode = NO; self.notice = @""; [self.scroll.contentView scrollToPoint:NSZeroPoint]; [self layout]; }
 - (void)sortChanged:(id)sender { [self renderContent]; }
 - (void)controlTextDidChange:(NSNotification *)notification {
     if (notification.object != self.search) return;
@@ -1246,7 +1120,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     [self.scroll.contentView scrollToPoint:NSZeroPoint]; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint];
     [self renderContent];
 }
-- (void)focusSearch:(id)sender { [self showWindow]; [self.window makeFirstResponder:self.search]; }
+- (void)focusSearch:(id)sender { [self showWindow]; if (self.page >= 3) [self.courseWindow focusSearch]; else [self.window makeFirstResponder:self.search]; }
 - (void)showWindow { [self.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES]; }
 - (void)showMain:(id)sender { [self showWindow]; }
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag { [self showWindow]; return YES; }
@@ -1258,7 +1132,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (NSApp.currentEvent.type == NSEventTypeRightMouseUp) {
         NSMenu *menu = [NSMenu new];
         NSMenuItem *show = [menu addItemWithTitle:@"打开 DDL-Manager" action:@selector(showMain:) keyEquivalent:@""]; show.target = self;
-        NSMenuItem *add = [menu addItemWithTitle:@"新建 DDL" action:@selector(addTask:) keyEquivalent:@""]; add.target = self;
+        NSMenuItem *add = [menu addItemWithTitle:@"新建任务" action:@selector(addTask:) keyEquivalent:@""]; add.target = self;
         [menu addItem:[NSMenuItem separatorItem]]; [menu addItemWithTitle:@"退出" action:@selector(terminate:) keyEquivalent:@"q"];
         [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, self.statusItem.button.bounds.size.height) inView:self.statusItem.button];
     } else if (self.window.visible && self.window.keyWindow) [self.window orderOut:nil]; else [self showWindow];
@@ -1273,14 +1147,14 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (self.calendarMode) [self.editor chooseDate:self.selectedDay];
     [self.window beginSheet:self.editor.window completionHandler:nil];
 }
-- (void)openCourses:(id)sender { if (!self.preview) [self.courseWindow show]; }
+- (void)openCourses:(id)sender { NSButton *route = NSButton.new; route.tag = 4; [self navigate:route]; }
 - (void)reviewGitHubCandidate:(NSDictionary *)candidate {
     [self showWindow];
     if (self.window.attachedSheet) return;
     NSDictionary *existing = nil;
     for (NSDictionary *task in self.tasks) if ([task[@"sourceID"] isEqual:candidate[@"id"]]) { existing = task; break; }
     NSMutableDictionary *draft = existing ? [existing mutableCopy] : [@{@"id":NSUUID.UUID.UUIDString, @"title":candidate[@"title"], @"subject":[candidate[@"repository"] lastPathComponent], @"notes":candidate[@"snippet"], @"completed":@NO, @"archived":@NO, @"reminderOffsets":@[@1440, @60, @0], @"leadDays":@0} mutableCopy];
-    NSDate *teacherDue = candidate[@"due"];
+    NSDate *teacherDue = candidate[@"due"]; draft[@"_reviewCandidate"] = candidate; draft[@"_existing"] = @(existing != nil);
     NSInteger lead = [draft[@"leadDays"] respondsToSelector:@selector(integerValue)] ? [draft[@"leadDays"] integerValue] : -1;
     if (!existing || lead >= 0) draft[@"due"] = DDLPersonalDueDate(teacherDue, MAX(0, lead), Cal());
     draft[@"announcedDue"] = teacherDue;
@@ -1291,7 +1165,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     draft[@"sourcePath"] = candidate[@"path"];
     draft[@"sourceLine"] = candidate[@"line"];
     self.editor = [[EditorController alloc] initWithTask:draft owner:self];
-    self.editor.window.title = existing ? @"审核老师更新 · 原任务待确认" : @"审核 GitHub 作业";
+    self.editor.window.title = existing ? @"审核更新" : @"审核作业";
     [self.window beginSheet:self.editor.window completionHandler:nil];
 }
 - (void)importClipboard:(id)sender {
@@ -1315,10 +1189,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)toggleTask:(NSButton *)sender {
     NSMutableDictionary *task = [self taskWithID:sender.identifier]; if (!task) return; [self prepareUndo:@"完成状态"];
-    task[@"completed"] = @(![task[@"completed"] boolValue]); self.notice = [task[@"completed"] boolValue] ? @"又完成了一件事，做得不错。可按 ⌘Z 撤销。" : @"任务已恢复到待办清单。"; [self persistAndRefresh];
+    task[@"completed"] = @(![task[@"completed"] boolValue]); self.notice = [task[@"completed"] boolValue] ? @"已标记完成，可按 ⌘Z 撤销。" : @"任务已恢复到待办清单。"; [self persistAndRefresh];
 }
-- (void)archiveTask:(NSButton *)sender {
-    NSMutableDictionary *task = [self taskWithID:sender.identifier]; if (!task) return; [self prepareUndo:@"归档任务"];
+- (void)archiveTask:(id)sender {
+    NSMutableDictionary *task = [self taskWithID:[self identifierForSender:sender]]; if (!task) return; [self prepareUndo:@"归档任务"];
     task[@"archived"] = @(![task[@"archived"] boolValue]); self.notice = [task[@"archived"] boolValue] ? @"任务已归档，可在「已归档」中恢复。" : @"任务已恢复。"; [self persistAndRefresh];
 }
 - (void)deleteTask:(id)sender {
@@ -1358,7 +1232,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         [self refreshReminders];
         if (self.authorization == UNAuthorizationStatusNotDetermined) [self requestPermission];
     }
-    [self render];
+    [self.courseWindow refreshPresentation]; [self render];
 }
 - (void)exportTasks:(id)sender {
     NSSavePanel *panel = [NSSavePanel savePanel]; panel.nameFieldStringValue = [NSString stringWithFormat:@"DDL-备份-%@.plist", DDLFormatDate(NSDate.date, @"yyyyMMdd-HHmmss")]; panel.title = @"导出全部任务备份";

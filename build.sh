@@ -31,6 +31,7 @@ clang \
   "$SCRIPT_DIR/Sources/SSLocalData.m" \
   "$SCRIPT_DIR/Sources/SSGitHub.m" \
   "$SCRIPT_DIR/Sources/SSGit.m" \
+  "$SCRIPT_DIR/Sources/DDLUI.m" \
   "$SCRIPT_DIR/Sources/SSSecurity.m" \
   "$SCRIPT_DIR/Sources/SSCourseWindow.m" \
   -o "$CONTENTS/MacOS/DDLManager"
