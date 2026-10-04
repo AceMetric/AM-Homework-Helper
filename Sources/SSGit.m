@@ -4,6 +4,7 @@
 #import <signal.h>
 
 static NSError *GitError(NSString *message) { return [NSError errorWithDomain:@"SSGit" code:1 userInfo:@{NSLocalizedDescriptionKey:SSRedactedText(message ?: @"Git 操作失败")}]; }
+static NSError *PendingPushError(NSError *error) { return [NSError errorWithDomain:@"SSGit" code:2 userInfo:@{NSLocalizedDescriptionKey:[@"本地更新已保留，尚未推送。修复原因后选择“重试推送”：\n" stringByAppendingString:error.localizedDescription ?: @"网络或权限错误"], @"SSPendingPush":@YES}]; }
 static NSString *Trim(NSString *value) { return [value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]; }
 static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSMutableArray *parts = NSMutableArray.array;
@@ -23,6 +24,9 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
 @end
 @implementation SSGit
 - (SSGitResult *)run:(NSArray<NSString *> *)arguments in:(NSString *)path token:(NSString *)token error:(NSError **)error {
+    NSDictionary *phases = @{@"fetch":@"正在获取仓库更新…", @"clone":@"正在下载课程仓库…", @"ls-tree":@"正在读取作业文档…", @"merge":@"正在合并老师更新…", @"commit":@"正在保存所选文件的提交…", @"push":@"正在推送到个人仓库…"};
+    NSUInteger commandIndex = 0; while (commandIndex + 1 < arguments.count && [arguments[commandIndex] isEqual:@"-c"]) commandIndex += 2;
+    NSString *phase = commandIndex < arguments.count ? phases[arguments[commandIndex]] : nil; if (self.progress && phase) self.progress(phase);
     NSTask *task = NSTask.new;
     task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/git"];
     NSMutableArray *args = [@[@"-c", @"core.hooksPath=/dev/null", @"-c", @"protocol.ext.allow=never", @"-c", @"http.followRedirects=false", @"-c", @"core.askPass=/usr/bin/false", @"-c", @"commit.gpgSign=false", @"-c", @"tag.gpgSign=false", @"-c", @"credential.helper="] mutableCopy];
@@ -208,6 +212,30 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     }
     return changes;
 }
+- (NSString *)previewForCourse:(NSDictionary *)course path:(NSString *)file error:(NSError **)error {
+    NSArray *changes = [self changesForCourse:course error:error]; if (!changes) return nil;
+    NSDictionary *change = nil; for (NSDictionary *item in changes) if ([item[@"path"] isEqual:file]) { change = item; break; }
+    if (!change) { if (error) *error = GitError(@"文件已不在变更列表，请重新打开提交窗口。"); return nil; }
+    if ([change[@"sensitive"] boolValue]) return @"此文件可能包含凭据或无法检查的内容，不能通过应用提交。请先排除或修复。";
+    NSString *root = [course[@"path"] stringByResolvingSymlinksInPath]; NSString *absolute = [[root stringByAppendingPathComponent:file] stringByResolvingSymlinksInPath];
+    if (![absolute hasPrefix:[root stringByAppendingString:@"/"]]) { if (error) *error = GitError(@"文件指向仓库之外，已阻止预览。"); return nil; }
+    NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:absolute error:NULL];
+    if ([attributes[NSFileSize] unsignedLongLongValue] > 512 * 1024) return @"文件较大，请在编辑器中查看。提交时仍会完整检查所选文件与待推送历史。";
+    NSData *data = nil;
+    if (![change[@"status"] isEqual:@"??"]) {
+        SSGitResult *size = [self run:@[@"cat-file", @"-s", [@"HEAD:" stringByAppendingString:file]] in:root token:nil error:NULL];
+        if (size && size.status == 0 && [Trim([self string:size]) longLongValue] > 512 * 1024) return @"原文件较大，请在编辑器中查看。提交检查仍会覆盖完整内容。";
+    }
+    if ([change[@"status"] isEqual:@"??"]) data = [NSData dataWithContentsOfFile:absolute];
+    else {
+        SSGitResult *result = [self checked:@[@"diff", @"--no-ext-diff", @"--no-textconv", @"--no-color", @"HEAD", @"--", file] in:root token:nil error:error]; if (!result) return nil; data = result.data;
+    }
+    if (!data) { if (error) *error = GitError(@"文件在读取期间发生变化，请重新打开提交窗口。"); return nil; }
+    if (SSContainsSecret(data)) return @"检测到疑似凭据，预览已隐藏。请移除敏感内容，并轮换真实凭据后再提交。";
+    NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (!text) return @"这是非 UTF-8 文本或二进制文件，请在对应应用中查看。";
+    NSString *preview = SSRedactedText(text.length ? text : @"没有文本差异，可能仅修改了文件属性。"); return text.length > 1600 ? [preview stringByAppendingString:@"\n…预览已截断；提交检查会覆盖完整内容。"] : preview;
+}
 - (BOOL)checkObjects:(NSString *)range path:(NSString *)path error:(NSError **)error {
     SSGitResult *objects = [self checked:@[@"rev-list", @"--objects", @"--no-object-names", range] in:path token:nil error:error]; if (!objects) return NO;
     NSArray *shas = NonemptyParts([self string:objects], @"\n");
@@ -262,7 +290,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
         if (error) *error = GitError(@"合并产生冲突。请打开冲突引导，编辑文件、标记解决后再继续。");
         return @{@"conflicts":files, @"mergeHead":teacher};
     }
-    if (![self pushCourse:course token:token error:error]) return nil;
+    if (![self pushCourse:course token:token error:error]) { if (error) *error = PendingPushError(*error); return nil; }
     return @{@"success":@YES};
 }
 - (BOOL)commitCourse:(NSDictionary *)course paths:(NSArray<NSString *> *)paths message:(NSString *)message login:(NSString *)login userID:(NSNumber *)userID token:(NSString *)token error:(NSError **)error {
@@ -308,7 +336,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSMutableArray *reset = [@[@"reset", @"--quiet", @"HEAD", @"--"] mutableCopy]; [reset addObjectsFromArray:paths];
     if (![self checked:reset in:path token:nil error:error]) return NO;
     if (![self pushCourse:course token:token error:error]) {
-        if (error) *error = GitError([@"已保留本地提交，但尚未推送。修复原因后可点“推送我的 fork”：\n" stringByAppendingString:(*error).localizedDescription ?: @"网络或权限错误"]); return NO;
+        if (error) *error = PendingPushError(*error); return NO;
     }
     return YES;
 }
@@ -338,7 +366,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSArray *files = [self conflicts:course error:error]; if (!files) return NO;
     if (files.count) { if (error) *error = GitError(@"仍有未解决的冲突，请编辑文件并标记解决。"); return NO; }
     if (![self checked:[[self authorArguments:user] arrayByAddingObjectsFromArray:@[@"commit", @"--no-edit"]] in:course[@"path"] token:nil error:error]) return NO;
-    return [self pushCourse:course token:token error:error];
+    if (![self pushCourse:course token:token error:error]) { if (error) *error = PendingPushError(*error); return NO; } return YES;
 }
 - (BOOL)abortMerge:(NSDictionary *)course error:(NSError **)error {
     if (![self validateCourse:course error:error] || ![self ownedMerge:course error:error]) return NO;

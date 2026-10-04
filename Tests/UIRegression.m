@@ -18,13 +18,6 @@ static void Search(AppDelegate *app, NSString *text) {
     app.search.stringValue = text;
     [app controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:app.search]];
 }
-static NSData *IconPixels(NSImage *icon) {
-    NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:128 pixelsHigh:128 bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
-    [NSGraphicsContext saveGraphicsState]; [NSGraphicsContext setCurrentContext:[NSGraphicsContext graphicsContextWithBitmapImageRep:bitmap]];
-    [icon drawInRect:NSMakeRect(0, 0, 128, 128) fromRect:NSZeroRect operation:NSCompositingOperationCopy fraction:1];
-    [NSGraphicsContext restoreGraphicsState];
-    return [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
-}
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         if (![NSProcessInfo.processInfo.arguments containsObject:@"--preview"]) return 2;
@@ -32,7 +25,8 @@ int main(int argc, const char *argv[]) {
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
         AppDelegate *app = [AppDelegate new]; NSApp.delegate = app;
         [app applicationDidFinishLaunching:[NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification object:NSApp]];
-        CheckUI(app.preview && app.tasks.count == 13 && CurrentTheme == 1, @"preview uses synthetic tasks and blue theme");
+        CheckUI(app.preview && app.tasks.count == 13 && app.page == 0 && app.courseWindow != nil, @"preview starts on overview with synthetic tasks");
+        [app openCalendar:nil];
         OverviewGrid *initial = FirstGrid(app);
         CheckUI(initial != nil && app.calendarDocument.subviews.count == 26, @"13 calendar sections loaded");
         // Freeze the cache minute for deterministic reuse assertions.
@@ -71,13 +65,12 @@ int main(int argc, const char *argv[]) {
         [app openList:nil]; Search(app, @"  英语  "); [app applySearch];
         CheckUI([app visibleTasks].count == 1, @"list and calendar share whitespace search behavior");
         Search(app, @"设计"); [app openCalendar:nil]; [app applySearch];
-        CheckUI(app.query.length == 0 && app.overviewSnapshot.count == 13, @"view switch does not resurrect stale search");
+        CheckUI(app.query.length == 0 && app.overviewSnapshot.count == 13, @"calendar restores its own search independently of task page");
         [app.monthPicker selectItemWithTitle:@"1 月"]; [app jumpCalendar:nil];
         CheckUI([Cal() component:NSCalendarUnitMonth fromDate:app.month] == 1, @"exact month jump rebuilds correct window");
         CheckUI([Cal() isDate:app.overviewBaseMonth equalToDate:app.month toUnitGranularity:NSCalendarUnitMonth], @"cached month matches jump target");
-        CheckUI(app.themePicker.numberOfItems == 6, @"six named pastel themes available");
-        CheckUI(ThemeIndex(@"unknown-theme") == 1 && ThemeIndex(@42) == 1, @"invalid preference falls back to blue");
-        CheckUI(app.root.gradientEnd != nil && app.calendarDocument.gradientEnd != nil, @"main and calendar surfaces have gradients");
+        CheckUI(NSApp.appearance == nil, @"application follows system appearance by default");
+        CheckUI(app.root.gradientEnd == nil && !app.sidebar.hidden, @"layered surfaces and persistent sidebar");
         NSDateComponents *september = [NSDateComponents new]; september.year = 2026; september.month = 9; september.day = 1;
         NSDate *testMonth = [Cal() dateFromComponents:september];
         NSDate *adjacentDay = DDLMonthGrid(testMonth, Cal()).firstObject;
@@ -94,20 +87,16 @@ int main(int argc, const char *argv[]) {
         NSDate *selectedDay = app.selectedDay, *month = app.month;
         NSArray *tasksBeforeTheme = [app.tasks copy];
         NSPoint scrollBeforeTheme = app.calendarScroll.contentView.bounds.origin;
-        for (NSInteger i = 0; i < 6; i++) {
+        for (NSString *appearance in @[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]) {
             OverviewGrid *oldGrid = FirstGrid(app);
-            NSData *oldIcon = IconPixels(NSApp.applicationIconImage);
-            [app.themePicker selectItemAtIndex:i]; [app changeTheme:app.themePicker];
-            CheckUI(CurrentTheme == i && [app.root.fill isEqual:Canvas()] && [app.root.gradientEnd isEqual:Panel()] && [app.agenda.fill isEqual:Panel()], @"theme recolors persistent gradients");
-            CheckUI(![IconPixels(NSApp.applicationIconImage) isEqualToData:oldIcon] && NSEqualSizes(NSApp.applicationIconImage.size, NSMakeSize(512, 512)), @"Dock icon follows theme selection");
-            CheckUI(FirstGrid(app) != oldGrid, @"theme invalidates cached calendar colors");
-            CheckUI([app.selectedDay isEqual:selectedDay] && [app.month isEqual:month] && [app.tasks isEqual:tasksBeforeTheme], @"theme preserves dates and tasks");
-            CheckUI(NSEqualPoints(app.calendarScroll.contentView.bounds.origin, scrollBeforeTheme), @"theme preserves calendar scroll");
+            NSApp.appearance = [NSAppearance appearanceNamed:appearance]; [app refreshAppearance];
+            CheckUI(FirstGrid(app) != oldGrid, @"appearance invalidates cached calendar colors");
+            CheckUI([app.selectedDay isEqual:selectedDay] && [app.month isEqual:month] && [app.tasks isEqual:tasksBeforeTheme], @"appearance preserves dates and tasks");
+            CheckUI(NSEqualPoints(app.calendarScroll.contentView.bounds.origin, scrollBeforeTheme), @"appearance preserves calendar scroll");
             [app.window displayIfNeeded];
-            NSBitmapImageRep *bitmap = [app.root bitmapImageRepForCachingDisplayInRect:app.root.bounds];
-            [app.root cacheDisplayInRect:app.root.bounds toBitmapImageRep:bitmap];
-            NSString *path = [NSString stringWithFormat:@"build/qa/theme-%@.png", ThemeIDs()[i]];
-            CheckUI([[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:NO], @"theme preview exported");
+            NSBitmapImageRep *bitmap = [app.root bitmapImageRepForCachingDisplayInRect:app.root.bounds]; [app.root cacheDisplayInRect:app.root.bounds toBitmapImageRep:bitmap];
+            NSString *path = [NSString stringWithFormat:@"build/qa/calendar-%@.png", [appearance isEqual:NSAppearanceNameAqua] ? @"light" : @"dark"];
+            CheckUI([[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:NO], @"synthetic appearance preview exported");
         }
         OverviewGrid *hoverGrid = nil;
         for (NSView *view in app.calendarDocument.subviews) {
@@ -137,14 +126,23 @@ int main(int argc, const char *argv[]) {
         for (NSView *view in hoverGrid.subviews) if ([view isKindOfClass:CalendarDayCell.class] && ((CalendarDayCell *)view).hovered) activeCount++;
         CheckUI(activeCount <= 1, @"scrolling does not leave a dark calendar column");
         [app openList:nil];
-        [app.themePicker selectItemAtIndex:1]; [app changeTheme:app.themePicker];
-        CheckUI([app.sidebar.fill isEqual:Panel()] && !app.themePicker.hidden, @"list shares theme and picker");
-        [app.window setContentSize:NSMakeSize(1100, 760)]; [app layout];
-        CheckUI(NSMaxX(app.themePicker.frame) <= NSWidth(app.root.bounds), @"theme picker fits compact window");
+        CheckUI(!app.sidebar.hidden && app.page == 2, @"task page retains sidebar");
+        [app.window setContentSize:NSMakeSize(960, 640)]; [app layout];
+        CheckUI(NSMaxX(app.search.frame) <= NSWidth(app.root.bounds), @"search fits minimum window");
+        [app openCalendar:nil]; CheckUI(NSMinY(app.agenda.frame) >= NSMaxY(app.calendarScroll.frame), @"compact calendar places agenda beneath months");
+        [app.window setContentSize:NSMakeSize(1280, 840)]; [app layout];
+        CheckUI(NSMinX(app.agenda.frame) > NSMaxX(app.calendarScroll.frame), @"wide calendar places agenda alongside months");
+        [app openCourses:nil]; CheckUI(app.page == 4 && !app.courseWindow.view.hidden && app.courseWindow.view.window == app.window, @"courses share the main window");
+        [app openList:nil];
         [app.window displayIfNeeded];
         NSBitmapImageRep *listBitmap = [app.root bitmapImageRepForCachingDisplayInRect:app.root.bounds];
         [app.root cacheDisplayInRect:app.root.bounds toBitmapImageRep:listBitmap];
-        [[listBitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:@"build/qa/theme-list-compact.png" atomically:NO];
+        [[listBitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:@"build/qa/tasks-default.png" atomically:NO];
+        ActionButton *navigationFocus = nil; for (NSView *view in app.sidebar.subviews) if ([view isKindOfClass:ActionButton.class] && ((ActionButton *)view).action == @selector(navigate:) && view.tag == 4) navigationFocus = (ActionButton *)view;
+        [app.window makeFirstResponder:navigationFocus]; [app refreshAppearance]; CheckUI([app.window.firstResponder isKindOfClass:ActionButton.class] && ((ActionButton *)app.window.firstResponder).tag == 4, @"appearance refresh preserves sidebar keyboard focus");
+        [app.taskUndo removeAllActions]; [app.taskUndo beginUndoGrouping]; NSButton *check = NSButton.new; check.identifier = app.tasks.firstObject[@"id"]; BOOL completed = [app.tasks.firstObject[@"completed"] boolValue]; [app toggleTask:check]; [app.taskUndo endUndoGrouping];
+        CheckUI([app.tasks.firstObject[@"completed"] boolValue] != completed, @"task completion updates through unified rows"); [app undo:nil]; CheckUI([app.tasks.firstObject[@"completed"] boolValue] == completed, @"undo restores completion after navigation changes");
+        NSMenuItem *archive = NSMenuItem.new; archive.representedObject = check.identifier; [app archiveTask:archive]; CheckUI([app.tasks.firstObject[@"archived"] boolValue], @"more-menu archive uses represented task identity");
         [app.ticker invalidate]; [app.searchTimer invalidate];
         [app.window orderOut:nil]; [NSStatusBar.systemStatusBar removeStatusItem:app.statusItem];
         printf("PASS: %ld AppKit assertions\n", (long)assertions);

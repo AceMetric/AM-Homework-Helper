@@ -185,7 +185,10 @@ static void GitTests(void) {
     Check([[service scanCourse:f cache:cache error:&error][@"candidates"] firstObject] != nil && cache.count == cacheCount, @"scan cache reuse");
     service.denyTeacher = YES; Check(![service scanCourse:f cache:cache error:&error], @"private upstream denied fails safely"); service.denyTeacher = NO;
     Write([path stringByAppendingPathComponent:@"answer one.txt"], @"my homework\n"); Write([path stringByAppendingPathComponent:@"unrelated.txt"], @"keep local\n");
+    Check([[service previewForCourse:f path:@"answer one.txt" error:&error] containsString:@"my homework"], @"untracked text has safe preview");
+    Check(![service previewForCourse:f path:@"../outside.txt" error:&error], @"preview requires a current changed path");
     Check(![service syncCourse:f token:@"test" error:&error], @"dirty worktree blocks sync");
+    Check(![error.userInfo[@"SSPendingPush"] boolValue], @"dirty worktree does not suggest retrying a push");
     Git(path, @[@"remote", @"set-url", @"--push", @"origin", @"https://github.com/teacher/course.git"]);
     Check([service commitCourse:f paths:@[@"answer one.txt"] message:@"complete assignment" login:@"student" userID:@42 token:@"test" error:&error], @"selected-file commit and explicit fork push");
     Check([[Git(f[@"forkBare"], @[@"show", @"main:answer one.txt"]) lowercaseString] containsString:@"homework"], @"selected file reached own fork");
@@ -198,6 +201,7 @@ static void GitTests(void) {
     Check([Git(path, @[@"rev-parse", @"HEAD"]) isEqual:before], @"blocked commit preserves HEAD"); Git(path, @[@"reset", @"--quiet", @"HEAD", @"--", @"unrelated.txt"]);
     NSString *fake = [[@"gh" stringByAppendingString:@"p_"] stringByAppendingString:[@"B" stringByPaddingToLength:40 withString:@"B" startingAtIndex:0]];
     Write([path stringByAppendingPathComponent:@"answer.txt"], fake);
+    Check(![[service previewForCourse:f path:@"answer.txt" error:&error] containsString:fake], @"preview never exposes suspected credential");
     Check(![service commitCourse:f paths:@[@"answer.txt"] message:@"secret should block" login:@"student" userID:@42 token:@"test" error:&error], @"secret in selected blob blocks commit");
     Check(Git(path, @[@"diff", @"--cached", @"--name-only"]).length == 0, @"failed secret check leaves original index intact");
     Git(path, @[@"add", @"answer.txt"]); Git(path, @[@"commit", @"-m", @"unsafe old commit"]); Git(path, @[@"rm", @"answer.txt"]); Git(path, @[@"commit", @"-m", @"removed afterwards"]);
@@ -212,8 +216,9 @@ static void GitTests(void) {
     f = Fixture(); service = Service(f); path = f[@"path"];
     Write([path stringByAppendingPathComponent:@"answer.txt"], @"keep local commit when network fails\n"); service.rejectPush = YES;
     Check(![service commitCourse:f paths:@[@"answer.txt"] message:@"answer" login:@"student" userID:@42 token:@"test" error:&error], @"push rejection reported");
+    Check([error.userInfo[@"SSPendingPush"] boolValue], @"failed push exposes structured retry state after local commit");
     Check([Git(path, @[@"show", @"HEAD:answer.txt"]) containsString:@"keep local"], @"failed push preserves local commit");
-    service.rejectPush = NO; Check([service pushCourse:f token:@"test" error:&error], @"retry own fork push works"); Cleanup(f);
+    __block NSString *phase; service.progress = ^(NSString *message) { phase = message; }; service.rejectPush = NO; Check([service pushCourse:f token:@"test" error:&error], @"retry own fork push works"); Check([phase containsString:@"个人仓库"] && ![phase containsString:@"test"], @"progress names phase without credentials or command arguments"); Cleanup(f);
 
     f = Fixture(); service = Service(f); path = f[@"path"];
     Write([path stringByAppendingPathComponent:@"shared.txt"], @"student edit\n");
