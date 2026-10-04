@@ -3,6 +3,7 @@
 #import "../Sources/App.m"
 #undef main
 #import "../Sources/SSCourseWindow.m"
+#import "../Sources/SSAssignments.h"
 static NSUInteger checks;
 static void Check(BOOL condition, NSString *label) { checks++; if (!condition) { fprintf(stderr, "FAIL: %s\n", label.UTF8String); exit(1); } }
 static void Capture(NSView *view, NSString *path) {
@@ -55,6 +56,12 @@ int main(void) { @autoreleasepool {
     [courses.window setContentSize:NSMakeSize(1200, 800)];
     Check(NSMaxY(courses.table.enclosingScrollView.frame) <= NSMinY(courses.statusLabel.frame), @"resized table does not overlap controls");
     Check(NSMaxY(courses.detail.enclosingScrollView.frame) < NSMinY(courses.table.enclosingScrollView.frame), @"details remain below table");
+    NSDictionary *weekly = [SSAssignmentsFromDocument(@"# 规则\n- 截止时间：本周日 21:00\n# 任务\n完成附件作业：运动学基础和牛顿定律。", @"teacher/course", @"assignment-04.md", @"v1", NSDate.date, Cal()) firstObject];
+    courses.candidates[course[@"fork"]] = @[weekly]; [courses refreshCourses];
+    NSTextField *dueLabel = (NSTextField *)[courses tableView:courses.table viewForTableColumn:[courses.table tableColumnWithIdentifier:@"due"] row:0];
+    Check([dueLabel.stringValue isEqual:@"本周日 21:00 · 待确认"], @"relative deadline displays teacher wording instead of unknown deadline");
+    [courses.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO]; [courses candidateSelected:nil];
+    Check([courses.detail.string containsString:@"牛顿定律"] && [courses.detail.string containsString:@"本周日 21:00"], @"relative deadline and assignment instructions are visible together");
     Capture(courses.window.contentView, @"build/qa/github-courses.png");
     Capture(app.root, @"build/qa/ss-calendar.png");
     [courses.window orderOut:nil]; [app.window orderOut:nil]; [app.ticker invalidate]; [NSStatusBar.systemStatusBar removeStatusItem:app.statusItem];

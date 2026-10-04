@@ -117,6 +117,28 @@ static void ParserTests(void) {
     Check(SSIsSupportedDocument(@"README") && SSIsSupportedDocument(@"a.md") && !SSIsSupportedDocument(@"README.pdf") && !SSIsSupportedDocument(@"answer.py"), @"document coverage excludes binary and code");
     NSArray *iso = SSAssignmentsFromDocument(@"# Homework\nDue: 2026-10-08T15:59Z", @"t/r", @"a.md", @"v", now, cal);
     Check(iso.count == 1 && [iso[0][@"due"] isEqual:DDLParseDate(@"2026-10-08 23:59", now, cal)], @"ISO timezone respected");
+    NSString *rules = @"# 规则\n\n- 截止时间：本周日 21:00\n- 提交单个 Markdown 文件，命名格式：assignment-04.md。\n\n# 任务\n\n## 1.\n解答：为什么数值求解时，时间步长较大更容易发散？\n## 2.\n完成附件作业：1. 运动学基础 和 2. 牛顿定律作业\n";
+    NSArray *weekly = SSAssignmentsFromDocument(rules, @"teacher/course", @"assignment-04.md", @"v1", now, cal);
+    Check(weekly.count == 1, @"rules section with this Sunday deadline is discovered");
+    Check([weekly[0][@"title"] isEqual:@"assignment-04"], @"generic rules/task headings fall back to assignment filename");
+    Check([weekly[0][@"deadlineText"] isEqual:@"本周日 21:00"] && [weekly[0][@"needsDate"] boolValue] && ![weekly[0][@"needsTime"] boolValue], @"weekday wording and explicit time retained for review");
+    Check(!weekly[0][@"due"], @"teacher's relative date is never anchored to the scan day");
+    Check([weekly[0][@"snippet"] containsString:@"牛顿定律作业"], @"review snippet contains following tasks and attachment instructions");
+    Check([weekly[0][@"line"] integerValue] == 3, @"deadline source line remains accurate");
+    NSArray *later = SSAssignmentsFromDocument(rules, @"teacher/course", @"assignment-04.md", @"v1", [now dateByAddingTimeInterval:14 * 86400], cal);
+    Check([weekly isEqual:later], @"old relative deadline is stable across later weeks");
+    for (NSString *day in @[@"本周日", @"本周天", @"这周日", @"周日", @"星期天", @"下周一", @"下星期五", @"礼拜天", @"下礼拜日", @"本周末", @"一周后", @"3天后"]) {
+        NSString *document = [NSString stringWithFormat:@"# 物理作业四\n## 规则\n- **截止时间**：%@ 21：00\n## 任务\n完成附件习题。", day];
+        NSArray *found = SSAssignmentsFromDocument(document, @"t/r", @"README.md", @"v", now, cal);
+        Check(found.count == 1 && [found[0][@"title"] isEqual:@"物理作业四"] && [found[0][@"needsDate"] boolValue] && ![found[0][@"needsTime"] boolValue] && !found[0][@"due"], [@"relative weekday variant: " stringByAppendingString:day]);
+    }
+    NSArray *split = SSAssignmentsFromDocument(@"# 作业四\n截止时间：\n本周日 21:00\n", @"t/r", @"a.md", @"v", now, cal);
+    Check(split.count == 1 && [split[0][@"title"] isEqual:@"作业四"], @"deadline can be on the following line");
+    NSArray *noTime = SSAssignmentsFromDocument(@"# 作业四\n截止：本周日", @"t/r", @"a.md", @"v", now, cal);
+    Check(noTime.count == 1 && [noTime[0][@"needsTime"] boolValue], @"relative date without time requires both date and time");
+    Check(SSAssignmentsFromDocument(@"# 作业四\n发布：本周日 21:00\n```\n截止：星期天 21:00\n```", @"t/r", @"a.md", @"v", now, cal).count == 0, @"relative publication dates and fenced examples remain ignored");
+    NSArray *renamed = SSAssignmentsFromDocument([rules stringByReplacingOccurrencesOfString:@"本周日" withString:@"下周日"], @"teacher/course", @"assignment-04.md", @"v2", now, cal);
+    Check([weekly[0][@"id"] isEqual:renamed[0][@"id"]], @"relative deadline edits retain assignment identity");
 }
 static void SecurityTests(void) {
     Check([SSCanonicalRepository(@"git@github.com:Student/Course.git") isEqual:@"student/course"], @"canonical SSH URL");
@@ -154,7 +176,11 @@ static void GitTests(void) {
     Check([service validateCourse:f error:&error], @"validate course remotes");
     Check([service linkCourse:f error:&error], @"link verifies teacher access");
     NSMutableDictionary *cache = NSMutableDictionary.dictionary;
+    NSString *oldKey = [NSString stringWithFormat:@"v2|teacher/course|README.md|%@|Asia/Shanghai", Git(f[@"seed"], @[@"rev-parse", @"HEAD:README.md"])];
+    cache[oldKey] = @[];
     NSDictionary *scan = [service scanCourse:f cache:cache error:&error]; Check([scan[@"candidates"] count] == 1, @"scan teacher main");
+    NSString *newKey = [@"v3" stringByAppendingString:[oldKey substringFromIndex:2]];
+    Check([cache[newKey] count] == 1 && [cache[oldKey] count] == 0, @"new parser does not reuse empty results cached by older parser");
     NSUInteger cacheCount = cache.count;
     Check([[service scanCourse:f cache:cache error:&error][@"candidates"] firstObject] != nil && cache.count == cacheCount, @"scan cache reuse");
     service.denyTeacher = YES; Check(![service scanCourse:f cache:cache error:&error], @"private upstream denied fails safely"); service.denyTeacher = NO;
@@ -209,12 +235,18 @@ static void GitTests(void) {
     Git(seed, @[@"checkout", @"-b", @"lesson"]);
     Write([seed stringByAppendingPathComponent:@"README.md"], @"# Homework 2\nDue: 2026-10-12 21:00\n");
     Write([seed stringByAppendingPathComponent:@"duplicate.md"], @"# Homework 2\nDue: 2026-10-12 21:00\n");
+    Write([seed stringByAppendingPathComponent:@"assignment-04.md"], @"# 规则\n- 截止时间：本周日 21:00\n- 提交单个 Markdown 文件。\n# 任务\n完成附件作业：运动学基础和牛顿定律。\n");
     Write([seed stringByAppendingPathComponent:@"large.md"], [@"x" stringByPaddingToLength:1024 * 1024 + 1 withString:@"x" startingAtIndex:0]);
     Check([NSFileManager.defaultManager createSymbolicLinkAtPath:[seed stringByAppendingPathComponent:@"external.md"] withDestinationPath:@"/private/not-a-document" error:NULL], @"fixture document symlink");
     Git(seed, @[@"add", @"."]); Git(seed, @[@"commit", @"-m", @"teacher changes default branch"]); Git(seed, @[@"push", f[@"teacherBare"], @"lesson"]);
     Git(f[@"teacherBare"], @[@"symbolic-ref", @"HEAD", @"refs/heads/lesson"]);
-    scan = [service scanCourse:f cache:NSMutableDictionary.dictionary error:&error];
-    Check([scan[@"branch"] isEqual:@"lesson"] && [scan[@"candidates"] count] == 1, @"current teacher default branch scanned and duplicates collapsed");
+    NSMutableDictionary *oldCache = NSMutableDictionary.dictionary;
+    oldCache[[NSString stringWithFormat:@"v2|teacher/course|assignment-04.md|%@|Asia/Shanghai", Git(seed, @[@"rev-parse", @"HEAD:assignment-04.md"])]] = @[];
+    scan = [service scanCourse:f cache:oldCache error:&error];
+    Check([scan[@"branch"] isEqual:@"lesson"] && [scan[@"candidates"] count] == 2, @"current teacher default branch scanned and duplicates collapsed");
+    NSDictionary *weeklyCandidate = nil;
+    for (NSDictionary *item in scan[@"candidates"]) if ([item[@"path"] isEqual:@"assignment-04.md"]) weeklyCandidate = item;
+    Check([weeklyCandidate[@"deadlineText"] isEqual:@"本周日 21:00"] && [weeklyCandidate[@"needsDate"] boolValue] && [weeklyCandidate[@"snippet"] containsString:@"牛顿定律"], @"Git blob scan discovers screenshot-style assignment despite old empty cache");
     Check([scan[@"skipped"] count] == 2, @"large document and symlink reported");
     Check([service syncCourse:f token:@"test" error:&error] != nil, @"clean sync succeeds after teacher default branch changes");
     Check([Git(f[@"forkBare"], @[@"show", @"main:README.md"]) containsString:@"Homework 2"], @"teacher default merged into explicit own main");

@@ -388,10 +388,10 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSDictionary *candidate = self.visible[row]; NSString *key = column.identifier;
     NSString *value = @"";
     if ([key isEqual:@"title"]) value = candidate[@"title"];
-    else if ([key isEqual:@"due"]) value = !candidate[@"due"] ? @"截止待定" : ([candidate[@"needsDate"] boolValue] ? @"日期待确认" : ([candidate[@"needsTime"] boolValue] ? [DDLFormatDate(candidate[@"due"], @"yyyy-MM-dd") stringByAppendingString:@" · 待补时间"] : DDLFormatDate(candidate[@"due"], @"yyyy-MM-dd HH:mm")));
+    else if ([key isEqual:@"due"]) value = candidate[@"deadlineText"] ? [candidate[@"deadlineText"] stringByAppendingString:@" · 待确认"] : (!candidate[@"due"] ? @"截止待定" : ([candidate[@"needsDate"] boolValue] ? @"日期待确认" : ([candidate[@"needsTime"] boolValue] ? [DDLFormatDate(candidate[@"due"], @"yyyy-MM-dd") stringByAppendingString:@" · 待补时间"] : DDLFormatDate(candidate[@"due"], @"yyyy-MM-dd HH:mm"))));
     else if ([key isEqual:@"source"]) value = [NSString stringWithFormat:@"%@:%@", candidate[@"path"], candidate[@"line"]];
     else if ([key isEqual:@"state"]) value = [self stateForCandidate:candidate];
-    NSTextField *label = [NSTextField labelWithString:value ?: @""]; label.lineBreakMode = NSLineBreakByTruncatingMiddle; return label;
+    NSTextField *label = [NSTextField labelWithString:value ?: @""]; label.lineBreakMode = NSLineBreakByTruncatingMiddle; label.toolTip = value; return label;
 }
 - (NSString *)stateForCandidate:(NSDictionary *)candidate {
     for (NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[]) if ([task[@"sourceID"] isEqual:candidate[@"id"]])
@@ -409,7 +409,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     candidate[@"observedDue"] = candidate[@"due"];
     if ([candidate[@"needsTime"] boolValue] || [candidate[@"needsDate"] boolValue]) {
         NSAlert *alert = [NSAlert new]; alert.messageText = @"请确认老师的具体截止时间";
-        alert.informativeText = @"文档缺少明确的年份、日期或时间。请依据老师原文或课程说明输入完整时间，不能默认当作 23:59。";
+        alert.informativeText = candidate[@"deadlineText"] ? [NSString stringWithFormat:@"老师原文：%@\n相对日期取决于老师布置作业的时间，不能按今天推算。请确认完整日期和时间。", candidate[@"deadlineText"]] : @"文档缺少明确的年份、日期或时间。请依据老师原文或课程说明输入完整时间，不能默认当作 23:59。";
         NSTextField *field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 300, 28)]; field.stringValue = candidate[@"due"] ? DDLFormatDate(candidate[@"due"], @"yyyy-MM-dd") : @""; field.placeholderString = @"2026-10-08 20:00"; alert.accessoryView = field;
         [alert addButtonWithTitle:@"确认"]; [alert addButtonWithTitle:@"取消"];
         if ([alert runModal] != NSAlertFirstButtonReturn) return;

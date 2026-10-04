@@ -174,7 +174,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
         if ([fields[0] isEqual:@"120000"]) { [skipped addObject:[file stringByAppendingString:@"：符号链接，未读取外部文件"]]; continue; }
         NSUInteger size = [fields[3] integerValue];
         if (size > 1024 * 1024 || total + size > 30 * 1024 * 1024) { [skipped addObject:[file stringByAppendingString:@"：超出扫描大小限制"]]; continue; } total += size;
-        NSString *key = [NSString stringWithFormat:@"v2|%@|%@|%@|%@", course[@"upstream"], file, fields[2], calendar.timeZone.name];
+        NSString *key = [NSString stringWithFormat:@"v3|%@|%@|%@|%@", course[@"upstream"], file, fields[2], calendar.timeZone.name];
         NSArray *found = cache[key];
         if (![found isKindOfClass:NSArray.class]) {
             SSGitResult *blob = [self checked:@[@"cat-file", @"blob", fields[2]] in:path token:nil error:error]; if (!blob) return nil;
@@ -185,7 +185,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
             found = SSAssignmentsFromDocument(text, course[@"upstream"], file, fields[2], NSDate.date, calendar); cache[key] = found;
         }
         for (NSDictionary *candidate in found) {
-            NSString *fingerprint = [NSString stringWithFormat:@"%@|%@", [candidate[@"title"] lowercaseString], candidate[@"due"]];
+            NSString *fingerprint = [NSString stringWithFormat:@"%@|%@|%@", [candidate[@"title"] lowercaseString], candidate[@"due"], candidate[@"deadlineText"] ?: @""];
             if ([dedup containsObject:fingerprint]) continue; [dedup addObject:fingerprint];
             NSMutableDictionary *copy = candidate.mutableCopy; copy[@"timeZone"] = calendar.timeZone.name; [candidates addObject:copy];
         }

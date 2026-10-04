@@ -18,12 +18,39 @@ static NSString *CleanTitle(NSString *raw) {
     title = [title stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@" \t\n:：-—，,。"]];
     return title.length > 90 ? [title substringToIndex:90] : title;
 }
-static NSString *Title(NSString *line, NSString *heading, NSString *previous) {
+static BOOL GenericTitle(NSString *title) {
+    return !title.length || Match(title, @"^(?:规则|要求|提交(?:规则|要求|说明)?|说明|任务|作业|截止时间|时间|日期|rules?|requirements?|instructions?|tasks?|readme|[0-9]+[.)]?)$");
+}
+static NSString *DocumentTitle(NSArray *lines, NSString *path) {
+    BOOL fence = NO;
+    for (NSString *raw in lines) {
+        NSString *line = [raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if ([line hasPrefix:@"```"] || [line hasPrefix:@"~~~"]) { fence = !fence; continue; }
+        if (!fence && [line hasPrefix:@"#"]) {
+            NSString *title = CleanTitle(line);
+            if (!GenericTitle(title)) return title;
+        }
+    }
+    NSString *name = path.lastPathComponent.stringByDeletingPathExtension;
+    if (!GenericTitle(name)) return name;
+    NSString *folder = path.stringByDeletingLastPathComponent.lastPathComponent;
+    return folder.length && !GenericTitle(folder) ? folder : @"待确认作业";
+}
+static NSString *Title(NSString *line, NSString *heading, NSString *previous, NSString *documentTitle) {
     NSString *inlineTitle = CleanTitle(line);
-    if (inlineTitle.length > 2 && !Match(inlineTitle, @"^(?:请在|最晚|提交时间|时间|日期|before|by)\\s*$")) return inlineTitle;
+    if (inlineTitle.length > 2 && !GenericTitle(inlineTitle) && !Match(inlineTitle, @"^(?:请在|最晚|提交时间|before|by)\\s*$") && !Match(inlineTitle, @"^(?:今天|今晚|明天|后天|(?:本|这|下)?(?:周|星期|礼拜)|20\\d{2}[-/年]|\\d{1,2}月)") && !Match(line, @"^\\s*[-*+]?\\s*(?:\\*\\*)?(?:截止|deadline|due|ddl)")) return inlineTitle;
     NSString *title = CleanTitle(heading);
-    if (!title.length) title = CleanTitle(previous);
-    return title.length ? title : @"待确认作业";
+    if (!GenericTitle(title)) return title;
+    title = CleanTitle(previous);
+    if (Match(previous, @"^\\s*#") && !GenericTitle(title)) return title;
+    return documentTitle;
+}
+static NSString *Snippet(NSArray *lines, NSUInteger index, NSString *heading) {
+    // Keep the deadline and nearby task/attachment instructions together for review.
+    NSUInteger start = index > 2 ? index - 2 : 0;
+    NSUInteger end = MIN(lines.count, index + 21);
+    NSString *excerpt = [[lines subarrayWithRange:NSMakeRange(start, end - start)] componentsJoinedByString:@"\n"];
+    return heading.length ? [NSString stringWithFormat:@"%@\n%@", heading, excerpt] : excerpt;
 }
 static NSDictionary *Candidate(NSString *title, NSString *repository, NSString *path, NSString *blobSHA, NSUInteger line, NSString *snippet, NSDate *due, BOOL needsDate, BOOL needsTime, NSMutableDictionary *counts) {
     NSString *identity = [NSString stringWithFormat:@"%@|%@|%@", repository.lowercaseString, path, title.lowercaseString];
@@ -36,17 +63,18 @@ NSArray<NSDictionary<NSString *, id> *> *SSAssignmentsFromDocument(NSString *tex
     if (!text.length || !repository.length || !path.length) return @[];
     NSArray *lines = [[text stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"] componentsSeparatedByString:@"\n"];
     NSMutableArray *result = NSMutableArray.array; NSMutableDictionary *counts = NSMutableDictionary.dictionary;
-    NSString *heading = @"", *previous = @""; BOOL fence = NO;
-    NSString *datePattern = @"(?<![0-9])(?:20[0-9]{2}[-/年]\\s*[0-9]{1,2}[-/月]\\s*[0-9]{1,2}[日号]?|[0-9]{1,2}\\s*月\\s*[0-9]{1,2}[日号]?|[0-9]{1,2}/[0-9]{1,2})(?![0-9])|今天|今晚|明天|后天|下周[一二三四五六日天]?";
+    NSString *heading = @"", *previous = @"", *documentTitle = DocumentTitle(lines, path); BOOL fence = NO;
+    NSString *relativePattern = @"今天|今晚|明天|后天|(?:本|这|下)(?:周|星期|礼拜)(?:[一二三四五六日天末])?|(?:周|星期|礼拜)[一二三四五六日天末]|一周后|两周后|二周后|[0-9]{1,3}天后|[0-9]{1,2}周后";
+    NSString *datePattern = [@"(?<![0-9])(?:20[0-9]{2}[-/年]\\s*[0-9]{1,2}[-/月]\\s*[0-9]{1,2}[日号]?|[0-9]{1,2}\\s*月\\s*[0-9]{1,2}[日号]?|[0-9]{1,2}/[0-9]{1,2})(?![0-9])|" stringByAppendingString:relativePattern];
     for (NSUInteger index = 0; index < lines.count; index++) {
         NSString *line = [lines[index] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
         if ([line hasPrefix:@"```"] || [line hasPrefix:@"~~~"]) { fence = !fence; continue; } if (fence || !line.length) continue;
-        if ([line hasPrefix:@"#"]) heading = CleanTitle(line);
+        if ([line hasPrefix:@"#"] && !GenericTitle(CleanTitle(line))) heading = CleanTitle(line);
         NSString *context = [NSString stringWithFormat:@"%@\n%@\n%@", heading, previous, line];
         BOOL taskCue = Match(context, @"作业|实验|报告|提交|截止|最晚|homework|assignment|deadline|\\bdue\\b|\\bsubmit\\b|\\bhw[0-9]+\\b|\\bddl\\b");
         NSArray *dates = [Regex(datePattern) matchesInString:line options:0 range:NSMakeRange(0, line.length)];
         if (!dates.count && taskCue && Match(line, @"(?:截止|deadline|due|ddl).{0,12}(?:待定|未定|TBA|TBD)")) {
-            [result addObject:Candidate(Title(line, heading, previous), repository, path, blobSHA, index + 1, context, nil, YES, YES, counts)];
+            [result addObject:Candidate(Title(line, heading, previous, documentTitle), repository, path, blobSHA, index + 1, Snippet(lines, index, heading), nil, YES, YES, counts)];
         }
         for (NSUInteger d = 0; taskCue && d < dates.count; d++) {
             NSTextCheckingResult *dateMatch = dates[d];
@@ -58,6 +86,15 @@ NSArray<NSDictionary<NSString *, id> *> *SSAssignmentsFromDocument(NSString *tex
             dateText = Replace(dateText, @"(?<=\\d)T(?=\\d)", @" ");
             BOOL explicitYear = Match(dateText, @"^20\\d{2}[-/年]");
             BOOL explicitTime = Match(dateText, @"(?<!\\d)(?:[01]?\\d|2[0-3]):[0-5]\\d(?!\\d)|(?:凌晨|上午|中午|下午|晚上)?\\s*\\d{1,2}\\s*点");
+            BOOL relative = Match([line substringWithRange:dateMatch.range], relativePattern);
+            if (relative) {
+                // The scan date is not the teacher's publication date. Never roll an old
+                // "this Sunday" deadline forward based on when the student clicks refresh.
+                NSMutableDictionary *candidate = [Candidate(Title(line, heading, previous, documentTitle), repository, path, blobSHA, index + 1, Snippet(lines, index, heading), nil, YES, !explicitTime, counts) mutableCopy];
+                candidate[@"deadlineText"] = [dateText stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+                [result addObject:candidate];
+                continue;
+            }
             NSCalendar *dateCalendar = calendar.copy;
             NSTextCheckingResult *zone = [Regex(@"UTC\\s*([+-])\\s*(\\d{1,2})(?::([0-5]\\d))?") firstMatchInString:dateText options:0 range:NSMakeRange(0, dateText.length)];
             if (zone) {
@@ -72,7 +109,7 @@ NSArray<NSDictionary<NSString *, id> *> *SSAssignmentsFromDocument(NSString *tex
                 due = [NSISO8601DateFormatter.new dateFromString:value];
             }
             if (!due) continue;
-            [result addObject:Candidate(Title(line, heading, previous), repository, path, blobSHA, index + 1, context, due, !explicitYear, !explicitTime, counts)];
+            [result addObject:Candidate(Title(line, heading, previous, documentTitle), repository, path, blobSHA, index + 1, Snippet(lines, index, heading), due, !explicitYear, !explicitTime, counts)];
         }
         if (!dates.count && ![line hasPrefix:@"#"]) previous = line;
     }
