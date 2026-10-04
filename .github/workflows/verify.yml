@@ -1,0 +1,28 @@
+name: Build and privacy checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Native build
+        run: zsh build.sh
+      - name: Dates and reminders
+        run: zsh test.sh
+      - name: Document and screenshot import
+        run: zsh verify-import.sh
+      - name: GitHub, Git and secret protection
+        run: zsh verify-homework.sh
+      - name: Compile local image privacy scanner
+        run: >-
+          clang -fobjc-arc -Wall -Wextra -Werror -mmacosx-version-min=13.0
+          -framework Foundation -framework Vision Tools/PrivacyOCR.m -o build/tests/privacy-ocr
+      - name: Current files, full history, archives and screenshots
+        run: python3 Tools/security-audit.py --history --artifacts 'build/SS 作业管理器.app' --ocr build/tests/privacy-ocr

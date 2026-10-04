@@ -1,0 +1,36 @@
+# 安全与隐私
+
+## 推送到个人 fork 的约束
+
+每次写操作先从 GitHub 核对当前用户 ID、fork 仓库 ID、拥有者 ID 和老师 parent ID。每次推送在检查提交后再次核验，固定使用 `https://github.com/自己的账户/课程.git` 与明确的 `提交SHA:refs/heads/分支`。origin / upstream 不匹配时拒绝操作；默认 push 配置和 remote.pushurl 不作为推送目标。不强推，不执行仓库 hooks，不允许 URL rewrite、外部 merge driver、filter 等会改变网络或执行行为的本地配置。
+
+Git 使用 `/usr/bin/git` 和参数数组。隔离 Git 全局配置，HTTPS 禁用重定向；SSH 使用本机配置及现有密钥。GitHub App token 仅通过子进程环境与静态 askpass 在内存中提供，只用于经过身份核验的个人 fork，不传给老师仓库，不写入命令参数、远端 URL 或文件。
+
+老师当前默认分支每次通过本机 `ls-remote --symref HEAD` 确认，直接读取 Git 对象，不读取本地作业文件或跟随文档符号链接。
+
+## 凭据与本机数据
+
+访问/刷新令牌保存在 macOS 钥匙串，禁用同步到其他设备。HTTP 使用无缓存、无 cookie 的临时会话，不跟随授权请求重定向。退出登录删除本机钥匙串记录；要撤销 App 授权请在 GitHub 设置中撤销。
+
+任务、课程路径、老师原文和识别缓存在本机 Application Support；目录权限 0700、数据文件 0600。应用没有遥测或自建服务器。任务备份只导出任务，**备注可能包含个人信息**，分享前自行检查。
+
+新提交使用 `用户ID+login@users.noreply.github.com`，不更改全局或仓库邮箱设置。现有提交的作者/提交者信息不会自动重写。老师与个人 fork 的 Git 提交传输使用 GitHub / 本机 Git 凭据。
+
+## 提交检查与限制
+
+只提交用户勾选的文件，通过临时 index 检查实际待提交 blob；已有暂存、待完成合并或可疑内容时停止。推送会检查整个待推送范围，包括后来删除的 blob、提交说明和树中的敏感文件名称。常见环境凭据、私钥、GitHub/AWS/OpenAI 密钥、带值的密码字段会被拦截；压缩包不能进行可靠的通用检查，因此拒绝。
+
+本地规则不能保证识别所有未知格式的秘密。不要把密钥放在课程文件夹；敏感文件应先加入课程仓库 .gitignore。遇到疑似密钥：
+
+1. 未提交：把秘密移出仓库，修复文件内容，在 .gitignore 排除本机配置后重试。
+2. 已本地提交：仅删除最新文件不够，历史仍含秘密；先备份作业，人工清理尚未推送的提交。应用不会替你重写历史或强推。
+3. 已公开：先在凭据提供方撤销或轮换，再按 GitHub 的敏感数据移除流程处理历史与缓存。
+4. 推送失败：本地提交保留，修复原因后点“推送我的 fork”；不会重复生成相同提交。
+
+## 仓库发布检查
+
+`Tools/security-audit.py` 扫描工作文件、所有可达历史对象、嵌套 ZIP 与构建包；结合本机 Vision OCR 检查历史截图。只报告位置、类别与计数，绝不打印命中的秘密。原历史的公开作者邮箱单独统计；不会擅自改写历史或删掉原作者署名。忽略规则不会自动移除已跟踪文件。
+
+GitHub Actions 持续运行检查。发布脚本重新构建、测试、检查归档和历史，阻止未配置 GitHub App 的正式包；只创建本机 ZIP，不上传、不创建远端提交。
+
+[GitHub 敏感数据移除说明](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository)

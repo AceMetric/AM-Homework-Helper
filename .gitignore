@@ -2,3 +2,16 @@
 build/
 *.dSYM/
 module-cache/
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.key
+*.log
+*.local.plist
+credentials*
+secrets*
+.DDL-Manager*
+SS-Homework-Manager-*.zip

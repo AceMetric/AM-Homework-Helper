@@ -27,7 +27,7 @@ int main(int argc, const char *argv[]) {
             Check([fieldEditor.selectedTextAttributes[NSBackgroundColorAttributeName] isEqual:Emphasis()], @"selection follows palette");
             Check([fieldEditor.insertionPointColor isEqual:Accent()], @"caret follows palette");
             [fieldEditor setSelectedRange:NSMakeRange(fieldEditor.string.length, 0)];
-            Snapshot(editor.window.contentView, [NSString stringWithFormat:@"QA/form-%@.png", ThemeIDs()[theme]]);
+            Snapshot(editor.window.contentView, [NSString stringWithFormat:@"build/qa/form-%@.png", ThemeIDs()[theme]]);
             PastelPopUpButton *preset = (PastelPopUpButton *)editor.reminderPreset;
             [preset menuWillOpen:preset.menu];
             [(PastelMenuRow *)[preset itemAtIndex:2].view activate];

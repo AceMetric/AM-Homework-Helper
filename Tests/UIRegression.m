@@ -106,7 +106,7 @@ int main(int argc, const char *argv[]) {
             [app.window displayIfNeeded];
             NSBitmapImageRep *bitmap = [app.root bitmapImageRepForCachingDisplayInRect:app.root.bounds];
             [app.root cacheDisplayInRect:app.root.bounds toBitmapImageRep:bitmap];
-            NSString *path = [NSString stringWithFormat:@"QA/theme-%@.png", ThemeIDs()[i]];
+            NSString *path = [NSString stringWithFormat:@"build/qa/theme-%@.png", ThemeIDs()[i]];
             CheckUI([[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:NO], @"theme preview exported");
         }
         OverviewGrid *hoverGrid = nil;
@@ -144,7 +144,7 @@ int main(int argc, const char *argv[]) {
         [app.window displayIfNeeded];
         NSBitmapImageRep *listBitmap = [app.root bitmapImageRepForCachingDisplayInRect:app.root.bounds];
         [app.root cacheDisplayInRect:app.root.bounds toBitmapImageRep:listBitmap];
-        [[listBitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:@"QA/theme-list-compact.png" atomically:NO];
+        [[listBitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:@"build/qa/theme-list-compact.png" atomically:NO];
         [app.ticker invalidate]; [app.searchTimer invalidate];
         [app.window orderOut:nil]; [NSStatusBar.systemStatusBar removeStatusItem:app.statusItem];
         printf("PASS: %ld AppKit assertions\n", (long)assertions);

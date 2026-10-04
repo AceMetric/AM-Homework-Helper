@@ -5,28 +5,28 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh_CN</string>
 	<key>CFBundleDisplayName</key>
-	<string>DDL Manager</string>
+	<string>SS 作业管理器</string>
 	<key>CFBundleExecutable</key>
-	<string>DDLManager</string>
+	<string>SSHomeworkManager</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
-	<string>local.ddlmanager.app</string>
+	<string>io.github.acemetric.sshomeworkmanager</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>DDL Manager</string>
+	<string>SS 作业管理器</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>5.5</string>
+	<string>1.0</string>
 	<key>CFBundleVersion</key>
-	<string>10</string>
+	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>LSUIElement</key>
 	<false/>
 	<key>NSHumanReadableCopyright</key>
-	<string>Local DDL checklist</string>
+	<string>SS 作业管理器 · 基于 DDL Manager 改编</string>
 </dict>
 </plist>
