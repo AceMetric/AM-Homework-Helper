@@ -84,6 +84,6 @@ zsh verify-homework.sh
 
 ## 开源许可
 
-本项目经原作者同意采用 [MIT 许可证](LICENSE)，保留原作者及贡献者署名。随应用分发的 Sparkle 保留其独立许可证。
+本项目沿用上游的 [MIT 许可证](LICENSE)，保留原作者版权声明，并另列本分支改动的署名。随应用分发的 Sparkle 保留其独立许可证。
 
 来源与授权依据见 [原作者与授权记录](docs/ATTRIBUTION.md)；原版用户指南保存在 [原版说明](docs/UPSTREAM_README.md)。
