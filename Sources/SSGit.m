@@ -166,7 +166,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSString *branch = [self teacherBranch:Trim([self string:url]) path:path error:error]; if (!branch) return nil;
     NSString *head = [self fetch:Trim([self string:url]) branch:branch path:path token:nil error:error]; if (!head) return nil;
     SSGitResult *tree = [self checked:@[@"ls-tree", @"-r", @"-l", @"-z", head] in:path token:nil error:error]; if (!tree) return nil;
-    NSMutableArray *candidates = NSMutableArray.array, *skipped = NSMutableArray.array;
+    NSMutableArray *candidates = NSMutableArray.array, *materials = NSMutableArray.array, *skipped = NSMutableArray.array;
     NSMutableSet *dedup = NSMutableSet.set; NSUInteger total = 0;
     NSCalendar *calendar = [NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];
     calendar.timeZone = [NSTimeZone timeZoneWithName:course[@"timeZone"] ?: NSTimeZone.localTimeZone.name] ?: NSTimeZone.localTimeZone;
@@ -178,7 +178,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
         if ([fields[0] isEqual:@"120000"]) { [skipped addObject:[file stringByAppendingString:@"：符号链接，未读取外部文件"]]; continue; }
         NSUInteger size = [fields[3] integerValue];
         if (size > 1024 * 1024 || total + size > 30 * 1024 * 1024) { [skipped addObject:[file stringByAppendingString:@"：超出扫描大小限制"]]; continue; } total += size;
-        NSString *key = [NSString stringWithFormat:@"v3|%@|%@|%@|%@", course[@"upstream"], file, fields[2], calendar.timeZone.name];
+        NSString *key = [NSString stringWithFormat:@"v4|%@|%@|%@|%@", course[@"upstream"], file, fields[2], calendar.timeZone.name];
         NSArray *found = cache[key];
         if (![found isKindOfClass:NSArray.class]) {
             SSGitResult *blob = [self checked:@[@"cat-file", @"blob", fields[2]] in:path token:nil error:error]; if (!blob) return nil;
@@ -186,15 +186,16 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
             if (!text && blob.data.length >= 2) { const unsigned char *bytes = blob.data.bytes; if ((bytes[0] == 0xff && bytes[1] == 0xfe) || (bytes[0] == 0xfe && bytes[1] == 0xff)) text = [[NSString alloc] initWithData:blob.data encoding:NSUTF16StringEncoding]; }
             if (!text || [text rangeOfString:@"\0"].location != NSNotFound) { [skipped addObject:[file stringByAppendingString:@"：不是支持的文本编码"]]; continue; }
             if (SSContainsSecret(blob.data)) { [skipped addObject:[file stringByAppendingString:@"：含疑似凭据，未导入原文"]]; continue; }
-            found = SSAssignmentsFromDocument(text, course[@"upstream"], file, fields[2], NSDate.date, calendar); cache[key] = found;
+            found = SSDiscoveriesFromDocument(text, course[@"upstream"], file, fields[2], NSDate.date, calendar); cache[key] = found;
         }
         for (NSDictionary *candidate in found) {
+            if (![candidate[@"kind"] isEqual:@"assignment"]) { [materials addObject:candidate]; continue; }
             NSString *fingerprint = [NSString stringWithFormat:@"%@|%@|%@", [candidate[@"title"] lowercaseString], candidate[@"due"], candidate[@"deadlineText"] ?: @""];
             if ([dedup containsObject:fingerprint]) continue; [dedup addObject:fingerprint];
-            NSMutableDictionary *copy = candidate.mutableCopy; copy[@"timeZone"] = calendar.timeZone.name; [candidates addObject:copy];
+            NSMutableDictionary *copy = candidate.mutableCopy; if (!copy[@"timeZone"]) copy[@"timeZone"] = calendar.timeZone.name; [candidates addObject:copy];
         }
     }
-    return @{@"candidates":candidates, @"skipped":skipped, @"commit":head, @"branch":branch, @"date":NSDate.date};
+    return @{@"candidates":SSConsolidateAssignments(candidates), @"materials":SSGroupMaterials(materials), @"skipped":skipped, @"commit":head, @"branch":branch, @"date":NSDate.date};
 }
 - (BOOL)cleanWorktree:(NSString *)path error:(NSError **)error {
     SSGitResult *status = [self checked:@[@"status", @"--porcelain=v1", @"-z", @"--untracked-files=all"] in:path token:nil error:error]; if (!status) return NO;
