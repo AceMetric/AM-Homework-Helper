@@ -2,6 +2,11 @@
 #import <Security/Security.h>
 
 NSURL *SSDataDirectory(void) {
+#ifdef DDL_TESTING
+    // Compiled only into isolated test applications, never into a distributable build.
+    NSString *testPath = [NSBundle.mainBundle objectForInfoDictionaryKey:@"DDLTestDataDirectory"];
+    if (testPath) return [NSURL fileURLWithPath:testPath isDirectory:YES];
+#endif
     // Keep the preview build's storage location when restoring the DDL-Manager
     // display name, so existing tasks and course associations remain available.
     NSURL *base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
@@ -28,8 +33,12 @@ BOOL SSWritePlist(NSString *name, id value, NSError **error) {
 
 static NSMutableDictionary *KeychainQuery(NSString *account) {
     // This service identifier is persistent data, not the public product name.
+    NSString *service = @"io.github.acemetric.sshomeworkmanager.github";
+#ifdef DDL_TESTING
+    service = [NSBundle.mainBundle objectForInfoDictionaryKey:@"DDLTestKeychainService"] ?: @"io.github.ddl-manager.unit-tests";
+#endif
     return [@{(__bridge id)kSecClass:(__bridge id)kSecClassGenericPassword,
-              (__bridge id)kSecAttrService:@"io.github.acemetric.sshomeworkmanager.github",
+              (__bridge id)kSecAttrService:service,
               (__bridge id)kSecAttrAccount:account} mutableCopy];
 }
 

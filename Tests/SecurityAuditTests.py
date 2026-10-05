@@ -47,6 +47,16 @@ class AuditTests(unittest.TestCase):
         SCAN(data, 'preview.jpg')
         self.assertIn(('preview.jpg', 'personal-email'), GLOBALS['findings'])
 
+    def test_upstream_attribution_exemption_requires_exact_bytes(self):
+        path = Path(__file__).resolve().parent.parent / 'build/DDL-Manager.app/Contents/Resources/Sparkle-LICENSE.txt'
+        if not path.exists():
+            self.skipTest('build the pinned dependency first')
+        data = path.read_bytes()
+        SCAN(data, 'artifact/Sparkle-LICENSE.txt')
+        self.assertEqual(GLOBALS['findings'], set())
+        SCAN(data + b'\n' + self.address, 'artifact/Sparkle-LICENSE.txt')
+        self.assertIn(('artifact/Sparkle-LICENSE.txt', 'personal-email'), GLOBALS['findings'])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -55,6 +55,9 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property NSArray<NSButton *> *actionButtons;
 @property NSDictionary *reports;
 @property SSSubmissionController *submission;
+@property BOOL allowingExitSubmission;
+@property BOOL exitSubmissionInFlight;
+@property (readwrite) BOOL submissionFailedDuringExit;
 @end
 
 @implementation SSCourseController
@@ -73,6 +76,20 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     } return self;
 }
 - (NSWindow *)window { return self.view.window; }
+- (BOOL)operationBusy { return self.busy; }
+- (BOOL)hasSubmissionSheet { return self.submission.window.sheetParent != nil; }
+- (BOOL)hasUnsavedSubmission { return self.hasSubmissionSheet && self.submission.hasUnsavedChanges; }
+- (void)setOperationsPaused:(BOOL)paused { _operationsPaused = paused; [self refreshPresentation]; }
+- (void)cancelPendingLogin { [self cancelLogin:nil]; }
+- (void)discardSubmission { [self.submission cancel:nil]; self.submission = nil; }
+- (void)acknowledgeSubmissionFailure { self.submissionFailedDuringExit = NO; }
+- (BOOL)persistForExit:(NSError **)error { return self.preview || SSWritePlist(@"courses.plist", self.courses, error); }
+- (BOOL)saveSubmissionForExit {
+    self.allowingExitSubmission = YES; self.exitSubmissionInFlight = YES;
+    BOOL saved = [self.submission saveForExit]; self.allowingExitSubmission = NO;
+    if (!saved) self.exitSubmissionInFlight = NO;
+    return saved;
+}
 - (NSString *)accountSummary { if (self.loginActive) return @"取消 GitHub 登录"; if (self.busy && !self.connected) return @"正在连接 GitHub…"; return self.connected ? @"GitHub 已连接" : @"连接 GitHub"; }
 - (void)buildUI {
     Surface *root = Box(Canvas(), 0); root.frame = NSMakeRect(0, 0, 960, 600); self.view = root;
@@ -136,6 +153,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     return count;
 }
 - (void)accountSettings:(id)sender {
+    if (self.operationsPaused) return;
     if (self.busy) { if (self.loginActive) [self cancelLogin:nil]; return; }
     NSAlert *alert = NSAlert.new; alert.messageText = self.connected ? @"GitHub 账户已连接" : @"连接 GitHub";
     alert.informativeText = @"先授权自己的课程仓库，再通过设备码登录。登录信息只保存在本机钥匙串。";
@@ -212,11 +230,11 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.statusLabel.toolTip = self.statusLabel.stringValue; self.accountLabel.toolTip = context;
     BOOL local = [course[@"path"] length] > 0;
     self.setupButton.title = !self.connected ? @"连接 GitHub" : (course && !local ? @"关联文件夹…" : @"添加课程…");
-    self.setupButton.enabled = !self.busy; self.moreButton.enabled = !self.busy && course != nil;
+    self.setupButton.enabled = !self.busy && !self.operationsPaused; self.moreButton.enabled = !self.busy && !self.operationsPaused && course != nil;
     self.syncButton.hidden = self.inbox; self.commitButton.hidden = self.inbox;
-    self.syncButton.enabled = self.commitButton.enabled = !self.busy && local && self.connected;
-    BOOL anyLocal = NO; for (NSDictionary *item in self.courses) if ([item[@"path"] length]) anyLocal = YES; self.scanButton.enabled = !self.busy && (local || (self.inbox && !course && anyLocal));
-    self.recoveryButton.hidden = !course || (![course[@"pendingMergeTip"] length] && ![course[@"pushFailed"] boolValue]); self.recoveryButton.enabled = !self.busy;
+    self.syncButton.enabled = self.commitButton.enabled = !self.busy && !self.operationsPaused && local && self.connected;
+    BOOL anyLocal = NO; for (NSDictionary *item in self.courses) if ([item[@"path"] length]) anyLocal = YES; self.scanButton.enabled = !self.busy && !self.operationsPaused && (local || (self.inbox && !course && anyLocal));
+    self.recoveryButton.hidden = !course || (![course[@"pendingMergeTip"] length] && ![course[@"pushFailed"] boolValue]); self.recoveryButton.enabled = !self.busy && !self.operationsPaused;
     self.recoveryButton.title = [course[@"pendingMergeTip"] length] ? @"处理冲突…" : @"重试推送";
     NSArray *visible = [self visible];
     NSString *selectedID = self.selectedCandidateID; NSPoint scrollPosition = self.table.enclosingScrollView.contentView.bounds.origin;
@@ -241,18 +259,19 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)work:(NSString *)message forCourse:(NSDictionary *)course operation:(id (^)(NSError **))operation completion:(void (^)(id, NSError *))completion {
     if (self.preview) { [self status:@"模拟预览不会操作真实账户或仓库"]; return; }
-    if (self.busy) return;
+    if (self.busy || (self.operationsPaused && !self.allowingExitSubmission)) return;
     self.busy = YES; self.workGeneration++; NSUInteger generation = self.workGeneration; NSString *target = course[@"fork"]; self.operationFork = target; self.statusFork = target; [self.progress startAnimation:nil]; [self status:message];
     dispatch_async(self.queue, ^{
         NSError *error = nil; id value = operation(&error);
         dispatch_async(dispatch_get_main_queue(), ^{
             self.busy = NO; [self.progress stopAnimation:nil]; self.statusFork = target;
             completion(value, error); if (self.workGeneration == generation) { self.statusFork = nil; self.operationFork = nil; } [self refreshPresentation];
+            if (self.operationStateChanged) self.operationStateChanged();
         });
     });
 }
 - (void)setClientID:(id)sender {
-    if (self.busy || self.preview) return;
+    if (self.busy || self.preview || self.operationsPaused) return;
     NSAlert *alert = [NSAlert new]; alert.messageText = @"GitHub App Client ID";
     alert.informativeText = @"填写开发者注册的 GitHub App 公开 Client ID 和安装链接。注册说明位于 docs/GITHUB_APP_SETUP.md。不要填写密钥或个人令牌。";
     NSTextField *field = [[PastelTextField alloc] initWithFrame:NSMakeRect(0, 42, 440, 28)]; field.stringValue = self.github.clientID ?: @"";
@@ -270,6 +289,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)login:(id)sender {
     [self work:@"正在申请 GitHub 设备授权…" operation:^id(NSError **error) { return [self.github beginDeviceLogin:error]; } completion:^(NSDictionary *challenge, NSError *error) {
+        if (self.operationsPaused) return;
         if (!challenge) { [self showError:error]; return; }
         NSAlert *alert = [NSAlert new]; alert.messageText = [@"请在 GitHub 输入代码 " stringByAppendingString:challenge[@"user_code"] ?: @""];
         alert.informativeText = @"浏览器中仅安装到你自己的课程 fork；应用不会要求老师安装。";
@@ -280,14 +300,15 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         [self work:@"等待 GitHub 授权…" operation:^id(NSError **innerError) { return @([self.github completeDeviceLogin:challenge error:innerError]); } completion:^(NSNumber *ok, NSError *innerError) {
             self.loginActive = NO;
             if (!ok.boolValue) { [self showError:innerError]; return; }
-            self.connected = YES; [self refreshPresentation]; [self status:@"GitHub 已连接"]; if (self.guided) { if ([self course] && ![[self course][@"path"] length]) { self.guided = NO; [self chooseLocalFolder]; } else [self addFork:nil]; }
+            self.connected = YES; [self refreshPresentation]; [self status:@"GitHub 已连接"]; if (self.guided && !self.operationsPaused) { if ([self course] && ![[self course][@"path"] length]) { self.guided = NO; [self chooseLocalFolder]; } else [self addFork:nil]; }
         }];
     }];
 }
 - (void)cancelLogin:(id)sender { if (self.loginActive) { [self.github cancelDeviceLogin]; [self status:@"正在取消登录…"]; } }
-- (void)signOut:(id)sender { if (self.busy || self.preview) return; [self.github signOut]; self.connected = NO; [self refreshPresentation]; [self status:@"已退出登录；本地课程和 DDL 已保留。"] ; }
+- (void)signOut:(id)sender { if (self.busy || self.preview || self.operationsPaused) return; [self.github signOut]; self.connected = NO; [self refreshPresentation]; [self status:@"已退出登录；本地课程和 DDL 已保留。"] ; }
 - (void)addFork:(id)sender {
     [self work:@"正在读取可访问的 fork…" operation:^id(NSError **error) { return [self.github accessibleForks:error]; } completion:^(NSArray *forks, NSError *error) {
+        if (self.operationsPaused) return;
         if (!forks) { [self showError:error]; return; }
         self.availableForks = forks;
         self.connected = YES;
@@ -309,7 +330,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
                 @"upstreamURL":parent[@"clone_url"] ?: @""} mutableCopy];
             [self.courses addObject:course]; [self saveCourses]; [self refreshCourses];
             self.selectedFork = course[@"fork"]; [self refreshCourses];
-            [self status:@"课程已添加，下一步关联本地文件夹"]; if (self.guided) { self.guided = NO; [self chooseLocalFolder]; }
+            [self status:@"课程已添加，下一步关联本地文件夹"]; if (self.guided && !self.operationsPaused) { self.guided = NO; [self chooseLocalFolder]; }
         }];
     }];
 }
@@ -411,7 +432,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     } completion:^(NSDictionary *result, NSError *error) {
         if (result[@"conflicts"]) {
             NSMutableDictionary *saved = [self savedCourse:course]; saved[@"pendingMergeTip"] = result[@"mergeHead"]; saved[@"pendingConflicts"] = result[@"conflicts"]; [self saveCourses];
-            [self showError:error]; if ([self.selectedFork isEqual:course[@"fork"]] && !self.window.attachedSheet) [self conflictGuide:course];
+            [self showError:error]; if (!self.operationsPaused && [self.selectedFork isEqual:course[@"fork"]] && !self.window.attachedSheet) [self conflictGuide:course];
         }
         else if (!result) { if ([error.userInfo[@"SSPendingPush"] boolValue]) { [self savedCourse:course][@"pushFailed"] = @YES; [self saveCourses]; } [self showError:error]; }
         else { [[self savedCourse:course] removeObjectForKey:@"pushFailed"]; [self saveCourses]; [self status:@"老师作业已更新到本地与个人仓库"]; [self scanCourses:@[course.copy]]; }
@@ -442,6 +463,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)conflictGuide:(NSDictionary *)course {
     [self work:@"正在读取冲突状态…" forCourse:course operation:^id(NSError **error) { return [self.git conflicts:course error:error]; } completion:^(NSArray *files, NSError *error) {
+        if (self.operationsPaused) return;
         if (!files) { [self showError:error]; return; }
         if (![course[@"pendingMergeTip"] length]) { [self status:@"没有本应用记录的上游合并。请自行处理现有 Git 状态。"] ; return; }
         NSAlert *alert = NSAlert.new; alert.messageText = @"上游合并冲突引导";
@@ -476,6 +498,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSDictionary *course = [[self course] copy]; if (!course) return;
     [self work:@"正在读取本地修改…" forCourse:course operation:^id(NSError **error) { return [self.git changesForCourse:course error:error]; } completion:^(NSArray *changes, NSError *error) {
         if (!changes) { [self showError:error]; return; }
+        if (self.operationsPaused) return;
         if (!changes.count) { [self status:@"没有需要提交的改动。"] ; return; }
         if (self.window.attachedSheet) { [self status:@"请先关闭当前编辑弹窗，再打开“提交作业”。"]; return; }
         self.submission = [[SSSubmissionController alloc] initWithCourse:course changes:changes];
@@ -489,7 +512,19 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             NSDictionary *user = [self.github user:innerError]; if (!user) return @NO;
             NSString *token = [self.github accessToken:innerError]; if (!token) return @NO;
             return @([self.git commitCourse:course paths:paths message:message login:user[@"login"] userID:user[@"id"] token:token error:innerError]);
-        } completion:^(NSNumber *ok, NSError *innerError) { if (ok.boolValue) { [[self savedCourse:course] removeObjectForKey:@"pushFailed"]; [self saveCourses]; [self status:@"所选文件已提交到自己的仓库"]; } else { if ([innerError.userInfo[@"SSPendingPush"] boolValue]) { [self savedCourse:course][@"pushFailed"] = @YES; [self saveCourses]; } [self showError:innerError]; } }];
+        } completion:^(NSNumber *ok, NSError *innerError) {
+            if (self.exitSubmissionInFlight) { self.submissionFailedDuringExit = !ok.boolValue; self.exitSubmissionInFlight = NO; }
+            if (ok.boolValue) { [[self savedCourse:course] removeObjectForKey:@"pushFailed"]; [self saveCourses]; [self status:@"所选文件已提交到自己的仓库"]; }
+            else {
+                if ([innerError.userInfo[@"SSPendingPush"] boolValue]) { [self savedCourse:course][@"pushFailed"] = @YES; [self saveCourses]; }
+                else if (!self.window.attachedSheet) {
+                    self.submission.validation.stringValue = innerError.localizedDescription ?: @"提交未完成，请检查后重试。";
+                    self.submission.validation.textColor = NSColor.systemRedColor;
+                    [self.window beginSheet:self.submission.window completionHandler:nil];
+                }
+                [self showError:innerError];
+            }
+        }];
         };
         [self.window beginSheet:self.submission.window completionHandler:nil];
     }];

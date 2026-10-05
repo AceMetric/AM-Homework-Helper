@@ -1,6 +1,6 @@
 # 开发与贡献
 
-本分支为原项目增加 GitHub 课程作业能力，并沿用 **DDL-Manager** 名称。原作者负责上游的审核、功能取舍和正式版本发布。个人开发计划留在本机，不属于仓库文档。
+本分支为原项目增加 GitHub 课程作业能力，并沿用 **DDL-Manager** 名称。本分支当前独立开发，暂不提交 PR。个人开发计划留在本机，不属于仓库文档。
 
 ## 代码结构
 
@@ -13,6 +13,7 @@
 | `Sources/SSAssignments.m` | 文档识别、日期待确认标记、标题与原文片段 |
 | `Sources/SSGitHub.m` | 设备授权、令牌刷新、仓库及账户身份核验 |
 | `Sources/SSGit.m` | 上游文档读取、安全合并、所选文件提交与明确目标推送 |
+| `Sources/SSUpdateController.m`、`SSExitCoordinator.m` | 原生更新窗口、偏好、退出等待与保存保护 |
 | `Sources/SSLocalData.m`、`SSSecurity.m` | 本机数据与钥匙串、敏感内容检查 |
 | `Tools/security-audit.py` | 源码、历史、图片、归档和发布产物的隐私检查 |
 
@@ -29,6 +30,7 @@ zsh verify-import.sh
 zsh verify-homework.sh
 zsh verify-forms.sh
 zsh verify-course-ui.sh
+zsh verify-update.sh
 python3 Tests/SecurityAuditTests.py
 python3 Tools/security-audit.py --history --artifacts build/DDL-Manager.app --ocr build/tests/privacy-ocr
 ```
@@ -49,9 +51,9 @@ python3 Tools/security-audit.py --history --artifacts build/DDL-Manager.app --oc
 zsh release.sh --candidate
 ```
 
-脚本依次构建、测试、校验签名、扫描历史与产物，然后生成 `build/releases/DDL-Manager-1.0-macOS-arm64-candidate.zip` 和校验文件。ZIP 包含应用、安装说明和公开文档；不包含任务数据库、登录信息或开发计划。
+脚本依次构建、测试、校验签名、扫描历史与产物，然后生成 `build/releases/DDL-Manager-1.1-macOS-arm64-candidate.zip` 和校验文件。ZIP 仅包含应用，安装说明单独生成；不包含任务数据库、登录信息或开发计划。
 
-`zsh release.sh` 生成不带 candidate 后缀的本机包，要求配置公开 GitHub App 信息。它仍不会上传 GitHub Release，也不完成 Developer ID 签名或 Apple 公证。当前 `1.0` 是本分支测试包版本号，上游维护者可按原项目版本序列调整。
+`zsh release.sh` 生成不带 candidate 后缀的本机包，要求配置公开 GitHub App 信息。它仍不会上传 GitHub Release，也不完成 Developer ID 签名或 Apple 公证。当前 1.1 的构建号为 2，后续更新必须递增。签名清单及真实升级验证见 [软件更新与本机发布](UPDATES.md)。
 
 ## 提交给上游
 

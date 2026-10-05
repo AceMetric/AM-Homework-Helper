@@ -6,6 +6,9 @@ APP_DIR="$SCRIPT_DIR/build/DDL-Manager.app"
 CONTENTS="$APP_DIR/Contents"
 export CLANG_MODULE_CACHE_PATH="$SCRIPT_DIR/build/module-cache"
 
+SPARKLE_DIR=$(python3 "$SCRIPT_DIR/Tools/prepare-sparkle.py")
+mkdir -p "$CONTENTS/Frameworks"
+/usr/bin/ditto "$SPARKLE_DIR/Sparkle.framework" "$CONTENTS/Frameworks/Sparkle.framework"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 mkdir -p "$SCRIPT_DIR/build/DDL.iconset"
 
@@ -24,6 +27,8 @@ clang \
   -framework Vision \
   -framework UniformTypeIdentifiers \
   -framework Security \
+  -F"$SPARKLE_DIR" -framework Sparkle \
+  -Wl,-rpath,@executable_path/../Frameworks \
   "$SCRIPT_DIR/Sources/App.m" \
   "$SCRIPT_DIR/Sources/DDLCore.m" \
   "$SCRIPT_DIR/Sources/DDLImport.m" \
@@ -32,6 +37,8 @@ clang \
   "$SCRIPT_DIR/Sources/SSGitHub.m" \
   "$SCRIPT_DIR/Sources/SSGit.m" \
   "$SCRIPT_DIR/Sources/DDLUI.m" \
+  "$SCRIPT_DIR/Sources/SSExitCoordinator.m" \
+  "$SCRIPT_DIR/Sources/SSUpdateController.m" \
   "$SCRIPT_DIR/Sources/SSSecurity.m" \
   "$SCRIPT_DIR/Sources/SSCourseWindow.m" \
   -o "$CONTENTS/MacOS/DDLManager"
@@ -41,6 +48,9 @@ python3 "$SCRIPT_DIR/Tools/configure-bundle.py" "$SCRIPT_DIR/Config/GitHubApp.pl
 cp "$SCRIPT_DIR/Tools/SSAskPass.sh" "$CONTENTS/Resources/SSAskPass.sh"
 chmod 700 "$CONTENTS/Resources/SSAskPass.sh"
 chmod +x "$CONTENTS/MacOS/DDLManager"
-codesign --force --deep --sign - "$APP_DIR"
+cp "$SPARKLE_DIR/LICENSE" "$CONTENTS/Resources/Sparkle-LICENSE.txt"
+# Preserve upstream framework/helper signatures; sign the host only.
+codesign --force --sign - "$APP_DIR"
+codesign --verify --deep --strict "$APP_DIR"
 
 echo "$APP_DIR"

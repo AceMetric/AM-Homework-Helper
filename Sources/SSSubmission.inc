@@ -8,6 +8,8 @@
 @property (copy) void (^readPreview)(NSString *, void (^)(NSString *));
 @property (copy) void (^submit)(NSArray *, NSString *);
 @property NSUInteger previewGeneration;
+- (BOOL)hasUnsavedChanges;
+- (BOOL)saveForExit;
 - (instancetype)initWithCourse:(NSDictionary *)course changes:(NSArray *)changes;
 @end
 @implementation SSSubmissionController
@@ -37,6 +39,13 @@
         ActionButton *save = Button(@"检查并提交", self, @selector(save:), 1); save.keyEquivalent = @"\r"; save.keyEquivalentModifierMask = 0; Put(root, save, 568, 520, 168, 36); panel.initialFirstResponder = self.message; panel.defaultButtonCell = save.cell;
     } return self;
 }
+- (BOOL)hasUnsavedChanges {
+    [self.window makeFirstResponder:nil];
+    if (self.message.stringValue.length) return YES;
+    for (NSButton *check in self.checks) if (check.state == NSControlStateValueOn) return YES;
+    return NO;
+}
+- (BOOL)saveForExit { [self save:nil]; return self.window.sheetParent == nil; }
 - (void)selectionChanged:(NSButton *)sender { NSUInteger count = 0; for (NSButton *check in self.checks) if (check.state == NSControlStateValueOn) count++; self.validation.stringValue = [NSString stringWithFormat:@"已选择 %lu 个文件", (unsigned long)count]; self.validation.textColor = Muted(); if (sender) [self showPreview:sender]; }
 - (void)showPreview:(NSButton *)sender {
     NSUInteger generation = ++self.previewGeneration; self.preview.string = @"正在读取变更…";
