@@ -9,7 +9,11 @@ int main(int argc, char **argv) { @autoreleasepool {
     NSCalendar *calendar = [NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian]; calendar.timeZone = [NSTimeZone timeZoneWithName:@"Asia/Shanghai"];
     for (NSDictionary *document in documents) {
         NSArray *found = SSDiscoveriesFromDocument(document[@"text"], document[@"repository"], document[@"path"], document[@"blobSHA"], NSDate.date, calendar);
-        [records addObjectsFromArray:found];
+        for (NSDictionary *candidate in found) {
+            NSDictionary *basis = document[@"references"][[candidate[@"line"] stringValue]];
+            NSDate *date = basis ? [NSISO8601DateFormatter.new dateFromString:basis[@"date"]] : nil;
+            [records addObject:date ? SSApplyDateReference(candidate, date, basis[@"commit"], calendar) : candidate];
+        }
     }
     NSArray *assignments = SSConsolidateAssignments(records);
     NSDictionary *report = @{@"records":records, @"assignments":assignments, @"materials":SSGroupMaterials(records)};

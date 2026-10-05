@@ -2,6 +2,7 @@
 #import "SSAssignments.h"
 #import "SSSecurity.h"
 #import <signal.h>
+#include <math.h>
 
 static NSError *GitError(NSString *message) { return [NSError errorWithDomain:@"SSGit" code:1 userInfo:@{NSLocalizedDescriptionKey:SSRedactedText(message ?: @"Git 操作失败")}]; }
 static NSError *PendingPushError(NSError *error) { return [NSError errorWithDomain:@"SSGit" code:2 userInfo:@{NSLocalizedDescriptionKey:[@"本地更新已保留，尚未推送。修复原因后选择“重试推送”：\n" stringByAppendingString:error.localizedDescription ?: @"网络或权限错误"], @"SSPendingPush":@YES}]; }
@@ -159,6 +160,26 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     }
     if (error) *error = GitError(@"无法确认老师仓库的默认分支，已停止读取。"); return nil;
 }
+- (NSDictionary *)dateReferenceForCandidate:(NSDictionary *)candidate head:(NSString *)head path:(NSString *)path {
+    if (![candidate[@"relative"] boolValue] || [candidate[@"needsTime"] boolValue]) return candidate;
+    NSUInteger line = [candidate[@"line"] unsignedIntegerValue]; if (!line) return candidate;
+    SSGitResult *blame = [self checked:@[@"blame", @"--no-textconv", @"--line-porcelain", @"-L", [NSString stringWithFormat:@"%lu,%lu", (unsigned long)line, (unsigned long)line], head, @"--", candidate[@"path"]] in:path token:nil error:nil];
+    if (!blame) return candidate;
+    NSArray *lines = [[self string:blame] componentsSeparatedByString:@"\n"];
+    NSString *commit = [lines.firstObject componentsSeparatedByString:@" "].firstObject;
+    if ([commit rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location == NSNotFound) return candidate;
+    // A shallow boundary cannot establish when this line was introduced.
+    SSGitResult *shallowFile = [self checked:@[@"rev-parse", @"--git-path", @"shallow"] in:path token:nil error:nil];
+    if (!shallowFile) return candidate;
+    NSString *boundaryPath = Trim([self string:shallowFile]); if (!boundaryPath.isAbsolutePath) boundaryPath = [path stringByAppendingPathComponent:boundaryPath];
+    NSString *boundaries = [NSString stringWithContentsOfFile:boundaryPath encoding:NSUTF8StringEncoding error:nil];
+    if ([[boundaries componentsSeparatedByString:@"\n"] containsObject:commit]) return candidate;
+    NSTimeInterval timestamp = 0;
+    for (NSString *entry in lines) if ([entry hasPrefix:@"committer-time "]) timestamp = [[entry substringFromIndex:15] doubleValue];
+    if (timestamp <= 0 || !isfinite(timestamp)) return candidate;
+    NSCalendar *calendar = [NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian]; calendar.timeZone = [NSTimeZone timeZoneWithName:candidate[@"timeZone"] ?: @""] ?: NSTimeZone.localTimeZone;
+    return SSApplyDateReference(candidate, [NSDate dateWithTimeIntervalSince1970:timestamp], commit, calendar);
+}
 - (NSDictionary *)scanCourse:(NSDictionary *)course cache:(NSMutableDictionary *)cache error:(NSError **)error {
     if (![self validateCourse:course error:error]) return nil;
     NSString *path = course[@"path"];
@@ -192,7 +213,10 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
             if (![candidate[@"kind"] isEqual:@"assignment"]) { [materials addObject:candidate]; continue; }
             NSString *fingerprint = [NSString stringWithFormat:@"%@|%@|%@", [candidate[@"title"] lowercaseString], candidate[@"due"], candidate[@"deadlineText"] ?: @""];
             if ([dedup containsObject:fingerprint]) continue; [dedup addObject:fingerprint];
-            NSMutableDictionary *copy = candidate.mutableCopy; if (!copy[@"timeZone"]) copy[@"timeZone"] = calendar.timeZone.name; [candidates addObject:copy];
+            NSString *referenceKey = [NSString stringWithFormat:@"reference-v4|%@|%@|%@|%@|%@|%@", course[@"upstream"], head, file, fields[2], candidate[@"line"], calendar.timeZone.name];
+            NSDictionary *referenced = [cache[referenceKey] isKindOfClass:NSArray.class] ? [cache[referenceKey] firstObject] : nil;
+            if (!referenced) { referenced = [self dateReferenceForCandidate:candidate head:head path:path]; if ([candidate[@"relative"] boolValue]) cache[referenceKey] = @[referenced]; }
+            NSMutableDictionary *copy = referenced.mutableCopy; if (!copy[@"timeZone"]) copy[@"timeZone"] = calendar.timeZone.name; [candidates addObject:copy];
         }
     }
     return @{@"candidates":SSConsolidateAssignments(candidates), @"materials":SSGroupMaterials(materials), @"skipped":skipped, @"commit":head, @"branch":branch, @"date":NSDate.date};
