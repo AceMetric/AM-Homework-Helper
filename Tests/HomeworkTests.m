@@ -109,7 +109,8 @@ static void ParserTests(void) {
     Check([items[0][@"id"] isEqual:updated[0][@"id"]], @"DDL change retains identity");
     Check(![items[0][@"due"] isEqual:updated[0][@"due"]], @"DDL change is observed");
     Check(SSAssignmentsFromDocument(@"# Homework\nPublished: 2026-10-01\n```\nDue: 2026-10-05 20:00\n```\n", @"t/r", @"README.md", @"v", now, cal).count == 0, @"publication date and code fences are ignored");
-    Check(SSAssignmentsFromDocument(@"# 作业\n截止：2026-02-30 20:00", @"t/r", @"README.md", @"v", now, cal).count == 0, @"invalid date ignored");
+    NSArray *invalidDate = SSAssignmentsFromDocument(@"# 作业\n截止：2026-02-30 20:00", @"t/r", @"README.md", @"v", now, cal);
+    Check(invalidDate.count == 1 && !invalidDate[0][@"due"] && [invalidDate[0][@"warnings"] count], @"invalid deadline retained for correction");
     NSArray *tba = SSAssignmentsFromDocument(@"# Homework\nDeadline: TBD", @"t/r", @"README.md", @"v", now, cal);
     Check(tba.count == 1 && !tba[0][@"due"] && [tba[0][@"needsDate"] boolValue], @"TBD deadline requires manual date");
     NSArray *relative = SSAssignmentsFromDocument(@"# 实验\n明天20:00前提交", @"t/r", @"README.md", @"v", now, cal);
@@ -139,6 +140,45 @@ static void ParserTests(void) {
     Check(SSAssignmentsFromDocument(@"# 作业四\n发布：本周日 21:00\n```\n截止：星期天 21:00\n```", @"t/r", @"a.md", @"v", now, cal).count == 0, @"relative publication dates and fenced examples remain ignored");
     NSArray *renamed = SSAssignmentsFromDocument([rules stringByReplacingOccurrencesOfString:@"本周日" withString:@"下周日"], @"teacher/course", @"assignment-04.md", @"v2", now, cal);
     Check([weekly[0][@"id"] isEqual:renamed[0][@"id"]], @"relative deadline edits retain assignment identity");
+
+    NSArray *spaced = SSAssignmentsFromDocument(@"# 练习五\n**提交截止时间：2027 年 4 月 14 日（星期三）下午 3 点半前，北京时间（UTC+8）。**", @"t/r", @"Assignment-5/README.md", @"v", now, cal);
+    Check(spaced.count == 1 && [spaced[0][@"due"] isEqual:DDLParseDate(@"2027-04-14 15:30", now, cal)], @"spaced Chinese date, weekday annotation and Chinese clock form one deadline");
+    Check(![spaced[0][@"needsDate"] boolValue] && ![spaced[0][@"needsTime"] boolValue], @"complete Chinese year is not mistaken for a missing year");
+    NSArray *dateOnly = SSAssignmentsFromDocument(@"# 作业五\n提交截止日期：2027 年 4 月 14 日（星期三）。", @"t/r", @"a.md", @"v", now, cal);
+    Check(dateOnly.count == 1 && [dateOnly[0][@"dateOnly"] isEqual:@"2027-04-14"] && [dateOnly[0][@"needsTime"] boolValue] && !dateOnly[0][@"due"], @"date-only keeps civil date without inventing 23:59");
+    NSArray *mismatch = SSAssignmentsFromDocument(@"# 作业五\n截止：2027年4月14日（星期二）21:00", @"t/r", @"a.md", @"v", now, cal);
+    Check(mismatch.count == 1 && [mismatch[0][@"needsDate"] boolValue] && [mismatch[0][@"warnings"] count] == 1, @"weekday mismatch requires confirmation without duplicate date");
+    NSArray *separateClock = SSAssignmentsFromDocument(@"# 作业五\n截止：2027／04／14\n21：00", @"t/r", @"a.md", @"v", now, cal);
+    Check(separateClock.count == 1 && [separateClock[0][@"due"] isEqual:DDLParseDate(@"2027-04-14 21:00", now, cal)], @"clock on following line and fullwidth separators");
+    NSArray *undated = SSAssignmentsFromDocument(@"# 作业五\n请完成并提交本次练习。", @"t/r", @"a.md", @"v", now, cal);
+    Check(undated.count == 1 && !undated[0][@"due"] && [undated[0][@"needsDate"] boolValue] && [undated[0][@"needsTime"] boolValue], @"explicit undated homework enters review");
+    Check(SSAssignmentsFromDocument(@"# 教材示例\n请提交以下示例\n截止：2027-04-14 21:00", @"t/r", @"examples/a.md", @"v", now, cal).count == 0, @"teaching examples are not tasks");
+    Check(SSAssignmentsFromDocument(@"# 课程目录\n- [作业五](assignment-5.md)", @"t/r", @"README.md", @"v", now, cal).count == 0, @"index links do not create undated homework");
+    for (NSString *bad in @[@"2027-04-14 25:00", @"2027-04-14 21:00 UTC+15", @"2027-04-14 21:00 UTC+14:30"]) {
+        NSArray *items = SSAssignmentsFromDocument([@"# 作业五\n截止：" stringByAppendingString:bad], @"t/r", @"a.md", @"v", now, cal);
+        Check(items.count == 1 && !items[0][@"due"] && [items[0][@"warnings"] count], @"invalid clock or timezone cannot become a confirmed due");
+    }
+    NSArray *multiple = SSAssignmentsFromDocument(@"# 作业五\n截止：2027-04-14 或 2027-04-15 21:00", @"t/r", @"a.md", @"v", now, cal);
+    Check(multiple.count == 1 && !multiple[0][@"due"] && [multiple[0][@"warnings"] count], @"ambiguous dates require one review rather than duplicate tasks");
+    NSArray *exam = SSDiscoveriesFromDocument(@"# 开放题：资源安排\n请分析问题并提交答案。", @"t/r", @"intro_exam/Q4_project_assignment.md", @"v", now, cal);
+    Check(exam.count == 1 && [exam[0][@"kind"] isEqual:@"exam"], @"exam folder overrides assignment word in question filename");
+    Check(SSAssignmentsFromDocument(@"# 考试\n截止：2027-04-14 21:00", @"t/r", @"exam/Q1.md", @"v", now, cal).count == 0, @"exam never enters homework inbox even with a deadline");
+    NSMutableArray *questions = exam.mutableCopy;
+    [questions addObjectsFromArray:SSDiscoveriesFromDocument(@"# 问题一\n请解答以下问题。", @"t/r", @"intro_exam/Q1.md", @"v", now, cal)];
+    NSArray *groups = SSGroupMaterials(questions);
+    Check(groups.count == 1 && [groups[0][@"documents"] count] == 2, @"question documents group under one exam");
+    NSArray *classroom = SSDiscoveriesFromDocument(@"# 课堂练习\n请完成讨论题。", @"t/r", @"lesson.md", @"v", now, cal);
+    Check(classroom.count == 1 && [classroom[0][@"kind"] isEqual:@"classroom"] && SSAssignmentsFromDocument(@"# 课堂练习\n请完成讨论题。", @"t/r", @"lesson.md", @"v", now, cal).count == 0, @"classroom tasks only belong to course materials");
+    NSArray *mixed = SSDiscoveriesFromDocument(@"# 本周安排\n## 课堂练习\n请完成讨论题。\n## 课后作业\n截止：2027-04-14 21:00\n", @"t/r", @"README.md", @"v", now, cal);
+    Check(mixed.count == 2 && SSGroupMaterials(mixed).count == 1, @"mixed sections keep undated classroom activity beside homework");
+    NSArray *prose = SSAssignmentsFromDocument(@"# 作业五\n截止：2027-04-14 21:00\n## 作业目标\n请完成今天所学习的内容。\n求 1/2 的值。", @"t/r", @"a.md", @"v", now, cal);
+    Check(prose.count == 1 && prose[0][@"due"], @"prose, fractions and homework-goal headings do not create extra deadlines");
+    NSMutableArray *withAttachment = [SSDiscoveriesFromDocument(@"# 作业五\n截止：2027-04-14 21:00\n完成附件：3. 电路练习。", @"t/r", @"assignment-5/README.md", @"v", now, cal) mutableCopy];
+    [withAttachment addObjectsFromArray:SSDiscoveriesFromDocument(@"# 电路作业\n请完成练习。", @"t/r", @"assignment-5/3. 电路练习.md", @"v", now, cal)];
+    NSArray *consolidated = SSConsolidateAssignments(withAttachment);
+    Check(consolidated.count == 1 && [consolidated[0][@"attachments"] count] == 1 && [consolidated[0][@"path"] isEqual:@"assignment-5/README.md"], @"referenced undated worksheet belongs to its assignment announcement");
+    [withAttachment addObjectsFromArray:SSDiscoveriesFromDocument(@"# 独立作业\n请完成练习。", @"t/r", @"assignment-5/independent.md", @"v", now, cal)];
+    Check(SSConsolidateAssignments(withAttachment).count == 2, @"unreferenced independent homework is not absorbed into an announcement");
 }
 static void SecurityTests(void) {
     Check([SSCanonicalRepository(@"git@github.com:Student/Course.git") isEqual:@"student/course"], @"canonical SSH URL");
@@ -179,7 +219,7 @@ static void GitTests(void) {
     NSString *oldKey = [NSString stringWithFormat:@"v2|teacher/course|README.md|%@|Asia/Shanghai", Git(f[@"seed"], @[@"rev-parse", @"HEAD:README.md"])];
     cache[oldKey] = @[];
     NSDictionary *scan = [service scanCourse:f cache:cache error:&error]; Check([scan[@"candidates"] count] == 1, @"scan teacher main");
-    NSString *newKey = [@"v3" stringByAppendingString:[oldKey substringFromIndex:2]];
+    NSString *newKey = [@"v4" stringByAppendingString:[oldKey substringFromIndex:2]];
     Check([cache[newKey] count] == 1 && [cache[oldKey] count] == 0, @"new parser does not reuse empty results cached by older parser");
     NSUInteger cacheCount = cache.count;
     Check([[service scanCourse:f cache:cache error:&error][@"candidates"] firstObject] != nil && cache.count == cacheCount, @"scan cache reuse");
