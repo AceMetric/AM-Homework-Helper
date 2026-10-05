@@ -9,6 +9,17 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) BOOL inbox;
 @property (readonly) NSUInteger pendingCount;
 @property (readonly) NSString *accountSummary;
+@property (readonly) BOOL operationBusy;
+@property (nonatomic) BOOL operationsPaused;
+@property (copy, nullable) void (^operationStateChanged)(void);
+@property (readonly) BOOL hasSubmissionSheet;
+@property (readonly) BOOL hasUnsavedSubmission;
+@property (readonly) BOOL submissionFailedDuringExit;
+- (void)cancelPendingLogin;
+- (BOOL)saveSubmissionForExit;
+- (void)discardSubmission;
+- (void)acknowledgeSubmissionFailure;
+- (BOOL)persistForExit:(NSError **)error;
 - (instancetype)initWithPreview:(BOOL)preview;
 - (void)startAutomaticChecks;
 - (void)refreshPresentation;

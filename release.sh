@@ -22,37 +22,26 @@ zsh verify-import.sh
 zsh verify-homework.sh
 zsh verify-forms.sh
 zsh verify-course-ui.sh
+zsh verify-update.sh
 python3 Tests/SecurityAuditTests.py
 app='build/DDL-Manager.app'
 codesign --verify --deep --strict "$app"
 [[ "$(lipo -archs "$app/Contents/MacOS/DDLManager")" == "arm64" ]]
-python3 Tools/security-audit.py --history --artifacts "$app" build/qa --ocr build/tests/privacy-ocr --report build/security-audit.json
+# QA application fixtures include local paths; only synthetic screenshots are release review artifacts.
+screenshots=(build/qa/*.png(N))
+python3 Tools/security-audit.py --history --artifacts "$app" "${screenshots[@]}" --ocr build/tests/privacy-ocr --report build/security-audit.json
 mkdir -p build/releases
 stage='build/releases/package'
-# Only explicit deliverables are copied; no task database, token store or repository metadata.
+# Update ZIP contains only the app; public guidance is a separate attachment.
 rm -rf "$stage"
 mkdir -p "$stage"
-cp -R "$app" "$stage/DDL-Manager.app"
-cp docs/ATTRIBUTION.md docs/GITHUB_APP_SETUP.md docs/SECURITY.md docs/VERIFICATION.md "$stage/"
-python3 - <<'PY'
-from pathlib import Path
-Path('build/releases/package/安装说明.txt').write_text('''DDL-Manager 1.0 · macOS 13+ · Apple 芯片
-
-此包使用临时签名，未经 Apple 公证。更新前退出旧测试版，解压后将 DDL-Manager.app 拖入“应用程序”。首次打开若被阻止，在系统设置 → 隐私与安全性中按系统提示选择“仍要打开”。
-
-从侧栏“课程”开始连接 GitHub、选择个人 fork 和关联本地文件夹；“待审核作业”集中查看所有课程建议。浅深外观自动跟随 macOS。当前公开安装入口沿用 SS Homework Manager 的注册名称；它与桌面显示名称不同。未预置公开 Client ID 的包需先按 GITHUB_APP_SETUP.md 完成配置。
-
-只从老师默认分支扫描作业；识别项须审核。“本周日”等相对日期需确认完整截止时间。所有推送只到已核验属于当前用户的个人 fork。提交前逐项选文件；冲突时使用引导。
-
-从旧测试版更新时已有任务和授权继续沿用；从原版 DDL Manager 迁移时先导出任务备份，再在本应用导入。登录令牌只存于本机钥匙串，不在备份或此包中。
-
-提醒需要系统通知权限。关闭窗口后仍在菜单栏运行；退出应用、关机或休眠时无法定时扫描。更多安全限制见 SECURITY.md。
-''')
-PY
+/usr/bin/ditto "$app" "$stage/DDL-Manager.app"
+version=$(python3 -c 'import plistlib; print(plistlib.load(open("Info.plist", "rb"))["CFBundleShortVersionString"])')
 suffix=''
 [[ "$mode" == "--candidate" ]] && suffix='-candidate'
-archive="build/releases/DDL-Manager-1.0-macOS-arm64${suffix}.zip"
+archive="build/releases/DDL-Manager-${version}-macOS-arm64${suffix}.zip"
 /usr/bin/ditto -c -k --sequesterRsrc "$stage" "$archive"
-python3 Tools/security-audit.py --artifacts "$archive" --ocr build/tests/privacy-ocr --report build/release-audit.json
+python3 Tools/installation-guide.py "$version"
+python3 Tools/security-audit.py --artifacts "$archive" "build/releases/DDL-Manager-${version}-安装说明.txt" --ocr build/tests/privacy-ocr --report build/release-audit.json
 /usr/bin/shasum -a 256 "$archive" > "${archive}.sha256"
 print -r -- "已生成本机安装包：$archive"

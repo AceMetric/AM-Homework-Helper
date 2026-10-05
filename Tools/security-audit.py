@@ -3,6 +3,7 @@
 import argparse
 import io
 import json
+import hashlib
 from pathlib import Path
 import plistlib
 import re
@@ -28,6 +29,9 @@ findings = set()
 counts = {'files': 0, 'history_objects': 0, 'archives': 0, 'images_ocr': 0, 'legacy_commit_email_objects': 0}
 seen = set()
 ocr = None
+# Exact upstream attribution text, obtained from the pinned Sparkle 2.10.0 distribution.
+# Only its published author email is exempt; any changed byte or credential remains checked.
+PUBLIC_ATTRIBUTION = {'Sparkle-LICENSE.txt': '389a4e4e9a32f059775b13a06e25a591445ba229d2838d26dd3e7c0c45127cfe'}
 
 
 def git(*args):
@@ -99,6 +103,8 @@ def inspect(data, label, depth=0, commit=False):
     elif data.startswith(b'PK\x03\x04'):
         privacy_texts = []  # ZIP entries are scanned after decompression below.
     for category, regex in REGEXES.items():
+        if category == 'personal-email' and PUBLIC_ATTRIBUTION.get(label.rsplit('/', 1)[-1]) == hashlib.sha256(data).hexdigest():
+            continue
         eligible = privacy_texts if category in ('personal-email', 'personal-home-path') else texts
         if any(regex.search(text) for text in eligible):
             if category == 'personal-email' and commit:

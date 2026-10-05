@@ -36,3 +36,9 @@ Git 使用 `/usr/bin/git` 和参数数组。隔离 Git 全局配置，HTTPS 禁�
 GitHub Actions 持续运行检查。发布脚本重新构建、测试、检查归档和历史，阻止未配置 GitHub App 的正式包；只创建本机 ZIP，不上传、不创建远端提交。
 
 [GitHub 敏感数据移除说明](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository)
+
+## 应用更新
+
+更新采用独立 Ed25519 密钥，私钥仅在维护者本机钥匙串；应用内只包含公开验证密钥。启用清单与更新说明签名、解压前验证；不允许签名失败长期失效后退回未签名清单。更新请求不使用 GitHub 课程令牌，不携带任务或课程数据。失败时保留已安装版本，并提供手动重试。测试应用的数据重定向只在 `DDL_TESTING` 构建中存在，正式应用没有环境变量或启动参数可重定向到测试目录。
+
+用户同意安装后，退出保护暂停新的课程操作，等待正在进行的 Git 完成，再处理未保存内容。更新流程不会修改 remote 或放宽个人 fork 校验。Sparkle 的更新来源签名与 Apple 公证是两项独立机制；当前分发仍未公证。详细流程见 [更新说明](UPDATES.md)。

@@ -8,6 +8,8 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #import "DDLUI.h"
+#import "SSUpdateController.h"
+#import "SSExitCoordinator.h"
 
 static NSImage *ThemeIcon(void) {
     unsigned accent = 0x2262B0;
@@ -269,6 +271,9 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSTextField *reminderField;
 @property NSTextField *reminderValidation;
 @property NSDate *selectedDate;
+@property NSArray *initialValues;
+- (BOOL)hasUnsavedChanges;
+- (BOOL)saveForExit;
 - (instancetype)initWithTask:(NSDictionary *)task owner:(AppDelegate *)owner;
 - (void)importClipboard:(id)sender;
 @end
@@ -304,6 +309,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSStatusItem *statusItem;
 @property EditorController *editor;
 @property SSCourseController *courseWindow;
+@property SSUpdateController *updates;
+@property SSExitCoordinator *exitCoordinator;
 @property NSInteger filter;
 @property BOOL calendarMode;
 @property NSDate *month;
@@ -326,7 +333,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSSize overviewSize;
 @property NSInteger overviewMinute;
 - (void)render;
-- (void)commitTask:(NSDictionary *)task originalID:(NSString *)identifier;
+- (BOOL)commitTask:(NSDictionary *)task originalID:(NSString *)identifier;
 - (void)closeEditor;
 - (void)editTask:(id)sender;
 - (void)deleteTask:(id)sender;
@@ -412,8 +419,14 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         [self validateReminders]; [self validateDate]; if (self.candidate && !self.teacherField.stringValue.length) { self.validation.stringValue = @"核对原文后补全老师截止时间，向下滚动设置我的 DDL。"; self.validation.textColor = Muted(); }
         self.titleField.nextKeyView = self.subjectField; self.subjectField.nextKeyView = self.priority; self.priority.nextKeyView = self.teacherField ?: self.deadlineField; if (self.teacherField) self.teacherField.nextKeyView = self.leadMenu;
         self.titleField.accessibilityLabel = @"任务名称"; self.subjectField.accessibilityLabel = @"课程或分类"; self.deadlineField.accessibilityLabel = @"我的截止时间"; self.teacherField.accessibilityLabel = @"老师截止时间，需完整日期和时间"; self.reminderField.accessibilityLabel = @"提醒时间"; self.notesField.accessibilityLabel = @"备注"; panel.initialFirstResponder = self.titleField; panel.defaultButtonCell = self.saveButton.cell; panel.autorecalculatesKeyViewLoop = YES;
+        self.initialValues = [self formValues];
     } return self;
 }
+- (NSArray *)formValues {
+    return [[NSArray alloc] initWithArray:@[self.titleField.stringValue ?: @"", self.subjectField.stringValue ?: @"", self.deadlineField.stringValue ?: @"", self.timePicker.stringValue ?: @"", self.notesField.string ?: @"", self.reminderField.stringValue ?: @"", @(self.priority.indexOfSelectedItem), self.teacherField.stringValue ?: @"", @(self.leadDays)] copyItems:YES];
+}
+- (BOOL)hasUnsavedChanges { [self.window makeFirstResponder:nil]; return ![self.initialValues isEqual:[self formValues]]; }
+- (BOOL)saveForExit { [self save:nil]; return self.appDelegate.editor != self; }
 - (NSCalendar *)teacherCalendar { NSCalendar *calendar = Cal(); calendar.timeZone = [NSTimeZone timeZoneWithName:self.candidate[@"timeZone"] ?: NSTimeZone.localTimeZone.name] ?: NSTimeZone.localTimeZone; return calendar; }
 - (NSString *)formatTeacherDate:(NSDate *)date { NSDateFormatter *formatter = NSDateFormatter.new; formatter.dateFormat = @"yyyy-MM-dd HH:mm"; formatter.timeZone = self.teacherCalendar.timeZone; return [formatter stringFromDate:date]; }
 - (void)showDatePicker:(NSButton *)sender { self.datePopover = NSPopover.new; NSViewController *controller = NSViewController.new; controller.view = self.calendar; self.datePopover.contentViewController = controller; self.datePopover.behavior = NSPopoverBehaviorTransient; [self.datePopover showRelativeToRect:sender.bounds ofView:sender preferredEdge:NSRectEdgeMaxY]; }
@@ -591,7 +604,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (self.announcedDue) { task[@"announcedDue"] = self.announcedDue; task[@"leadDays"] = @(self.leadDays); }
     else { [task removeObjectForKey:@"announcedDue"]; [task removeObjectForKey:@"leadDays"]; }
     [task removeObjectForKey:@"_reviewCandidate"]; [task removeObjectForKey:@"_existing"];
-    [self.appDelegate commitTask:task originalID:self.task[@"id"]]; [self.appDelegate closeEditor];
+    if ([self.appDelegate commitTask:task originalID:self.task[@"id"]]) [self.appDelegate closeEditor];
 }
 @end
 
@@ -626,6 +639,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
             self.notice = @"旧数据格式异常，原始内容已另存备份。";
         }
     }
+    self.updates = [[SSUpdateController alloc] initWithPreview:self.preview];
     [self installMenu];
     self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1280, 840) styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView) backing:NSBackingStoreBuffered defer:NO];
     self.window.title = self.preview ? @"DDL-Manager · 界面预览" : @"DDL-Manager"; self.window.titleVisibility = NSWindowTitleVisible; self.window.titlebarAppearsTransparent = YES;
@@ -663,6 +677,19 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.courseWindow.reviewCandidate = ^(NSDictionary *candidate) { [weakSelf reviewGitHubCandidate:candidate]; };
     self.courseWindow.editTask = ^(NSString *identifier) { NSMenuItem *item = NSMenuItem.new; item.representedObject = identifier; [weakSelf editTask:item]; };
     self.courseWindow.stateChanged = ^{ [weakSelf renderSidebar]; if (weakSelf.page == 0) [weakSelf renderContent]; };
+    self.exitCoordinator = SSExitCoordinator.new;
+    self.exitCoordinator.operationBusy = ^BOOL { return weakSelf.courseWindow.operationBusy; };
+    self.exitCoordinator.pauseOperations = ^(BOOL paused) { weakSelf.courseWindow.operationsPaused = paused; };
+    self.exitCoordinator.cancelLogin = ^{ [weakSelf.courseWindow cancelPendingLogin]; };
+    self.exitCoordinator.resolveEdits = ^BOOL(BOOL updating) { return [weakSelf resolveEditsForExit:updating]; };
+    self.exitCoordinator.persist = ^BOOL {
+        if (weakSelf.preview) return YES;
+        NSError *error = nil; BOOL ok = SSWritePlist(@"tasks.plist", weakSelf.tasks, &error) && [weakSelf.courseWindow persistForExit:&error];
+        if (!ok) { weakSelf.notice = @"本机数据保存失败，已暂缓退出与更新。"; [weakSelf render]; }
+        return ok;
+    };
+    self.courseWindow.operationStateChanged = ^{ [weakSelf.exitCoordinator operationStateChanged]; };
+    self.updates.statusChanged = ^(NSString *message) { weakSelf.notice = message; [weakSelf render]; };
     [self.root addSubview:self.courseWindow.view]; self.courseWindow.view.hidden = YES;
     self.root.onAppearanceChange = ^{ [weakSelf refreshAppearance]; };
     if (!self.preview) [self.courseWindow startAutomaticChecks];
@@ -704,7 +731,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSMenu *menu = [NSMenu new];
     NSMenuItem *appItem = [NSMenuItem new]; [menu addItem:appItem]; NSMenu *app = [[NSMenu alloc] initWithTitle:@"DDL-Manager"]; appItem.submenu = app;
     [app addItemWithTitle:@"关于 DDL-Manager" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
-    NSMenuItem *settings = [app addItemWithTitle:@"提醒设置…" action:@selector(showNotificationSettings:) keyEquivalent:@","]; settings.target = self;
+    NSMenuItem *check = [app addItemWithTitle:@"检查更新…" action:@selector(checkForUpdates:) keyEquivalent:@""]; check.target = self.updates;
+    NSMenuItem *settings = [app addItemWithTitle:@"设置…" action:@selector(showSettings:) keyEquivalent:@","]; settings.target = self;
     [app addItem:[NSMenuItem separatorItem]]; [app addItemWithTitle:@"隐藏 DDL-Manager" action:@selector(hide:) keyEquivalent:@"h"];
     [app addItemWithTitle:@"退出 DDL-Manager" action:@selector(terminate:) keyEquivalent:@"q"];
     NSMenuItem *fileItem = [NSMenuItem new]; [menu addItem:fileItem]; NSMenu *file = [[NSMenu alloc] initWithTitle:@"任务"]; fileItem.submenu = file;
@@ -827,7 +855,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     ActionButton *account = Button(self.courseWindow.accountSummary ?: @"连接 GitHub", self, @selector(accountSettings:), 3); account.symbol = @"person.crop.circle";
     Put(self.sidebar, account, 12, h - 124, 168, 36);
     ActionButton *settings = Button(@"设置", self, @selector(showSettings:), 3); settings.symbol = @"gearshape"; Put(self.sidebar, settings, 12, h - 80, 168, 36);
-    Put(self.sidebar, Text(self.preview ? @"模拟数据 · 不会保存" : @"本机数据 · v1.0", 11, NSFontWeightRegular, Muted()), 20, h - 32, 164, 16);
+    Put(self.sidebar, Text(self.preview ? @"模拟数据 · 不会保存" : [NSString stringWithFormat:@"本机数据 · v%@", [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"1.1"], 11, NSFontWeightRegular, Muted()), 20, h - 32, 164, 16);
 }
 - (void)accountSettings:(id)sender { [self.courseWindow accountSettings:sender]; }
 - (void)showSettings:(id)sender {
@@ -835,6 +863,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     for (NSArray *entry in @[@[@"提醒设置…", NSStringFromSelector(@selector(showNotificationSettings:))], @[@"GitHub 账户…", NSStringFromSelector(@selector(accountSettings:))], @[@"高级：GitHub App…", NSStringFromSelector(@selector(setClientID:))]]) {
         NSMenuItem *item = [menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""]; item.target = [entry[1] isEqual:NSStringFromSelector(@selector(setClientID:))] ? self.courseWindow : self;
     }
+    NSMenuItem *updates = [menu addItemWithTitle:@"软件更新…" action:@selector(showSettings:) keyEquivalent:@""]; updates.target = self.updates;
     [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(12, NSHeight(self.sidebar.bounds) - 80) inView:self.sidebar];
 }
 - (void)renderHeader {
@@ -1124,6 +1153,49 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)showWindow { [self.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES]; }
 - (void)showMain:(id)sender { [self showWindow]; }
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag { [self showWindow]; return YES; }
+- (BOOL)resolveEditsForExit:(BOOL)updating {
+    if (self.courseWindow.submissionFailedDuringExit) { [self.courseWindow acknowledgeSubmissionFailure]; return NO; }
+    if (self.editor) {
+        if (self.editor.hasUnsavedChanges) {
+            NSAlert *alert = NSAlert.new; alert.messageText = updating ? @"更新前保存修改？" : @"退出前保存修改？";
+            alert.informativeText = @"当前任务或作业审核有未保存内容。";
+            [alert addButtonWithTitle:updating ? @"保存后更新" : @"保存后退出"];
+            [alert addButtonWithTitle:updating ? @"放弃修改并更新" : @"放弃修改并退出"];
+            [alert addButtonWithTitle:updating ? @"稍后更新" : @"取消退出"];
+            NSModalResponse choice = [alert runModal];
+            if (choice == NSAlertThirdButtonReturn) return NO;
+            if (choice == NSAlertFirstButtonReturn) { if (![self.editor saveForExit]) return NO; }
+            else [self closeEditor];
+        } else [self closeEditor];
+    }
+    if (self.courseWindow.hasSubmissionSheet) {
+        if (self.courseWindow.hasUnsavedSubmission) {
+            NSAlert *alert = NSAlert.new; alert.messageText = @"提交窗口有未完成内容";
+            alert.informativeText = @"选择“检查并提交”会执行所选文件的提交与推送，完成后才继续退出或更新。验证或提交失败将暂缓退出。";
+            [alert addButtonWithTitle:updating ? @"检查并提交后更新" : @"检查并提交后退出"];
+            [alert addButtonWithTitle:updating ? @"放弃填写并更新" : @"放弃填写并退出"];
+            [alert addButtonWithTitle:updating ? @"稍后更新" : @"取消退出"];
+            NSModalResponse choice = [alert runModal];
+            if (choice == NSAlertThirdButtonReturn) return NO;
+            if (choice == NSAlertFirstButtonReturn) { if (![self.courseWindow saveSubmissionForExit]) return NO; }
+            else [self.courseWindow discardSubmission];
+        } else [self.courseWindow discardSubmission];
+    }
+    // Open import/file/other sheets must be completed by the user first.
+    if (self.window.attachedSheet) { self.notice = @"请先完成或关闭当前弹窗，再退出或更新。"; [self render]; return NO; }
+    return YES;
+}
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    if (!self.exitCoordinator) return NSTerminateNow;
+    if (self.exitCoordinator.pending) return NSTerminateLater;
+    if (self.courseWindow.operationBusy) { self.notice = @"正在等待当前课程操作完成，再退出或更新…"; [self render]; }
+    __weak typeof(self) weakSelf = self;
+    [self.exitCoordinator requestForUpdate:self.updates.installing completion:^(BOOL ready) {
+        if (!ready) [weakSelf.updates terminationCancelled];
+        [NSApp replyToApplicationShouldTerminate:ready];
+    }];
+    return NSTerminateLater;
+}
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return NO; }
 - (void)applicationDidBecomeActive:(NSNotification *)notification { if (!self.preview && self.window) [self refreshPermission]; }
 - (void)tick:(NSTimer *)timer { [self render]; if (!self.preview) [self refreshReminders]; }
@@ -1180,12 +1252,22 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (NSArray *)snapshot { return [[NSArray alloc] initWithArray:self.tasks copyItems:YES]; }
 - (void)prepareUndo:(NSString *)name { NSArray *snapshot = [self snapshot]; [self.taskUndo registerUndoWithTarget:self handler:^(AppDelegate *target) { [target restoreSnapshot:snapshot]; }]; [self.taskUndo setActionName:name]; }
 - (void)restoreSnapshot:(NSArray *)snapshot { [self prepareUndo:@"任务修改"]; self.tasks = [DDLNormalizeTasks(snapshot) mutableCopy]; self.notice = @"已恢复上一步操作。"; [self persistAndRefresh]; }
-- (void)commitTask:(NSDictionary *)task originalID:(NSString *)identifier {
+- (BOOL)commitTask:(NSDictionary *)task originalID:(NSString *)identifier {
+    if (!self.preview) {
+        NSMutableArray *next = [[self snapshot] mutableCopy]; NSUInteger index = [next indexOfObjectPassingTest:^BOOL(NSDictionary *item, NSUInteger idx, BOOL *stop) { return [item[@"id"] isEqual:identifier]; }];
+        if (index == NSNotFound) [next addObject:task]; else next[index] = task;
+        NSError *error = nil;
+        NSArray *previous = SSReadPlist(@"tasks.plist");
+        if (previous) SSWritePlist(@"tasks.previous.plist", previous, NULL);
+        if (!SSWritePlist(@"tasks.plist", next, &error)) { self.editor.validation.stringValue = @"任务未能保存，请检查本机存储后重试。"; self.editor.validation.textColor = NSColor.systemRedColor; return NO; }
+    }
     [self prepareUndo:identifier ? @"编辑任务" : @"添加任务"];
     NSMutableDictionary *existing = [self taskWithID:identifier]; if (existing) [existing setDictionary:task]; else [self.tasks addObject:[task mutableCopy]];
     if (!identifier) { self.filter = 0; self.query = @""; self.search.stringValue = @""; if (self.calendarMode) self.calendarStatus.selectedSegment = 0; }
     if (self.calendarMode) { self.selectedDay = task[@"due"]; self.month = task[@"due"]; self.calendarBaseMonth = self.month; self.calendarNeedsCenter = YES; self.focusedTaskID = task[@"id"]; }
-    self.notice = identifier ? @"任务已更新，提醒时间也已同步。" : @"新任务已加入清单。"; [self persistAndRefresh];
+    self.notice = identifier ? @"任务已更新，提醒时间也已同步。" : @"新任务已加入清单。";
+    if (!self.preview) { [self refreshReminders]; if (self.authorization == UNAuthorizationStatusNotDetermined) [self requestPermission]; }
+    [self.courseWindow refreshPresentation]; [self render]; return YES;
 }
 - (void)toggleTask:(NSButton *)sender {
     NSMutableDictionary *task = [self taskWithID:sender.identifier]; if (!task) return; [self prepareUndo:@"完成状态"];

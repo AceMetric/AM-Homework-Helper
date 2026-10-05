@@ -24,6 +24,8 @@ jobs:
         run: >-
           clang -fobjc-arc -Wall -Wextra -Werror -mmacosx-version-min=13.0
           -framework Foundation -framework Vision Tools/PrivacyOCR.m -o build/tests/privacy-ocr
+      - name: Update and safe exit regression
+        run: zsh verify-update.sh
       - name: Image metadata and binary audit regression
         run: python3 Tests/SecurityAuditTests.py
       - name: Current files, full history, archives and screenshots
