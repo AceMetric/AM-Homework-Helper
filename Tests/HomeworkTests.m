@@ -160,6 +160,8 @@ static void ParserTests(void) {
     }
     NSArray *multiple = SSAssignmentsFromDocument(@"# 作业五\n截止：2027-04-14 或 2027-04-15 21:00", @"t/r", @"a.md", @"v", now, cal);
     Check(multiple.count == 1 && !multiple[0][@"due"] && [multiple[0][@"warnings"] count], @"ambiguous dates require one review rather than duplicate tasks");
+    NSArray *conflictingLines = SSAssignmentsFromDocument(@"# 作业五\n截止：2027-04-14 21:00\n最晚：2027-04-15 21:00", @"t/r", @"a.md", @"v", now, cal);
+    Check(conflictingLines.count == 1 && !conflictingLines[0][@"due"] && [conflictingLines[0][@"warnings"] count], @"conflicting dates on separate lines cannot silently become two tasks");
     NSArray *exam = SSDiscoveriesFromDocument(@"# 开放题：资源安排\n请分析问题并提交答案。", @"t/r", @"intro_exam/Q4_project_assignment.md", @"v", now, cal);
     Check(exam.count == 1 && [exam[0][@"kind"] isEqual:@"exam"], @"exam folder overrides assignment word in question filename");
     Check(SSAssignmentsFromDocument(@"# 考试\n截止：2027-04-14 21:00", @"t/r", @"exam/Q1.md", @"v", now, cal).count == 0, @"exam never enters homework inbox even with a deadline");
@@ -179,6 +181,40 @@ static void ParserTests(void) {
     Check(consolidated.count == 1 && [consolidated[0][@"attachments"] count] == 1 && [consolidated[0][@"path"] isEqual:@"assignment-5/README.md"], @"referenced undated worksheet belongs to its assignment announcement");
     [withAttachment addObjectsFromArray:SSDiscoveriesFromDocument(@"# 独立作业\n请完成练习。", @"t/r", @"assignment-5/independent.md", @"v", now, cal)];
     Check(SSConsolidateAssignments(withAttachment).count == 2, @"unreferenced independent homework is not absorbed into an announcement");
+    NSDate *published = DDLParseDate(@"2026-09-28 08:30", now, cal);
+    NSDictionary *suggestion = SSApplyDateReference(weekly[0], published, @"synthetic-origin", cal);
+    Check([suggestion[@"suggestedDue"] isEqual:DDLParseDate(@"2026-10-04 21:00", now, cal)] && !suggestion[@"due"] && [suggestion[@"needsDate"] boolValue], @"commit-anchored Sunday is a suggestion and still requires confirmation");
+    Check([SSApplyDateReference(noTime[0], published, @"synthetic-origin", cal) isEqual:noTime[0]], @"missing time never creates an invented suggestion");
+    NSArray *weekend = SSAssignmentsFromDocument(@"# 作业五\n截止：本周末 21:00", @"t/r", @"a.md", @"v", now, cal);
+    Check(!SSApplyDateReference(weekend[0], published, @"synthetic-origin", cal)[@"suggestedDue"], @"ambiguous weekend does not silently mean Sunday");
+    NSCalendar *utc = cal.copy; utc.timeZone = [NSTimeZone timeZoneForSecondsFromGMT:0];
+    NSDate *boundary = DDLParseDate(@"2027-04-11 18:30", NSDate.date, utc);
+    Check([SSApplyDateReference(weekly[0], boundary, @"synthetic-origin", utc)[@"suggestedDue"] isEqual:DDLParseDate(@"2027-04-18 21:00", NSDate.date, cal)], @"course timezone determines the commit's local week across UTC midnight");
+}
+static void DateReferenceTests(void) {
+    NSMutableDictionary *f = Fixture(); SSGit *service = SSGit.new; NSString *seed = f[@"seed"];
+    NSCalendar *cal = [NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian]; cal.timeZone = [NSTimeZone timeZoneWithName:@"Asia/Shanghai"];
+    NSString *document = @"# 作业五\n截止：本周日 21:00\n完成练习。\n";
+    Write([seed stringByAppendingPathComponent:@"README.md"], document); Git(seed, @[@"add", @"README.md"]);
+    setenv("GIT_COMMITTER_DATE", "2027-04-12T08:30:00+08:00", 1); Git(seed, @[@"commit", @"--date=2027-04-12T08:30:00+08:00", @"-m", @"deadline introduced"]); unsetenv("GIT_COMMITTER_DATE");
+    NSString *origin = Git(seed, @[@"rev-parse", @"HEAD"]);
+    NSDictionary *candidate = SSAssignmentsFromDocument(document, @"teacher/course", @"README.md", @"v", NSDate.date, cal).firstObject;
+    NSDictionary *first = [service dateReferenceForCandidate:candidate head:origin path:seed];
+    Check([first[@"suggestedDue"] isEqual:DDLParseDate(@"2027-04-18 21:00", NSDate.date, cal)] && [first[@"dateBasis"][@"commit"] isEqual:origin], @"real Git blame supplies deadline line provenance");
+    Write([seed stringByAppendingPathComponent:@"README.md"], [document stringByAppendingString:@"其他说明更新。\n"]); Git(seed, @[@"add", @"README.md"]);
+    setenv("GIT_COMMITTER_DATE", "2027-04-19T08:30:00+08:00", 1); Git(seed, @[@"commit", @"--date=2027-04-19T08:30:00+08:00", @"-m", @"unrelated paragraph changed"]); unsetenv("GIT_COMMITTER_DATE");
+    NSString *head = Git(seed, @[@"rev-parse", @"HEAD"]);
+    Check([[[service dateReferenceForCandidate:candidate head:head path:seed] objectForKey:@"dateBasis"] isEqual:first[@"dateBasis"]], @"unrelated paragraph changes cannot move an old relative deadline");
+    Write([seed stringByAppendingPathComponent:@".gitattributes"], @"*.md diff=fixture\n"); Git(seed, @[@"add", @".gitattributes"]); Git(seed, @[@"commit", @"-m", @"attributes"]); Git(seed, @[@"config", @"diff.fixture.textconv", @"/usr/bin/false"]);
+    Check([service dateReferenceForCandidate:candidate head:Git(seed, @[@"rev-parse", @"HEAD"]) path:seed][@"suggestedDue"] != nil, @"blame never executes a configured text conversion program");
+    document = [document stringByReplacingOccurrencesOfString:@"本周日" withString:@"下周日"]; Write([seed stringByAppendingPathComponent:@"README.md"], document); Git(seed, @[@"add", @"README.md"]);
+    setenv("GIT_COMMITTER_DATE", "2027-04-19T23:30:00+08:00", 1); Git(seed, @[@"commit", @"--date=2027-04-19T23:30:00+08:00", @"-m", @"deadline changed"]); unsetenv("GIT_COMMITTER_DATE");
+    candidate = SSAssignmentsFromDocument(document, @"teacher/course", @"README.md", @"v2", NSDate.date, cal).firstObject; head = Git(seed, @[@"rev-parse", @"HEAD"]);
+    Check([[service dateReferenceForCandidate:candidate head:head path:seed][@"suggestedDue"] isEqual:DDLParseDate(@"2027-05-02 21:00", NSDate.date, cal)], @"deadline edits acquire their own commit anchor");
+    NSString *shallow = [f[@"root"] stringByAppendingPathComponent:@"shallow"];
+    Git(f[@"root"], @[@"clone", @"--depth", @"1", [@"file://" stringByAppendingString:seed], shallow]);
+    Check(![service dateReferenceForCandidate:candidate head:head path:shallow][@"suggestedDue"], @"shallow boundary cannot supply a date suggestion");
+    Cleanup(f);
 }
 static void SecurityTests(void) {
     Check([SSCanonicalRepository(@"git@github.com:Student/Course.git") isEqual:@"student/course"], @"canonical SSH URL");
@@ -307,4 +343,4 @@ static void GitTests(void) {
     Check([Git(path, @[@"rev-parse", @"HEAD"]) isEqual:before], @"divergence preserves local commit"); Cleanup(f);
 
 }
-int main(void) { @autoreleasepool { ParserTests(); SecurityTests(); APITests(); GitTests(); printf("PASS: %lu homework/API/Git/security assertions\n", (unsigned long)assertions); } return 0; }
+int main(void) { @autoreleasepool { ParserTests(); SecurityTests(); APITests(); GitTests(); DateReferenceTests(); printf("PASS: %lu homework/API/Git/security assertions\n", (unsigned long)assertions); } return 0; }

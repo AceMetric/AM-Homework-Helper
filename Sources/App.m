@@ -251,6 +251,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSDictionary *task;
 @property NSDictionary *candidate;
 @property NSTextField *teacherField;
+@property NSButton *suggestionButton;
 @property NSScrollView *sourceScroll;
 @property NSPopover *datePopover;
 @property NSButton *saveButton;
@@ -386,9 +387,25 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
             Put(body, Text(@"老师截止时间", 12, NSFontWeightMedium, Muted()), 24, y, 632, 20); y += 24;
             self.teacherField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.teacherField.delegate = self; self.teacherField.placeholderString = @"请填写完整日期和时间，例如 2026-10-11 21:00";
             if (![self.candidate[@"needsDate"] boolValue] && ![self.candidate[@"needsTime"] boolValue]) self.teacherField.stringValue = self.announcedDue ? [self formatTeacherDate:self.announcedDue] : @"";
+            else if (self.candidate[@"dateOnly"] && ![self.candidate[@"needsDate"] boolValue]) self.teacherField.stringValue = self.candidate[@"dateOnly"];
             Put(body, self.teacherField, 24, y, 632, 36); y += 44;
+            if (self.candidate[@"suggestedDue"] && self.candidate[@"dateBasis"]) {
+                self.teacherField.frame = NSMakeRect(24, y - 44, 464, 36);
+                self.suggestionButton = Button(@"采用建议日期", self, @selector(adoptDateSuggestion:), 2);
+                self.suggestionButton.toolTip = [NSString stringWithFormat:@"建议：%@；仍需核对老师原文后保存", [self formatTeacherDate:self.candidate[@"suggestedDue"]]];
+                Put(body, self.suggestionButton, 504, y - 44, 152, 36);
+            }
             NSString *hint = self.candidate[@"deadlineText"] ? [NSString stringWithFormat:@"老师写的是“%@”，请依据布置时间确认具体日期。", self.candidate[@"deadlineText"]] : ([self.candidate[@"needsTime"] boolValue] ? @"老师未写明时间，请补全具体截止时间。" : ([self.candidate[@"needsDate"] boolValue] ? @"日期不完整，请确认年份、日期和时间。" : @"请核对老师原文中的日期和时间。"));
             NSTextField *help = Text(hint, 12, NSFontWeightRegular, Muted()); help.toolTip = hint; Put(body, help, 24, y, 632, 24); y += 40;
+            if ([self.candidate[@"warnings"] count]) {
+                NSString *warning = [self.candidate[@"warnings"] componentsJoinedByString:@"；"];
+                NSTextField *label = Text(warning, 12, NSFontWeightRegular, NSColor.systemOrangeColor); label.toolTip = warning; Put(body, label, 24, y, 632, 28); y += 36;
+            }
+            if (self.candidate[@"suggestedDue"] && self.candidate[@"dateBasis"]) {
+                NSString *commit = self.candidate[@"dateBasis"][@"commit"];
+                NSString *basis = [NSString stringWithFormat:@"建议 %@ · 截止语句提交于 %@（%@）", [self formatTeacherDate:self.candidate[@"suggestedDue"]], [self formatTeacherDate:self.candidate[@"dateBasis"][@"date"]], [commit substringToIndex:MIN((NSUInteger)7, commit.length)]];
+                NSTextField *label = Text(basis, 12, NSFontWeightRegular, Muted()); label.toolTip = basis; Put(body, label, 24, y, 632, 28); y += 36;
+            }
         }
         if (!self.candidate && self.announcedDue) { Put(body, Text([NSString stringWithFormat:@"老师截止时间：%@", DDLFormatDate(self.announcedDue, @"yyyy-MM-dd HH:mm")], 13, NSFontWeightMedium, Accent()), 24, y, 632, 24); y += 32; }
         Put(body, Text(@"截止时间", 15, NSFontWeightSemibold, Ink()), 24, y, 632, 24); y += 32;
@@ -418,6 +435,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         self.saveButton = Button(self.candidate ? @"确认并保存" : (task ? @"保存修改" : @"添加任务"), self, @selector(save:), 1); self.saveButton.keyEquivalent = @"\r"; self.saveButton.keyEquivalentModifierMask = 0; Put(root, self.saveButton, 544, 524, 112, 36);
         [self validateReminders]; [self validateDate]; if (self.candidate && !self.teacherField.stringValue.length) { self.validation.stringValue = @"核对原文后补全老师截止时间，向下滚动设置我的 DDL。"; self.validation.textColor = Muted(); }
         self.titleField.nextKeyView = self.subjectField; self.subjectField.nextKeyView = self.priority; self.priority.nextKeyView = self.teacherField ?: self.deadlineField; if (self.teacherField) self.teacherField.nextKeyView = self.leadMenu;
+        if (self.suggestionButton) { self.teacherField.nextKeyView = self.suggestionButton; self.suggestionButton.nextKeyView = self.leadMenu; }
         self.titleField.accessibilityLabel = @"任务名称"; self.subjectField.accessibilityLabel = @"课程或分类"; self.deadlineField.accessibilityLabel = @"我的截止时间"; self.teacherField.accessibilityLabel = @"老师截止时间，需完整日期和时间"; self.reminderField.accessibilityLabel = @"提醒时间"; self.notesField.accessibilityLabel = @"备注"; panel.initialFirstResponder = self.titleField; panel.defaultButtonCell = self.saveButton.cell; panel.autorecalculatesKeyViewLoop = YES;
         self.initialValues = [self formValues];
     } return self;
@@ -438,6 +456,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.announcedDue = teacher;
     if (self.leadDays >= 0) [self updateDate:DDLPersonalDueDate(teacher, self.leadDays, Cal())];
     return YES;
+}
+- (void)adoptDateSuggestion:(id)sender {
+    NSDate *suggestion = self.candidate[@"suggestedDue"]; if (!suggestion) return;
+    self.teacherField.stringValue = [self formatTeacherDate:suggestion]; [self confirmTeacherDate];
 }
 - (void)controlTextDidChange:(NSNotification *)notification {
     if (notification.object == self.teacherField) { [self confirmTeacherDate]; return; }
@@ -604,6 +626,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (self.announcedDue) { task[@"announcedDue"] = self.announcedDue; task[@"leadDays"] = @(self.leadDays); }
     else { [task removeObjectForKey:@"announcedDue"]; [task removeObjectForKey:@"leadDays"]; }
     [task removeObjectForKey:@"_reviewCandidate"]; [task removeObjectForKey:@"_existing"];
+    if (self.candidate[@"dateBasis"]) task[@"sourceDateBasis"] = self.candidate[@"dateBasis"];
     if ([self.appDelegate commitTask:task originalID:self.task[@"id"]]) [self.appDelegate closeEditor];
 }
 @end
@@ -1221,6 +1244,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)openCourses:(id)sender { NSButton *route = NSButton.new; route.tag = 4; [self navigate:route]; }
 - (void)reviewGitHubCandidate:(NSDictionary *)candidate {
+    if (candidate[@"kind"] && ![candidate[@"kind"] isEqual:@"assignment"]) return;
     [self showWindow];
     if (self.window.attachedSheet) return;
     NSDictionary *existing = nil;
