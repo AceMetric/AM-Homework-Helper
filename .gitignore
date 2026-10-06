@@ -1,5 +1,8 @@
 .DS_Store
 build/
+# Local build symlink and Spotlight-excluded output directory
+/build
+/build.noindex/
 __pycache__/
 *.pyc
 *.dSYM/
