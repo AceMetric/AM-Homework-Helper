@@ -2,11 +2,13 @@ import importlib.util
 import json
 import plistlib
 import unittest
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'Tools'))
 spec = importlib.util.spec_from_file_location('prepare_update', ROOT / 'Tools/prepare-update.py')
 update = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(update)
@@ -33,13 +35,27 @@ class UpdateConfigurationTests(unittest.TestCase):
     def test_identity_and_compatibility(self):
         self.assertEqual(self.info['CFBundleIdentifier'], 'io.github.acemetric.sshomeworkmanager')
         self.assertEqual(self.info['LSMinimumSystemVersion'], '13.0')
-        self.assertEqual(self.info['SUFeedURL'], 'https://acemetric.github.io/DDL-Manager/updates/appcast.xml')
+        self.assertEqual(self.info['SUFeedURL'], 'https://acemetric.github.io/AM-Homework-Helper/updates/appcast.xml')
         self.assertGreaterEqual(int(self.info['CFBundleVersion']), 2)
 
     def test_binary_dependency_is_pinned(self):
         lock = json.loads((ROOT / 'Config/Sparkle.json').read_text())
         self.assertEqual(lock['version'], '2.10.0')
         self.assertEqual(lock['sha256'], 'c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c')
+
+    def test_distribution_addresses_share_one_configuration(self):
+        repository, download, notes = update.update_locations(self.info)
+        self.assertEqual(download, repository + '/releases/download/v' + self.info['CFBundleShortVersionString'] + '/')
+        self.assertEqual(notes + 'appcast.xml', self.info['SUFeedURL'])
+
+    def test_reject_mismatched_or_credential_distribution(self):
+        for change in ({'SUFeedURL': 'https://acemetric.github.io/DDL-Manager/updates/appcast.xml'},
+                       {'DDLRepositoryURL': 'https://' + 'user:password' + '@github.com/AceMetric/AM-Homework-Helper'},
+                       {'DDLRepositoryURL': 'https://github.com/AceMetric/AM-Homework-Helper?token=synthetic'},
+                       {'DDLRepositoryURL': 'https://github.com/AceMetric/../AM-Homework-Helper'},
+                       {'DDLRepositoryURL': 'http://github.com/AceMetric/AM-Homework-Helper'}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                update.update_locations(self.info | change)
 
     def test_reject_wrong_version_or_test_app(self):
         for change in ({'CFBundleVersion': '1'}, {'CFBundleName': 'Wrong App'}, {'SUPublicEDKey': 'different'}, {'DDLTestRoot': '/synthetic'}, {'SURequireSignedFeed': False}):

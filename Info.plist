@@ -19,9 +19,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.1.1</string>
+	<string>1.1.2</string>
 	<key>CFBundleVersion</key>
-	<string>3</string>
+	<string>4</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>LSUIElement</key>
@@ -30,8 +30,10 @@
 	<string>AM's Homework Helper · 原作者及贡献者署名见项目提交历史</string>
 	<key>DDLArchiveName</key>
 	<string>AM-Homework-Helper</string>
+	<key>DDLRepositoryURL</key>
+	<string>https://github.com/AceMetric/AM-Homework-Helper</string>
 	<key>SUFeedURL</key>
-	<string>https://acemetric.github.io/DDL-Manager/updates/appcast.xml</string>
+	<string>https://acemetric.github.io/AM-Homework-Helper/updates/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>YOuYre2SPB5qM7CZxfFI8yTraaL55AvcIcnVdQSZReE=</string>
 	<key>SUEnableAutomaticChecks</key>
