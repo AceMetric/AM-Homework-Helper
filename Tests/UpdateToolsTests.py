@@ -42,11 +42,11 @@ class UpdateConfigurationTests(unittest.TestCase):
         self.assertEqual(lock['sha256'], 'c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c')
 
     def test_reject_wrong_version_or_test_app(self):
-        for change in ({'CFBundleVersion': '1'}, {'SUPublicEDKey': 'different'}, {'DDLTestRoot': '/synthetic'}, {'SURequireSignedFeed': False}):
+        for change in ({'CFBundleVersion': '1'}, {'CFBundleName': 'Wrong App'}, {'SUPublicEDKey': 'different'}, {'DDLTestRoot': '/synthetic'}, {'SURequireSignedFeed': False}):
             with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
                 archive = Path(directory) / 'test.zip'
                 with zipfile.ZipFile(archive, 'w') as package:
-                    package.writestr('DDL-Manager.app/Contents/Info.plist', plistlib.dumps(self.info | change))
+                    package.writestr(self.info['CFBundleName'] + '.app/Contents/Info.plist', plistlib.dumps(self.info | change))
                 with self.assertRaises(ValueError):
                     update.validate_archive(archive, self.info)
 
@@ -55,10 +55,17 @@ class UpdateConfigurationTests(unittest.TestCase):
             with self.subTest(extra=extra), tempfile.TemporaryDirectory() as directory:
                 archive = Path(directory) / 'test.zip'
                 with zipfile.ZipFile(archive, 'w') as package:
-                    package.writestr('DDL-Manager.app/Contents/Info.plist', plistlib.dumps(self.info))
+                    package.writestr(self.info['CFBundleName'] + '.app/Contents/Info.plist', plistlib.dumps(self.info))
                     package.writestr(extra, 'synthetic')
                 with self.assertRaises(ValueError):
                     update.validate_archive(archive, self.info)
+
+    def test_accept_renamed_application(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / 'test.zip'
+            with zipfile.ZipFile(archive, 'w') as package:
+                package.writestr(self.info['CFBundleName'] + '.app/Contents/Info.plist', plistlib.dumps(self.info))
+            update.validate_archive(archive, self.info)
 
 
 if __name__ == '__main__':

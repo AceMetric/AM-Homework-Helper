@@ -249,6 +249,11 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if (query.length) [result filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *item, NSDictionary *bindings) { NSString *text = [NSString stringWithFormat:@"%@ %@ %@", item[@"title"], item[@"path"], item[@"repository"] ?: item[@"subject"]]; return [text rangeOfString:query options:NSCaseInsensitiveSearch].location != NSNotFound; }]];
     return result;
 }
+- (NSArray<NSDictionary *> *)pendingReviewCandidates {
+    return [[self visible] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *item, NSDictionary *bindings) {
+        return ![item[@"confirmed"] boolValue] && (!item[@"kind"] || [item[@"kind"] isEqual:@"assignment"]) && ![[self stateForCandidate:item] isEqual:@"已导入"];
+    }]];
+}
 - (void)refreshCourses {
     [self.coursePicker removeAllItems]; if (self.inbox) [self.coursePicker addItemWithTitle:@"全部课程"];
     BOOL found = NO;
@@ -595,7 +600,9 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSInteger row = self.table.selectedRow;
     NSDictionary *candidate = row >= 0 && row < (NSInteger)self.visible.count ? self.visible[row] : nil;
     BOOL assignment = !candidate[@"kind"] || [candidate[@"kind"] isEqual:@"assignment"];
-    self.selectedCandidateID = candidate[@"id"]; self.reviewButton.enabled = candidate != nil && (assignment || [candidate[@"confirmed"] boolValue]); self.reviewButton.title = [candidate[@"confirmed"] boolValue] ? @"编辑任务…" : @"审核作业…";
+    self.selectedCandidateID = candidate[@"id"]; BOOL canStart = self.inbox && !candidate && self.pendingReviewCandidates.count > 0;
+    self.reviewButton.enabled = canStart || (candidate != nil && (assignment || [candidate[@"confirmed"] boolValue])); self.reviewButton.title = canStart ? @"开始审核…" : ([candidate[@"confirmed"] boolValue] ? @"编辑任务…" : @"审核作业…");
+    self.reviewButton.toolTip = @"按当前课程和搜索筛选逐项审核；Return 保存并下一项";
     self.typeButton.enabled = candidate != nil && ![candidate[@"confirmed"] boolValue] && !self.busy && !self.operationsPaused;
     NSMutableString *preview = NSMutableString.string;
     if (candidate) {
@@ -606,7 +613,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.detail.string = candidate ? preview : @"选择课程内容，查看类型、老师原文与位置。";
 }
 - (void)review:(id)sender {
-    NSInteger row = self.table.selectedRow; if (row < 0 || row >= (NSInteger)self.visible.count) return;
+    NSInteger row = self.table.selectedRow;
+    if (row < 0 || row >= (NSInteger)self.visible.count) { if (self.inbox && self.pendingReviewCandidates.count && self.reviewCandidate) self.reviewCandidate(self.pendingReviewCandidates.firstObject); return; }
     NSDictionary *candidate = self.visible[row];
     if (candidate[@"kind"] && ![candidate[@"kind"] isEqual:@"assignment"] && ![candidate[@"confirmed"] boolValue]) return;
     if ([candidate[@"confirmed"] boolValue]) { if (self.editTask) self.editTask(candidate[@"id"]); }

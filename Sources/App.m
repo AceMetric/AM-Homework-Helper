@@ -255,6 +255,9 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSScrollView *sourceScroll;
 @property NSPopover *datePopover;
 @property NSButton *saveButton;
+@property NSButton *nextReviewButton;
+@property NSArray<NSString *> *reviewQueue;
+@property NSTextField *reviewProgress;
 @property NSTextField *titleField;
 @property NSTextField *subjectField;
 @property NSTextField *deadlineField;
@@ -277,6 +280,9 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (BOOL)saveForExit;
 - (instancetype)initWithTask:(NSDictionary *)task owner:(AppDelegate *)owner;
 - (void)importClipboard:(id)sender;
+- (void)updateReviewProgress;
+- (void)saveAndReviewNext:(id)sender;
+- (void)deferReview:(id)sender;
 @end
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSSearchFieldDelegate, UNUserNotificationCenterDelegate>
@@ -347,6 +353,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)refreshAppearance;
 - (void)renderDashboard;
 - (void)reviewGitHubCandidate:(NSDictionary *)candidate;
+- (void)continueReviewQueue:(NSArray<NSString *> *)queue after:(NSString *)identifier;
 - (void)showWindow;
 - (void)refreshReminders;
 - (void)refreshPermission;
@@ -366,6 +373,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 680, 504)]; scroll.hasVerticalScroller = YES; scroll.autohidesScrollers = YES; scroll.drawsBackground = NO;
         Surface *body = Box(Canvas(), 0); scroll.documentView = body; [root addSubview:scroll]; CGFloat y = 24;
         Put(body, Text(panel.title, 23, NSFontWeightSemibold, Ink()), 24, y, 632, 32); y += 48;
+        if (self.candidate) { self.reviewProgress = Text(@"", 12, NSFontWeightRegular, Muted()); Put(body, self.reviewProgress, 416, 30, 240, 24); }
         self.importStatus = Text(@"", 12, NSFontWeightRegular, Muted());
         if (!task) {
             ActionButton *paste = Button(@"粘贴并识别", self, @selector(importClipboard:), 2); Put(body, paste, 24, y, 152, 36);
@@ -417,7 +425,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         self.deadlineField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.deadlineField.delegate = self; self.deadlineField.stringValue = self.candidate && !task[@"due"] ? @"" : DDLFormatDate(self.selectedDate, @"yyyy-MM-dd HH:mm"); self.deadlineField.placeholderString = @"明天 20:00 / 2026-10-11 21:00"; Put(body, self.deadlineField, 24, y, 496, 36);
         ActionButton *calendarButton = Button(@"选日期", self, @selector(showDatePicker:), 2); calendarButton.symbol = @"calendar"; Put(body, calendarButton, 536, y, 120, 36); y += 48;
         self.calendar = MonthView.new; self.calendar.fill = Card(); self.calendar.stroke = Line(); self.calendar.radius = 10; self.calendar.compact = YES; self.calendar.month = self.selectedDate; self.calendar.selection = self.selectedDate; self.calendar.tasks = @[]; self.calendar.frame = NSMakeRect(0, 0, 312, 288); [self.calendar reload];
-        __weak typeof(self) weakSelf = self; panel.onConfirm = ^{ [weakSelf save:nil]; }; panel.onCancel = ^{ [weakSelf cancel:nil]; }; self.calendar.onSelect = ^(NSDate *date) { [weakSelf chooseDate:date]; [weakSelf.datePopover close]; };
+        __weak typeof(self) weakSelf = self; panel.onConfirm = ^{ if (weakSelf.candidate) [weakSelf saveAndReviewNext:nil]; else [weakSelf save:nil]; }; panel.onCancel = ^{ [weakSelf cancel:nil]; }; self.calendar.onSelect = ^(NSDate *date) { [weakSelf chooseDate:date]; [weakSelf.datePopover close]; };
         self.timePicker = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.timePicker.delegate = self; self.timePicker.stringValue = DDLFormatDate(self.selectedDate, @"HH:mm"); self.timePicker.accessibilityLabel = @"具体时间，24 小时制"; Put(body, self.timePicker, 24, y, 96, 36);
         NSPopUpButton *quickTime = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [quickTime addItemsWithTitles:@[@"常用时间", @"09:00", @"12:00", @"18:00", @"20:00", @"22:00", @"23:59"]]; quickTime.target = self; quickTime.action = @selector(quickTime:); Put(body, quickTime, 136, y, 144, 36);
         for (NSInteger i = 0; i < 3; i++) { ActionButton *day = Button(@[@"今天", @"明天", @"一周后"][i], self, @selector(quickDay:), 2); Put(body, day, 296 + i * 120, y, 112, 36); } y += 56;
@@ -433,10 +441,16 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         self.validation = Text(@"", 12, NSFontWeightRegular, Muted()); Put(root, self.validation, 24, 516, 400, 44); self.validation.maximumNumberOfLines = 2; self.validation.lineBreakMode = NSLineBreakByWordWrapping;
         ActionButton *cancel = Button(@"取消", self, @selector(cancel:), 3); cancel.keyEquivalent = @"\033"; cancel.keyEquivalentModifierMask = 0; Put(root, cancel, 448, 524, 88, 36);
         self.saveButton = Button(self.candidate ? @"确认并保存" : (task ? @"保存修改" : @"添加任务"), self, @selector(save:), 1); self.saveButton.keyEquivalent = @"\r"; self.saveButton.keyEquivalentModifierMask = 0; Put(root, self.saveButton, 544, 524, 112, 36);
+        if (self.candidate) {
+            self.validation.frame = NSMakeRect(24, 516, 184, 44); cancel.frame = NSMakeRect(216, 524, 64, 36);
+            NSButton *later = Button(@"稍后审核", self, @selector(deferReview:), 2); later.toolTip = @"本轮跳过，仍保留在待审核列表"; Put(root, later, 288, 524, 88, 36);
+            self.saveButton.title = @"保存并关闭"; self.saveButton.frame = NSMakeRect(384, 524, 104, 36); self.saveButton.keyEquivalentModifierMask = NSEventModifierFlagCommand; ((ActionButton *)self.saveButton).tone = 2;
+            self.nextReviewButton = Button(@"保存并下一项", self, @selector(saveAndReviewNext:), 1); self.nextReviewButton.keyEquivalent = @"\r"; self.nextReviewButton.keyEquivalentModifierMask = 0; Put(root, self.nextReviewButton, 496, 524, 160, 36);
+        }
         [self validateReminders]; [self validateDate]; if (self.candidate && !self.teacherField.stringValue.length) { self.validation.stringValue = @"核对原文后补全老师截止时间，向下滚动设置我的 DDL。"; self.validation.textColor = Muted(); }
         self.titleField.nextKeyView = self.subjectField; self.subjectField.nextKeyView = self.priority; self.priority.nextKeyView = self.teacherField ?: self.deadlineField; if (self.teacherField) self.teacherField.nextKeyView = self.leadMenu;
         if (self.suggestionButton) { self.teacherField.nextKeyView = self.suggestionButton; self.suggestionButton.nextKeyView = self.leadMenu; }
-        self.titleField.accessibilityLabel = @"任务名称"; self.subjectField.accessibilityLabel = @"课程或分类"; self.deadlineField.accessibilityLabel = @"我的截止时间"; self.teacherField.accessibilityLabel = @"老师截止时间，需完整日期和时间"; self.reminderField.accessibilityLabel = @"提醒时间"; self.notesField.accessibilityLabel = @"备注"; panel.initialFirstResponder = self.titleField; panel.defaultButtonCell = self.saveButton.cell; panel.autorecalculatesKeyViewLoop = YES;
+        self.titleField.accessibilityLabel = @"任务名称"; self.subjectField.accessibilityLabel = @"课程或分类"; self.deadlineField.accessibilityLabel = @"我的截止时间"; self.teacherField.accessibilityLabel = @"老师截止时间，需完整日期和时间"; self.reminderField.accessibilityLabel = @"提醒时间"; self.notesField.accessibilityLabel = @"备注"; panel.initialFirstResponder = self.titleField; panel.defaultButtonCell = self.nextReviewButton ? self.nextReviewButton.cell : self.saveButton.cell; panel.autorecalculatesKeyViewLoop = YES;
         self.initialValues = [self formValues];
     } return self;
 }
@@ -445,6 +459,21 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (BOOL)hasUnsavedChanges { [self.window makeFirstResponder:nil]; return ![self.initialValues isEqual:[self formValues]]; }
 - (BOOL)saveForExit { [self save:nil]; return self.appDelegate.editor != self; }
+- (void)updateReviewProgress { self.reviewProgress.stringValue = [NSString stringWithFormat:@"本轮剩余 %lu 项", (unsigned long)self.reviewQueue.count]; }
+- (void)saveAndReviewNext:(id)sender {
+    NSArray *queue = self.reviewQueue; NSString *identifier = self.candidate[@"id"]; AppDelegate *owner = self.appDelegate;
+    [self save:nil]; if (owner.editor == self) return;
+    [owner continueReviewQueue:queue after:identifier];
+}
+- (void)deferReview:(id)sender {
+    if (self.hasUnsavedChanges) {
+        NSAlert *alert = NSAlert.new; alert.messageText = @"暂缓审核这项作业？"; alert.informativeText = @"当前未保存的修改将放弃，作业仍保留在待审核列表。";
+        [alert addButtonWithTitle:@"返回继续"]; [alert addButtonWithTitle:@"放弃修改并稍后审核"];
+        if ([alert runModal] != NSAlertSecondButtonReturn) return;
+    }
+    NSArray *queue = self.reviewQueue; NSString *identifier = self.candidate[@"id"]; AppDelegate *owner = self.appDelegate;
+    [owner closeEditor]; [owner continueReviewQueue:queue after:identifier];
+}
 - (NSCalendar *)teacherCalendar { NSCalendar *calendar = Cal(); calendar.timeZone = [NSTimeZone timeZoneWithName:self.candidate[@"timeZone"] ?: NSTimeZone.localTimeZone.name] ?: NSTimeZone.localTimeZone; return calendar; }
 - (NSString *)formatTeacherDate:(NSDate *)date { NSDateFormatter *formatter = NSDateFormatter.new; formatter.dateFormat = @"yyyy-MM-dd HH:mm"; formatter.timeZone = self.teacherCalendar.timeZone; return [formatter stringFromDate:date]; }
 - (void)showDatePicker:(NSButton *)sender { self.datePopover = NSPopover.new; NSViewController *controller = NSViewController.new; controller.view = self.calendar; self.datePopover.contentViewController = controller; self.datePopover.behavior = NSPopoverBehaviorTransient; [self.datePopover showRelativeToRect:sender.bounds ofView:sender preferredEdge:NSRectEdgeMaxY]; }
@@ -640,7 +669,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (!self.preview) {
         NSArray *running = [NSRunningApplication runningApplicationsWithBundleIdentifier:NSBundle.mainBundle.bundleIdentifier];
         for (NSRunningApplication *other in running) if (other.processIdentifier != NSProcessInfo.processInfo.processIdentifier) {
-            NSAlert *alert = [NSAlert new]; alert.messageText = @"另一个 DDL-Manager 正在运行"; alert.informativeText = @"请先退出旧版本或预览窗口，再打开本版，避免两个版本同时保存任务。"; [alert addButtonWithTitle:@"知道了"]; [NSApp activateIgnoringOtherApps:YES]; [alert runModal]; [NSApp terminate:nil]; return;
+            NSAlert *alert = [NSAlert new]; alert.messageText = @"另一个 AM's Homework Helper 正在运行"; alert.informativeText = @"请先退出旧版本或预览窗口，再打开本版，避免两个版本同时保存任务。"; [alert addButtonWithTitle:@"知道了"]; [NSApp activateIgnoringOtherApps:YES]; [alert runModal]; [NSApp terminate:nil]; return;
         }
     }
     self.filter = 0; self.calendarMode = NO; self.query = @""; self.month = NSDate.date; self.selectedDay = NSDate.date; self.notice = @"";
@@ -665,7 +694,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.updates = [[SSUpdateController alloc] initWithPreview:self.preview];
     [self installMenu];
     self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1280, 840) styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView) backing:NSBackingStoreBuffered defer:NO];
-    self.window.title = self.preview ? @"DDL-Manager · 界面预览" : @"DDL-Manager"; self.window.titleVisibility = NSWindowTitleVisible; self.window.titlebarAppearsTransparent = YES;
+    self.window.title = self.preview ? @"AM's Homework Helper · 界面预览" : @"AM's Homework Helper"; self.window.titleVisibility = NSWindowTitleVisible; self.window.titlebarAppearsTransparent = YES;
     self.window.minSize = NSMakeSize(960, 640); self.window.releasedWhenClosed = NO; self.window.delegate = self; self.window.movableByWindowBackground = YES;
     if (self.preview && [NSProcessInfo.processInfo.arguments containsObject:@"--compact"]) [self.window setContentSize:NSMakeSize(960, 640)];
     self.window.backgroundColor = Canvas();
@@ -689,7 +718,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     __weak typeof(self) weakSelf = self;
     self.root.onResize = ^{ [weakSelf layout]; };
     self.statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
-    self.statusItem.button.image = [NSImage imageWithSystemSymbolName:@"checklist" accessibilityDescription:@"DDL-Manager"];
+    self.statusItem.button.image = [NSImage imageWithSystemSymbolName:@"checklist" accessibilityDescription:@"AM's Homework Helper"];
     self.statusItem.button.imagePosition = NSImageLeft; self.statusItem.button.target = self; self.statusItem.button.action = @selector(statusClick:); [self.statusItem.button sendActionOn:NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp];
     [self layout]; [self.window center]; [self showWindow];
     if (!self.preview) { UNUserNotificationCenter.currentNotificationCenter.delegate = self; [self refreshPermission]; [self refreshReminders]; }
@@ -752,12 +781,12 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)installMenu {
     NSMenu *menu = [NSMenu new];
-    NSMenuItem *appItem = [NSMenuItem new]; [menu addItem:appItem]; NSMenu *app = [[NSMenu alloc] initWithTitle:@"DDL-Manager"]; appItem.submenu = app;
-    [app addItemWithTitle:@"关于 DDL-Manager" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
+    NSMenuItem *appItem = [NSMenuItem new]; [menu addItem:appItem]; NSMenu *app = [[NSMenu alloc] initWithTitle:@"AM's Homework Helper"]; appItem.submenu = app;
+    [app addItemWithTitle:@"关于 AM's Homework Helper" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
     NSMenuItem *check = [app addItemWithTitle:@"检查更新…" action:@selector(checkForUpdates:) keyEquivalent:@""]; check.target = self.updates;
     NSMenuItem *settings = [app addItemWithTitle:@"设置…" action:@selector(showSettings:) keyEquivalent:@","]; settings.target = self;
-    [app addItem:[NSMenuItem separatorItem]]; [app addItemWithTitle:@"隐藏 DDL-Manager" action:@selector(hide:) keyEquivalent:@"h"];
-    [app addItemWithTitle:@"退出 DDL-Manager" action:@selector(terminate:) keyEquivalent:@"q"];
+    [app addItem:[NSMenuItem separatorItem]]; [app addItemWithTitle:@"隐藏 AM's Homework Helper" action:@selector(hide:) keyEquivalent:@"h"];
+    [app addItemWithTitle:@"退出 AM's Homework Helper" action:@selector(terminate:) keyEquivalent:@"q"];
     NSMenuItem *fileItem = [NSMenuItem new]; [menu addItem:fileItem]; NSMenu *file = [[NSMenu alloc] initWithTitle:@"任务"]; fileItem.submenu = file;
     NSMenuItem *add = [file addItemWithTitle:@"新建任务" action:@selector(addTask:) keyEquivalent:@"n"]; add.target = self;
     NSMenuItem *courses = [file addItemWithTitle:@"GitHub 课程与作业…" action:@selector(openCourses:) keyEquivalent:@"g"]; courses.target = self;
@@ -776,7 +805,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     [edit addItem:[NSMenuItem separatorItem]];
     [edit addItemWithTitle:@"剪切" action:@selector(cut:) keyEquivalent:@"x"]; [edit addItemWithTitle:@"复制" action:@selector(copy:) keyEquivalent:@"c"]; [edit addItemWithTitle:@"粘贴" action:@selector(paste:) keyEquivalent:@"v"]; [edit addItemWithTitle:@"全选" action:@selector(selectAll:) keyEquivalent:@"a"];
     NSMenuItem *windowItem = [NSMenuItem new]; [menu addItem:windowItem]; NSMenu *windowMenu = [[NSMenu alloc] initWithTitle:@"窗口"]; windowItem.submenu = windowMenu;
-    NSMenuItem *show = [windowMenu addItemWithTitle:@"显示 DDL-Manager" action:@selector(showMain:) keyEquivalent:@"0"]; show.target = self;
+    NSMenuItem *show = [windowMenu addItemWithTitle:@"显示 AM's Homework Helper" action:@selector(showMain:) keyEquivalent:@"0"]; show.target = self;
     [windowMenu addItemWithTitle:@"最小化" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
     NSApp.mainMenu = menu; NSApp.windowsMenu = windowMenu;
 }
@@ -867,7 +896,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)renderSidebar {
     Clear(self.sidebar); CGFloat h = NSHeight(self.sidebar.bounds);
-    Put(self.sidebar, Text(@"DDL-Manager", 17, NSFontWeightSemibold, Ink()), 20, 48, 160, 24);
+    NSTextField *brand = Text(@"AM's Homework\nHelper", 15, NSFontWeightSemibold, Ink()); brand.maximumNumberOfLines = 2; brand.lineBreakMode = NSLineBreakByWordWrapping; brand.accessibilityLabel = @"AM's Homework Helper";
+    Put(self.sidebar, brand, 20, 32, 160, 44);
     NSArray *names = @[@"总览", @"日历", @"任务", @"待审核作业", @"课程"];
     NSArray *icons = @[@"square.grid.2x2", @"calendar", @"checklist", @"tray", @"books.vertical"];
     for (NSInteger i = 0; i < 5; i++) {
@@ -1226,7 +1256,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)statusClick:(id)sender {
     if (NSApp.currentEvent.type == NSEventTypeRightMouseUp) {
         NSMenu *menu = [NSMenu new];
-        NSMenuItem *show = [menu addItemWithTitle:@"打开 DDL-Manager" action:@selector(showMain:) keyEquivalent:@""]; show.target = self;
+        NSMenuItem *show = [menu addItemWithTitle:@"打开 AM's Homework Helper" action:@selector(showMain:) keyEquivalent:@""]; show.target = self;
         NSMenuItem *add = [menu addItemWithTitle:@"新建任务" action:@selector(addTask:) keyEquivalent:@""]; add.target = self;
         [menu addItem:[NSMenuItem separatorItem]]; [menu addItemWithTitle:@"退出" action:@selector(terminate:) keyEquivalent:@"q"];
         [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, self.statusItem.button.bounds.size.height) inView:self.statusItem.button];
@@ -1261,8 +1291,25 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     draft[@"sourcePath"] = candidate[@"path"];
     draft[@"sourceLine"] = candidate[@"line"];
     self.editor = [[EditorController alloc] initWithTask:draft owner:self];
+    NSArray *pending = self.courseWindow.pendingReviewCandidates; NSMutableArray *queue = NSMutableArray.array;
+    NSUInteger start = [pending indexOfObjectPassingTest:^BOOL(NSDictionary *item, NSUInteger idx, BOOL *stop) { return [item[@"id"] isEqual:candidate[@"id"]]; }];
+    if (start == NSNotFound) [queue addObject:candidate[@"id"]];
+    else for (NSUInteger offset = 0; offset < pending.count; offset++) [queue addObject:pending[(start + offset) % pending.count][@"id"]];
+    self.editor.reviewQueue = queue; [self.editor updateReviewProgress];
     self.editor.window.title = existing ? @"审核更新" : @"审核作业";
     [self.window beginSheet:self.editor.window completionHandler:nil];
+}
+- (void)continueReviewQueue:(NSArray<NSString *> *)queue after:(NSString *)identifier {
+    NSMutableArray *remaining = [queue mutableCopy] ?: NSMutableArray.array; [remaining removeObject:identifier];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (self.editor || self.window.attachedSheet || self.exitCoordinator.pending || self.courseWindow.operationsPaused) return;
+        NSMutableDictionary *pending = NSMutableDictionary.dictionary;
+        for (NSDictionary *item in self.courseWindow.pendingReviewCandidates) pending[item[@"id"]] = item;
+        [remaining filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSString *key, NSDictionary *bindings) { return pending[key] != nil; }]];
+        if (!remaining.count) { self.notice = @"本轮审核已结束，待审核清单已更新。"; [self render]; return; }
+        [self reviewGitHubCandidate:pending[remaining.firstObject]];
+        self.editor.reviewQueue = remaining; [self.editor updateReviewProgress];
+    });
 }
 - (void)importClipboard:(id)sender {
     if (!self.editor) [self addTask:nil];
@@ -1453,7 +1500,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     }
     BOOL notDetermined = self.authorization == UNAuthorizationStatusNotDetermined;
     BOOL denied = self.authorization == UNAuthorizationStatusDenied;
-    alert.informativeText = [NSString stringWithFormat:@"%@\n\n每个任务可以设置最多 10 个提醒点，例如「5小时、1小时、到期」。点击测试后，约 5 秒会出现系统通知。\n\n请在系统通知设置中允许 DDL-Manager 的横幅和声音。专注模式可能使提醒静音；电脑关机时不显示提醒。关闭窗口后应用仍在菜单栏运行。", self.notificationStatus];
+    alert.informativeText = [NSString stringWithFormat:@"%@\n\n每个任务可以设置最多 10 个提醒点，例如「5小时、1小时、到期」。点击测试后，约 5 秒会出现系统通知。\n\n请在系统通知设置中允许 AM's Homework Helper 的横幅和声音。专注模式可能使提醒静音；电脑关机时不显示提醒。关闭窗口后应用仍在菜单栏运行。", self.notificationStatus];
     [alert addButtonWithTitle:notDetermined ? @"允许电脑提醒" : (denied ? @"打开系统设置" : @"发送测试提醒")];
     [alert addButtonWithTitle:@"完成"]; if (!denied) [alert addButtonWithTitle:@"系统通知设置"];
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
@@ -1465,7 +1512,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)openSystemNotifications { [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.Notifications-Settings.extension"]]; }
 - (void)testNotification {
     if (self.preview) return;
-    UNMutableNotificationContent *content = [UNMutableNotificationContent new]; content.title = @"DDL-Manager · 提醒测试"; content.body = @"收到这条通知，就说明电脑提醒已准备好。"; content.sound = UNNotificationSound.defaultSound;
+    UNMutableNotificationContent *content = [UNMutableNotificationContent new]; content.title = @"AM's Homework Helper · 提醒测试"; content.body = @"收到这条通知，就说明电脑提醒已准备好。"; content.sound = UNNotificationSound.defaultSound;
     UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:@"ddl.test" content:content trigger:[UNTimeIntervalNotificationTrigger triggerWithTimeInterval:5 repeats:NO]];
     [UNUserNotificationCenter.currentNotificationCenter addNotificationRequest:request withCompletionHandler:^(NSError *error) {
         dispatch_async(dispatch_get_main_queue(), ^{ self.notice = error ? [NSString stringWithFormat:@"测试提醒失败：%@", error.localizedDescription] : @"测试提醒已安排，将在约 5 秒后显示。"; [self render]; });

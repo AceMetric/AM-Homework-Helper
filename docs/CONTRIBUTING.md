@@ -1,6 +1,6 @@
 # 开发与贡献
 
-本分支为原项目增加 GitHub 课程作业能力，并沿用 **DDL-Manager** 名称。本分支当前独立开发，暂不提交 PR。个人开发计划留在本机，不属于仓库文档。
+本分支为原项目增加 GitHub 课程作业能力，软件名称为 **AM's Homework Helper**。本分支当前独立开发，暂不提交 PR。个人开发计划留在本机，不属于仓库文档。
 
 ## 代码结构
 
@@ -17,7 +17,7 @@
 | `Sources/SSLocalData.m`、`SSSecurity.m` | 本机数据与钥匙串、敏感内容检查 |
 | `Tools/security-audit.py` | 源码、历史、图片、归档和发布产物的隐私检查 |
 
-`SS` 前缀与旧测试版内部数据标识暂时保留，用于兼容已有任务和登录信息。应用显示名称、可执行文件及新安装包名称均已恢复为 DDL-Manager。上游正式发行时，维护者应结合原版数据格式决定是否迁移内部标识；单纯改名不触发数据迁移。
+`SS` 前缀与旧测试版内部数据标识暂时保留，用于兼容已有任务和登录信息。软件显示名称与应用包名称为 AM's Homework Helper；内部可执行文件保持 DDLManager，ZIP 使用 AM-Homework-Helper 前缀。上游正式发行时，维护者应结合原版数据格式决定是否迁移内部标识；单纯改名不触发数据迁移。
 
 ## 构建与验证
 
@@ -32,7 +32,7 @@ zsh verify-forms.sh
 zsh verify-course-ui.sh
 zsh verify-update.sh
 python3 Tests/SecurityAuditTests.py
-python3 Tools/security-audit.py --history --artifacts build/DDL-Manager.app --ocr build/tests/privacy-ocr
+python3 Tools/security-audit.py --history --artifacts "build/AM's Homework Helper.app" --ocr build/tests/privacy-ocr
 ```
 
 图形与 Vision 测试需要可用的 macOS 图形会话，并须实际输出 PASS 标记；系统提前退出或无法运行 OCR 不能算通过。GitHub / Git 测试使用模拟响应和临时仓库，不操作真实课程仓库或用户钥匙串。
@@ -51,9 +51,9 @@ python3 Tools/security-audit.py --history --artifacts build/DDL-Manager.app --oc
 zsh release.sh --candidate
 ```
 
-脚本依次构建、测试、校验签名、扫描历史与产物，然后生成 `build/releases/DDL-Manager-1.1-macOS-arm64-candidate.zip` 和校验文件。ZIP 仅包含应用，安装说明单独生成；不包含任务数据库、登录信息或开发计划。
+脚本依次构建、测试、校验签名、扫描历史与产物，然后生成 `build/releases/AM-Homework-Helper-1.1.1-macOS-arm64-candidate.zip` 和校验文件。ZIP 仅包含应用，安装说明单独生成；不包含任务数据库、登录信息或开发计划。
 
-`zsh release.sh` 生成不带 candidate 后缀的本机包，要求配置公开 GitHub App 信息。它仍不会上传 GitHub Release，也不完成 Developer ID 签名或 Apple 公证。当前 1.1 的构建号为 2，后续更新必须递增。签名清单及真实升级验证见 [软件更新与本机发布](UPDATES.md)。
+`zsh release.sh` 生成不带 candidate 后缀的本机包，要求配置公开 GitHub App 信息。它仍不会上传 GitHub Release，也不完成 Developer ID 签名或 Apple 公证。当前 1.1.1 的构建号为 3，后续更新必须递增。签名清单及真实升级验证见 [软件更新与本机发布](UPDATES.md)。
 
 ## 提交给上游
 

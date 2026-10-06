@@ -2,10 +2,99 @@
 #import "../Sources/App.m"
 #undef main
 #import "../Sources/SSCourseWindow.m"
+#import <Sparkle/Sparkle.h>
 #include <stdio.h>
 static NSUInteger assertions;
 static void Check(BOOL value, NSString *description) { assertions++; if (!value) { fprintf(stderr, "FAIL: %s\n", description.UTF8String); exit(1); } }
 static void Drain(void) { [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]]; }
+// Exercise real NSURLSession callbacks without reaching a public feed or reading account credentials.
+@interface SSUpdateController (FeedTests)
++ (NSDictionary *)checkProblemForResponse:(NSURLResponse *)response error:(NSError *)error;
+- (NSURLSessionConfiguration *)feedSessionConfiguration;
+- (void)cancelFeedCheck:(id)sender;
+- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task willPerformHTTPRedirection:(NSHTTPURLResponse *)response newRequest:(NSURLRequest *)request completionHandler:(void (^)(NSURLRequest *))completionHandler;
+- (void)updater:(SPUUpdater *)updater didAbortWithError:(NSError *)error;
+- (void)updater:(SPUUpdater *)updater didFinishUpdateCycleForUpdateCheck:(SPUUpdateCheck)updateCheck error:(NSError *)error;
+@end
+static NSInteger feedStatus = 200, feedError = 0;
+static NSTimeInterval feedDelay = 0;
+static NSURLRequest *lastFeedRequest;
+@interface FeedProtocol : NSURLProtocol
+@property BOOL stopped;
+@end
+@implementation FeedProtocol
++ (BOOL)canInitWithRequest:(NSURLRequest *)request { return [request.URL.host isEqual:@"updates.example.invalid"]; }
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request { return request; }
+- (void)startLoading {
+    lastFeedRequest = self.request; NSInteger status = feedStatus, error = feedError;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(feedDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (self.stopped) return;
+        if (error) { [self.client URLProtocol:self didFailWithError:[NSError errorWithDomain:NSURLErrorDomain code:error userInfo:nil]]; return; }
+        NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:self.request.URL statusCode:status HTTPVersion:@"HTTP/1.1" headerFields:@{}];
+        [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed]; [self.client URLProtocolDidFinishLoading:self];
+    });
+}
+- (void)stopLoading { self.stopped = YES; }
+@end
+@interface FeedController : SSUpdateController
+@property NSUInteger forwarded;
+@property NSUInteger shownProblems;
+@property NSDictionary *problem;
+@property NSURL *testURL;
+@end
+@implementation FeedController
+- (NSURL *)updateFeedURL { return self.testURL; }
+- (NSURLSessionConfiguration *)feedSessionConfiguration {
+    NSURLSessionConfiguration *config = [super feedSessionConfiguration]; config.protocolClasses = @[FeedProtocol.class]; return config;
+}
+- (void)beginSparkleCheck { self.forwarded++; }
+- (void)showCheckProblem:(NSDictionary *)problem { self.problem = problem; self.shownProblems++; }
+@end
+static void WaitForFeed(FeedController *controller) {
+    NSDate *limit = [NSDate dateWithTimeIntervalSinceNow:3];
+    while ([[controller valueForKey:@"checking"] boolValue] && [limit timeIntervalSinceNow] > 0) Drain();
+    Check(![[controller valueForKey:@"checking"] boolValue], @"feed check completes and unlocks controls");
+}
+static void FeedChecks(void) {
+    FeedController *controller = [[FeedController alloc] initWithPreview:YES]; [controller setValue:@YES forKey:@"available"];
+    controller.testURL = [NSURL URLWithString:@"https://updates.example.invalid/appcast.xml"];
+    NSURLSessionConfiguration *config = [controller feedSessionConfiguration];
+    Check(!config.URLCache && !config.HTTPCookieStorage && !config.HTTPShouldSetCookies && !config.URLCredentialStorage, @"update preflight has no cookies, credential store or persistent cache");
+    feedStatus = 404; [controller checkForUpdates:nil]; [controller checkForUpdates:nil]; WaitForFeed(controller);
+    Check(controller.forwarded == 0 && controller.shownProblems == 1 && [controller.problem[@"title"] isEqual:@"更新服务尚未上线"], @"404 reports unpublished source once without Sparkle's generic error");
+    Check([lastFeedRequest.HTTPMethod isEqual:@"HEAD"] && ![lastFeedRequest valueForHTTPHeaderField:@"Authorization"], @"reachability check requests only public headers without credentials");
+    Check([controller.problem[@"message"] containsString:@"不表示已经是最新版"], @"missing feed is never presented as up to date");
+    Check(![controller valueForKey:@"checkWindow"], @"progress panel closes on completion");
+    feedStatus = 503; [controller checkForUpdates:nil]; WaitForFeed(controller);
+    Check(controller.forwarded == 0 && [controller.problem[@"title"] isEqual:@"更新服务暂时不可用"], @"server error is separate from unpublished source");
+    NSDictionary *networkCases = @{@(NSURLErrorNotConnectedToInternet):@"网络连接不可用", @(NSURLErrorTimedOut):@"连接更新服务超时", @(NSURLErrorServerCertificateUntrusted):@"无法安全连接更新服务", @(NSURLErrorCancelled):@"更新检查已取消"};
+    for (NSNumber *code in networkCases) {
+        feedError = code.integerValue; [controller checkForUpdates:nil]; WaitForFeed(controller);
+        Check(controller.forwarded == 0 && [controller.problem[@"title"] isEqual:networkCases[code]], @"network, timeout, TLS and transport cancellation have specific feedback and never bypass checks");
+    }
+    feedError = 0; feedStatus = 200; [controller checkForUpdates:nil]; WaitForFeed(controller);
+    Check(controller.forwarded == 1, @"retry succeeds after source becomes live and forwards to Sparkle signature validation");
+    feedStatus = 405; [controller checkForUpdates:nil]; WaitForFeed(controller);
+    Check(controller.forwarded == 2, @"HEAD unsupported leaves verified GET handling to Sparkle");
+    NSUInteger problems = controller.shownProblems; feedDelay = 0.3; [controller checkForUpdates:nil];
+    Check([controller valueForKey:@"checkWindow"] != nil, @"manual checks display cancellable native progress even without the main window");
+    [[controller valueForKey:@"checkWindow"] performClose:nil]; feedDelay = 0; feedStatus = 200; [controller checkForUpdates:nil]; WaitForFeed(controller);
+    [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.4]];
+    Check(controller.forwarded == 3 && controller.shownProblems == problems, @"cancelled request cannot alert or interfere with a newer retry");
+    controller.testURL = [NSURL URLWithString:@"http://updates.example.invalid/appcast.xml"]; [controller checkForUpdates:nil];
+    Check(controller.forwarded == 3 && [controller.problem[@"title"] isEqual:@"更新配置需要修复"], @"insecure configured feed is blocked before networking");
+    __block BOOL rejected = NO;
+    [controller URLSession:nil task:nil willPerformHTTPRedirection:nil newRequest:[NSURLRequest requestWithURL:controller.testURL] completionHandler:^(NSURLRequest *request) { rejected = request == nil; }];
+    Check(rejected, @"redirect cannot downgrade to HTTP");
+    __block NSString *notice;
+    controller.statusChanged = ^(NSString *message) { notice = message; };
+    [controller updater:nil didAbortWithError:[NSError errorWithDomain:SUSparkleErrorDomain code:SUNoUpdateError userInfo:nil]];
+    Check([notice isEqual:@"本次检查没有发现适用的新版本。"], @"no applicable update clears the checking phase without claiming latest version");
+    [controller updater:nil didAbortWithError:[NSError errorWithDomain:SUSparkleErrorDomain code:SUInstallationCanceledError userInfo:nil]];
+    Check([notice containsString:@"已取消安装"], @"cancelled installation is distinct from a failed check");
+    [controller updater:nil didFinishUpdateCycleForUpdateCheck:SPUUpdateCheckUpdates error:nil];
+    Check([notice isEqual:@"更新检查已完成。"], @"dismissed or skipped update clears the checking phase");
+}
 @interface FailedSubmissionGit : SSGit @end
 @implementation FailedSubmissionGit
 - (NSArray *)changesForCourse:(NSDictionary *)course error:(NSError **)error { return @[@{@"path":@"answers.md", @"status":@"M"}]; }
@@ -20,6 +109,7 @@ static void Drain(void) { [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTi
 @end
 int main(int argc, char **argv) { @autoreleasepool {
     [NSApplication sharedApplication];
+    FeedChecks();
     NSString *location = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     [NSFileManager.defaultManager createDirectoryAtPath:location withIntermediateDirectories:YES attributes:nil error:nil];
     NSString *appPath = [location stringByAppendingPathComponent:@"Synthetic.app"];

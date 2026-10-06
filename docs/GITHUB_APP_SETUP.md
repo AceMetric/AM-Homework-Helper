@@ -4,14 +4,14 @@ GitHub App 是软件在 GitHub 上的公开身份，不是你的账户密码。�
 
 ## 使用已配置的测试包
 
-同学可直接点击侧栏账户入口的“安装授权…”和“登录 GitHub”，无需自行注册。当前公开配置沿用已注册的 **SS Homework Manager**；桌面应用名称恢复为 DDL-Manager 后，Client ID、安装入口和已有授权继续沿用。
+同学可直接点击侧栏账户入口的“安装授权…”和“登录 GitHub”，无需自行注册。当前公开配置沿用已注册的 **SS Homework Manager**；桌面应用更名为 AM's Homework Helper 后，Client ID、安装入口和已有授权继续沿用。
 
 原作者若采用独立的 GitHub App，只需按下面的流程注册并替换两项公开配置。
 
 ## 维护者操作
 
 1. 登录 GitHub，打开 [新建 GitHub App](https://github.com/settings/apps/new)。
-2. 名称可使用 `DDL-Manager` 或对应的公开项目名；被占用时添加维护者后缀。
+2. 名称可使用 `AM Homework Helper` 或对应的公开项目名；被占用时添加维护者后缀。
 3. Homepage URL 填项目公开仓库页面。Description 可填“macOS 课程作业与截止时间管理；只向当前用户自己的 fork 提交”。
 4. 保留 **Expire user authorization tokens**；勾选 **Enable Device Flow**。
 5. 取消 **Request user authorization (OAuth) during installation**。本应用随后通过设备码授权，Callback URL 和 Setup URL 留空。

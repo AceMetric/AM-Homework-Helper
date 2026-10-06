@@ -48,7 +48,9 @@ class AuditTests(unittest.TestCase):
         self.assertIn(('preview.jpg', 'personal-email'), GLOBALS['findings'])
 
     def test_upstream_attribution_exemption_requires_exact_bytes(self):
-        path = Path(__file__).resolve().parent.parent / 'build/DDL-Manager.app/Contents/Resources/Sparkle-LICENSE.txt'
+        root = Path(__file__).resolve().parent.parent
+        name = __import__("plistlib").loads((root / "Info.plist").read_bytes())["CFBundleName"]
+        path = root / "build" / (name + ".app") / "Contents/Resources/Sparkle-LICENSE.txt"
         if not path.exists():
             self.skipTest('build the pinned dependency first')
         data = path.read_bytes()
