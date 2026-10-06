@@ -12,6 +12,10 @@ static void Capture(NSView *view, NSString *path) {
     Check([[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:YES], @"synthetic screenshot saved");
 }
 static void Route(AppDelegate *app, NSInteger page) { NSButton *button = NSButton.new; button.tag = page; [app navigate:button]; }
+@interface FailedReviewApp : AppDelegate @end
+@implementation FailedReviewApp
+- (BOOL)commitTask:(NSDictionary *)task originalID:(NSString *)identifier { self.editor.validation.stringValue = @"模拟存储失败"; return NO; }
+@end
 int main(void) { @autoreleasepool {
     if (![NSProcessInfo.processInfo.arguments containsObject:@"--preview"]) return 2;
     [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
@@ -106,6 +110,41 @@ int main(void) { @autoreleasepool {
     Check(handled && app.tasks.count == before + 1, @"Return saves through actual sheet key equivalent");
     [app addTask:nil]; [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.25]]; [app.editor.window makeKeyWindow]; before = app.tasks.count; NSEvent *escapeKey = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0 windowNumber:app.editor.window.windowNumber context:nil characters:@"\033" charactersIgnoringModifiers:@"\033" isARepeat:NO keyCode:53];
     Check([app.editor.window performKeyEquivalent:escapeKey] && !app.editor && app.tasks.count == before, @"Escape cancels without creating a task");
+    // One session follows the current filter, saves individually and never loops over deferred items.
+    NSDictionary *originalCandidates = courses.candidates.copy; NSArray *originalTasks = app.snapshot;
+    NSMutableDictionary *one = candidate.mutableCopy, *two = candidate.mutableCopy, *three = dateOnly.mutableCopy;
+    one[@"id"] = @"queue-one"; one[@"title"] = @"连续审核一"; two[@"id"] = @"queue-two"; two[@"title"] = @"连续审核二"; three[@"id"] = @"queue-three"; three[@"title"] = @"连续审核三";
+    courses.candidates[course[@"fork"]] = @[one, two, three]; courses.candidates[other[@"fork"]] = @[math];
+    Route(app, 3); courses.selectedFork = course[@"fork"]; courses.query = @"连续"; [courses.reviewFilter selectItemAtIndex:0]; [courses refreshPresentation];
+    [courses.table deselectAll:nil]; [courses candidateSelected:nil];
+    Check([courses.reviewButton.title isEqual:@"开始审核…"] && courses.reviewButton.enabled, @"start-review action does not require selecting each row");
+    [courses review:nil]; before = app.tasks.count;
+    Check(app.editor.reviewQueue.count == 3 && [app.editor.reviewProgress.stringValue containsString:@"3"], @"session captures only pending homework in current course and search");
+    [app.editor saveAndReviewNext:nil]; [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    Check(app.tasks.count == before + 1 && [app.editor.candidate[@"id"] isEqual:two[@"id"]], @"save-and-next imports one task and opens the next without a list round trip");
+    app.editor.titleField.stringValue = @""; [app.editor saveAndReviewNext:nil];
+    Check([app.editor.candidate[@"id"] isEqual:two[@"id"]] && app.tasks.count == before + 1, @"invalid review cannot advance or import another task");
+    app.editor.titleField.stringValue = two[@"title"]; [app.editor deferReview:nil]; [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    BOOL deferredStillPending = [courses.pendingReviewCandidates indexOfObjectPassingTest:^BOOL(NSDictionary *item, NSUInteger idx, BOOL *stop) { return [item[@"id"] isEqual:two[@"id"]]; }] != NSNotFound;
+    Check([app.editor.candidate[@"id"] isEqual:three[@"id"]] && deferredStillPending, @"defer moves to next and retains unimported homework in inbox");
+    [app.editor saveAndReviewNext:nil]; Check(app.editor != nil && app.tasks.count == before + 1, @"continuous review still requires a missing teacher time");
+    app.editor.teacherField.stringValue = @"2027-04-14 20:00";
+    NSEvent *reviewReturn = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0 windowNumber:app.editor.window.windowNumber context:nil characters:@"\r" charactersIgnoringModifiers:@"\r" isARepeat:NO keyCode:36];
+    Check([app.editor.window performKeyEquivalent:reviewReturn], @"Return invokes save-and-next in review sheet");
+    [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    Check(!app.editor && app.tasks.count == before + 2 && [app.notice containsString:@"本轮审核已结束"], @"session ends without immediately reopening deferred homework");
+    Check(courses.pendingReviewCandidates.count == 1 && [courses.pendingReviewCandidates.firstObject[@"id"] isEqual:two[@"id"]], @"other-course homework and exams never enter the filtered session");
+    [app reviewGitHubCandidate:two]; NSUInteger pendingBeforeCancel = courses.pendingReviewCandidates.count; [app.editor cancel:nil];
+    Check(!app.editor && courses.pendingReviewCandidates.count == pendingBeforeCancel, @"cancel ends session without marking the pending item imported");
+    FailedReviewApp *failed = FailedReviewApp.new; failed.preview = YES; failed.courseWindow = courses; failed.window = app.window;
+    failed.editor = [[EditorController alloc] initWithTask:@{@"_reviewCandidate":one, @"title":one[@"title"], @"due":due, @"announcedDue":due, @"leadDays":@0} owner:failed];
+    failed.editor.reviewQueue = @[one[@"id"], two[@"id"]]; EditorController *failedSheet = failed.editor; [failedSheet saveAndReviewNext:nil];
+    Check(failed.editor == failedSheet && [failedSheet.validation.stringValue containsString:@"存储失败"], @"persistence failure leaves current input and queue intact");
+    [failedSheet.window orderOut:nil]; failed.editor = nil;
+    courses.operationsPaused = YES; [app continueReviewQueue:@[one[@"id"], two[@"id"]] after:one[@"id"]];
+    [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    Check(!app.editor, @"pending exit or update cannot reopen the next review sheet"); courses.operationsPaused = NO;
+    app.tasks = [originalTasks mutableCopy]; courses.candidates = [originalCandidates mutableCopy]; courses.query = @""; courses.selectedFork = nil; [courses refreshPresentation];
     for (NSString *appearance in @[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]) {
         NSApp.appearance = [NSAppearance appearanceNamed:appearance]; [app refreshAppearance]; NSString *name = [appearance isEqual:NSAppearanceNameAqua] ? @"light" : @"dark";
         Route(app, 0); Capture(app.root, [NSString stringWithFormat:@"build/qa/overview-%@.png", name]);

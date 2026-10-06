@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 import sys
+import plistlib
 from pathlib import Path
 
 version = sys.argv[1]
-Path(f'build/releases/DDL-Manager-{version}-安装说明.txt').write_text(f'''DDL-Manager {version} · macOS 13+ · Apple 芯片
+info = plistlib.loads((Path(__file__).resolve().parents[1] / 'Info.plist').read_bytes())
+name, archive_name = info['CFBundleName'], info['DDLArchiveName']
+Path(f'build/releases/{archive_name}-{version}-安装说明.txt').write_text(f'''{name} {version} · macOS 13+ · Apple 芯片
 
-此包使用临时签名，未经 Apple 公证。退出旧版，解压后将 DDL-Manager.app 拖入“应用程序”。首次打开若被阻止，在系统设置 → 隐私与安全性中按系统提示选择“仍要打开”。
+此包使用临时签名，未经 Apple 公证。退出旧版，解压后将 {name}.app 拖入“应用程序”。首次打开若被阻止，在系统设置 → 隐私与安全性中按系统提示选择“仍要打开”。
 
-本版加入“检查更新…”和“设置 → 软件更新”；默认每天检查，由你确认下载和安装。升级时等待课程操作结束，并处理未保存内容。正式更新清单尚未发布时，检查可能提示网络错误；不影响本机使用。
+从 DDL-Manager 测试版升级时，用新应用替换旧的 DDL-Manager.app，勿同时运行两个版本；任务和登录信息会继续沿用。
+
+本版提供“检查更新…”和“设置 → 软件更新”；默认每天检查，由你确认下载和安装。升级时等待课程操作结束，并处理未保存内容。正式更新清单尚未发布时，手动检查会提示“更新服务尚未上线”；断网、超时和服务故障分别说明原因，可稍后重试。不影响本机任务使用。
 
 从侧栏“课程”开始连接 GitHub、选择个人 fork 和关联本地文件夹；“待审核作业”集中核对老师原文与截止时间。相对日期需确认完整截止时间。所有推送只到已核验属于当前用户的个人 fork。
 

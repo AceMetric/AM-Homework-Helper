@@ -84,7 +84,7 @@ def fixture(name, base_url, scenario):
     keychain_service = bundle_id + '.github'
     info = plistlib.loads((ROOT / 'Info.plist').read_bytes())
     info.update(CFBundleIdentifier=bundle_id, CFBundleExecutable='DDLUpdateTest',
-                CFBundleName='DDL-Manager 升级测试', CFBundleDisplayName='DDL-Manager 升级测试',
+                CFBundleName="AM's Homework Helper 升级测试", CFBundleDisplayName="AM's Homework Helper 升级测试",
                 DDLTestRoot=str(folder), DDLTestDataDirectory=str(data), DDLTestKeychainService=keychain_service,
                 SUEnableAutomaticChecks=False, SUFeedURL=base_url + '/' + folder.name + '/appcast.xml',
                 NSAppTransportSecurity={'NSAllowsLocalNetworking': True})

@@ -29,4 +29,4 @@ jobs:
       - name: Image metadata and binary audit regression
         run: python3 Tests/SecurityAuditTests.py
       - name: Current files, full history, archives and screenshots
-        run: python3 Tools/security-audit.py --history --artifacts 'build/DDL-Manager.app' --ocr build/tests/privacy-ocr
+        run: python3 Tools/security-audit.py --history --artifacts "build/AM's Homework Helper.app" --ocr build/tests/privacy-ocr

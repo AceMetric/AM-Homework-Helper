@@ -57,7 +57,7 @@ static NSArray *ErrorCodes(NSError *error) {
 - (void)requestPermission {}
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     [super applicationDidFinishLaunching:notification];
-    self.window.title = @"DDL-Manager · 升级测试（模拟数据）";
+    self.window.title = @"AM's Homework Helper · 升级测试（模拟数据）";
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleVersion"];
     if ([version isEqual:@"2"]) {
         if (!SSWriteSecret(@"qa-preservation", @{@"fixture":@"synthetic-auth-placeholder"})) { Record(@"error.plist", @{@"error":@"test keychain write failed"}); [NSApp terminate:nil]; return; }

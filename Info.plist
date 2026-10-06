@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh_CN</string>
 	<key>CFBundleDisplayName</key>
-	<string>DDL-Manager</string>
+	<string>AM's Homework Helper</string>
 	<key>CFBundleExecutable</key>
 	<string>DDLManager</string>
 	<key>CFBundleIconFile</key>
@@ -15,19 +15,21 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>DDL-Manager</string>
+	<string>AM's Homework Helper</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.1</string>
+	<string>1.1.1</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>3</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>LSUIElement</key>
 	<false/>
 	<key>NSHumanReadableCopyright</key>
-	<string>DDL-Manager · 原作者及贡献者署名见项目提交历史</string>
+	<string>AM's Homework Helper · 原作者及贡献者署名见项目提交历史</string>
+	<key>DDLArchiveName</key>
+	<string>AM-Homework-Helper</string>
 	<key>SUFeedURL</key>
 	<string>https://acemetric.github.io/DDL-Manager/updates/appcast.xml</string>
 	<key>SUPublicEDKey</key>

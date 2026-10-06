@@ -2,7 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="${0:A:h}"
-APP_DIR="$SCRIPT_DIR/build/DDL-Manager.app"
+PRODUCT_NAME=$(python3 -c 'import plistlib,sys; print(plistlib.load(open(sys.argv[1], "rb"))["CFBundleName"])' "$SCRIPT_DIR/Info.plist")
+APP_DIR="$SCRIPT_DIR/build/$PRODUCT_NAME.app"
 CONTENTS="$APP_DIR/Contents"
 export CLANG_MODULE_CACHE_PATH="$SCRIPT_DIR/build/module-cache"
 

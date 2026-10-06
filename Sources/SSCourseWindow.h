@@ -23,6 +23,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)initWithPreview:(BOOL)preview;
 - (void)startAutomaticChecks;
 - (void)refreshPresentation;
+- (NSArray<NSDictionary *> *)pendingReviewCandidates;
 - (void)layoutContent;
 - (void)focusSearch;
 - (void)accountSettings:(nullable id)sender;

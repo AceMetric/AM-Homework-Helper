@@ -15,13 +15,14 @@ SPARKLE_NS = '{http://www.andymatuschak.org/xml-namespaces/sparkle}'
 
 
 def validate_archive(archive, expected):
+    app_name = expected['CFBundleName'] + '.app'
     with zipfile.ZipFile(archive) as package:
         for name in package.namelist():
             parts = Path(name).parts
-            if '..' in parts or name.startswith('/') or (parts and parts[0] not in ('DDL-Manager.app', '__MACOSX')):
-                raise ValueError('更新 ZIP 只能包含 DDL-Manager.app 及其归档元数据。')
-        bundled = plistlib.loads(package.read('DDL-Manager.app/Contents/Info.plist'))
-        for key in ('CFBundleIdentifier', 'CFBundleVersion', 'CFBundleShortVersionString', 'SUPublicEDKey', 'SUFeedURL'):
+            if '..' in parts or name.startswith('/') or (parts and parts[0] not in (app_name, '__MACOSX')):
+                raise ValueError('更新 ZIP 只能包含配置指定的应用及其归档元数据。')
+        bundled = plistlib.loads(package.read(f'{app_name}/Contents/Info.plist'))
+        for key in ('CFBundleIdentifier', 'CFBundleName', 'CFBundleVersion', 'CFBundleShortVersionString', 'SUPublicEDKey', 'SUFeedURL'):
             if bundled.get(key) != expected.get(key):
                 raise ValueError(f'更新包与当前配置不一致：{key}')
         if not bundled.get('SURequireSignedFeed') or not bundled.get('SUVerifyUpdateBeforeExtraction'):
@@ -35,7 +36,7 @@ def prepare(notes, previous_feed=None):
     previous_bytes = previous_feed.read_bytes() if previous_feed else None
     info = plistlib.loads((ROOT / 'Info.plist').read_bytes())
     version, build = info['CFBundleShortVersionString'], info['CFBundleVersion']
-    archive = ROOT / f'build/releases/DDL-Manager-{version}-macOS-arm64.zip'
+    archive = ROOT / f'build/releases/{info["DDLArchiveName"]}-{version}-macOS-arm64.zip'
     if not archive.is_file():
         raise SystemExit('先运行 zsh release.sh，生成通过检查的正式更新包。')
     validate_archive(archive, info)

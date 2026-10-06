@@ -24,7 +24,9 @@ zsh verify-forms.sh
 zsh verify-course-ui.sh
 zsh verify-update.sh
 python3 Tests/SecurityAuditTests.py
-app='build/DDL-Manager.app'
+product_name=$(python3 -c 'import plistlib; print(plistlib.load(open("Info.plist", "rb"))["CFBundleName"])')
+archive_name=$(python3 -c 'import plistlib; print(plistlib.load(open("Info.plist", "rb"))["DDLArchiveName"])')
+app="build/$product_name.app"
 codesign --verify --deep --strict "$app"
 [[ "$(lipo -archs "$app/Contents/MacOS/DDLManager")" == "arm64" ]]
 # QA application fixtures include local paths; only synthetic screenshots are release review artifacts.
@@ -35,13 +37,13 @@ stage='build/releases/package'
 # Update ZIP contains only the app; public guidance is a separate attachment.
 rm -rf "$stage"
 mkdir -p "$stage"
-/usr/bin/ditto "$app" "$stage/DDL-Manager.app"
+/usr/bin/ditto "$app" "$stage/$product_name.app"
 version=$(python3 -c 'import plistlib; print(plistlib.load(open("Info.plist", "rb"))["CFBundleShortVersionString"])')
 suffix=''
 [[ "$mode" == "--candidate" ]] && suffix='-candidate'
-archive="build/releases/DDL-Manager-${version}-macOS-arm64${suffix}.zip"
+archive="build/releases/${archive_name}-${version}-macOS-arm64${suffix}.zip"
 /usr/bin/ditto -c -k --sequesterRsrc "$stage" "$archive"
 python3 Tools/installation-guide.py "$version"
-python3 Tools/security-audit.py --artifacts "$archive" "build/releases/DDL-Manager-${version}-安装说明.txt" --ocr build/tests/privacy-ocr --report build/release-audit.json
+python3 Tools/security-audit.py --artifacts "$archive" "build/releases/${archive_name}-${version}-安装说明.txt" --ocr build/tests/privacy-ocr --report build/release-audit.json
 /usr/bin/shasum -a 256 "$archive" > "${archive}.sha256"
 print -r -- "已生成本机安装包：$archive"
