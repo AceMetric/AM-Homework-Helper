@@ -8,6 +8,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
+from distribution import update_locations
 
 ROOT = Path(__file__).resolve().parents[1]
 ACCOUNT = 'io.github.acemetric.sshomeworkmanager.updates'
@@ -22,7 +23,7 @@ def validate_archive(archive, expected):
             if '..' in parts or name.startswith('/') or (parts and parts[0] not in (app_name, '__MACOSX')):
                 raise ValueError('更新 ZIP 只能包含配置指定的应用及其归档元数据。')
         bundled = plistlib.loads(package.read(f'{app_name}/Contents/Info.plist'))
-        for key in ('CFBundleIdentifier', 'CFBundleName', 'CFBundleVersion', 'CFBundleShortVersionString', 'SUPublicEDKey', 'SUFeedURL'):
+        for key in ('CFBundleIdentifier', 'CFBundleName', 'CFBundleVersion', 'CFBundleShortVersionString', 'SUPublicEDKey', 'SUFeedURL', 'DDLRepositoryURL'):
             if bundled.get(key) != expected.get(key):
                 raise ValueError(f'更新包与当前配置不一致：{key}')
         if not bundled.get('SURequireSignedFeed') or not bundled.get('SUVerifyUpdateBeforeExtraction'):
@@ -35,6 +36,7 @@ def prepare(notes, previous_feed=None):
     notes_bytes = notes.read_bytes()
     previous_bytes = previous_feed.read_bytes() if previous_feed else None
     info = plistlib.loads((ROOT / 'Info.plist').read_bytes())
+    _, download_prefix, notes_prefix = update_locations(info)
     version, build = info['CFBundleShortVersionString'], info['CFBundleVersion']
     archive = ROOT / f'build/releases/{info["DDLArchiveName"]}-{version}-macOS-arm64.zip'
     if not archive.is_file():
@@ -61,8 +63,8 @@ def prepare(notes, previous_feed=None):
         (output / 'appcast.xml').write_bytes(previous_bytes)
     subprocess.run([str(distribution / 'bin/generate_appcast'), '--account', ACCOUNT,
                     '--maximum-deltas', '0', '--versions', str(build),
-                    '--download-url-prefix', f'https://github.com/AceMetric/DDL-Manager/releases/download/v{version}/',
-                    '--release-notes-url-prefix', 'https://acemetric.github.io/DDL-Manager/updates/',
+                    '--download-url-prefix', download_prefix,
+                    '--release-notes-url-prefix', notes_prefix,
                     '-o', str(output / 'appcast.xml'), str(output)], check=True)
     subprocess.run([str(distribution / 'bin/sign_update'), '--account', ACCOUNT, '--verify', str(output / 'appcast.xml')], check=True)
     feed = ET.parse(output / 'appcast.xml')
