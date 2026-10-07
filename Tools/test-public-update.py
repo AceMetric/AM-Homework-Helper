@@ -22,7 +22,8 @@ def main():
     parser.add_argument('--app', required=True, type=Path, help='Extracted, verified public application')
     args = parser.parse_args()
     info = plistlib.loads((args.app / 'Contents/Info.plist').read_bytes())
-    assert info['CFBundleVersion'] == '4'
+    assert int(info['CFBundleVersion']) > 1
+    expected_build = info['CFBundleVersion']
     assert info['SUFeedURL'] == 'https://acemetric.github.io/AM-Homework-Helper/updates/appcast.xml'
     sparkle = ROOT / 'build/dependencies/Sparkle-2.10.0'
     qa = ROOT / 'build/qa/public-update' / uuid.uuid4().hex[:8]
@@ -32,7 +33,7 @@ def main():
         '-mmacosx-version-min=13.0', '-framework', 'Cocoa', '-F' + str(sparkle), '-framework', 'Sparkle',
         '-Wl,-rpath,@executable_path/../Frameworks', ROOT / 'Tests/PublicUpdateIntegration.m', '-o', binary)
     results = []
-    for mode, baseline in [('latest', '4'), ('upgrade', '3')]:
+    for mode, baseline in [('latest', expected_build), ('upgrade', str(int(expected_build)-1))]:
         folder = qa / mode
         host = folder / "host/AM's Homework Helper.app"
         host.parent.mkdir(parents=True)
@@ -50,7 +51,7 @@ def main():
         (contents / 'Info.plist').write_bytes(plistlib.dumps({
             'CFBundleIdentifier': bundle, 'CFBundleExecutable': 'PublicUpdateTest', 'CFBundlePackageType': 'APPL',
             'CFBundleName': 'Public Update Test', 'CFBundleVersion': '1', 'LSUIElement': True,
-            'DDLPublicTestRoot': str(folder), 'DDLPublicTestMode': mode}))
+            'DDLPublicTestRoot': str(folder), 'DDLPublicTestMode': mode, 'DDLPublicExpectedBuild': expected_build}))
         run('/usr/bin/codesign', '--force', '--sign', '-', driver)
         # Sparkle settings use the host domain. Preserve only its updater preference keys;
         # no task/account preferences or credentials are read or copied.
@@ -66,7 +67,7 @@ def main():
                 if error.exists():
                     raise AssertionError(plistlib.loads(error.read_bytes()))
                 result = plistlib.loads((folder / 'result.plist').read_bytes())
-                assert result['version'] == '4', result
+                assert result['version'] == expected_build, result
                 if mode == 'latest':
                     assert result['noUpdate'] and not (folder / 'download.plist').exists()
                 else:

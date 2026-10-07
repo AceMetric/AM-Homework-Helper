@@ -10,6 +10,8 @@
 | `Sources/DDLUI.m`、`SSSubmission.inc` | 系统外观、共享控件、统一表单按键及文件选择 / 预览弹窗 |
 | `Sources/DDLCore.m`、`DDLImport.m` | 日期与提醒计算、公告解析及截图 OCR |
 | `Sources/SSCourseWindow.m` | 嵌入课程页、统一审核列表、引导、操作状态和 Git 流程 |
+| `Sources/AMWorkspace.swift` | 嵌入 AppKit 的 SwiftUI 审核与设置，草稿和批量操作 |
+| `Sources/SSRecognition.m` | 统一识别结果、模板、可选模型、来源校验与审核任务构建 |
 | `Sources/SSAssignments.m` | 文档识别、日期待确认标记、标题与原文片段 |
 | `Sources/SSGitHub.m` | 设备授权、令牌刷新、仓库及账户身份核验 |
 | `Sources/SSGit.m` | 上游文档读取、安全合并、所选文件提交与明确目标推送 |
@@ -31,6 +33,8 @@ zsh verify-homework.sh
 zsh verify-forms.sh
 zsh verify-course-ui.sh
 zsh verify-update.sh
+zsh verify-recognition.sh
+zsh verify-hybrid-ui.sh
 python3 Tests/SecurityAuditTests.py
 python3 Tools/security-audit.py --history --artifacts "build/AM's Homework Helper.app" --ocr build/tests/privacy-ocr
 ```
@@ -39,7 +43,7 @@ python3 Tools/security-audit.py --history --artifacts "build/AM's Homework Helpe
 
 ## 界面约定
 
-采用 AppKit 与 macOS 原生菜单、文件选择和 sheet；共享 UI 模块提供中性分层背景、蓝色强调、系统字体和焦点样式。主窗口默认 1280×840、最小 960×640，侧栏始终保留；宽度小于 1180 时日历当天任务移到下方。布局使用 8 点间距，主要按钮至少 32 点高。
+采用 AppKit 主窗口、日历及核心执行层，与 SwiftUI 审核、设置混合；使用 macOS 原生菜单、文件选择和 sheet；共享 UI 模块提供中性分层背景、蓝色强调、系统字体和焦点样式。主窗口默认 1280×840、最小 960×640，侧栏始终保留；宽度小于 1180 时日历当天任务移到下方。布局使用 8 点间距，主要按钮至少 32 点高。
 
 不再读取旧主题偏好，不强制浅色，也不修改系统外观设置。系统外观变化刷新缓存绘制与输入样式，同时保留未保存内容。页面保存当前会话中的筛选、选择和滚动状态；六小时检查由课程控制器独立管理，不随页面重建。
 
@@ -51,9 +55,9 @@ python3 Tools/security-audit.py --history --artifacts "build/AM's Homework Helpe
 zsh release.sh --candidate
 ```
 
-脚本依次构建、测试、校验签名、扫描历史与产物，然后生成 `build/releases/AM-Homework-Helper-1.1.2-macOS-arm64-candidate.zip` 和校验文件。ZIP 仅包含应用，安装说明单独生成；不包含任务数据库、登录信息或开发计划。
+脚本依次构建、测试、校验签名、扫描历史与产物，然后生成 `build/releases/AM-Homework-Helper-1.2.0-macOS-arm64-candidate.zip` 和校验文件。ZIP 仅包含应用，安装说明单独生成；不包含任务数据库、登录信息或开发计划。
 
-`zsh release.sh` 生成不带 candidate 后缀的本机包，要求配置公开 GitHub App 信息。它仍不会上传 GitHub Release，也不完成 Developer ID 签名或 Apple 公证。当前 1.1.2 的构建号为 4，后续更新必须递增。签名清单及真实升级验证见 [软件更新与本机发布](UPDATES.md)。
+`zsh release.sh` 生成不带 candidate 后缀的本机包，要求配置公开 GitHub App 信息。它仍不会上传 GitHub Release，也不完成 Developer ID 签名或 Apple 公证。当前 1.2.0 的构建号为 5，后续更新必须递增。签名清单及真实升级验证见 [软件更新与本机发布](UPDATES.md)。
 
 ## 为本项目贡献
 
@@ -64,3 +68,5 @@ zsh release.sh --candidate
 - 上游采用自己的 GitHub App 时，仅替换 `Config/GitHubApp.plist` 中公开的 Client ID 和安装入口。
 
 PR 不需要向接收仓库直接 push。提交代码后由本项目维护者审阅并决定是否合并。向原作者贡献应另行与原作者讨论。
+
+SwiftUI 通过 `Tools/prepare-swiftui.py` 编译为应用内 `libAMUI.dylib`，生成 Objective-C 桥接头；目标保持 macOS 13，依赖系统 Swift 运行库。后台结果在主线程送入视图，业务保存与 Git 操作仍只有现有应用入口。不要引入第二个主窗口或任务库。识别公开测试不得包含真实课程原文，详细配置见 [识别说明](RECOGNITION.md)。

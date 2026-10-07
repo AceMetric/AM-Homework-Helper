@@ -1390,7 +1390,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         if (!live || ![live[@"blobSHA"] isEqual:record[@"blobSHA"]] || ![live[@"kind"] isEqual:@"assignment"]) return @"老师原文或审核状态已变化，请刷新后重新核对。";
         NSUInteger index=[next indexOfObjectPassingTest:^BOOL(NSDictionary *task,NSUInteger i,BOOL *stop){return [task[@"sourceID"] isEqual:record[@"id"]];}];
         NSDictionary *existing=index==NSNotFound ? nil : next[index];
-        if (automatic && !SSCanAutomaticallyImport(record,next,NSDate.date)) continue;
+        if (automatic && !SSCanAutomaticallyImport(live,next,NSDate.date)) continue;
         NSError *error=nil; NSDictionary *task=SSReviewedTask(live,draft,existing,&error); if (!task) return error.localizedDescription ?: @"任务校验失败。";
         if (existing) next[index]=task; else { [next addObject:task]; [added addObject:task]; }savedCount++;
     }
@@ -1402,10 +1402,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     return @"";
 }
 - (void)undoAutomaticImport:(id)sender {
-    NSMutableArray *next=[[self snapshot] mutableCopy]; NSUInteger removed=0;
-    for (NSDictionary *task in self.automaticBatch) {NSUInteger i=[next indexOfObject:task];if(i!=NSNotFound){[next removeObjectAtIndex:i];removed++;}}
+    NSMutableArray *next=[[self snapshot] mutableCopy], *undone=NSMutableArray.array; NSUInteger removed=0;
+    for (NSDictionary *task in self.automaticBatch) {NSUInteger i=[next indexOfObject:task];if(i!=NSNotFound){[next removeObjectAtIndex:i];[undone addObject:task];removed++;}}
     NSError *error=nil;
-    if (removed && [self replaceTasks:next action:@"撤销自动加入" error:&error]) {self.automaticBatch=nil;self.notice=[NSString stringWithFormat:@"已撤销 %lu 项自动加入；已编辑的任务保留。",(unsigned long)removed];}
+    if (removed && [self.courseWindow deferAutomaticImportOfTasks:undone error:&error] && [self replaceTasks:next action:@"撤销自动加入" error:&error]) {self.automaticBatch=nil;self.notice=[NSString stringWithFormat:@"已撤销 %lu 项自动加入；已编辑的任务保留。",(unsigned long)removed];}
     else self.notice=error.localizedDescription ?: @"没有可撤销的自动加入任务；已编辑的任务会保留。";
     [self render];
 }

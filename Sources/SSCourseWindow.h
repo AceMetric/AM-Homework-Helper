@@ -10,6 +10,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readonly) BOOL hasUnsavedReview;
 - (BOOL)resolveUnsavedReview;
 - (void)discardReview;
+- (BOOL)deferAutomaticImportOfTasks:(NSArray *)tasks error:(NSError **)error;
 @property (nonatomic) BOOL inbox;
 @property (readonly) NSUInteger pendingCount;
 @property (readonly) NSString *accountSummary;

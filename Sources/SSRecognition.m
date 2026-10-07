@@ -114,7 +114,7 @@ static BOOL SameSource(NSDictionary *task, NSDictionary *record) {
 BOOL SSCanAutomaticallyImport(NSDictionary *record, NSArray *tasks, NSDate *now) {
     if (![record[@"kind"] isEqual:@"assignment"] || [record[@"relative"] boolValue] || [record[@"modelOnly"] boolValue] || [record[@"needsDate"] boolValue] || [record[@"needsTime"] boolValue] || [record[@"warnings"] count] || ![record[@"dateText"] length] || ![record[@"due"] isKindOfClass:NSDate.class] || [record[@"due"] compare:now] != NSOrderedDescending) return NO;
     // A user type override or uncertain identity requires a fresh review.
-    if ([record[@"identityUncertain"] boolValue] || [record[@"kindReason"] isEqual:@"你已手动确认类型"]) return NO;
+    if ([record[@"automaticDeferred"] boolValue] || [record[@"identityUncertain"] boolValue] || [record[@"kindReason"] isEqual:@"你已手动确认类型"]) return NO;
     for (NSDictionary *task in tasks) if (SameSource(task,record) || ([task[@"sourceRepository"] isEqual:record[@"repository"]] && [task[@"sourcePath"] isEqual:record[@"path"]])) return NO;
     return YES;
 }
