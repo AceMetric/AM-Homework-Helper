@@ -8,6 +8,7 @@
 
 static NSString *TestRoot(void) { return [NSBundle.mainBundle objectForInfoDictionaryKey:@"DDLTestRoot"]; }
 static void Record(NSString *name, NSDictionary *value) { [value writeToFile:[TestRoot() stringByAppendingPathComponent:name] atomically:YES]; }
+static BOOL TestKeychain(NSString *command) {NSTask *task=NSTask.new;task.executableURL=[NSURL fileURLWithPath:[TestRoot() stringByAppendingPathComponent:@"FixtureKeychain"]];task.arguments=@[command,[NSBundle.mainBundle objectForInfoDictionaryKey:@"DDLTestKeychainService"]];if(![task launchAndReturnError:NULL])return NO;[task waitUntilExit];return task.terminationStatus==0;}
 static NSArray *ErrorCodes(NSError *error) {
     NSMutableArray *codes = [NSMutableArray arrayWithObject:@(error.code)];
     NSError *underlying = error.userInfo[NSUnderlyingErrorKey];
@@ -52,6 +53,8 @@ static NSArray *ErrorCodes(NSError *error) {
 @property SPUUpdater *testUpdater;
 @end
 @implementation TestApplication
+- (BOOL)resolveEditsForExit:(BOOL)updating {BOOL result=[super resolveEditsForExit:updating];Record(@"exit-ready.plist",@{@"ready":@(result),@"reviewDirty":@(self.courseWindow.hasUnsavedReview),@"submission":@(self.courseWindow.hasSubmissionSheet),@"editor":@(self.editor!=nil),@"sheet":@(self.window.attachedSheet!=nil)});return result;}
+- (void)applicationWillTerminate:(NSNotification *)note {Record(@"terminated.plist",@{@"version":[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleVersion"]});}
 - (void)refreshPermission { self.authorization = UNAuthorizationStatusDenied; }
 - (void)refreshReminders {}
 - (void)requestPermission {}
@@ -60,7 +63,7 @@ static NSArray *ErrorCodes(NSError *error) {
     self.window.title = @"AM's Homework Helper · 升级测试（模拟数据）";
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleVersion"];
     if ([version isEqual:@"2"]) {
-        if (!SSWriteSecret(@"qa-preservation", @{@"fixture":@"synthetic-auth-placeholder"})) { Record(@"error.plist", @{@"error":@"test keychain write failed"}); [NSApp terminate:nil]; return; }
+        if (!TestKeychain(@"write")) { Record(@"error.plist", @{@"error":@"test keychain write failed"}); [NSApp terminate:nil]; return; }
         [NSUserDefaults.standardUserDefaults setBool:YES forKey:@"DDLTestPreference"];
         self.driver = TestDriver.new; self.driver.app = self;
         self.testUpdater = [[SPUUpdater alloc] initWithHostBundle:NSBundle.mainBundle applicationBundle:NSBundle.mainBundle userDriver:self.driver delegate:nil];
@@ -68,9 +71,9 @@ static NSArray *ErrorCodes(NSError *error) {
         if (![self.testUpdater startUpdater:&error]) { Record(@"error.plist", @{@"error":error.localizedDescription}); [NSApp terminate:nil]; return; }
         [self.testUpdater checkForUpdates];
     } else {
-        NSDictionary *secret = SSReadSecret(@"qa-preservation");
-        Record(@"relaunched.plist", @{@"version":version, @"tasks":@(self.tasks.count), @"task":self.tasks.firstObject ?: @{}, @"keychainPreserved":@([secret[@"fixture"] isEqual:@"synthetic-auth-placeholder"]), @"preferencePreserved":@([NSUserDefaults.standardUserDefaults boolForKey:@"DDLTestPreference"]), @"courses":SSReadPlist(@"courses.plist") ?: @[]});
-        SSDeleteSecret(@"qa-preservation");
+        BOOL keychainPreserved=TestKeychain(@"read");
+        Record(@"relaunched.plist", @{@"version":version, @"tasks":@(self.tasks.count), @"task":self.tasks.firstObject ?: @{}, @"keychainPreserved":@(keychainPreserved), @"preferencePreserved":@([NSUserDefaults.standardUserDefaults boolForKey:@"DDLTestPreference"]), @"courses":SSReadPlist(@"courses.plist") ?: @[]});
+        TestKeychain(@"delete");
         [NSApp terminate:nil];
     }
 }

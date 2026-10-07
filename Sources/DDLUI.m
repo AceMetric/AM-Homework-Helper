@@ -33,7 +33,8 @@ void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight weight, NS
 @implementation DDLFormPanel
 - (BOOL)performKeyEquivalent:(NSEvent *)event {
     NSEventModifierFlags modifiers = event.modifierFlags & (NSEventModifierFlagCommand | NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagShift);
-    if (!modifiers && ([event.charactersIgnoringModifiers isEqual:@"\r"] || [event.charactersIgnoringModifiers isEqual:@"\003"])) { [self makeFirstResponder:nil]; if (self.onConfirm) { self.onConfirm(); return YES; } }
+    BOOL multiline=[self.firstResponder isKindOfClass:NSTextView.class] && ![(NSTextView *)self.firstResponder isFieldEditor];
+    if (((!modifiers && !multiline) || modifiers==NSEventModifierFlagCommand) && ([event.charactersIgnoringModifiers isEqual:@"\r"] || [event.charactersIgnoringModifiers isEqual:@"\003"])) { [self makeFirstResponder:nil]; if (self.onConfirm) { self.onConfirm(); return YES; } }
     if (!modifiers && [event.charactersIgnoringModifiers isEqual:@"\033"] && self.onCancel) { self.onCancel(); return YES; }
     return [super performKeyEquivalent:event];
 }

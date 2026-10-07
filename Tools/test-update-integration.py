@@ -78,6 +78,9 @@ def stop_test_processes(folder):
 def fixture(name, base_url, scenario):
     folder = qa / (name + '-' + uuid.uuid4().hex[:8])
     folder.mkdir()
+    helper = folder / 'FixtureKeychain'
+    run('/usr/bin/clang', '-fobjc-arc', '-Wall', '-Wextra', '-Werror', '-mmacosx-version-min=13.0', '-framework', 'Foundation', '-framework', 'Security', ROOT / 'Tests/FixtureKeychain.m', '-o', helper)
+    run('/usr/bin/codesign', '--force', '--sign', '-', helper)
     data = folder / 'data'
     data.mkdir()
     bundle_id = 'io.github.ddl-manager.update-test.' + uuid.uuid4().hex
@@ -100,6 +103,7 @@ def fixture(name, base_url, scenario):
         (contents / 'MacOS').mkdir(parents=True)
         (contents / 'Frameworks').mkdir()
         shutil.copy2(ROOT / 'build/tests/update-integration', contents / 'MacOS/DDLUpdateTest')
+        shutil.copy2(ROOT / 'build/swiftui/libAMUI.dylib', contents / 'Frameworks/libAMUI.dylib')
         run('/usr/bin/ditto', sparkle / 'Sparkle.framework', contents / 'Frameworks/Sparkle.framework')
         info['CFBundleVersion'] = build
         info['CFBundleShortVersionString'] = '1.1' if build == '2' else '1.2'
@@ -234,7 +238,7 @@ def main():
         if 'folder' in locals():
             stop_test_processes(folder)
         if 'service' in locals():
-            subprocess.run(['/usr/bin/security', 'delete-generic-password', '-s', service, '-a', 'qa-preservation'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run([str(folder / 'FixtureKeychain'), 'delete', service], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         report = folder / 'results.json' if 'folder' in locals() else qa / 'results.json'
         report.write_text(json.dumps(outcomes, ensure_ascii=False, indent=2))
 

@@ -14,7 +14,7 @@ static void Capture(NSView *view, NSString *path) {
 static void Route(AppDelegate *app, NSInteger page) { NSButton *button = NSButton.new; button.tag = page; [app navigate:button]; }
 @interface FailedReviewApp : AppDelegate @end
 @implementation FailedReviewApp
-- (BOOL)commitTask:(NSDictionary *)task originalID:(NSString *)identifier { self.editor.validation.stringValue = @"模拟存储失败"; return NO; }
+- (BOOL)replaceTasks:(NSArray *)tasks action:(NSString *)action error:(NSError **)error {if(error)*error=[NSError errorWithDomain:@"Fixture" code:1 userInfo:@{NSLocalizedDescriptionKey:@"模拟存储失败"}];return NO; }
 @end
 int main(void) { @autoreleasepool {
     if (![NSProcessInfo.processInfo.arguments containsObject:@"--preview"]) return 2;
@@ -136,8 +136,8 @@ int main(void) { @autoreleasepool {
     Check(courses.pendingReviewCandidates.count == 1 && [courses.pendingReviewCandidates.firstObject[@"id"] isEqual:two[@"id"]], @"other-course homework and exams never enter the filtered session");
     [app reviewGitHubCandidate:two]; NSUInteger pendingBeforeCancel = courses.pendingReviewCandidates.count; [app.editor cancel:nil];
     Check(!app.editor && courses.pendingReviewCandidates.count == pendingBeforeCancel, @"cancel ends session without marking the pending item imported");
-    FailedReviewApp *failed = FailedReviewApp.new; failed.preview = YES; failed.courseWindow = courses; failed.window = app.window;
-    failed.editor = [[EditorController alloc] initWithTask:@{@"_reviewCandidate":one, @"title":one[@"title"], @"due":due, @"announcedDue":due, @"leadDays":@0} owner:failed];
+    FailedReviewApp *failed = FailedReviewApp.new; failed.preview = YES; failed.courseWindow = courses; failed.window = app.window;failed.tasks=app.tasks.mutableCopy;
+    failed.editor = [[EditorController alloc] initWithTask:@{@"_reviewCandidate":two, @"title":two[@"title"], @"due":due, @"announcedDue":due, @"leadDays":@0} owner:failed];
     failed.editor.reviewQueue = @[one[@"id"], two[@"id"]]; EditorController *failedSheet = failed.editor; [failedSheet saveAndReviewNext:nil];
     Check(failed.editor == failedSheet && [failedSheet.validation.stringValue containsString:@"存储失败"], @"persistence failure leaves current input and queue intact");
     [failedSheet.window orderOut:nil]; failed.editor = nil;

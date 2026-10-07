@@ -41,6 +41,13 @@ class AuditTests(unittest.TestCase):
         SCAN(png(b'IDAT', fake), 'preview.png')
         self.assertIn(('preview.png', 'github-token'), GLOBALS['findings'])
 
+    def test_binary_url_detection_stops_at_string_boundary(self):
+        SCAN(b'http://localhost:11434' + b'\0public-string@', 'app-binary')
+        self.assertNotIn(('app-binary', 'url-credentials'), GLOBALS['findings'])
+        credentials = b'https://' + b'synthetic-user' + b':' + b'fixture-only' + b'@example.invalid' + b'\0'
+        SCAN(credentials, 'app-binary')
+        self.assertIn(('app-binary', 'url-credentials'), GLOBALS['findings'])
+
     def test_jpeg_metadata_is_checked(self):
         payload = self.address
         data = b'\xff\xd8\xff\xfe' + struct.pack('>H', len(payload) + 2) + payload + b'\xff\xd9'
