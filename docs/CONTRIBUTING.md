@@ -55,12 +55,12 @@ zsh release.sh --candidate
 
 `zsh release.sh` 生成不带 candidate 后缀的本机包，要求配置公开 GitHub App 信息。它仍不会上传 GitHub Release，也不完成 Developer ID 签名或 Apple 公证。当前 1.1.2 的构建号为 4，后续更新必须递增。签名清单及真实升级验证见 [软件更新与本机发布](UPDATES.md)。
 
-## 提交给上游
+## 为本项目贡献
 
-- PR 的接收仓库为 `123456p-df/DDL-Manager`，来源为贡献者自己的 fork。
+- 本项目的 issue 与 PR 接收仓库为 `AceMetric/AM-Homework-Helper`，来源为贡献者自己的 fork。
 - 在说明中列出功能、验证范围和仍待实机联调的项目，并注明数据目录与内部标识的兼容选择。
 - 保留原作者署名和已有历史，不提交个人聊天截图、密钥、本机数据库或构建包。
 - 作业推送到个人课程 fork 的安全限制应作为合并后的功能约束保留。
 - 上游采用自己的 GitHub App 时，仅替换 `Config/GitHubApp.plist` 中公开的 Client ID 和安装入口。
 
-PR 不需要向原作者仓库直接 push。提交代码后由原作者审阅并决定是否合并。
+PR 不需要向接收仓库直接 push。提交代码后由本项目维护者审阅并决定是否合并。向原作者贡献应另行与原作者讨论。
