@@ -20,10 +20,16 @@ def run(*args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--app', required=True, type=Path, help='Extracted, verified public application')
+    parser.add_argument('--baseline-app', type=Path, help='Optional verified older public application for a real-version upgrade')
     args = parser.parse_args()
     info = plistlib.loads((args.app / 'Contents/Info.plist').read_bytes())
     assert int(info['CFBundleVersion']) > 1
     expected_build = info['CFBundleVersion']
+    baseline_info = plistlib.loads((args.baseline_app / 'Contents/Info.plist').read_bytes()) if args.baseline_app else None
+    if baseline_info:
+        assert int(baseline_info['CFBundleVersion']) < int(expected_build)
+        for key in ['CFBundleIdentifier', 'SUFeedURL', 'SUPublicEDKey']:
+            assert baseline_info[key] == info[key]
     assert info['SUFeedURL'] == 'https://acemetric.github.io/AM-Homework-Helper/updates/appcast.xml'
     sparkle = ROOT / 'build/dependencies/Sparkle-2.10.0'
     qa = ROOT / 'build/qa/public-update' / uuid.uuid4().hex[:8]
@@ -33,12 +39,12 @@ def main():
         '-mmacosx-version-min=13.0', '-framework', 'Cocoa', '-F' + str(sparkle), '-framework', 'Sparkle',
         '-Wl,-rpath,@executable_path/../Frameworks', ROOT / 'Tests/PublicUpdateIntegration.m', '-o', binary)
     results = []
-    for mode, baseline in [('latest', expected_build), ('upgrade', str(int(expected_build)-1))]:
+    for mode, baseline in [('latest', expected_build), ('upgrade', baseline_info['CFBundleVersion'] if baseline_info else str(int(expected_build)-1))]:
         folder = qa / mode
         host = folder / "host/AM's Homework Helper.app"
         host.parent.mkdir(parents=True)
-        run('/usr/bin/ditto', args.app, host)
-        host_info = info | {'CFBundleVersion': baseline, 'SUEnableAutomaticChecks': False}
+        run('/usr/bin/ditto', args.baseline_app if mode == 'upgrade' and args.baseline_app else args.app, host)
+        host_info = (baseline_info if mode == 'upgrade' and baseline_info else info) | {'CFBundleVersion': baseline, 'SUEnableAutomaticChecks': False}
         (host / 'Contents/Info.plist').write_bytes(plistlib.dumps(host_info))
         run('/usr/bin/codesign', '--force', '--sign', '-', host)
         driver = folder / 'PublicUpdateTest.app'

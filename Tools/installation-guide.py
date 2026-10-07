@@ -8,7 +8,7 @@ version = sys.argv[1]
 info = plistlib.loads((Path(__file__).resolve().parents[1] / 'Info.plist').read_bytes())
 name, archive_name = info['CFBundleName'], info['DDLArchiveName']
 repository, _, _ = update_locations(info)
-Path(f'build/releases/{archive_name}-{version}-安装说明.txt').write_text(f'''{name} {version} · macOS 13+ · Apple 芯片
+Path(f'build/releases/{archive_name}-{version}-installation-guide.txt').write_text(f'''{name} {version} · macOS 13+ · Apple 芯片
 
 此包使用临时签名，未经 Apple 公证。退出旧版，解压后将 {name}.app 拖入“应用程序”。首次打开若被阻止，在系统设置 → 隐私与安全性中按系统提示选择“仍要打开”。
 

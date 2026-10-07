@@ -33,7 +33,7 @@ python3 Tools/prepare-update.py --notes /path/to/public-release-notes.md
 
 后续版本加 `--previous-feed /path/to/previous-signed-appcast.xml`，脚本先验证旧清单签名与构建号，再保留旧条目。维护者每次后续发布必须传入最新线上清单，不要用首次发布模式绕过版本检查。
 
-`release.sh` 构建、回归、检查签名并扫描源码、历史和产物。更新 ZIP 仅包含 `.app`；安装说明单独生成。`--candidate` 是本机测试包，不参与正式清单。
+`release.sh` 构建、回归、检查签名并扫描源码、历史和产物。更新 ZIP 仅包含 `.app`；安装说明单独生成，附件使用 `AM-Homework-Helper-<版本>-installation-guide.txt`（内容为中文）。`--candidate` 是本机测试包，不参与正式清单。
 
 `prepare-update.py` 读取钥匙串签名，不导出私钥；要求公钥与应用一致，生成并验证 ZIP、清单及 Markdown 更新说明的签名，然后扫描所有待发布文件。产物位于忽略的 `build/releases/update/`。如修改清单或更新说明，必须重新签名。
 
@@ -68,4 +68,4 @@ zsh verify-update-integration.sh
 python3 Tools/test-public-update.py --app "/path/to/extracted/AM's Homework Helper.app"
 ```
 
-此测试让真实 Sparkle 读取正式 HTTPS 清单：当前构建号应无更新；仅本机临时副本降低一个构建号，再下载正式包并安装，核对完整应用配置、可执行文件及签名。独立测试驱动器负责重启协调；更新后的正式应用只以不会保存的预览模式打开，然后关闭，不加载真实任务、课程或钥匙串。测试结束恢复更新偏好，报告仅留在忽略的 `build/qa/public-update/`。任务和模拟钥匙串保留由上述隔离完整应用的回环升级测试验证。
+此测试让真实 Sparkle 读取正式 HTTPS 清单：当前构建号应无更新；升级场景可加 `--baseline-app` 指向已验证的旧公开应用，使用真实旧版临时副本。未指定时仅降低临时副本的构建号，再下载正式包并安装，核对完整应用配置、可执行文件及签名。独立测试驱动器负责重启协调；更新后的正式应用只以不会保存的预览模式打开，然后关闭，不加载真实任务、课程或钥匙串。测试结束恢复更新偏好，报告仅留在忽略的 `build/qa/public-update/`。任务和模拟钥匙串保留由上述隔离完整应用的回环升级测试验证。

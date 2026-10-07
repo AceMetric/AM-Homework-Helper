@@ -46,6 +46,6 @@ suffix=''
 archive="build/releases/${archive_name}-${version}-macOS-arm64${suffix}.zip"
 /usr/bin/ditto -c -k --sequesterRsrc "$stage" "$archive"
 python3 Tools/installation-guide.py "$version"
-python3 Tools/security-audit.py --artifacts "$archive" "build/releases/${archive_name}-${version}-安装说明.txt" --ocr build/tests/privacy-ocr --report build/release-audit.json
+python3 Tools/security-audit.py --artifacts "$archive" "build/releases/${archive_name}-${version}-installation-guide.txt" --ocr build/tests/privacy-ocr --report build/release-audit.json
 /usr/bin/shasum -a 256 "$archive" > "${archive}.sha256"
 print -r -- "已生成本机安装包：$archive"
