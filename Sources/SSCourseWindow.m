@@ -23,6 +23,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property NSMutableDictionary<NSString *, NSArray *> *candidates;
 @property NSMutableDictionary<NSString *, NSArray *> *materials;
 @property NSMutableDictionary *kindOverrides;
+@property NSMutableDictionary *automaticDeferrals;
 @property NSPopUpButton *typeFilter;
 @property NSButton *typeButton;
 @property NSArray<NSDictionary *> *availableForks;
@@ -80,6 +81,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         if ([discoveries[@"materials"] isKindOfClass:NSDictionary.class]) [self.materials addEntriesFromDictionary:discoveries[@"materials"]];
         id overrides = preview ? nil : SSReadPlist(@"discovery-overrides.plist");
         self.kindOverrides = [overrides isKindOfClass:NSDictionary.class] ? [overrides mutableCopy] : NSMutableDictionary.dictionary;
+        id deferred=preview ? nil : SSReadPlist(@"automatic-review.plist");self.automaticDeferrals=[deferred isKindOfClass:NSDictionary.class] ? [deferred mutableCopy] : NSMutableDictionary.dictionary;
         NSArray *saved = preview ? @[] : SSReadPlist(@"courses.plist");
         for (id item in [saved isKindOfClass:NSArray.class] ? saved : @[]) if ([item isKindOfClass:NSDictionary.class] && [item[@"fork"] isKindOfClass:NSString.class]) [self.courses addObject:[item mutableCopy]];
         self.connected = !preview && SSReadSecret(@"github") != nil;
@@ -271,6 +273,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     for (NSDictionary *item in [(self.candidates[fork] ?: @[]) arrayByAddingObjectsFromArray:self.materials[fork] ?: @[]]) {
         NSMutableDictionary *copy = item.mutableCopy; NSString *kind = self.kindOverrides[item[@"id"]] ?: item[@"kind"] ?: @"assignment";
         if (![@[@"assignment", @"classroom", @"exam", @"unknown"] containsObject:kind]) kind = @"unknown";
+        copy[@"automaticDeferred"]=@([self.automaticDeferrals[item[@"id"]] isEqual:item[@"blobSHA"]]);
         copy[@"kind"] = kind; if (self.kindOverrides[item[@"id"]]) copy[@"kindReason"] = @"你已手动确认类型";
         BOOL exact=NO, nearby=NO;
         for (NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[]) {
@@ -281,6 +284,12 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 
         [result addObject:copy];
     } return result;
+}
+- (BOOL)deferAutomaticImportOfTasks:(NSArray *)tasks error:(NSError **)error {
+    NSMutableDictionary *next=self.automaticDeferrals.mutableCopy;
+    for(NSDictionary *task in tasks)if([task[@"sourceID"] length] && [task[@"sourceBlobSHA"] length])next[task[@"sourceID"]]=task[@"sourceBlobSHA"];
+    if(!self.preview && !SSWritePlist(@"automatic-review.plist",next,error))return NO;
+    self.automaticDeferrals=next;return YES;
 }
 - (BOOL)setKind:(NSString *)kind forDiscovery:(NSDictionary *)record error:(NSError **)error {
     if (!record[@"id"] || ![@[@"assignment", @"classroom", @"exam", @"unknown"] containsObject:kind]) return NO;

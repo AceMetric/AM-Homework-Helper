@@ -2,7 +2,7 @@
 
 ## 用户使用
 
-AM's Homework Helper 1.1.2 起使用正式在线更新源。原 DDL-Manager 或本应用 1.1 / 1.1.1 测试版需要从 [GitHub Releases](https://github.com/AceMetric/AM-Homework-Helper/releases/latest) 手动安装一次 1.1.2：仓库更名后旧 Pages 地址不会重定向，新版已内置新地址。把应用放在“应用程序”中，再从应用菜单选择“检查更新…”。“设置 → 软件更新”可以关闭默认每 24 小时一次的检查。
+AM's Homework Helper 1.1.2 起使用正式在线更新源。原 DDL-Manager 或本应用 1.1 / 1.1.1 测试版需要从 [GitHub Releases](https://github.com/AceMetric/AM-Homework-Helper/releases/latest) 手动安装一次最新正式版：仓库更名后旧 Pages 地址不会重定向，新版已内置新地址。把应用放在“应用程序”中，再从应用菜单选择“检查更新…”。“设置 → 软件更新”可以关闭默认每 24 小时一次的检查。
 
 发现新版后展示更新说明，由用户确认下载和安装；不会默认自动下载。更新整个应用，需要重新打开。支持稍后提醒、跳过版本和手动重试。用户已经同意下载并进入安装准备阶段后，Sparkle 的“稍后”可能安排在退出应用时完成安装。
 
@@ -68,4 +68,4 @@ zsh verify-update-integration.sh
 python3 Tools/test-public-update.py --app "/path/to/extracted/AM's Homework Helper.app"
 ```
 
-此测试让真实 Sparkle 读取正式 HTTPS 清单：构建号 4 应无更新；仅本机临时副本降为构建号 3，再下载正式包并安装，核对完整应用配置、可执行文件及签名。独立测试驱动器负责重启协调；更新后的正式应用只以不会保存的预览模式打开，然后关闭，不加载真实任务、课程或钥匙串。测试结束恢复更新偏好，报告仅留在忽略的 `build/qa/public-update/`。任务和模拟钥匙串保留由上述隔离完整应用的回环升级测试验证。
+此测试让真实 Sparkle 读取正式 HTTPS 清单：当前构建号应无更新；仅本机临时副本降低一个构建号，再下载正式包并安装，核对完整应用配置、可执行文件及签名。独立测试驱动器负责重启协调；更新后的正式应用只以不会保存的预览模式打开，然后关闭，不加载真实任务、课程或钥匙串。测试结束恢复更新偏好，报告仅留在忽略的 `build/qa/public-update/`。任务和模拟钥匙串保留由上述隔离完整应用的回环升级测试验证。

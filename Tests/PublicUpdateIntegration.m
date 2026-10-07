@@ -13,7 +13,7 @@ static NSString *InstalledVersion(void) { return [NSDictionary dictionaryWithCon
 @end
 @implementation PublicDriver
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
-    if ([[NSBundle.mainBundle objectForInfoDictionaryKey:@"DDLPublicTestMode"] isEqual:@"upgrade"] && [InstalledVersion() isEqual:@"4"]) {
+    if ([[NSBundle.mainBundle objectForInfoDictionaryKey:@"DDLPublicTestMode"] isEqual:@"upgrade"] && [InstalledVersion() isEqual:[NSBundle.mainBundle objectForInfoDictionaryKey:@"DDLPublicExpectedBuild"]]) {
         NSWorkspaceOpenConfiguration *config = NSWorkspaceOpenConfiguration.configuration;
         config.arguments = @[@"--preview"]; config.createsNewApplicationInstance = YES;
         [NSWorkspace.sharedWorkspace openApplicationAtURL:Host().bundleURL configuration:config completionHandler:^(NSRunningApplication *app, NSError *error) {
