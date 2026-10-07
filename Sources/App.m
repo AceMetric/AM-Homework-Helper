@@ -694,7 +694,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.updates = [[SSUpdateController alloc] initWithPreview:self.preview];
     [self installMenu];
     self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1280, 840) styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView) backing:NSBackingStoreBuffered defer:NO];
-    self.window.title = self.preview ? @"AM's Homework Helper · 界面预览" : @"AM's Homework Helper"; self.window.titleVisibility = NSWindowTitleVisible; self.window.titlebarAppearsTransparent = YES;
+    self.window.title = self.preview ? @"AM's Homework Helper · 界面预览" : @"AM's Homework Helper"; self.window.titleVisibility = NSWindowTitleHidden; self.window.titlebarAppearsTransparent = YES;
     self.window.minSize = NSMakeSize(960, 640); self.window.releasedWhenClosed = NO; self.window.delegate = self; self.window.movableByWindowBackground = YES;
     if (self.preview && [NSProcessInfo.processInfo.arguments containsObject:@"--compact"]) [self.window setContentSize:NSMakeSize(960, 640)];
     self.window.backgroundColor = Canvas();
@@ -896,7 +896,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)renderSidebar {
     Clear(self.sidebar); CGFloat h = NSHeight(self.sidebar.bounds);
-    NSTextField *brand = Text(@"AM's Homework\nHelper", 15, NSFontWeightSemibold, Ink()); brand.maximumNumberOfLines = 2; brand.lineBreakMode = NSLineBreakByWordWrapping; brand.accessibilityLabel = @"AM's Homework Helper";
+    NSTextField *brand = Text(@"AM Helper", 14, NSFontWeightSemibold, Ink()); brand.maximumNumberOfLines = 1; brand.lineBreakMode = NSLineBreakByTruncatingTail; brand.accessibilityLabel = @"AM's Homework Helper"; brand.toolTip = @"AM's Homework Helper";
     Put(self.sidebar, brand, 20, 32, 160, 44);
     NSArray *names = @[@"总览", @"日历", @"任务", @"待审核作业", @"课程"];
     NSArray *icons = @[@"square.grid.2x2", @"calendar", @"checklist", @"tray", @"books.vertical"];
