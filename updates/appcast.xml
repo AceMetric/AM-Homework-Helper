@@ -1,8 +1,20 @@
-<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+<?xml version="1.0" standalone="yes"?>
+<!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+-->
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>AM's Homework Helper</title>
+        <item>
+            <title>1.2.0</title>
+            <pubDate>Wed, 07 Oct 2026 23:45:07 +0800</pubDate>
+            <sparkle:version>5</sparkle:version>
+            <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <sparkle:releaseNotesLink sparkle:edSignature="Mky8wtnppQqjHaWImbVpUz+iGpz6ZoX8Oo45sR8HxG2wtROZGy17LcXuAK5058zGWp5r9LPllZ9mKU6yC5W0AQ==" sparkle:length="2388">https://acemetric.github.io/AM-Homework-Helper/updates/AM-Homework-Helper-1.2.0-macOS-arm64.md</sparkle:releaseNotesLink>
+            <enclosure url="https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.2.0/AM-Homework-Helper-1.2.0-macOS-arm64.zip" length="2581737" type="application/octet-stream" sparkle:edSignature="3Xqy6+2c9NNjcXxsBd6aLcz3rp5cI45XIJrAJF6hGKx8ZDcWw6f7xtGhDi8FjOJ8RMdDYQJuAjVyWEbWOZgBDg=="/>
+        </item>
         <item>
             <title>1.1.2</title>
             <pubDate>Tue, 06 Oct 2026 12:41:24 +0800</pubDate>
@@ -11,10 +23,11 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <sparkle:releaseNotesLink sparkle:edSignature="awyyCqAZCSrRR+IULwQzLwRuWIMapep56aKPy5OfJEhDVklnj/AG/ofqKcGCdhwVMtAIQhat+Voi0rjG6eftBA==" sparkle:length="1326">https://acemetric.github.io/AM-Homework-Helper/updates/AM-Homework-Helper-1.1.2-macOS-arm64.md</sparkle:releaseNotesLink>
-            <enclosure url="https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.1.2/AM-Homework-Helper-1.1.2-macOS-arm64.zip" length="2397089" type="application/octet-stream" sparkle:edSignature="3Wod2OgoXF/9NR2eTASNZ5Mq8LjczOaJXDUxo2z4VgIq83czGXsNqqWpVFmlGKC6/NPqtnUgtPU601KcnSlAAw=="></enclosure>
+            <enclosure url="https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.1.2/AM-Homework-Helper-1.1.2-macOS-arm64.zip" length="2397089" type="application/octet-stream" sparkle:edSignature="3Wod2OgoXF/9NR2eTASNZ5Mq8LjczOaJXDUxo2z4VgIq83czGXsNqqWpVFmlGKC6/NPqtnUgtPU601KcnSlAAw=="/>
         </item>
     </channel>
-</rss><!-- sparkle-signatures:
-edSignature: 0/Luye/d5eggJWaiqznqWR82zDRuos7gNBKsYWfivMzf+2WAFfLNsQ2hP98T++6QTr4iVhUaTZbiGlR4l6+TBA==
-length: 1458
+</rss>
+<!-- sparkle-signatures:
+edSignature: TvFqMMBCwhUHTTbAQLbfas8Q63eNLNvY/Tko+LZUy7UM9t2p/l7PWWsluQEAVgKqHJdMdghNe/rsVkH2u7HyBA==
+length: 2456
 -->
