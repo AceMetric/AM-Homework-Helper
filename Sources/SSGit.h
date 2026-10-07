@@ -4,6 +4,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface SSGit : NSObject
 /// Required before cloning, committing, merging or pushing. Rechecks GitHub ownership.
 @property (copy, nullable) void (^progress)(NSString *phase);
+@property (copy, nullable) NSDictionary *recognitionSettings;
 @property (copy) NSDictionary * _Nullable (^identityVerifier)(NSDictionary *course, NSError **error);
 /// Course keys: fork, upstream, branch, upstreamBranch, path, upstreamURL.
 - (BOOL)validateCourse:(NSDictionary *)course error:(NSError **)error;

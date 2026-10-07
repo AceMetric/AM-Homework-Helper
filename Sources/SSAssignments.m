@@ -47,16 +47,20 @@ static NSString *Title(NSString *line, NSString *heading, NSString *previous, NS
     return documentTitle;
 }
 static NSString *Snippet(NSArray *lines, NSUInteger index, NSString *heading) {
-    // Keep the deadline and nearby task/attachment instructions together for review.
-    NSUInteger start = index > 2 ? index - 2 : 0;
-    NSUInteger end = MIN(lines.count, index + 21);
+    // Include the enclosing activity, including requirements far below its deadline.
+    NSUInteger start = 0, end = lines.count, level=6;
+    NSString *activity = @"作业|homework|assignment|考试|exam|课堂|课上|classroom";
+    BOOL (^isActivity)(NSString *)=^BOOL(NSString *line){NSString *title=CleanTitle(line);return [line hasPrefix:@"#"] && !GenericTitle(title) && !Match(title,@"^作业(?:选题|结构|提交|评分|提示|格式|目的|目标|要求|内容|说明|规则)") && Match(title,activity);};
+    NSUInteger (^depth)(NSString *)=^NSUInteger(NSString *line){NSUInteger n=0;while(n<line.length && [line characterAtIndex:n]=='#')n++;return n;};
+    for (NSUInteger i = 0; i <= index && i < lines.count; i++) if (isActivity(lines[i])) {start = i;level=depth(lines[i]);}
+    for (NSUInteger i = index + 1; i < lines.count; i++) if (isActivity(lines[i]) && depth(lines[i])<=level) { end = i; break; }
     NSString *excerpt = [[lines subarrayWithRange:NSMakeRange(start, end - start)] componentsJoinedByString:@"\n"];
     return heading.length ? [NSString stringWithFormat:@"%@\n%@", heading, excerpt] : excerpt;
 }
 static NSDictionary *Candidate(NSString *title, NSString *repository, NSString *path, NSString *blobSHA, NSUInteger line, NSString *snippet, NSDate *due, BOOL needsDate, BOOL needsTime, NSMutableDictionary *counts) {
     NSString *identity = [NSString stringWithFormat:@"%@|%@|%@", repository.lowercaseString, path, title.lowercaseString];
     NSUInteger ordinal = [counts[identity] unsignedIntegerValue] + 1; counts[identity] = @(ordinal);
-    NSMutableDictionary *candidate = [@{@"id":[NSString stringWithFormat:@"%@|%lu", identity, (unsigned long)ordinal], @"repository":repository, @"path":path, @"line":@(line), @"blobSHA":blobSHA, @"title":title, @"needsDate":@(needsDate), @"needsTime":@(needsTime), @"snippet":snippet.length > 1000 ? [snippet substringToIndex:1000] : snippet} mutableCopy];
+    NSMutableDictionary *candidate = [@{@"id":[NSString stringWithFormat:@"%@|%lu", identity, (unsigned long)ordinal], @"repository":repository, @"path":path, @"line":@(line), @"blobSHA":blobSHA, @"title":title, @"sourceTitle":title, @"needsDate":@(needsDate), @"needsTime":@(needsTime), @"snippet":snippet} mutableCopy];
     if (due) candidate[@"due"] = due;
     return candidate;
 }

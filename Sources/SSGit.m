@@ -1,5 +1,6 @@
 #import "SSGit.h"
 #import "SSAssignments.h"
+#import "SSRecognition.h"
 #import "SSSecurity.h"
 #import <signal.h>
 #include <math.h>
@@ -188,27 +189,35 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSString *head = [self fetch:Trim([self string:url]) branch:branch path:path token:nil error:error]; if (!head) return nil;
     SSGitResult *tree = [self checked:@[@"ls-tree", @"-r", @"-l", @"-z", head] in:path token:nil error:error]; if (!tree) return nil;
     NSMutableArray *candidates = NSMutableArray.array, *materials = NSMutableArray.array, *skipped = NSMutableArray.array;
+    NSMutableArray *documents = NSMutableArray.array, *recognitionMessages = NSMutableArray.array;
+    NSDictionary *settings=SSCourseRecognitionSettings(self.recognitionSettings ?: @{@"mode":@"rules"},course);
     NSMutableSet *dedup = NSMutableSet.set; NSUInteger total = 0;
     NSCalendar *calendar = [NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];
     calendar.timeZone = [NSTimeZone timeZoneWithName:course[@"timeZone"] ?: NSTimeZone.localTimeZone.name] ?: NSTimeZone.localTimeZone;
     for (NSString *entry in NonemptyParts([self string:tree], @"\0")) {
         NSRange tab = [entry rangeOfString:@"\t"]; if (tab.location == NSNotFound) continue;
         NSString *file = [entry substringFromIndex:NSMaxRange(tab)]; if (!SSIsSupportedDocument(file)) continue;
+        if (SSSensitivePath(file)) { [skipped addObject:[file stringByAppendingString:@"：敏感文件名，未读取"]]; continue; }
         NSArray *fields = NonemptyParts([entry substringToIndex:tab.location], @" ");
         if (fields.count < 4 || ![fields[1] isEqual:@"blob"]) continue;
         if ([fields[0] isEqual:@"120000"]) { [skipped addObject:[file stringByAppendingString:@"：符号链接，未读取外部文件"]]; continue; }
         NSUInteger size = [fields[3] integerValue];
         if (size > 1024 * 1024 || total + size > 30 * 1024 * 1024) { [skipped addObject:[file stringByAppendingString:@"：超出扫描大小限制"]]; continue; } total += size;
-        NSString *key = [NSString stringWithFormat:@"v4|%@|%@|%@|%@", course[@"upstream"], file, fields[2], calendar.timeZone.name];
-        NSArray *found = cache[key];
-        if (![found isKindOfClass:NSArray.class]) {
+        NSString *key = [NSString stringWithFormat:@"document-v5|%@|%@|%@", course[@"upstream"], file, fields[2]];
+        NSString *text = [cache[key] isKindOfClass:NSString.class] ? cache[key] : nil;
+        if (!text) {
             SSGitResult *blob = [self checked:@[@"cat-file", @"blob", fields[2]] in:path token:nil error:error]; if (!blob) return nil;
-            NSString *text = [[NSString alloc] initWithData:blob.data encoding:NSUTF8StringEncoding];
+            text = [[NSString alloc] initWithData:blob.data encoding:NSUTF8StringEncoding];
             if (!text && blob.data.length >= 2) { const unsigned char *bytes = blob.data.bytes; if ((bytes[0] == 0xff && bytes[1] == 0xfe) || (bytes[0] == 0xfe && bytes[1] == 0xff)) text = [[NSString alloc] initWithData:blob.data encoding:NSUTF16StringEncoding]; }
             if (!text || [text rangeOfString:@"\0"].location != NSNotFound) { [skipped addObject:[file stringByAppendingString:@"：不是支持的文本编码"]]; continue; }
             if (SSContainsSecret(blob.data)) { [skipped addObject:[file stringByAppendingString:@"：含疑似凭据，未导入原文"]]; continue; }
-            found = SSDiscoveriesFromDocument(text, course[@"upstream"], file, fields[2], NSDate.date, calendar); cache[key] = found;
+            cache[key] = text;
         }
+        [documents addObject:@{@"repository":course[@"upstream"],@"path":file,@"blobSHA":fields[2],@"text":text,@"timeZone":calendar.timeZone.name}];
+        NSError *recognitionError = nil;
+        if (self.progress) self.progress([NSString stringWithFormat:@"正在识别老师文档：%@",file]);
+        NSArray *found = SSRecognizeDocument(text, course[@"upstream"], file, fields[2], calendar, settings, cache, &recognitionError);
+        if (recognitionError) [recognitionMessages addObject:[NSString stringWithFormat:@"%@：%@",file,recognitionError.localizedDescription]];
         for (NSDictionary *candidate in found) {
             if (![candidate[@"kind"] isEqual:@"assignment"]) { [materials addObject:candidate]; continue; }
             NSString *fingerprint = [NSString stringWithFormat:@"%@|%@|%@", [candidate[@"title"] lowercaseString], candidate[@"due"], candidate[@"deadlineText"] ?: @""];
@@ -216,10 +225,10 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
             NSString *referenceKey = [NSString stringWithFormat:@"reference-v4|%@|%@|%@|%@|%@|%@", course[@"upstream"], head, file, fields[2], candidate[@"line"], calendar.timeZone.name];
             NSDictionary *referenced = [cache[referenceKey] isKindOfClass:NSArray.class] ? [cache[referenceKey] firstObject] : nil;
             if (!referenced) { referenced = [self dateReferenceForCandidate:candidate head:head path:path]; if ([candidate[@"relative"] boolValue]) cache[referenceKey] = @[referenced]; }
-            NSMutableDictionary *copy = referenced.mutableCopy; if (!copy[@"timeZone"]) copy[@"timeZone"] = calendar.timeZone.name; [candidates addObject:copy];
+            NSMutableDictionary *copy = candidate.mutableCopy;for(NSString *field in @[@"suggestedDue",@"dateBasis"])if(referenced[field])copy[field]=referenced[field]; if (!copy[@"timeZone"]) copy[@"timeZone"] = calendar.timeZone.name; [candidates addObject:copy];
         }
     }
-    return @{@"candidates":SSConsolidateAssignments(candidates), @"materials":SSGroupMaterials(materials), @"skipped":skipped, @"commit":head, @"branch":branch, @"date":NSDate.date};
+    return @{@"candidates":SSAttachLinkedDocuments(SSConsolidateAssignments(candidates),documents), @"materials":SSGroupMaterials(materials), @"documents":documents, @"recognitionMessages":recognitionMessages, @"skipped":skipped, @"commit":head, @"branch":branch, @"date":NSDate.date};
 }
 - (BOOL)cleanWorktree:(NSString *)path error:(NSError **)error {
     SSGitResult *status = [self checked:@[@"status", @"--porcelain=v1", @"-z", @"--untracked-files=all"] in:path token:nil error:error]; if (!status) return NO;

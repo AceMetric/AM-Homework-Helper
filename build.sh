@@ -7,9 +7,11 @@ APP_DIR="$SCRIPT_DIR/build/$PRODUCT_NAME.app"
 CONTENTS="$APP_DIR/Contents"
 export CLANG_MODULE_CACHE_PATH="$SCRIPT_DIR/build/module-cache"
 
+SWIFTUI_DIR=$(python3 "$SCRIPT_DIR/Tools/prepare-swiftui.py")
 SPARKLE_DIR=$(python3 "$SCRIPT_DIR/Tools/prepare-sparkle.py")
 mkdir -p "$CONTENTS/Frameworks"
 /usr/bin/ditto "$SPARKLE_DIR/Sparkle.framework" "$CONTENTS/Frameworks/Sparkle.framework"
+cp "$SWIFTUI_DIR/libAMUI.dylib" "$CONTENTS/Frameworks/libAMUI.dylib"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 mkdir -p "$SCRIPT_DIR/build/DDL.iconset"
 
@@ -22,6 +24,7 @@ clang \
   -fblocks \
   -Wall -Wextra -Werror -Wno-unused-parameter \
   -mmacosx-version-min=13.0 \
+  -I"$SWIFTUI_DIR" -L"$SWIFTUI_DIR" -lAMUI \
   -O2 \
   -framework Cocoa \
   -framework UserNotifications \
@@ -33,7 +36,7 @@ clang \
   "$SCRIPT_DIR/Sources/App.m" \
   "$SCRIPT_DIR/Sources/DDLCore.m" \
   "$SCRIPT_DIR/Sources/DDLImport.m" \
-  "$SCRIPT_DIR/Sources/SSAssignments.m" \
+  "$SCRIPT_DIR/Sources/SSRecognition.m" "$SCRIPT_DIR/Sources/SSAssignments.m" \
   "$SCRIPT_DIR/Sources/SSLocalData.m" \
   "$SCRIPT_DIR/Sources/SSGitHub.m" \
   "$SCRIPT_DIR/Sources/SSGit.m" \

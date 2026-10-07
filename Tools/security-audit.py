@@ -19,7 +19,7 @@ PATTERNS = {
     'github-token': rb'(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})',
     'cloud-token': rb'(?:AKIA|ASIA)[A-Z0-9]{16}|sk-(?:proj-)?[A-Za-z0-9_-]{24,}',
     'secret-value': rb'''(?i)["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|aws_secret_access_key)["']?\s*[:=]\s*["'][A-Za-z0-9_./+=-]{12,}["']''',
-    'url-credentials': rb'https?://[^\s/<>"\']+:[^\s/<>"\']+@',
+    'url-credentials': rb'https?://[^\x00\s/<>"\']+:[^\x00\s/<>"\']+@',
     'personal-home-path': rb'/Users/(?!Shared(?:/|$)|USER(?:/|$)|username(?:/|$))[A-Za-z0-9_.-]+/',
     'personal-email': rb'(?i)(?<![A-Z0-9_.+-])(?!(?:git@github\.com|[A-Z0-9_]+@2x\.png)\b)[A-Z0-9_.+-]+@(?![A-Z0-9.-]*(?:example\.(?:com|org)|\.invalid|noreply\.github\.com|users\.noreply\.github\.com)\b)[A-Z0-9.-]+\.[A-Z]{2,}',
 }

@@ -6,9 +6,14 @@ NS_ASSUME_NONNULL_BEGIN
 @property (copy) void (^reviewCandidate)(NSDictionary *candidate);
 @property (copy) void (^editTask)(NSString *identifier);
 @property (copy) void (^stateChanged)(void);
+@property (copy, nullable) NSString * (^saveReviewItems)(NSArray<NSDictionary *> *items, BOOL automatic);
+@property (readonly) BOOL hasUnsavedReview;
+- (BOOL)resolveUnsavedReview;
+- (void)discardReview;
 @property (nonatomic) BOOL inbox;
 @property (readonly) NSUInteger pendingCount;
 @property (readonly) NSString *accountSummary;
+@property (readonly) NSArray<NSString *> *courseRepositoryNames;
 @property (readonly) BOOL operationBusy;
 @property (nonatomic) BOOL operationsPaused;
 @property (copy, nullable) void (^operationStateChanged)(void);
@@ -24,6 +29,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)startAutomaticChecks;
 - (void)refreshPresentation;
 - (NSArray<NSDictionary *> *)pendingReviewCandidates;
+- (NSArray<NSDictionary *> *)allPendingReviewCandidates;
 - (void)layoutContent;
 - (void)focusSearch;
 - (void)accountSettings:(nullable id)sender;

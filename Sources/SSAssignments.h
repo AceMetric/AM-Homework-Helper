@@ -2,7 +2,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-/// A candidate always requires a human review before becoming a DDL task.
+/// Rules return evidence-backed candidates; the task service decides import eligibility.
 NSArray<NSDictionary<NSString *, id> *> *SSAssignmentsFromDocument(NSString *text,
     NSString *repository, NSString *path, NSString *blobSHA, NSDate *now, NSCalendar *calendar);
 BOOL SSIsSupportedDocument(NSString *path);

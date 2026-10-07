@@ -4,11 +4,10 @@
 NSURL *SSDataDirectory(void) {
 #ifdef DDL_TESTING
     // Compiled only into isolated test applications, never into a distributable build.
-    NSString *testPath = [NSBundle.mainBundle objectForInfoDictionaryKey:@"DDLTestDataDirectory"];
+    NSString *testPath = [NSBundle.mainBundle objectForInfoDictionaryKey:@"DDLTestDataDirectory"] ?: NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"];
     if (testPath) return [NSURL fileURLWithPath:testPath isDirectory:YES];
 #endif
-    // Keep the preview build's storage location when restoring the DDL-Manager
-    // display name, so existing tasks and course associations remain available.
+    // This historical directory is a compatibility identifier, not the product name.
     NSURL *base = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
     return [base URLByAppendingPathComponent:@"SS Homework Manager" isDirectory:YES];
 }
