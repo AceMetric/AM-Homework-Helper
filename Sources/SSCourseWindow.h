@@ -39,6 +39,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)refreshPresentation;
 - (NSArray<NSDictionary *> *)pendingReviewCandidates;
 - (NSArray<NSDictionary *> *)allPendingReviewCandidates;
+- (nullable NSDictionary *)reviewSourceWithID:(NSString *)identifier;
 - (void)layoutContent;
 - (void)focusSearch;
 - (void)accountSettings:(nullable id)sender;

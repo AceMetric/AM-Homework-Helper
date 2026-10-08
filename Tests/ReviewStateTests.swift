@@ -21,9 +21,20 @@ import Foundation
         state.query="nothing";check(state.visible.isEmpty,"filter stays local to review state");state.query="报告";check(state.visible.count==1,"search includes suggested title")
         var updated=record;updated["existingTask"]=["title":"手动标题","notes":"手动备注","leadDays":-1,"due":Date(timeIntervalSince1970:1_900_000_000)] as NSDictionary
         check((state.payload(updated as NSDictionary,editing:false)?["draft"] as? NSDictionary)?["title"] as? String=="手动标题","batch update preserves user title")
-        state.refresh([updated as NSDictionary]);check(state.customPersonalDate && state.personalDate==Date(timeIntervalSince1970:1_900_000_000),"custom personal deadline survives review refresh")
-        state.hasDate=true;state.dateConfirmed=true;state.customPersonalDate=false
-        check(((state.payload(updated as NSDictionary,editing:true)?["draft"] as? NSDictionary)?["leadDays"] as? Int)==0,"leaving manual date mode clamps legacy negative lead")
+        state.refresh([updated as NSDictionary]);check(state.date==Date(timeIntervalSince1970:1_900_000_000) && state.dateConfirmed,"existing deadline remains canonical even with legacy lead metadata")
+        let draft=state.payload(updated as NSDictionary,editing:true)?["draft"] as? NSDictionary
+        check(draft?["assignmentDue"] as? Date==state.date && draft?["teacherDue"]==nil && draft?["personalDue"]==nil && draft?["leadDays"]==nil,"one deadline in review payload")
+        state.load(record as NSDictionary)
+        check(state.notes.isEmpty && state.reminderOffsets==[10080,4320,1440,60,0],"source summary never becomes user notes and new tasks use five reminders")
+        var suggested=relative;suggested.removeValue(forKey:"due");suggested["needsDate"]=true;suggested["suggestedDue"]=Date(timeIntervalSince1970:2_100_000_000);suggested["dateBasis"]=["date":Date(),"commit":"abc123"]
+        state.load(suggested as NSDictionary)
+        check(state.date==suggested["suggestedDue"] as? Date && state.hasDate && state.dateConfirmed && state.payload(suggested as NSDictionary,editing:true) != nil,"relative date with provenance is prefilled and saves without adopt action")
+        check(state.payload(suggested as NSDictionary,editing:false)==nil,"relative dates still excluded from unattended batch confirmation")
+        suggested["needsTime"]=true;state.load(suggested as NSDictionary);check(!state.hasDate && !state.dateConfirmed,"missing time cannot use a suggestion")
+        suggested["needsTime"]=false;suggested["warnings"]=["conflicting dates"];state.load(suggested as NSDictionary);check(!state.dateConfirmed,"conflicting evidence requires completion")
+        suggested.removeValue(forKey:"warnings");suggested.removeValue(forKey:"dateBasis");state.load(suggested as NSDictionary);check(!state.hasDate,"unverified suggestion cannot prefill")
+        updated["existingTask"]=["title":"原名称","notes":"","due":state.date,"reminderOffsets":[300,0]] as NSDictionary
+        state.load(updated as NSDictionary);check(state.notes.isEmpty && state.reminderOffsets==[300,0],"existing empty notes and custom reminders preserved")
         let settings=SettingsState();settings.apply(["mode":"rules","endpoint":"http://localhost:11434","model":"","automaticImport":true] as NSDictionary)
         settings.key="temporary input";settings.dirty=true;settings.save={_,_ in "失败"};check(!settings.persist() && settings.dirty && !settings.key.isEmpty,"failed settings save preserves draft")
         settings.save={config,key in check(config["key"]==nil && key=="temporary input","credential separated from settings dictionary");return ""}

@@ -24,6 +24,7 @@ int main(int argc, const char *argv[]) {
         for (NSString *appearance in @[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]) {
             NSApp.appearance = [NSAppearance appearanceNamed:appearance];
             EditorController *editor = [[EditorController alloc] initWithTask:nil owner:app];
+            Check([DDLParseReminderOffsets(editor.reminderField.stringValue) isEqual:DDLDefaultReminderOffsets()] && !editor.notesField.string.length, @"new form has five default reminders and blank notes");
             [editor.window makeKeyAndOrderFront:nil]; [editor.window makeFirstResponder:editor.reminderField];
             [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
             NSTextView *fieldEditor = (NSTextView *)editor.reminderField.currentEditor;
@@ -35,7 +36,7 @@ int main(int argc, const char *argv[]) {
             PastelPopUpButton *preset = (PastelPopUpButton *)editor.reminderPreset;
             [preset menuWillOpen:preset.menu];
             Check([preset itemAtIndex:2].view == nil, @"popup retains native macOS menu presentation"); [preset selectItemAtIndex:2]; [editor reminderPresetChanged:preset];
-            Check([editor.reminderField.stringValue isEqual:@"5小时、1小时、到期"] && preset.indexOfSelectedItem == 0, @"native menu dispatches reminder selection and resets placeholder");
+            Check([editor.reminderField.stringValue isEqual:@"7天"] && preset.indexOfSelectedItem == 0, @"native menu dispatches reminder selection and resets placeholder");
             [editor.window makeFirstResponder:editor.timePicker]; editor.timePicker.stringValue = @"09:30"; [editor timeChanged:editor.timePicker];
             Check([DDLFormatDate(editor.selectedDate, @"HH:mm") isEqual:@"09:30"] && [editor.deadlineField.stringValue hasSuffix:@"09:30"], @"time text syncs deadline");
             NSDate *valid = editor.selectedDate; editor.timePicker.stringValue = @"25:90"; [editor timeChanged:editor.timePicker];
@@ -54,7 +55,7 @@ int main(int argc, const char *argv[]) {
             Check([editor.titleField.stringValue isEqual:@"尚未保存的标题"] && [editor.notesField.string isEqual:@"尚未保存的备注"], @"live appearance change preserves unsaved input");
             editor.reminderField.stringValue = @"错误提醒"; beforeSave = app.tasks.count; [editor save:nil]; Check(app.tasks.count == beforeSave, @"invalid reminder blocks unified editor save");
             [editor applyImportedText:@"物理作业：实验报告\n截止时间：2026-10-11 21:00" source:@"模拟公告"];
-            Check(editor.announcedDue != nil && !editor.leadMenu.hidden && NSMaxY(editor.leadMenu.frame) <= NSMinY(editor.deadlineField.frame), @"announcement import expands teacher controls without overlapping date field");
+            Check([editor.deadlineLabel.stringValue isEqual:@"作业 DDL"] && [editor.deadlineField.stringValue isEqual:@"2026-10-11 21:00"] && [editor.notesField.string isEqual:@"尚未保存的备注"], @"announcement prefills one deadline and preserves user notes");
             NSString *longTitle = [@"很长的模拟任务标题" stringByPaddingToLength:1500 withString:@"很长的模拟任务标题" startingAtIndex:0]; NSString *longNotes = [@"模拟备注\n" stringByPaddingToLength:8000 withString:@"模拟备注\n" startingAtIndex:0]; editor.titleField.stringValue = longTitle; editor.notesField.string = longNotes;
             Check([editor.titleField.stringValue isEqual:longTitle] && [editor.notesField.string isEqual:longNotes] && editor.notesField.enclosingScrollView.hasVerticalScroller, @"long title and notes remain editable and scrollable");
             Check(NSMaxY(editor.notesField.enclosingScrollView.superview.frame) <= NSHeight(editor.notesField.enclosingScrollView.superview.superview.frame), @"long form fits its scrolling document");

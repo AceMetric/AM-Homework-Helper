@@ -363,6 +363,12 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     for (NSDictionary *course in self.courses) for (NSDictionary *record in [self discoveriesForFork:course[@"fork"]]) if ([record[@"kind"] isEqual:@"assignment"] && ![seen containsObject:record[@"id"]] && ![[self stateForCandidate:record] isEqual:@"已导入"]) { [seen addObject:record[@"id"]]; [records addObject:record]; }
     return records;
 }
+- (NSDictionary *)reviewSourceWithID:(NSString *)identifier {
+    // An imported source is still valid for editing. Pending status and active
+    // page filters must never decide whether its source version is current.
+    for (NSDictionary *course in self.courses) for (NSDictionary *record in [self discoveriesForFork:course[@"fork"]]) if ([record[@"id"] isEqual:identifier]) return record;
+    return nil;
+}
 - (void)refreshCourses {
     if(self.selectedFork && ![self savedCourse:@{@"fork":self.selectedFork}])self.selectedFork=nil;
     [self refreshPresentation];

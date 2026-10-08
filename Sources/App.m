@@ -252,8 +252,6 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property(weak) AppDelegate *appDelegate;
 @property NSDictionary *task;
 @property NSDictionary *candidate;
-@property NSTextField *teacherField;
-@property NSButton *suggestionButton;
 @property NSScrollView *sourceScroll;
 @property NSPopover *datePopover;
 @property NSButton *saveButton;
@@ -267,9 +265,6 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSTextField *validation;
 @property NSTextField *importStatus;
 @property NSTextField *deadlineLabel;
-@property NSPopUpButton *leadMenu;
-@property NSDate *announcedDue;
-@property NSInteger leadDays;
 @property MonthView *calendar;
 @property PastelTextField *timePicker;
 @property NSPopUpButton *priority;
@@ -375,8 +370,6 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     DDLFormPanel *panel = [[DDLFormPanel alloc] initWithContentRect:NSMakeRect(0, 0, 680, 580) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     if ((self = [super initWithWindow:panel])) {
         self.appDelegate = owner; self.task = task; self.candidate = task[@"_reviewCandidate"];
-        self.announcedDue = [task[@"announcedDue"] isKindOfClass:NSDate.class] ? task[@"announcedDue"] : nil;
-        self.leadDays = self.announcedDue || self.candidate ? [task[@"leadDays"] integerValue] : -1;
         panel.title = self.candidate ? ([task[@"_existing"] boolValue] ? @"审核更新" : @"审核作业") : (task ? @"编辑任务" : @"新建任务"); panel.releasedWhenClosed = NO;
         Surface *root = Box(Canvas(), 0); root.frame = NSMakeRect(0, 0, 680, 580); panel.contentView = root;
         NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 680, 504)]; scroll.hasVerticalScroller = YES; scroll.autohidesScrollers = YES; scroll.drawsBackground = NO;
@@ -401,17 +394,6 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
             NSTextField *label = Text(location, 12, NSFontWeightRegular, Muted()); label.toolTip = location; Put(body, label, 24, y, 632, 24); y += 32;
             self.sourceScroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(24, y, 632, 104)]; self.sourceScroll.hasVerticalScroller = YES; self.sourceScroll.autohidesScrollers = YES;
             NSTextView *source = [[PastelNotesView alloc] initWithFrame:NSMakeRect(0, 0, 612, 104)]; source.editable = NO; source.richText = NO; source.autoresizingMask = NSViewWidthSizable; source.textContainer.widthTracksTextView = YES; source.font = [NSFont systemFontOfSize:13]; source.textColor = Ink(); source.backgroundColor = Card(); source.textContainerInset = NSMakeSize(10, 10); source.string = self.candidate[@"snippet"] ?: @""; ThemeEditor(source); self.sourceScroll.documentView = source; [body addSubview:self.sourceScroll]; y += 120;
-            Put(body, Text(@"老师截止时间", 12, NSFontWeightMedium, Muted()), 24, y, 632, 20); y += 24;
-            self.teacherField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.teacherField.delegate = self; self.teacherField.placeholderString = @"请填写完整日期和时间，例如 2026-10-11 21:00";
-            if (![self.candidate[@"needsDate"] boolValue] && ![self.candidate[@"needsTime"] boolValue]) self.teacherField.stringValue = self.announcedDue ? [self formatTeacherDate:self.announcedDue] : @"";
-            else if (self.candidate[@"dateOnly"] && ![self.candidate[@"needsDate"] boolValue]) self.teacherField.stringValue = self.candidate[@"dateOnly"];
-            Put(body, self.teacherField, 24, y, 632, 36); y += 44;
-            if (self.candidate[@"suggestedDue"] && self.candidate[@"dateBasis"]) {
-                self.teacherField.frame = NSMakeRect(24, y - 44, 464, 36);
-                self.suggestionButton = Button(@"采用建议日期", self, @selector(adoptDateSuggestion:), 2);
-                self.suggestionButton.toolTip = [NSString stringWithFormat:@"建议：%@；仍需核对老师原文后保存", [self formatTeacherDate:self.candidate[@"suggestedDue"]]];
-                Put(body, self.suggestionButton, 504, y - 44, 152, 36);
-            }
             NSString *hint = self.candidate[@"deadlineText"] ? [NSString stringWithFormat:@"老师写的是“%@”，请依据布置时间确认具体日期。", self.candidate[@"deadlineText"]] : ([self.candidate[@"needsTime"] boolValue] ? @"老师未写明时间，请补全具体截止时间。" : ([self.candidate[@"needsDate"] boolValue] ? @"日期不完整，请确认年份、日期和时间。" : @"请核对老师原文中的日期和时间。"));
             NSTextField *help = Text(hint, 12, NSFontWeightRegular, Muted()); help.toolTip = hint; Put(body, help, 24, y, 632, 24); y += 40;
             if ([self.candidate[@"warnings"] count]) {
@@ -424,23 +406,19 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
                 NSTextField *label = Text(basis, 12, NSFontWeightRegular, Muted()); label.toolTip = basis; Put(body, label, 24, y, 632, 28); y += 36;
             }
         }
-        if (!self.candidate && self.announcedDue) { Put(body, Text([NSString stringWithFormat:@"老师截止时间：%@", DDLFormatDate(self.announcedDue, @"yyyy-MM-dd HH:mm")], 13, NSFontWeightMedium, Accent()), 24, y, 632, 24); y += 32; }
         Put(body, Text(@"截止时间", 15, NSFontWeightSemibold, Ink()), 24, y, 632, 24); y += 32;
-        self.deadlineLabel = Text(self.announcedDue || self.candidate ? @"我的 DDL" : @"任务截止时间", 12, NSFontWeightMedium, Muted()); Put(body, self.deadlineLabel, 24, y, 350, 20); y += 24;
-        self.leadMenu = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.leadMenu addItemsWithTitles:@[@"按老师截止时间", @"提前 1 天", @"提前 2 天", @"提前 3 天", @"提前 7 天", @"手动设置"]]; self.leadMenu.target = self; self.leadMenu.action = @selector(leadChanged:); self.leadMenu.hidden = !self.announcedDue && !self.candidate;
-        NSInteger leadIndex = self.leadDays == 0 ? 0 : self.leadDays == 1 ? 1 : self.leadDays == 2 ? 2 : self.leadDays == 3 ? 3 : self.leadDays == 7 ? 4 : 5; [self.leadMenu selectItemAtIndex:leadIndex];
-        Put(body, self.leadMenu, 24, y, 632, 36); if (!self.leadMenu.hidden) y += 44;
+        self.deadlineLabel = Text(@"作业 DDL", 12, NSFontWeightMedium, Muted()); Put(body, self.deadlineLabel, 24, y, 632, 20); y += 24;
         self.selectedDate = task[@"due"] ?: DDLParseDate(@"明天 23:59", NSDate.date, Cal());
-        self.deadlineField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.deadlineField.delegate = self; self.deadlineField.stringValue = self.candidate && !task[@"due"] ? @"" : DDLFormatDate(self.selectedDate, @"yyyy-MM-dd HH:mm"); self.deadlineField.placeholderString = @"明天 20:00 / 2026-10-11 21:00"; Put(body, self.deadlineField, 24, y, 496, 36);
+        self.deadlineField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.deadlineField.delegate = self; self.deadlineField.stringValue = self.candidate && !task[@"due"] ? (self.candidate[@"dateOnly"] ?: @"") : [self formatTeacherDate:self.selectedDate]; self.deadlineField.placeholderString = @"明天 20:00 / 2026-10-11 21:00"; Put(body, self.deadlineField, 24, y, 496, 36);
         ActionButton *calendarButton = Button(@"选日期", self, @selector(showDatePicker:), 2); calendarButton.symbol = @"calendar"; Put(body, calendarButton, 536, y, 120, 36); y += 48;
         self.calendar = MonthView.new; self.calendar.fill = Card(); self.calendar.stroke = Line(); self.calendar.radius = 10; self.calendar.compact = YES; self.calendar.month = self.selectedDate; self.calendar.selection = self.selectedDate; self.calendar.tasks = @[]; self.calendar.frame = NSMakeRect(0, 0, 312, 288); [self.calendar reload];
         __weak typeof(self) weakSelf = self; panel.onConfirm = ^{ if (weakSelf.candidate) [weakSelf saveAndReviewNext:nil]; else [weakSelf save:nil]; }; panel.onCancel = ^{ [weakSelf cancel:nil]; }; self.calendar.onSelect = ^(NSDate *date) { [weakSelf chooseDate:date]; [weakSelf.datePopover close]; };
-        self.timePicker = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.timePicker.delegate = self; self.timePicker.stringValue = DDLFormatDate(self.selectedDate, @"HH:mm"); self.timePicker.accessibilityLabel = @"具体时间，24 小时制"; Put(body, self.timePicker, 24, y, 96, 36);
+        self.timePicker = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.timePicker.delegate = self; self.timePicker.stringValue = [self timeString:self.selectedDate]; self.timePicker.accessibilityLabel = @"具体时间，24 小时制"; Put(body, self.timePicker, 24, y, 96, 36);
         NSPopUpButton *quickTime = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [quickTime addItemsWithTitles:@[@"常用时间", @"09:00", @"12:00", @"18:00", @"20:00", @"22:00", @"23:59"]]; quickTime.target = self; quickTime.action = @selector(quickTime:); Put(body, quickTime, 136, y, 144, 36);
         for (NSInteger i = 0; i < 3; i++) { ActionButton *day = Button(@[@"今天", @"明天", @"一周后"][i], self, @selector(quickDay:), 2); Put(body, day, 296 + i * 120, y, 112, 36); } y += 56;
         Put(body, Text(@"提醒", 15, NSFontWeightSemibold, Ink()), 24, y, 632, 24); y += 32;
-        self.reminderField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.reminderField.delegate = self; self.reminderField.placeholderString = @"例如：1天、1小时、到期"; self.reminderField.stringValue = DDLFormatReminderOffsets(task ? DDLReminderOffsetsForTask(task) : @[@1440, @60, @0]); Put(body, self.reminderField, 24, y, 352, 36);
-        self.reminderPreset = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.reminderPreset addItemsWithTitles:@[@"常用方案…", @"1天、1小时、到期", @"5小时、1小时、到期", @"仅到期", @"不提醒"]]; self.reminderPreset.target = self; self.reminderPreset.action = @selector(reminderPresetChanged:); Put(body, self.reminderPreset, 392, y, 264, 36); y += 44;
+        self.reminderField = [[PastelTextField alloc] initWithFrame:NSZeroRect]; self.reminderField.delegate = self; self.reminderField.placeholderString = @"例如：1天、1小时、到期"; self.reminderField.stringValue = DDLFormatReminderOffsets(task ? DDLReminderOffsetsForTask(task) : DDLDefaultReminderOffsets()); Put(body, self.reminderField, 24, y, 352, 36);
+        self.reminderPreset = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.reminderPreset addItemsWithTitles:@[@"常用提醒…", @"7天、3天、1天、1小时、到期", @"提前7天", @"提前3天", @"提前1天", @"提前1小时", @"仅到期", @"不提醒"]]; self.reminderPreset.target = self; self.reminderPreset.action = @selector(reminderPresetChanged:); Put(body, self.reminderPreset, 392, y, 264, 36); y += 44;
         self.reminderValidation = Text(@"", 12, NSFontWeightRegular, Muted()); Put(body, self.reminderValidation, 24, y, 632, 24); y += 40;
         Put(body, Text(@"备注（选填）", 15, NSFontWeightSemibold, Ink()), 24, y, 632, 24); y += 32;
         Surface *notesSurface = Box(Card(), 8); notesSurface.stroke = Line(); Put(body, notesSurface, 24, y, 632, 112);
@@ -456,15 +434,14 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
             self.saveButton.title = @"保存并关闭"; self.saveButton.frame = NSMakeRect(384, 524, 104, 36); self.saveButton.keyEquivalentModifierMask = NSEventModifierFlagCommand; ((ActionButton *)self.saveButton).tone = 2;
             self.nextReviewButton = Button(@"保存并下一项", self, @selector(saveAndReviewNext:), 1); self.nextReviewButton.keyEquivalent = @"\r"; self.nextReviewButton.keyEquivalentModifierMask = 0; Put(root, self.nextReviewButton, 496, 524, 160, 36);
         }
-        [self validateReminders]; [self validateDate]; if (self.candidate && !self.teacherField.stringValue.length) { self.validation.stringValue = @"核对原文后补全老师截止时间，向下滚动设置我的 DDL。"; self.validation.textColor = Muted(); }
-        self.titleField.nextKeyView = self.subjectField; self.subjectField.nextKeyView = self.priority; self.priority.nextKeyView = self.teacherField ?: self.deadlineField; if (self.teacherField) self.teacherField.nextKeyView = self.leadMenu;
-        if (self.suggestionButton) { self.teacherField.nextKeyView = self.suggestionButton; self.suggestionButton.nextKeyView = self.leadMenu; }
-        self.titleField.accessibilityLabel = @"任务名称"; self.subjectField.accessibilityLabel = @"课程或分类"; self.deadlineField.accessibilityLabel = @"我的截止时间"; self.teacherField.accessibilityLabel = @"老师截止时间，需完整日期和时间"; self.reminderField.accessibilityLabel = @"提醒时间"; self.notesField.accessibilityLabel = @"备注"; panel.initialFirstResponder = self.titleField; panel.defaultButtonCell = self.nextReviewButton ? self.nextReviewButton.cell : self.saveButton.cell; panel.autorecalculatesKeyViewLoop = YES;
+        [self validateReminders]; [self validateDate];
+        self.titleField.nextKeyView = self.subjectField; self.subjectField.nextKeyView = self.priority; self.priority.nextKeyView = self.deadlineField;
+        self.titleField.accessibilityLabel = @"任务名称"; self.subjectField.accessibilityLabel = @"课程或分类"; self.deadlineField.accessibilityLabel = @"作业截止时间"; self.reminderField.accessibilityLabel = @"提醒时间"; self.notesField.accessibilityLabel = @"我的备注"; panel.initialFirstResponder = self.titleField; panel.defaultButtonCell = self.nextReviewButton ? self.nextReviewButton.cell : self.saveButton.cell; panel.autorecalculatesKeyViewLoop = YES;
         self.initialValues = [self formValues];
     } return self;
 }
 - (NSArray *)formValues {
-    return [[NSArray alloc] initWithArray:@[self.titleField.stringValue ?: @"", self.subjectField.stringValue ?: @"", self.deadlineField.stringValue ?: @"", self.timePicker.stringValue ?: @"", self.notesField.string ?: @"", self.reminderField.stringValue ?: @"", @(self.priority.indexOfSelectedItem), self.teacherField.stringValue ?: @"", @(self.leadDays)] copyItems:YES];
+    return [[NSArray alloc] initWithArray:@[self.titleField.stringValue ?: @"", self.subjectField.stringValue ?: @"", self.deadlineField.stringValue ?: @"", self.timePicker.stringValue ?: @"", self.notesField.string ?: @"", self.reminderField.stringValue ?: @"", @(self.priority.indexOfSelectedItem)] copyItems:YES];
 }
 - (BOOL)hasUnsavedChanges { [self.window makeFirstResponder:nil]; return ![self.initialValues isEqual:[self formValues]]; }
 - (BOOL)saveForExit { [self save:nil]; return self.appDelegate.editor != self; }
@@ -485,27 +462,20 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (NSCalendar *)teacherCalendar { NSCalendar *calendar = Cal(); calendar.timeZone = [NSTimeZone timeZoneWithName:self.candidate[@"timeZone"] ?: NSTimeZone.localTimeZone.name] ?: NSTimeZone.localTimeZone; return calendar; }
 - (NSString *)formatTeacherDate:(NSDate *)date { NSDateFormatter *formatter = NSDateFormatter.new; formatter.dateFormat = @"yyyy-MM-dd HH:mm"; formatter.timeZone = self.teacherCalendar.timeZone; return [formatter stringFromDate:date]; }
+- (NSString *)timeString:(NSDate *)date { NSDateFormatter *formatter = NSDateFormatter.new; formatter.dateFormat = @"HH:mm"; formatter.timeZone = self.teacherCalendar.timeZone; return [formatter stringFromDate:date]; }
 - (void)showDatePicker:(NSButton *)sender { self.datePopover = NSPopover.new; NSViewController *controller = NSViewController.new; controller.view = self.calendar; self.datePopover.contentViewController = controller; self.datePopover.behavior = NSPopoverBehaviorTransient; [self.datePopover showRelativeToRect:sender.bounds ofView:sender preferredEdge:NSRectEdgeMaxY]; }
-- (BOOL)confirmTeacherDate {
+- (BOOL)validateAssignmentDate {
     if (!self.candidate) return YES;
-    NSString *text = [self.teacherField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    NSDate *teacher = [text rangeOfString:@"^20\\d{2}[-/]\\d{1,2}[-/]\\d{1,2}\\s+(?:[01]?\\d|2[0-3]):[0-5]\\d$" options:NSRegularExpressionSearch].location == NSNotFound ? nil : DDLParseDate(text, NSDate.date, self.teacherCalendar);
-    if (!teacher) { self.validation.stringValue = @"请核对老师原文，填写完整的截止日期和时间。"; self.validation.textColor = NSColor.systemRedColor; return NO; }
-    self.announcedDue = teacher;
-    if (self.leadDays >= 0) [self updateDate:DDLPersonalDueDate(teacher, self.leadDays, Cal())];
+    NSString *text = [self.deadlineField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSDate *date = [text rangeOfString:@"^20\\d{2}[-/]\\d{1,2}[-/]\\d{1,2}\\s+(?:[01]?\\d|2[0-3]):[0-5]\\d$" options:NSRegularExpressionSearch].location == NSNotFound ? nil : DDLParseDate(text, NSDate.date, self.teacherCalendar);
+    if (!date) { self.validation.stringValue = @"请核对原文，填写完整的截止日期和时间。"; self.validation.textColor = NSColor.systemRedColor; return NO; }
     return YES;
 }
-- (void)adoptDateSuggestion:(id)sender {
-    NSDate *suggestion = self.candidate[@"suggestedDue"]; if (!suggestion) return;
-    self.teacherField.stringValue = [self formatTeacherDate:suggestion]; [self confirmTeacherDate];
-}
 - (void)controlTextDidChange:(NSNotification *)notification {
-    if (notification.object == self.teacherField) { [self confirmTeacherDate]; return; }
     if (notification.object == self.timePicker) { [self timeChanged:self.timePicker]; return; }
     if (notification.object == self.reminderField) { [self validateReminders]; return; }
-    if (notification.object == self.deadlineField) [self markManualLead];
-    NSDate *date = DDLParseDate(self.deadlineField.stringValue, NSDate.date, Cal());
-    if (date) { self.selectedDate = date; self.calendar.selection = date; self.calendar.month = date; [self.calendar reload]; self.timePicker.stringValue = DDLFormatDate(date, @"HH:mm"); }
+    NSDate *date = DDLParseDate(self.deadlineField.stringValue, NSDate.date, self.teacherCalendar);
+    if (date) { self.selectedDate = date; self.calendar.selection = date; self.calendar.month = date; [self.calendar reload]; self.timePicker.stringValue = [self timeString:date]; }
     [self validateDate];
 }
 - (void)validateReminders {
@@ -515,93 +485,65 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.reminderValidation.textColor = offsets.count ? Accent() : Muted();
 }
 - (void)reminderPresetChanged:(NSPopUpButton *)sender {
-    NSArray *values = @[@"", @"1天、1小时、到期", @"5小时、1小时、到期", @"到期", @"不提醒"];
+    NSArray *values = @[@"", @"7天、3天、1天、1小时、到期", @"7天", @"3天", @"1天", @"1小时", @"到期", @"不提醒"];
     if (sender.indexOfSelectedItem > 0) self.reminderField.stringValue = values[sender.indexOfSelectedItem];
     [self validateReminders]; [sender selectItemAtIndex:0];
 }
 - (void)validateDate {
-    NSDate *date = DDLParseDate(self.deadlineField.stringValue, NSDate.date, Cal());
+    NSDate *date = DDLParseDate(self.deadlineField.stringValue, NSDate.date, self.teacherCalendar);
     if (!date) { self.validation.stringValue = @"请输入有效日期，例如：明天 20:00、下周五、2026-10-01 23:59"; self.validation.textColor = NSColor.systemRedColor; }
     else if (date.timeIntervalSinceNow <= 0) { self.validation.stringValue = @"这个时间已经过去，保存后会标记为逾期；不会补发过去的提醒。"; self.validation.textColor = NSColor.systemOrangeColor; }
     else { self.validation.stringValue = [NSString stringWithFormat:@"%@ · %@", DDLFormatDate(date, @"M月d日 EEEE HH:mm"), DDLRemaining(date, NSDate.date, NO)]; self.validation.textColor = Accent(); }
 }
 - (void)updateDate:(NSDate *)date {
-    if (!date) return; self.selectedDate = date; self.deadlineField.stringValue = DDLFormatDate(date, @"yyyy-MM-dd HH:mm"); self.calendar.selection = date; self.calendar.month = date; self.timePicker.stringValue = DDLFormatDate(date, @"HH:mm"); [self.calendar reload]; [self validateDate];
-}
-- (void)markManualLead {
-    if (!self.announcedDue && !self.candidate) return;
-    self.leadDays = -1;
-    [self.leadMenu selectItemAtIndex:5];
-}
-- (void)leadChanged:(NSPopUpButton *)sender {
-    NSArray<NSNumber *> *days = @[@0, @1, @2, @3, @7];
-    NSInteger index = sender.indexOfSelectedItem;
-    if (index >= (NSInteger)days.count) { [self markManualLead]; [self focusInput:self.deadlineField]; return; }
-    self.leadDays = days[index].integerValue;
-    if (!self.announcedDue) return;
-    [self updateDate:DDLPersonalDueDate(self.announcedDue, self.leadDays, Cal())];
-    self.importStatus.stringValue = [NSString stringWithFormat:@"老师截止：%@ · 我的 DDL：%@", DDLFormatDate(self.announcedDue, @"M月d日 HH:mm"), DDLFormatDate(self.selectedDate, @"M月d日 HH:mm")];
-    self.importStatus.textColor = Accent();
+    if (!date) return; self.selectedDate = date; self.deadlineField.stringValue = [self formatTeacherDate:date]; self.calendar.selection = date; self.calendar.month = date; self.timePicker.stringValue = [self timeString:date]; [self.calendar reload]; [self validateDate];
 }
 - (void)chooseDate:(NSDate *)date {
-    NSDateComponents *time = [Cal() components:NSCalendarUnitHour | NSCalendarUnitMinute fromDate:self.selectedDate];
-    [self markManualLead];
-    [self updateDate:[Cal() dateBySettingHour:time.hour minute:time.minute second:0 ofDate:date options:0]];
+    NSDateComponents *time = [self.teacherCalendar components:NSCalendarUnitHour | NSCalendarUnitMinute fromDate:self.selectedDate];
+    [self updateDate:[self.teacherCalendar dateBySettingHour:time.hour minute:time.minute second:0 ofDate:date options:0]];
 }
 - (NSDate *)parsedTime {
     NSString *value = [self.timePicker.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
     NSRegularExpression *pattern = [NSRegularExpression regularExpressionWithPattern:@"^([01]?[0-9]|2[0-3]):[0-5][0-9]$" options:0 error:nil];
     if (![pattern numberOfMatchesInString:value options:0 range:NSMakeRange(0, value.length)]) return nil;
     NSArray *parts = [value componentsSeparatedByString:@":"];
-    NSDate *base = DDLParseDate(self.deadlineField.stringValue, NSDate.date, Cal());
-    return base ? [Cal() dateBySettingHour:[parts[0] integerValue] minute:[parts[1] integerValue] second:0 ofDate:base options:0] : nil;
+    NSDate *base = DDLParseDate(self.deadlineField.stringValue, NSDate.date, self.teacherCalendar);
+    return base ? [self.teacherCalendar dateBySettingHour:[parts[0] integerValue] minute:[parts[1] integerValue] second:0 ofDate:base options:0] : nil;
 }
 - (void)timeChanged:(id)sender {
     NSDate *date = [self parsedTime];
     if (!date) { self.validation.stringValue = @"时间格式：00:00–23:59"; self.validation.textColor = NSColor.systemRedColor; return; }
-    [self markManualLead];
     // Keep the active field editor and caret intact while typing.
-    self.selectedDate = date; self.deadlineField.stringValue = DDLFormatDate(date, @"yyyy-MM-dd HH:mm");
+    self.selectedDate = date; self.deadlineField.stringValue = [self formatTeacherDate:date];
     self.calendar.selection = date; self.calendar.month = date; [self.calendar reload]; [self validateDate];
 }
 - (void)stepTime:(NSButton *)sender {
     NSDate *date = [self parsedTime];
     if (!date) { [self timeChanged:self.timePicker]; return; }
-    [self markManualLead];
-    [self updateDate:[Cal() dateByAddingUnit:NSCalendarUnitMinute value:sender.tag toDate:date options:0]];
+    [self updateDate:[self.teacherCalendar dateByAddingUnit:NSCalendarUnitMinute value:sender.tag toDate:date options:0]];
 }
 - (void)quickTime:(NSPopUpButton *)sender {
     if (sender.indexOfSelectedItem == 0) return;
-    NSDate *base = DDLParseDate(self.deadlineField.stringValue, NSDate.date, Cal());
+    NSDate *base = DDLParseDate(self.deadlineField.stringValue, NSDate.date, self.teacherCalendar);
     if (!base) { [self validateDate]; return; }
     NSArray *parts = [sender.titleOfSelectedItem componentsSeparatedByString:@":"];
-    [self markManualLead];
-    [self updateDate:[Cal() dateBySettingHour:[parts[0] integerValue] minute:[parts[1] integerValue] second:0 ofDate:base options:0]];
+    [self updateDate:[self.teacherCalendar dateBySettingHour:[parts[0] integerValue] minute:[parts[1] integerValue] second:0 ofDate:base options:0]];
     [sender selectItemAtIndex:0];
 }
 - (void)quickDay:(NSButton *)sender {
     NSDate *day = DDLParseDate(sender.title, NSDate.date, Cal());
     [self chooseDate:day];
 }
-- (void)setLeadVisible:(BOOL)visible {
-    if (visible == !self.leadMenu.hidden) return;
-    CGFloat shift = visible ? 44 : -44, origin = NSMinY(self.leadMenu.frame); NSView *body = self.leadMenu.superview;
-    for (NSView *view in body.subviews) if (view != self.leadMenu && NSMinY(view.frame) >= origin) { NSRect frame = view.frame; frame.origin.y += shift; view.frame = frame; }
-    NSRect frame = body.frame; frame.size.height += shift; body.frame = frame; self.leadMenu.hidden = !visible;
-}
 - (void)applyImportedText:(NSString *)text source:(NSString *)source {
     NSDictionary<NSString *, id> *fields = DDLFieldsFromAnnouncement(text, NSDate.date, Cal());
     if (!fields.count) { self.importStatus.stringValue = @"没有识别到文字，请换一张清晰截图。"; self.importStatus.textColor = NSColor.systemRedColor; return; }
     self.titleField.stringValue = fields[@"title"] ?: @"";
     self.subjectField.stringValue = fields[@"subject"] ?: @"";
-    self.notesField.string = fields[@"notes"] ?: @"";
     NSDate *due = fields[@"due"];
-    self.announcedDue = due; self.leadDays = due ? 0 : -1;
-    self.deadlineLabel.stringValue = due ? @"我的 DDL 截止时间" : @"截止时间";
-    [self setLeadVisible:due != nil]; [self.leadMenu selectItemAtIndex:due ? 0 : 5];
+    self.deadlineLabel.stringValue = @"作业 DDL";
     if (due) [self updateDate:due];
     else { self.deadlineField.stringValue = @""; [self validateDate]; }
-    self.importStatus.stringValue = due ? [NSString stringWithFormat:@"已识别%@ · 老师截止：%@ · 可选提前天数", source, DDLFormatDate(due, @"M月d日 HH:mm")] : [NSString stringWithFormat:@"已识别%@，但没有找到明确日期；请手动填写截止时间。", source];
+    self.importStatus.stringValue = due ? [NSString stringWithFormat:@"已识别%@ · 截止时间已填写：%@", source, DDLFormatDate(due, @"M月d日 HH:mm")] : [NSString stringWithFormat:@"已识别%@，但没有找到明确日期；请手动填写截止时间。", source];
     self.importStatus.textColor = due ? Accent() : NSColor.systemOrangeColor;
     [self.window makeFirstResponder:due ? self.titleField : self.deadlineField];
 }
@@ -651,8 +593,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)save:(id)sender {
     NSString *title = [self.titleField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!title.length) { self.validation.stringValue = @"先写一个任务名称。"; self.validation.textColor = NSColor.systemRedColor; [self focusInput:self.titleField]; return; }
-    if (![self confirmTeacherDate]) { [self focusInput:self.teacherField]; return; }
-    NSDate *date = DDLParseDate(self.deadlineField.stringValue, NSDate.date, Cal());
+    if (![self validateAssignmentDate]) { [self focusInput:self.deadlineField]; return; }
+    NSDate *date = DDLParseDate(self.deadlineField.stringValue, NSDate.date, self.teacherCalendar);
     if (!date) { [self validateDate]; [self focusInput:self.deadlineField]; return; }
     if (![self parsedTime]) { [self timeChanged:self.timePicker]; [self focusInput:self.timePicker]; return; }
     NSArray<NSNumber *> *reminderOffsets = DDLParseReminderOffsets(self.reminderField.stringValue);
@@ -661,12 +603,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSString *subject = [self.subjectField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     NSInteger legacyMode = reminderOffsets.count == 0 ? 4 : ([reminderOffsets isEqual:@[@0]] ? 0 : ([reminderOffsets isEqual:@[@60, @0]] ? 1 : ([reminderOffsets isEqual:@[@1440, @60, @0]] ? 2 : ([reminderOffsets isEqual:@[@4320, @1440, @60, @0]] ? 3 : 2))));
     task[@"title"] = title; task[@"subject"] = subject.length ? subject : @"其他"; task[@"due"] = date; task[@"notes"] = self.notesField.string; task[@"priority"] = @(self.priority.indexOfSelectedItem); task[@"reminder"] = @(legacyMode); task[@"reminderOffsets"] = reminderOffsets;
-    if (self.announcedDue) { task[@"announcedDue"] = self.announcedDue; task[@"leadDays"] = @(self.leadDays); }
-    else { [task removeObjectForKey:@"announcedDue"]; [task removeObjectForKey:@"leadDays"]; }
     [task removeObjectForKey:@"_reviewCandidate"]; [task removeObjectForKey:@"_existing"];
     if (self.candidate[@"dateBasis"]) task[@"sourceDateBasis"] = self.candidate[@"dateBasis"];
     if (self.candidate) {
-        NSDictionary *draft=@{@"title":title,@"subject":task[@"subject"],@"notes":task[@"notes"],@"teacherDue":self.announcedDue ?: date,@"personalDue":date,@"leadDays":task[@"leadDays"] ?: @(-1),@"reminderOffsets":reminderOffsets,@"dateConfirmed":@YES};
+        NSDictionary *draft=@{@"title":title,@"subject":task[@"subject"],@"notes":task[@"notes"],@"assignmentDue":date,@"reminderOffsets":reminderOffsets,@"dateConfirmed":@YES};
         NSString *failure=[self.appDelegate saveReviewItems:@[@{@"record":self.candidate,@"draft":draft}] automatic:NO];
         if (failure.length) {self.validation.stringValue=failure;self.validation.textColor=NSColor.systemRedColor;return;}
         [self.appDelegate closeEditor];
@@ -1366,11 +1306,14 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     if (self.window.attachedSheet) return;
     NSDictionary *existing = nil;
     for (NSDictionary *task in self.tasks) if ([task[@"sourceID"] isEqual:candidate[@"id"]]) { existing = task; break; }
-    NSMutableDictionary *draft = existing ? [existing mutableCopy] : [@{@"id":NSUUID.UUID.UUIDString, @"title":candidate[@"title"], @"subject":[candidate[@"repository"] lastPathComponent], @"notes":candidate[@"snippet"], @"completed":@NO, @"archived":@NO, @"reminderOffsets":@[@1440, @60, @0], @"leadDays":@0} mutableCopy];
-    NSDate *teacherDue = candidate[@"due"]; draft[@"_reviewCandidate"] = candidate; draft[@"_existing"] = @(existing != nil);
-    NSInteger lead = [draft[@"leadDays"] respondsToSelector:@selector(integerValue)] ? [draft[@"leadDays"] integerValue] : -1;
-    if (!existing || lead >= 0) draft[@"due"] = DDLPersonalDueDate(teacherDue, MAX(0, lead), Cal());
-    draft[@"announcedDue"] = teacherDue;
+    NSMutableDictionary *draft = existing ? [existing mutableCopy] : [@{@"id":NSUUID.UUID.UUIDString, @"title":candidate[@"suggestedTitle"] ?: candidate[@"title"], @"subject":[candidate[@"repository"] lastPathComponent], @"notes":@"", @"completed":@NO, @"archived":@NO, @"reminderOffsets":DDLDefaultReminderOffsets()} mutableCopy];
+    draft[@"_reviewCandidate"] = candidate; draft[@"_existing"] = @(existing != nil);
+    if (!existing) {
+        NSDate *date = ![candidate[@"needsDate"] boolValue] && ![candidate[@"needsTime"] boolValue] ? candidate[@"due"] : nil;
+        NSDictionary *basis = candidate[@"dateBasis"];
+        if (!date && ![candidate[@"needsTime"] boolValue] && ![candidate[@"warnings"] count] && [basis[@"date"] isKindOfClass:NSDate.class] && [basis[@"commit"] length]) date = candidate[@"suggestedDue"];
+        draft[@"due"] = date;
+    }
     draft[@"sourceID"] = candidate[@"id"];
     draft[@"sourceBlobSHA"] = candidate[@"blobSHA"];
     draft[@"sourceObservedDue"] = candidate[@"observedDue"] ?: candidate[@"due"];
@@ -1424,7 +1367,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
         NSDictionary *record=item[@"record"]; NSDictionary *draft=item[@"draft"] ?: @{};
         if (![record isKindOfClass:NSDictionary.class] || ![record[@"id"] isKindOfClass:NSString.class] || ![record[@"id"] length] || [seen containsObject:record[@"id"]]) return @"所选作业重复或格式无效，请重新选择。";
         [seen addObject:record[@"id"]];
-        NSDictionary *live=nil; for (NSDictionary *candidate in self.courseWindow.allPendingReviewCandidates) if ([candidate[@"id"] isEqual:record[@"id"]]) {live=candidate;break;}
+        NSDictionary *live=[self.courseWindow reviewSourceWithID:record[@"id"]];
         if (!live || ![live[@"blobSHA"] isEqual:record[@"blobSHA"]] || ![live[@"kind"] isEqual:@"assignment"]) return @"老师原文或审核状态已变化，请刷新后重新核对。";
         NSUInteger index=[next indexOfObjectPassingTest:^BOOL(NSDictionary *task,NSUInteger i,BOOL *stop){return [task[@"sourceID"] isEqual:record[@"id"]];}];
         NSDictionary *existing=index==NSNotFound ? nil : next[index];

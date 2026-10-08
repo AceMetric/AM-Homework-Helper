@@ -113,6 +113,7 @@ NSArray<NSNumber *> *DDLReminderOffsetsForTask(NSDictionary *task) {
     NSInteger mode = task[@"reminder"] ? [task[@"reminder"] integerValue] : 2;
     return LegacyReminderOffsets(mode);
 }
+NSArray<NSNumber *> *DDLDefaultReminderOffsets(void) { return @[@10080, @4320, @1440, @60, @0]; }
 
 NSArray<NSNumber *> *DDLParseReminderOffsets(NSString *input) {
     NSString *text = [input stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];

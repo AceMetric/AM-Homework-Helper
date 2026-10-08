@@ -22,6 +22,11 @@ int main(void){@autoreleasepool{
     Check(!SSCanAutomaticallyImport(record,@[],DDLParseDate(@"2028-04-01 00:00",NSDate.date,calendar)),@"historical homework stays in review");
     NSDictionary *task=SSReviewedTask(record,@{},nil,&error);Check(task && [task[@"sourceID"] isEqual:record[@"id"]],@"review shares normalization and source identity");
     Check(!SSCanAutomaticallyImport(record,@[task],NSDate.date),@"existing task never silently imports again");
+    Check([task[@"notes"] isEqual:@""] && [task[@"reminderOffsets"] isEqual:DDLDefaultReminderOffsets()],@"new source does not populate notes and uses five default reminders");
+    NSMutableDictionary *old=task.mutableCopy;old[@"announcedDue"]=task[@"due"];old[@"leadDays"]=@7;old[@"notes"]=@"my note";
+    NSDate *chosen=[task[@"due"] dateByAddingTimeInterval:3600];
+    NSDictionary *unified=SSReviewedTask(record,@{@"assignmentDue":chosen,@"notes":@""},old,&error);
+    Check([unified[@"due"] isEqual:chosen] && [unified[@"notes"] isEqual:@""] && [unified[@"sourceSummary"] isEqual:record[@"summary"]],@"single deadline overrides legacy offset, empty user notes remain empty, summary stays separate");
     NSMutableDictionary *existing=task.mutableCopy;existing[@"title"]=@"自己编辑的标题";existing[@"notes"]=@"自己的备注";existing[@"leadDays"]=@(-1);existing[@"due"]=[task[@"due"] dateByAddingTimeInterval:-12345];
     NSDictionary *edited=SSReviewedTask(record,@{@"title":existing[@"title"]},existing,&error);
     Check([edited[@"notes"] isEqual:existing[@"notes"]] && [edited[@"due"] isEqual:existing[@"due"]],@"update preserves manually edited content and personal DDL");
