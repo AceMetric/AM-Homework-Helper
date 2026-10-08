@@ -18,6 +18,7 @@ NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *pat
 /// Network transport is replaceable for isolated tests; responses are never logged.
 @interface SSRecognitionClient : NSObject <NSURLSessionTaskDelegate>
 @property (copy, nullable) NSData * _Nullable (^transport)(NSURLRequest *request, NSError **error);
+- (NSArray * _Nullable)localModels:(NSDictionary *)settings error:(NSError **)error;
 - (id _Nullable)extract:(NSString *)text settings:(NSDictionary *)settings error:(NSError **)error;
 @end
 NS_ASSUME_NONNULL_END

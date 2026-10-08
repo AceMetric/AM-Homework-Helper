@@ -928,7 +928,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     Surface *navigation=Box(NSColor.clearColor,0);navigation.frame=NSMakeRect(0,0,192,MAX(NSHeight(self.navigationScroll.frame),navigationHeight));self.navigationScroll.documentView=navigation;[self.sidebar addSubview:self.navigationScroll];
     NSArray *names=@[@"总览",@"日历",@"任务",@"待审核作业"];NSArray *icons=@[@"square.grid.2x2",@"calendar",@"checklist",@"tray"];
     for(NSInteger i=0;i<4;i++){NSString *name=i==3 && self.courseWindow.pendingCount ? [NSString stringWithFormat:@"%@  %lu",names[i],(unsigned long)self.courseWindow.pendingCount]:names[i];ActionButton *button=Button(name,self,@selector(navigate:),3);button.symbol=icons[i];button.tag=i;button.selected=self.page==i;button.identifier=[NSString stringWithFormat:@"navigation-%ld",(long)i];Put(navigation,button,12,i*44,168,36);}
-    ActionButton *group=Button(@"课程",self,@selector(toggleCourses:),3);group.symbol=self.coursesCollapsed ? @"chevron.right":@"chevron.down";group.accessibilityLabel=self.coursesCollapsed ? @"展开课程":@"收起课程";Put(navigation,group,12,176,168,36);
+    ActionButton *group=Button(@"课程",self,@selector(toggleCourses:),3);group.identifier=@"course-group";group.symbol=self.coursesCollapsed ? @"chevron.right":@"chevron.down";group.accessibilityLabel=self.coursesCollapsed ? @"展开课程":@"收起课程";Put(navigation,group,12,176,168,36);
     if(!self.coursesCollapsed){ActionButton *all=Button(@"所有课程",self,@selector(selectSidebarCourse:),3);all.identifier=@"";all.symbol=@"books.vertical";all.selected=self.page==4 && !self.courseWindow.selectedCourseID;Put(navigation,all,20,220,160,36);
         for(NSUInteger i=0;i<snapshots.count;i++){NSDictionary *course=snapshots[i];NSString *title=[course[@"pending"] unsignedIntegerValue] ? [NSString stringWithFormat:@"%@  %@",course[@"name"],course[@"pending"]]:course[@"name"];ActionButton *button=Button(title,self,@selector(selectSidebarCourse:),3);button.symbol=course[@"symbol"];button.identifier=course[@"id"];button.selected=self.page==4 && [self.courseWindow.selectedCourseID isEqual:course[@"id"]];button.toolTip=[NSString stringWithFormat:@"%@ · %@",course[@"id"],course[@"status"]];Put(navigation,button,20,260+i*40,160,36);}}
     [self.navigationScroll.contentView scrollToPoint:offset];
@@ -949,8 +949,19 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)showSettings:(id)sender {
     [self showWindow]; if (self.window.attachedSheet) return;
     self.settingsController = AMSettingsController.new;
-    NSMutableDictionary *displaySettings=[self.preview ? @{@"mode":@"rules",@"endpoint":@"http://localhost:11434",@"model":@"",@"automaticImport":@YES} : SSRecognitionSettings() mutableCopy];NSMutableArray *available=NSMutableArray.array;[available addObjectsFromArray:self.courseWindow.courseRepositoryNames];displaySettings[@"availableCourses"]=available;[self.settingsController updateSettings:displaySettings];
+    NSMutableDictionary *displaySettings=[self.preview ? @{@"mode":@"rules",@"endpoint":@"http://localhost:11434",@"model":@"",@"automaticImport":@YES} : SSRecognitionSettings() mutableCopy];NSMutableArray *available=NSMutableArray.array;[available addObjectsFromArray:self.courseWindow.courseRepositoryNames];displaySettings[@"availableCourses"]=available;NSDictionary *lastLocal=self.preview ? nil:SSReadPlist(@"recognition-last-result.plist");if(lastLocal[@"date"])[displaySettings setObject:[NSString stringWithFormat:@"最近本地分析：%@ · %@ · %@",lastLocal[@"course"],DDLFormatDate(lastLocal[@"date"],@"M/d HH:mm"),[lastLocal[@"success"] boolValue] ? @"完成":@"部分失败，规则可用"] forKey:@"localStatus"];[self.settingsController updateSettings:displaySettings];
     __weak typeof(self) owner = self;
+    self.settingsController.localHandler=^(NSDictionary *configuration,NSString *action,void (^ready)(NSDictionary *)) {
+        if(owner.preview){ready(@{@"models":@[@{@"name":@"示例本地模型",@"digest":@"synthetic"}],@"message":@"模拟预览：不会连接真实模型服务。"});return;}
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+            NSError *failure=nil;SSRecognitionClient *client=SSRecognitionClient.new;NSDictionary *result=nil;
+            if([action isEqual:@"models"]){NSArray *models=[client localModels:configuration error:&failure];result=models ? @{@"models":models,@"message":models.count ? @"本地服务已连接，请选择模型后测试识别。":@"服务已连接，但没有已安装模型。请在 Ollama 中准备模型后再次检测。"}:@{@"message":failure.localizedDescription ?: @"无法检测本地服务。"};}
+            else {NSString *sample=@"# 作业：实验报告\n截止：2027年4月14日21:00 UTC+8\n完成运动实验分析，提交一份 Markdown 报告。";
+                id extracted=[client extract:sample settings:configuration error:&failure];NSArray *validated=extracted ? SSValidatedModelResults(extracted,sample,@"example/course",@"homework.md",@"synthetic",Cal(),&failure):nil;
+                result=@{@"message":validated.count==1 ? @"测试通过：本地模型返回了可核验的作业与截止原文。":(failure.localizedDescription ?: @"模型未识别模拟作业，请换模型或检查服务。")};}
+            dispatch_async(dispatch_get_main_queue(),^{ready(result);});
+        });
+    };
     self.settingsController.saveHandler = ^NSString *(NSDictionary *settings, NSString *key) {
         NSError *error = nil; if (!SSValidateRecognitionSettings(settings,&error)) return error.localizedDescription;
         if (owner.preview) return @"";
@@ -989,7 +1000,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSString *title = @[@"今日与近期安排", @"日历", @"任务", @"待审核作业", @"课程"][self.page];
     if(self.page==4)title=self.courseWindow.selectedCourseID.lastPathComponent ?: @"所有课程";
     Put(self.header, Text(title, 25, NSFontWeightSemibold, Ink()), 0, 4, w - 152, 32);
-    NSString *subtitle = (self.notice.length && self.page < 3) ? self.notice : (self.page == 0 ? DDLFormatDate(NSDate.date, @"M月d日 EEEE") : (self.page == 3 ? @"核对老师原文后，将作业加入日历与提醒" : (self.page == 4 ? @"管理课程仓库、更新与提交" : @"按截止时间安排任务")));
+    NSString *subtitle = (self.notice.length && self.page < 3) ? self.notice : (self.page == 0 ? DDLFormatDate(NSDate.date, @"M月d日 EEEE") : (self.page == 3 ? @"核对老师原文后，将作业加入日历与提醒" : (self.page == 4 ? @"先检查新作业，需要时再同步课程文件" : @"按截止时间安排任务")));
     Put(self.header, Text(subtitle, 13, NSFontWeightRegular, Muted()), 0, 48, w, 24);
     if (self.page < 3) { ActionButton *add = Button(@"新建任务", self, @selector(addTask:), 1); add.symbol = @"plus"; Put(self.header, add, w - 136, 0, 136, 36); }
 }

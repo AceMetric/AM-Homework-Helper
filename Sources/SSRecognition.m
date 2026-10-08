@@ -30,7 +30,7 @@ static NSString *TemplateField(NSString *text, NSString *pattern) {
     return nil;
 }
 NSDictionary *SSRecognitionSettings(void) {
-    NSMutableDictionary *settings = [@{@"mode":@"rules", @"endpoint":@"http://localhost:11434", @"model":@"", @"automaticImport":@YES, @"dailyLimit":@20} mutableCopy];
+    NSMutableDictionary *settings = [@{@"mode":@"rules", @"endpoint":@"http://localhost:11434", @"model":@"", @"automaticImport":@YES, @"dailyLimit":@20, @"localAutomatic":@YES} mutableCopy];
     id saved = SSReadPlist(@"recognition-settings.plist"); if ([saved isKindOfClass:NSDictionary.class]) [settings addEntriesFromDictionary:saved];
     return settings;
 }
@@ -67,6 +67,7 @@ NSArray *SSAttachLinkedDocuments(NSArray *records, NSArray *documents) {
 NSDictionary *SSCourseRecognitionSettings(NSDictionary *settings, NSDictionary *course) {
     NSMutableDictionary *copy=settings.mutableCopy;
     if ([copy[@"mode"] isEqual:@"cloud"] && (![copy[@"cloudCourses"] isKindOfClass:NSArray.class] || ![copy[@"cloudCourses"] containsObject:course[@"fork"]])) copy[@"mode"]=@"rules";
+    if([copy[@"mode"] isEqual:@"local"] && [copy[@"localAutomatic"] isEqual:@NO] && ![copy[@"manualLocal"] boolValue])copy[@"mode"]=@"rules";
     if ([course[@"recognitionTemplate"] isKindOfClass:NSDictionary.class]) copy[@"courseTemplate"]=course[@"recognitionTemplate"];
     return copy;
 }
@@ -186,7 +187,28 @@ NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repositor
 @implementation SSRecognitionClient
 - (NSString *)cloudKeyForEndpoint:(NSString *)endpoint { NSDictionary *secret=SSReadSecret(@"recognition-api");return [secret[@"endpoint"] isEqual:endpoint] ? secret[@"key"] : nil; }
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task willPerformHTTPRedirection:(NSHTTPURLResponse *)response newRequest:(NSURLRequest *)request completionHandler:(void (^)(NSURLRequest *))completionHandler { completionHandler(nil); }
+- (NSArray *)localModels:(NSDictionary *)settings error:(NSError **)error {
+    NSMutableDictionary *local=settings.mutableCopy;local[@"mode"]=@"local";local[@"model"]=@"validation-only";
+    if(!SSValidateRecognitionSettings(local,error))return nil;
+    NSString *base=[local[@"endpoint"] stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/"]];
+    NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:[base stringByAppendingString:@"/api/tags"]]];request.timeoutInterval=6;
+    __block NSData *data=nil;__block NSError *failure=nil;
+    if(self.transport)data=self.transport(request,&failure);else {
+        NSURLSessionConfiguration *configuration=NSURLSessionConfiguration.ephemeralSessionConfiguration;configuration.URLCache=nil;configuration.URLCredentialStorage=nil;configuration.HTTPCookieStorage=nil;configuration.timeoutIntervalForResource=8;
+        NSURLSession *session=[NSURLSession sessionWithConfiguration:configuration delegate:self delegateQueue:nil];dispatch_semaphore_t done=dispatch_semaphore_create(0);
+        NSURLSessionDataTask *task=[session dataTaskWithRequest:request completionHandler:^(NSData *response,NSURLResponse *metadata,NSError *networkError){if(networkError || [(NSHTTPURLResponse *)metadata statusCode]!=200)failure=RError(@"无法连接本地模型服务。请启动 Ollama，或检查高级设置中的地址。");else data=response;dispatch_semaphore_signal(done);}];[task resume];if(dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,10*NSEC_PER_SEC))){[task cancel];failure=RError(@"本地服务检测超时，请检查 Ollama 是否运行。");}[session invalidateAndCancel];
+    }
+    if(failure || !data || data.length>1024*1024){if(error)*error=failure ?: RError(@"本地服务返回无效模型列表。");return nil;}
+    id object=[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];id models=[object isKindOfClass:NSDictionary.class] ? object[@"models"] : nil;
+    if(![models isKindOfClass:NSArray.class] || [models count]>500){if(error)*error=RError(@"本地服务不支持模型列表，可在高级设置手填模型名。");return nil;}
+    NSMutableArray *result=NSMutableArray.array;for(id model in models)if([model isKindOfClass:NSDictionary.class] && [model[@"name"] isKindOfClass:NSString.class] && [model[@"name"] length]>0 && [model[@"name"] length]<256)[result addObject:@{@"name":model[@"name"],@"digest":[model[@"digest"] isKindOfClass:NSString.class] ? model[@"digest"]:@""}];
+    return [result sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"name"] localizedStandardCompare:b[@"name"]];}];
+}
 - (id)extract:(NSString *)text settings:(NSDictionary *)settings error:(NSError **)error {
+    static NSLock *lock;static dispatch_once_t once;dispatch_once(&once,^{lock=NSLock.new;});[lock lock];
+    @try {return [self extractSerial:text settings:settings error:error];}@finally{[lock unlock];}
+}
+- (id)extractSerial:(NSString *)text settings:(NSDictionary *)settings error:(NSError **)error {
     if (!SSValidateRecognitionSettings(settings,error) || [settings[@"mode"] isEqual:@"rules"]) return nil;
     if (text.length > 48000 || SSContainsSecret([text dataUsingEncoding:NSUTF8StringEncoding])) { if(error)*error=RError(@"文档过长或含疑似凭据，仅使用本机规则。"); return nil; }
     BOOL cloud=[settings[@"mode"] isEqual:@"cloud"];
@@ -251,9 +273,10 @@ NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repositor
 }
 @end
 NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings, NSMutableDictionary *cache, NSError **error) {
-    NSString *configuration=[[NSJSONSerialization dataWithJSONObject:settings options:NSJSONWritingSortedKeys error:NULL] base64EncodedStringWithOptions:0];
+    NSMutableDictionary *cacheSettings=settings.mutableCopy;for(NSString *field in @[@"forceRecognition",@"manualLocal",@"localAutomatic"])[cacheSettings removeObjectForKey:field];
+    NSString *configuration=[[NSJSONSerialization dataWithJSONObject:cacheSettings options:NSJSONWritingSortedKeys error:NULL] base64EncodedStringWithOptions:0];
     NSString *key=[NSString stringWithFormat:@"recognition-v5|%@|%@|%@|%@|%@",repository,path,blob,calendar.timeZone.name,RHash(configuration ?: @"")];
-    if ([cache[key] isKindOfClass:NSArray.class]) return cache[key];
+    if (![settings[@"forceRecognition"] boolValue] && [cache[key] isKindOfClass:NSArray.class]) return cache[key];
     NSMutableArray *found=NSMutableArray.array; for (NSDictionary *record in SSDiscoveriesFromDocument(text,repository,path,blob,NSDate.date,calendar)) [found addObject:SSEnrichDiscovery(record)];
     NSDictionary *template=settings[@"courseTemplate"];
     if ([template isKindOfClass:NSDictionary.class] && template.count && SSValidateCourseTemplate(template,NULL)) {
