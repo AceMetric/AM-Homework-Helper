@@ -18,7 +18,7 @@
 
 ## 安装与使用
 
-从 [GitHub Releases](https://github.com/AceMetric/AM-Homework-Helper/releases/latest) 下载 **1.3.2** 的 `AM-Homework-Helper-1.3.2-macOS-arm64.zip`，安装说明与校验文件作为独立附件提供。当前构建使用临时签名，**未经 Apple 公证**。
+从 [GitHub Releases](https://github.com/AceMetric/AM-Homework-Helper/releases/latest) 下载 **1.3.3** 的 `AM-Homework-Helper-1.3.3-macOS-arm64.zip`，安装说明与校验文件作为独立附件提供。当前构建使用临时签名，**未经 Apple 公证**。
 
 解压后将 `AM's Homework Helper.app` 放入“应用程序”。首次打开若被系统阻止，可在“系统设置 → 隐私与安全性”按系统提示选择“仍要打开”。更新前退出正在运行的旧测试版。
 

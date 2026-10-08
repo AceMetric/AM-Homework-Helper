@@ -5,6 +5,40 @@ private func string(_ record: NSDictionary, _ key: String) -> String { record[ke
 private func flag(_ record: NSDictionary, _ key: String) -> Bool { (record[key] as? NSNumber)?.boolValue ?? false }
 private func identifier(_ record: NSDictionary) -> String { string(record, "id") }
 
+// Objective-C controllers mutate their dictionaries as operations progress. Never
+// use those objects as SwiftUI identity, or let old views observe later mutations.
+private func workspaceSnapshot(_ value: Any) -> Any {
+    if let dictionary = value as? NSDictionary {
+        var result: [String: Any] = [:]
+        for case let key as String in dictionary.allKeys {
+            if let item = dictionary[key] { result[key] = workspaceSnapshot(item) }
+        }
+        return result as NSDictionary
+    }
+    if let array = value as? NSArray { return array.map(workspaceSnapshot) as NSArray }
+    if let text = value as? NSString { return String(text) }
+    return value
+}
+func workspaceRecords(_ records: [NSDictionary]) -> [NSDictionary] {
+    records.map { workspaceSnapshot($0) as! NSDictionary }
+}
+struct WorkspaceRow: Identifiable {
+    let id: String
+    let record: NSDictionary
+}
+func workspaceRows(_ records: [NSDictionary], key: String = "id") -> [WorkspaceRow] {
+    var occurrences: [String: Int] = [:]
+    return records.enumerated().map { index, record in
+        let value = string(record, key)
+        let base = value.isEmpty ? "position:\(index)" : "\(key):\(value.utf8.count):\(value)"
+        let occurrence = occurrences[base, default: 0]
+        occurrences[base] = occurrence + 1
+        // Duplicate/missing source identifiers still get distinct presentation IDs.
+        // Operation targets remain the original source IDs, never these row IDs.
+        return WorkspaceRow(id: "\(base):\(occurrence)", record: record)
+    }
+}
+
 @MainActor
 final class ReviewState: ObservableObject {
     @Published var records: [NSDictionary] = []
@@ -32,6 +66,7 @@ final class ReviewState: ObservableObject {
         records.filter { query.isEmpty || [string($0,"suggestedTitle"),string($0,"title"),string($0,"repository"),string($0,"path")].joined(separator:" ").localizedCaseInsensitiveContains(query) }
     }
     func refresh(_ records: [NSDictionary]) {
+        let records = workspaceRecords(records)
         self.records = records
         checked.formIntersection(Set(records.map(identifier)))
         if !dirty {
@@ -133,7 +168,8 @@ private struct ReviewWorkspace: View {
             HSplitView {
                 ScrollView {
                     LazyVStack(alignment:.leading,spacing:4) {
-                        ForEach(state.visible,id:\.self) { record in
+                        ForEach(workspaceRows(state.visible)) { row in
+                            let record = row.record
                             HStack(alignment:.top,spacing:8) {
                                 Toggle("选择",isOn:Binding(get:{state.checked.contains(identifier(record))},set:{if $0 {state.checked.insert(identifier(record))}else{state.checked.remove(identifier(record))}})).labelsHidden().toggleStyle(.checkbox).accessibilityLabel("选择\(string(record,"title"))")
                                 Button { state.select(record) } label: {
@@ -156,7 +192,7 @@ private struct ReviewWorkspace: View {
                             GroupBox("截止时间") {
                                 VStack(alignment:.leading,spacing:10) {
                                     Text(string(record,"dateText").isEmpty ? "老师未说明完整截止时间" : "老师原文：\(string(record,"dateText"))").textSelection(.enabled)
-                                    if let warnings=record["warnings"] as? [String] { ForEach(warnings,id:\.self){Text($0).foregroundStyle(.orange)} }
+                                    if let warnings=record["warnings"] as? [String] { ForEach(Array(warnings.enumerated()),id:\.offset){Text($0.element).foregroundStyle(.orange)} }
                                     if let due=record["suggestedDue"] as? Date {
                                         Text("建议：\(due.formatted(date:.abbreviated,time:.shortened))")
                                         if let basis=record["dateBasis"] as? NSDictionary, let date=basis["date"] as? Date { Text("依据：\(date.formatted()) · \(String(string(basis,"commit").prefix(7)))").font(.caption).foregroundStyle(.secondary) }
@@ -180,7 +216,7 @@ private struct ReviewWorkspace: View {
                                 VStack(alignment:.leading,spacing:8) {
                                     Text("\(string(record,"repository")) / \(string(record,"path")):\((record["line"] as? NSNumber)?.intValue ?? 1)").font(.caption).foregroundStyle(.secondary)
                                     Text(string(record,"snippet")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)
-                                    if let attachments=record["attachments"] as? [NSDictionary] { ForEach(attachments,id:\.self){Text("附件：\(string($0,"path"))\n\(string($0,"snippet"))").textSelection(.enabled)} }
+                                    if let attachments=record["attachments"] as? [NSDictionary] { ForEach(workspaceRows(attachments,key:"path")){Text("附件：\(string($0.record,"path"))\n\(string($0.record,"snippet"))").textSelection(.enabled)} }
                                 }.padding(4)
                             }
                         }.padding(.horizontal,16).padding(.vertical,8).disabled(string(record,"reviewStatus")=="已导入")
@@ -328,7 +364,7 @@ private struct SettingsWorkspace:View {
     var action:((String,String)->Void)?
     var current:NSDictionary? {records.first{identifier($0)==selected}}
     func update(_ records:[NSDictionary], selected:String, information:String, empty:String, paused:Bool) {
-        self.records=records;self.selected=selected.isEmpty ? nil:selected;self.information=information;self.empty=empty;self.paused=paused
+        self.records=workspaceRecords(records);self.selected=selected.isEmpty ? nil:selected;self.information=information;self.empty=empty;self.paused=paused
     }
 }
 private struct CourseWorkspace:View {
@@ -336,8 +372,8 @@ private struct CourseWorkspace:View {
     private func kind(_ record:NSDictionary)->String {flag(record,"confirmed") ? "已加入任务" : ["assignment":"作业","exam":"考试","classroom":"课上任务","unknown":"待确认类型"][string(record,"kind")] ?? "作业"}
     private var entries:some View {
         List(selection:Binding(get:{state.selected},set:{state.selected=$0;if let id=$0 {state.action?("select",id)}})) {
-            ForEach(state.records.indices,id:\.self) { index in
-                let record=state.records[index]
+            ForEach(workspaceRows(state.records)) { row in
+                let record=row.record
                 VStack(alignment:.leading,spacing:6) {
                     Text(string(record,"suggestedTitle").isEmpty ? string(record,"title") : string(record,"suggestedTitle")).fontWeight(.medium).lineLimit(2)
                     HStack {Label(kind(record),systemImage:string(record,"kind")=="exam" ? "doc.text" : "checklist");Spacer();if let due=record["due"] as? Date {Text(due,format:.dateTime.month().day().hour().minute())}}
@@ -403,7 +439,7 @@ final class SetupState: ObservableObject {
     @Published var context:NSDictionary=[:]
     var action:((NSDictionary)->Void)?
     var visible:[NSDictionary]{records.filter{query.isEmpty || string($0,"fork").localizedCaseInsensitiveContains(query)}}
-    func update(_ records:[NSDictionary],step:Int,busy:Bool,message:String){self.records=records;self.step=step;self.busy=busy;self.message=message;for record in records {let key=string(record,"fork");if let path=record["path"] as? String {paths[key]=path}}}
+    func update(_ records:[NSDictionary],step:Int,busy:Bool,message:String){self.records=workspaceRecords(records);self.step=step;self.busy=busy;self.message=message;for record in self.records {let key=string(record,"fork");if let path=record["path"] as? String {paths[key]=path}}}
     func send(_ action:String,_ course:String=""){self.action?(["action":action,"course":course,"selected":Array(selected),"paths":paths] as NSDictionary)}
 }
 private struct SetupWorkspace:View {
@@ -444,7 +480,8 @@ private struct SetupWorkspace:View {
             Text("勾选自己的课程 fork，老师仓库和读取权限将自动核验。").foregroundStyle(.secondary)
             TextField("搜索课程仓库",text:$state.query).textFieldStyle(.roundedBorder).disabled(state.busy)
             if state.records.isEmpty {Text("未找到个人课程 fork。请先在 GitHub fork 课程仓库，再重新读取。").foregroundStyle(.secondary);Button("重新读取课程"){state.send("reload")}.disabled(state.busy)}
-            List(state.visible,id:\.self){record in
+            List(workspaceRows(state.visible,key:"fork")){row in
+                let record=row.record
                 let key=string(record,"fork")
                 Toggle(isOn:Binding(get:{state.selected.contains(key)},set:{if $0 {state.selected.insert(key)}else{state.selected.remove(key)}})){
                     VStack(alignment:.leading,spacing:3){Text(key);if flag(record,"existing"){Text("已添加 · 将复用原目录和任务").font(.caption).foregroundStyle(.secondary)}}
@@ -469,7 +506,8 @@ private struct SetupWorkspace:View {
     }
     private func tip(_ title:String,_ description:String,_ symbol:String)->some View {HStack(alignment:.top,spacing:12){Image(systemName:symbol).frame(width:24).foregroundStyle(Color.accentColor);VStack(alignment:.leading,spacing:4){Text(title).fontWeight(.semibold);Text(description).foregroundStyle(.secondary)}}}
     private var courseRows:some View {
-        List(state.records,id:\.self){record in
+        List(workspaceRows(state.records,key:"fork")){row in
+            let record=row.record
             let key=string(record,"fork"),options=record["matches"] as? [String] ?? []
             VStack(alignment:.leading,spacing:6){
                 HStack{Image(systemName:flag(record,"ready") ? "checkmark.circle":"exclamationmark.circle");Text(key).fontWeight(.medium);Spacer();if state.step==3 {Button("查看结果"){state.send("result",key)}.disabled(state.busy)};if state.step==2 {Button("选择文件夹…"){state.send("folder",key)}.disabled(flag(record,"invalid") || state.busy)}}

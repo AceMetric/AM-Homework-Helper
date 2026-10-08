@@ -49,6 +49,31 @@ import Foundation
         setup.update(setup.records,step:3,busy:false,message:"checked")
         check(setup.selected.count==2 && setup.paths["student/two"]=="chosen","wizard stages preserve selections and paths")
         setup.send("close");check(setupPayload?["action"] as? String=="close","wizard cancellation is explicit")
+        let nested=NSMutableDictionary(dictionary:["title":"原文"])
+        let mutable=NSMutableDictionary(dictionary:["fork":"student/one","id":"source-1","status":"待关联","course":nested,"matches":NSMutableArray(array:["first"])])
+        setup.query="";setup.update([mutable],step:2,busy:false,message:"")
+        let firstRows=workspaceRows(setup.records,key:"fork")
+        let identity=firstRows[0].id
+        var identities=[identity:"retained"]
+        mutable["status"]="已关联";mutable["path"]="second";nested["title"]="变更原文"
+        (mutable["matches"] as! NSMutableArray).add("second")
+        check(setup.records[0]["status"] as? String=="待关联","controller mutation cannot alter rendered setup snapshot")
+        check((setup.records[0]["course"] as? NSDictionary)?["title"] as? String=="原文","nested dictionaries are detached from controller mutation")
+        check((setup.records[0]["matches"] as? [String])==["first"],"nested arrays are detached from controller mutation")
+        setup.update([mutable],step:3,busy:true,message:"检查中")
+        let secondRows=workspaceRows(setup.records,key:"fork")
+        check(secondRows[0].id==identity && firstRows[0].record["status"] as? String=="待关联","row identity remains stable across state and stage changes")
+        identities[secondRows[0].id]="updated"
+        check(identities.count==1 && identities[identity]=="updated","updated row uses a stable dictionary key")
+        let another:NSDictionary=["fork":"student/two","id":"source-2"]
+        check(workspaceRows([another,mutable],key:"fork")[1].id==identity,"reordering keeps identity tied to repository rather than index")
+        let malformed=workspaceRows([mutable,mutable,[:],[:]],key:"fork")
+        check(Set(malformed.map(\.id)).count==4,"duplicate or missing source IDs cannot collide in SwiftUI")
+        state.refresh([mutable]);mutable["title"]="外部变更"
+        check(state.records[0]["title"]==nil,"review snapshots are detached too")
+        courseState.update([mutable],selected:"source-1",information:"",empty:"",paused:false)
+        mutable["title"]="再次变更"
+        check(courseState.current?["title"] as? String=="外部变更","course selection uses source identity with an immutable snapshot")
         print("PASS: \(count) SwiftUI state assertions")
     }
 }
