@@ -54,6 +54,16 @@ class AuditTests(unittest.TestCase):
         SCAN(data, 'preview.jpg')
         self.assertIn(('preview.jpg', 'personal-email'), GLOBALS['findings'])
 
+    def test_official_binary_exemption_requires_exact_signed_bytes(self):
+        path = Path(__file__).resolve().parent.parent / 'build/dependencies/gh-2.101.0/gh'
+        if not path.exists():
+            self.skipTest('prepare the pinned official CLI first')
+        data = path.read_bytes()
+        SCAN(data, 'artifact/gh')
+        self.assertEqual(GLOBALS['findings'], set())
+        SCAN(data + b'\n' + self.address, 'artifact/gh')
+        self.assertIn(('artifact/gh', 'personal-email'), GLOBALS['findings'])
+
     def test_upstream_attribution_exemption_requires_exact_bytes(self):
         root = Path(__file__).resolve().parent.parent
         name = __import__("plistlib").loads((root / "Info.plist").read_bytes())["CFBundleName"]

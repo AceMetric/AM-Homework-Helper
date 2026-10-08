@@ -44,6 +44,11 @@ import Foundation
         check(setup.busy && setup.step==1 && setup.selected.count==2,"background setup retains selection and operation stage")
         setup.query="two";check(setup.visible.count==1,"setup search filters course names")
         setup.send("link");check((setupPayload?["paths"] as? [String:String])?["student/two"]=="chosen","setup links explicit course paths independently of current sidebar selection")
+        setup.context=["code":"ABCD-EFGH"] as NSDictionary;setup.update(setup.records,step:0,busy:true,message:"waiting")
+        check(setup.step==0 && setup.context["code"] as? String=="ABCD-EFGH","device code persists through background refresh")
+        setup.update(setup.records,step:3,busy:false,message:"checked")
+        check(setup.selected.count==2 && setup.paths["student/two"]=="chosen","wizard stages preserve selections and paths")
+        setup.send("close");check(setupPayload?["action"] as? String=="close","wizard cancellation is explicit")
         print("PASS: \(count) SwiftUI state assertions")
     }
 }

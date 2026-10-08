@@ -48,11 +48,19 @@ static NSArray *ErrorCodes(NSError *error) {
 - (void)dismissUpdateInstallation {}
 @end
 
+// Update QA does not sign in or launch first-use setup. Its own scenarios below
+// exercise operation/unsaved protection with synthetic state only.
+@interface UpdateTestCourses:SSCourseController
+@end
+@implementation UpdateTestCourses
+- (void)startAutomaticChecks {}
+@end
 @interface TestApplication : AppDelegate
 @property TestDriver *driver;
 @property SPUUpdater *testUpdater;
 @end
 @implementation TestApplication
+- (SSCourseController *)makeCourseController {return [[UpdateTestCourses alloc] initWithPreview:NO];}
 - (BOOL)resolveEditsForExit:(BOOL)updating {BOOL result=[super resolveEditsForExit:updating];Record(@"exit-ready.plist",@{@"ready":@(result),@"reviewDirty":@(self.courseWindow.hasUnsavedReview),@"submission":@(self.courseWindow.hasSubmissionSheet),@"editor":@(self.editor!=nil),@"sheet":@(self.window.attachedSheet!=nil)});return result;}
 - (void)applicationWillTerminate:(NSNotification *)note {Record(@"terminated.plist",@{@"version":[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleVersion"]});}
 - (void)refreshPermission { self.authorization = UNAuthorizationStatusDenied; }

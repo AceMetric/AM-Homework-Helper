@@ -8,6 +8,7 @@ CONTENTS="$APP_DIR/Contents"
 export CLANG_MODULE_CACHE_PATH="$SCRIPT_DIR/build/module-cache"
 
 SWIFTUI_DIR=$(python3 "$SCRIPT_DIR/Tools/prepare-swiftui.py")
+GITHUB_CLI_DIR=$(python3 "$SCRIPT_DIR/Tools/prepare-github-cli.py")
 SPARKLE_DIR=$(python3 "$SCRIPT_DIR/Tools/prepare-sparkle.py")
 mkdir -p "$CONTENTS/Frameworks"
 /usr/bin/ditto "$SPARKLE_DIR/Sparkle.framework" "$CONTENTS/Frameworks/Sparkle.framework"
@@ -56,7 +57,12 @@ cp "$SPARKLE_DIR/LICENSE" "$CONTENTS/Resources/Sparkle-LICENSE.txt"
 cp "$SCRIPT_DIR/LICENSE" "$CONTENTS/Resources/DDL-Manager-LICENSE.txt"
 cp "$SCRIPT_DIR/Skills/am-homework-extract/SKILL.md" "$CONTENTS/Resources/am-homework-extract.md"
 cp "$SCRIPT_DIR/docs/ATTRIBUTION.md" "$CONTENTS/Resources/ATTRIBUTION.md"
-# Preserve upstream framework/helper signatures; sign the host only.
+mkdir -p "$CONTENTS/Helpers"
+cp "$GITHUB_CLI_DIR/gh" "$CONTENTS/Helpers/gh"
+cp "$GITHUB_CLI_DIR/LICENSE" "$CONTENTS/Resources/GitHub-CLI-LICENSE.txt"
+# Keep the official Developer ID signature and every byte of the pinned helper.
+codesign --verify --strict "$CONTENTS/Helpers/gh"
+# Preserve Sparkle component signatures; sign the host last.
 codesign --force --sign - "$APP_DIR"
 codesign --verify --deep --strict "$APP_DIR"
 

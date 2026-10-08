@@ -8,18 +8,10 @@ if [[ -n "$mode" && "$mode" != "--candidate" ]]; then
   print -u2 -- '用法：zsh release.sh [--candidate]'
   exit 2
 fi
-if [[ "$mode" != "--candidate" ]]; then
-  python3 - <<'PY'
-import plistlib
-from pathlib import Path
-config = plistlib.loads(Path('Config/GitHubApp.plist').read_bytes())
-if not config.get('oauthClientID'):
-    raise SystemExit('正式包需要公开 OAuth Client ID，请按 docs/GITHUB_APP_SETUP.md 注册。')
-PY
-fi
 zsh build.sh
 zsh verify-import.sh
 zsh verify-homework.sh
+zsh verify-github-cli.sh
 zsh verify-forms.sh
 zsh verify-course-ui.sh
 zsh verify-update.sh

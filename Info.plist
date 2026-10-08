@@ -19,9 +19,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.3.1</string>
+	<string>1.3.2</string>
 	<key>CFBundleVersion</key>
-	<string>7</string>
+	<string>8</string>
 	<key>DDLArchiveName</key>
 	<string>AM-Homework-Helper</string>
 	<key>DDLRepositoryURL</key>
@@ -32,6 +32,10 @@
 	<false/>
 	<key>NSHumanReadableCopyright</key>
 	<string>AM's Homework Helper · 原作者及贡献者署名见项目提交历史</string>
+	<key>SSDefaultAuthentication</key>
+	<string>githubCLI</string>
+	<key>SSGitHubCLIVersion</key>
+	<string>2.101.0</string>
 	<key>SUAllowsAutomaticUpdates</key>
 	<false/>
 	<key>SUAutomaticallyUpdate</key>

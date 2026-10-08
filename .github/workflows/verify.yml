@@ -20,6 +20,8 @@ jobs:
         run: zsh verify-import.sh
       - name: GitHub, Git and secret protection
         run: zsh verify-homework.sh
+      - name: Official login protection
+        run: zsh verify-github-cli.sh
       - name: Compile local image privacy scanner
         run: >-
           clang -fobjc-arc -Wall -Wextra -Werror -mmacosx-version-min=13.0

@@ -63,6 +63,9 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property NSWindow *setupWindow;
 @property NSMutableArray<NSMutableDictionary *> *setupRecords;
 @property NSInteger setupStep;
+@property NSDictionary *loginChallenge;
+@property NSArray *setupSelection;
+@property BOOL firstCheckRunning;
 @property NSMutableDictionary *errorDetails;
 @property BOOL refreshing;
 @property NSTableView *table;
@@ -107,7 +110,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         [self buildUI]; [self refreshCourses];
     } return self;
 }
-- (void)configureCredentialAccess { __weak typeof(self) weakSelf=self;self.git.teacherCredentialProvider=[self.github.authType isEqual:@"oauth"] ? ^NSString *(NSDictionary *course,NSError **error){if(![weakSelf.github readableTeacher:course error:error])return nil;return [weakSelf.github accessToken:error];} : nil; }
+- (void)configureCredentialAccess { __weak typeof(self) weakSelf=self;self.git.teacherCredentialProvider=[@[@"oauth",@"githubCLI"] containsObject:self.github.authType] ? ^NSString *(NSDictionary *course,NSError **error){if(![weakSelf.github readableTeacher:course error:error])return nil;return [weakSelf.github accessToken:error];} : nil; }
 - (NSWindow *)window { return self.view.window; }
 - (BOOL)operationBusy { return self.busy; }
 - (BOOL)hasUnsavedReview { return self.reviewWorkspace.hasUnsavedChanges || self.setupWindow.sheetParent != nil; }
@@ -211,7 +214,10 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)startAutomaticChecks {
     if (self.preview || self.timer) return;
-    [self scanAll:nil]; self.timer = [NSTimer scheduledTimerWithTimeInterval:6 * 3600 target:self selector:@selector(scanAll:) userInfo:nil repeats:YES];
+    NSDictionary *progress=SSReadPlist(@"onboarding.plist");
+    if([progress[@"completed"] boolValue] && self.connected)[self scanAll:nil];
+    else dispatch_async(dispatch_get_main_queue(),^{[self setup:nil];});
+    self.timer = [NSTimer scheduledTimerWithTimeInterval:6 * 3600 target:self selector:@selector(scanAll:) userInfo:nil repeats:YES];
 }
 - (void)dealloc { [self.timer invalidate]; }
 - (NSUInteger)pendingCount {
@@ -221,22 +227,34 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)accountSettings:(id)sender {
     if(self.operationsPaused)return;if(self.busy){if(self.loginActive)[self cancelLogin:nil];return;}
-    if(!self.connected){self.guided=YES;[self login:nil];return;}
-    NSAlert *alert=NSAlert.new;alert.messageText=@"GitHub 已连接";alert.informativeText=[self.github.authType isEqual:@"oauth"] ? @"私有课程通过 HTTPS 访问，无需 SSH。登录令牌只保存在本机。旧 GitHub App 安装需在 GitHub 单独撤销。" : @"正在使用旧 GitHub App 登录，可切换到统一 HTTPS 登录。";
+    if(!self.connected){[self setup:nil];return;}
+    NSAlert *alert=NSAlert.new;alert.messageText=@"GitHub 已连接";alert.informativeText=[@[@"oauth",@"githubCLI"] containsObject:self.github.authType] ? @"私有课程通过 HTTPS 访问，无需 SSH。登录令牌只保存在本机。旧 GitHub App 安装需在 GitHub 单独撤销。" : @"正在使用旧 GitHub App 登录，可切换到内置 GitHub 官方登录。";
     [alert addButtonWithTitle:@"配置课程…"];[alert addButtonWithTitle:@"退出登录"];[alert addButtonWithTitle:@"高级登录设置…"];[alert addButtonWithTitle:@"重新登录"];[alert addButtonWithTitle:@"关闭"];
     NSModalResponse choice=[alert runModal];if(choice==NSAlertFirstButtonReturn)[self addFork:nil];else if(choice==NSAlertSecondButtonReturn)[self signOut:nil];else if(choice==NSAlertThirdButtonReturn)[self authenticationSettings:nil];else if(choice==NSAlertThirdButtonReturn+1)[self login:nil];
 }
 - (void)authenticationSettings:(id)sender {
     if(self.busy || self.operationsPaused || self.preview)return;
-    NSAlert *alert=NSAlert.new;alert.messageText=@"登录与兼容设置";alert.informativeText=@"推荐统一浏览器登录。旧方式仍需要 App 安装及本机 SSH／钥匙串凭据。切换不会删除任务或旧授权。";
-    [alert addButtonWithTitle:@"统一浏览器登录"];[alert addButtonWithTitle:@"旧 GitHub App 登录"];[alert addButtonWithTitle:@"撤销旧 App 安装…"];[alert addButtonWithTitle:@"旧 App 公开配置…"];[alert addButtonWithTitle:@"旧 App 安装授权…"];[alert addButtonWithTitle:@"取消"];
+    NSAlert *alert=NSAlert.new;alert.messageText=@"登录与兼容设置";alert.informativeText=@"推荐内置 GitHub CLI 官方浏览器登录。旧 OAuth／GitHub App 仅供兼容，可能受组织限制。切换不删除任务或旧凭据。";
+    [alert addButtonWithTitle:@"GitHub 官方登录"];[alert addButtonWithTitle:@"旧 GitHub App 登录"];[alert addButtonWithTitle:@"撤销旧 App 安装…"];[alert addButtonWithTitle:@"旧 App 公开配置…"];[alert addButtonWithTitle:@"旧 App 安装授权…"];[alert addButtonWithTitle:@"旧 OAuth 登录"];[alert addButtonWithTitle:@"取消"];
     NSModalResponse choice=[alert runModal];if(choice==NSAlertThirdButtonReturn){[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://github.com/settings/installations"]];return;}
     if(choice==NSAlertThirdButtonReturn+1){[self setClientID:nil];return;}if(choice==NSAlertThirdButtonReturn+2){[self installApp:nil];return;}
-    if(choice!=NSAlertFirstButtonReturn && choice!=NSAlertSecondButtonReturn)return;NSError *error=nil;
-    if(![self.github selectAuthentication:choice==NSAlertFirstButtonReturn ? @"oauth":@"githubApp" error:&error]){[self showError:error];return;}
+    if(choice!=NSAlertFirstButtonReturn && choice!=NSAlertSecondButtonReturn && choice!=NSAlertThirdButtonReturn+3)return;NSError *error=nil;
+    if(![self.github selectAuthentication:choice==NSAlertFirstButtonReturn ? @"githubCLI":(choice==NSAlertSecondButtonReturn ? @"githubApp":@"oauth") error:&error]){[self showError:error];return;}
     [self configureCredentialAccess];self.connected=self.github.hasCredentials;if(!self.connected)[self login:nil];else [self refreshPresentation];
 }
-- (void)setup:(id)sender {self.guided=YES;if(!self.connected)[self accountSettings:nil];else [self addFork:nil];}
+- (void)setup:(id)sender {
+    if(self.busy || self.operationsPaused)return;self.guided=YES;
+    NSDictionary *saved=self.preview ? nil:SSReadPlist(@"onboarding.plist");
+    if(self.connected && ![saved[@"completed"] boolValue] && [saved[@"step"] integerValue]>=2 && [saved[@"records"] isKindOfClass:NSArray.class]){
+        self.setupRecords=NSMutableArray.array;for(NSDictionary *row in saved[@"records"])[self.setupRecords addObject:row.mutableCopy];self.setupStep=MIN(3,[saved[@"step"] integerValue]);self.setupSelection=saved[@"selected"];
+        [self presentCourseSetup];[self updateCourseSetup:@"继续上次配置。检查不会自动重复执行；可以重试未完成课程。"];return;
+    }
+    self.setupStep=self.connected ? 1:0;[self presentCourseSetup];if(self.connected)[self addFork:nil];
+}
+- (void)startUsing:(id)sender {
+    if(self.busy || self.operationsPaused)return;NSAlert *alert=NSAlert.new;alert.messageText=@"开始使用";alert.informativeText=@"查看四个日常操作的说明，或继续配置课程。";[alert addButtonWithTitle:@"查看使用提示"];[alert addButtonWithTitle:@"重新运行配置引导"];[alert addButtonWithTitle:@"取消"];
+    NSInteger choice=[alert runModal];if(choice==NSAlertFirstButtonReturn){self.setupStep=4;[self presentCourseSetup];[self updateCourseSetup:@""];}else if(choice==NSAlertSecondButtonReturn){self.setupStep=self.connected ? 1:0;[self presentCourseSetup];if(self.connected)[self addFork:nil];}
+}
 - (void)chooseLocalFolder {
     NSAlert *alert = NSAlert.new; alert.messageText = @"关联课程文件夹"; alert.informativeText = @"已下载课程仓库时选择已有文件夹；还未下载时选择保存位置。";
     [alert addButtonWithTitle:@"选择已有文件夹"]; [alert addButtonWithTitle:@"下载课程仓库"]; [alert addButtonWithTitle:@"稍后"];
@@ -449,36 +467,33 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSString *installationURL = [install.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (installationURL.length && [installationURL rangeOfString:@"^https://github\\.com/apps/[a-z0-9-]+/installations/new$" options:NSRegularExpressionSearch].location == NSNotFound) { [self status:@"安装页面链接格式无效。"]; return; }
     NSError *error = nil;
-    NSMutableDictionary *next=[SSReadPlist(@"settings.plist") mutableCopy] ?: NSMutableDictionary.dictionary;next[@"clientID"]=identifier;next[@"installationURL"]=installationURL;next[@"authType"]=@"githubApp";
+    NSMutableDictionary *next=[SSReadPlist(@"settings.plist") mutableCopy] ?: NSMutableDictionary.dictionary;next[@"clientID"]=identifier;next[@"installationURL"]=installationURL;next[@"authType"]=@"githubApp";next[@"authSelectionVersion"]=@2;
     if (!SSWritePlist(@"settings.plist", next, &error)) { [self showError:error]; return; }
     self.github.authType=@"githubApp";self.github.clientID = identifier; self.github.installationURL = installationURL;[self configureCredentialAccess];self.connected=self.github.hasCredentials; [self status:@"已保存公开应用信息。请先安装授权，再登录。"];
 }
 - (void)login:(id)sender {
-    [self work:@"正在申请 GitHub 设备授权…" operation:^id(NSError **error) { return [self.github beginDeviceLogin:error]; } completion:^(NSDictionary *challenge, NSError *error) {
-        if (self.operationsPaused) return;
-        if (!challenge) { [self showError:error]; return; }
-        NSAlert *alert = [NSAlert new]; alert.messageText = [@"请在 GitHub 输入代码 " stringByAppendingString:challenge[@"user_code"] ?: @""];
-        alert.informativeText = [self.github.authType isEqual:@"oauth"] ? @"GitHub 将授权私有仓库访问（repo），范围比所选课程更宽。软件仅操作你选择的课程，令牌只存本机；无需安装 App 或配置 SSH。" : @"旧方式：先安装授权自己的 fork；老师上游仍使用本机 Git 凭据。";
-        [alert addButtonWithTitle:@"复制代码并打开 GitHub"]; [alert addButtonWithTitle:@"取消"];
-        if ([alert runModal] != NSAlertFirstButtonReturn) return;
-        [NSPasteboard.generalPasteboard clearContents];[NSPasteboard.generalPasteboard setString:challenge[@"user_code"] forType:NSPasteboardTypeString];
-        [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://github.com/login/device"]];
-        self.loginActive = YES;
-        [self work:@"等待 GitHub 授权…" operation:^id(NSError **innerError) { return @([self.github completeDeviceLogin:challenge error:innerError]); } completion:^(NSNumber *ok, NSError *innerError) {
-            self.loginActive = NO;
-            if (!ok.boolValue) { [self showError:innerError]; return; }
-            self.connected = YES; [self configureCredentialAccess];[self refreshPresentation];[self status:@"GitHub 已连接，课程通过 HTTPS 访问。"];if(!self.operationsPaused)[self addFork:nil];
-        }];
-    }];
+    if(self.busy || self.operationsPaused)return;
+    self.setupStep=0;self.loginChallenge=nil;[self presentCourseSetup];self.loginActive=YES;
+    [self work:@"正在连接内置 GitHub 官方登录工具…" operation:^id(NSError **error) { return [self.github beginDeviceLogin:error]; } completion:^(NSDictionary *challenge, NSError *error) {
+        if (!challenge) {self.loginActive=NO;[self updateCourseSetup:error.localizedDescription ?: @"连接暂缓，可以稍后重试。"];return;}
+        if(self.operationsPaused || !self.setupWindow)[self.github cancelDeviceLogin];
+        self.loginChallenge=challenge;[self updateCourseSetup:@"请复制验证码并打开 GitHub。完成网页授权后自动继续。"];
+        [self work:@"等待浏览器登录并核验账户…" operation:^id(NSError **innerError) { return @([self.github completeDeviceLogin:challenge error:innerError]); } completion:^(NSNumber *ok, NSError *innerError) {
+            self.loginActive=NO;self.loginChallenge=nil;
+            if(!ok.boolValue){[self updateCourseSetup:innerError.localizedDescription ?: @"登录未完成，请重试。"];return;}
+            self.connected=YES;[self configureCredentialAccess];[self refreshPresentation];
+            if(!self.operationsPaused && self.setupWindow)[self addFork:nil];
+        }];[self updateCourseSetup:@"等待你在 GitHub 完成登录…"];
+    }];[self updateCourseSetup:@"正在获取验证码…"];
 }
 - (void)cancelLogin:(id)sender { if (self.loginActive) { [self.github cancelDeviceLogin]; [self status:@"正在取消登录…"]; } }
 - (void)signOut:(id)sender { if (self.busy || self.preview || self.operationsPaused) return; [self.github signOut]; self.connected = NO; [self refreshPresentation]; [self status:@"已退出登录；本地课程和 DDL 已保留。"] ; }
 - (void)addFork:(id)sender {
-    if(!self.connected){self.guided=YES;[self login:nil];return;}
+    if(!self.connected){[self setup:nil];return;}
     [self work:@"正在读取个人课程 fork…" forCourse:nil operation:^id(NSError **error){return [self.github accessibleForks:error];} completion:^(NSArray *forks,NSError *error){
-        if(!forks){[self showError:error];return;}self.availableForks=forks;self.setupRecords=NSMutableArray.array;
-        for(NSDictionary *repo in forks){NSDictionary *existing=[self savedCourse:@{@"fork":repo[@"full_name"]}];if([existing[@"path"] length] && [existing[@"connectionAuth"] isEqual:self.github.authType] && !self.reports[existing[@"fork"]][@"error"])continue;NSMutableDictionary *row=[@{@"fork":repo[@"full_name"],@"existing":@([self courseExists:repo[@"full_name"]])} mutableCopy];[self.setupRecords addObject:row];}
-        [self presentCourseSetup];
+        if(!forks){[self updateCourseSetup:error.localizedDescription];return;}self.availableForks=forks;self.setupStep=1;self.setupRecords=NSMutableArray.array;
+        for(NSDictionary *repo in forks){NSMutableDictionary *row=[@{@"fork":repo[@"full_name"],@"existing":@([self courseExists:repo[@"full_name"]])} mutableCopy];[self.setupRecords addObject:row];}
+        [self presentCourseSetup];NSMutableArray *selected=NSMutableArray.array;for(NSDictionary *row in self.setupRecords)if([row[@"existing"] boolValue])[selected addObject:row[@"fork"]];self.setupSelection=selected;[self.setupWorkspace updateContext:@{@"selected":selected}];[self updateCourseSetup:@"已添加课程默认选中；选择需要管理的其他个人 fork。"];
     }];
 }
 - (BOOL)courseExists:(NSString *)fork { for (NSDictionary *course in self.courses) if ([course[@"fork"] caseInsensitiveCompare:fork] == NSOrderedSame) return YES; return NO; }
@@ -533,6 +548,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     else [self status:@"尚未配置安装页面。开发者请按仓库 docs/GITHUB_APP_SETUP.md 注册后填写公开安装链接。"];
 }
 - (void)scanAll:(id)sender {
+    if(!self.connected || self.setupWindow.sheetParent)return;
     NSMutableArray *enabled = NSMutableArray.array;
     for (NSDictionary *course in self.courses) if (!course[@"enabled"] || [course[@"enabled"] boolValue]) [enabled addObject:[course copy]];
     [self scanCourses:enabled];
@@ -580,6 +596,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             if (items.count) {NSUInteger before=self.tasksProvider ? self.tasksProvider().count : 0;NSString *message=self.saveReviewItems(items,YES); if (message.length) [messages addObject:message]; else {NSString *notice=[NSString stringWithFormat:@"自动加入 %lu 项完整日期作业；可在“任务”菜单撤销本次加入。",(unsigned long)MAX((NSInteger)0,(NSInteger)(self.tasksProvider ? self.tasksProvider().count : 0)-(NSInteger)before)];[messages addObject:notice];for(NSDictionary *course in courses)self.statuses[course[@"fork"]]=[self.statuses[course[@"fork"]] stringByAppendingFormat:@" · %@",notice];} }
         }
         [self saveCourses]; [self refreshCourses];
+        if(self.firstCheckRunning){self.firstCheckRunning=NO;for(NSMutableDictionary *row in self.setupRecords){NSDictionary *scan=result[row[@"fork"]];if(!scan)continue;row[@"status"]=self.statuses[row[@"fork"]] ?: @"检查已完成";row[@"detail"]=scan[@"detail"] ?: @"";row[@"invalid"]=@([scan[@"error"] length]>0);}[self updateCourseSetup:@"首次检查结束。可重试失败课程，或完成并查看使用提示。"];}
         if (courses.count > 1) self.statuses[@"all"] = messages.count ? [messages componentsJoinedByString:@"；"] : @"尚未关联可扫描的仓库。"; else if (!messages.count) [self status:@"请先关联本地课程文件夹，再检查作业。"];
     }];
 }
