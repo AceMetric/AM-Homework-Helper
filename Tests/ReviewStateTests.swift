@@ -35,6 +35,24 @@ import Foundation
         suggested.removeValue(forKey:"warnings");suggested.removeValue(forKey:"dateBasis");state.load(suggested as NSDictionary);check(!state.hasDate,"unverified suggestion cannot prefill")
         updated["existingTask"]=["title":"原名称","notes":"","due":state.date,"reminderOffsets":[300,0]] as NSDictionary
         state.load(updated as NSDictionary);check(state.notes.isEmpty && state.reminderOffsets==[300,0],"existing empty notes and custom reminders preserved")
+        let checkedState=ReviewState();checkedState.refresh([record as NSDictionary]);checkedState.checked=["source-1"]
+        var reviewed=record;reviewed["reviewStatus"]="已导入";checkedState.refresh([reviewed as NSDictionary])
+        check(checkedState.checked.isEmpty,"reviewed source immediately leaves batch selection even in all-results filter")
+        let savedState=ReviewState();savedState.refresh([record as NSDictionary]);savedState.dirty=true
+        savedState.save={_ in savedState.refresh([]);return ""}
+        check(savedState.saveCurrent(advance:false) && savedState.records.isEmpty && savedState.current==nil,"saved source removed by refresh cannot leave a stale review detail")
+        let courseReview=CourseState();var courseRecord=record;courseRecord["existingTask"]=["title":"作业","notes":"保存后的备注","due":Date(),"reminderOffsets":[60,0]]
+        courseReview.update([courseRecord as NSDictionary],selected:"source-1",information:"",empty:"",paused:false)
+        check(courseReview.review.notes=="保存后的备注" && courseReview.review.current != nil,"course side editor loads persisted task notes")
+        var joined:[String:Any]=["id":"task-uuid","confirmed":true,"notes":"保存后的备注","reviewRecord":courseRecord]
+        courseReview.update([joined as NSDictionary],selected:"task-uuid",information:"",empty:"",paused:false)
+        check(courseReview.review.selected=="source-1" && courseReview.selected=="task-uuid","joined task row maps to the correct review source")
+        courseReview.review.notes="未保存草稿";courseReview.review.dirty=true;courseRecord["blobSHA"]="updated-source";joined["reviewRecord"]=courseRecord
+        courseReview.update([joined as NSDictionary],selected:"task-uuid",information:"",empty:"",paused:false)
+        check(courseReview.review.notes=="未保存草稿" && courseReview.review.current?["blobSHA"] as? String=="v1","course background update preserves draft and source version")
+        courseReview.update([],selected:"",information:"",empty:"没有匹配",paused:false)
+        check(courseReview.current?["id"] as? String=="task-uuid" && courseReview.review.notes=="未保存草稿","search filtering cannot hide or destroy course draft")
+        courseReview.review.save={_ in "写入失败"};check(!courseReview.review.saveCurrent(advance:false) && courseReview.review.dirty,"inline save failure retains notes")
         let settings=SettingsState();settings.apply(["mode":"rules","endpoint":"http://localhost:11434","model":"","automaticImport":true] as NSDictionary)
         settings.key="temporary input";settings.dirty=true;settings.save={_,_ in "失败"};check(!settings.persist() && settings.dirty && !settings.key.isEmpty,"failed settings save preserves draft")
         settings.save={config,key in check(config["key"]==nil && key=="temporary input","credential separated from settings dictionary");return ""}

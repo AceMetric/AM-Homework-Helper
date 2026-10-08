@@ -129,6 +129,13 @@ int main(int argc, const char *argv[]) {
         CheckUI(!app.sidebar.hidden && app.page == 2, @"task page retains sidebar");
         [app.window setContentSize:NSMakeSize(960, 640)]; [app layout];
         CheckUI(NSMaxX(app.search.frame) <= NSWidth(app.root.bounds), @"search fits minimum window");
+        NSDictionary *noteTask=@{@"id":@"notes-fixture",@"title":@"备注显示测试",@"subject":@"模拟课程",@"notes":@"审核保存的备注\n第二行",@"due":NSDate.date,@"completed":@NO};
+        Surface *noteRow=[app taskRow:noteTask width:700];BOOL noteVisible=NO;
+        for(NSView *view in noteRow.subviews)if([view isKindOfClass:NSTextField.class] && [((NSTextField *)view).stringValue containsString:@"审核保存的备注"])noteVisible=YES;
+        CheckUI(noteVisible && [app taskRowHeight:noteTask base:80]>80,@"saved task notes are visible instead of tooltip-only");
+        NSButton *expand=NSButton.new;expand.identifier=noteTask[@"id"];[app toggleTaskNotes:expand];noteRow=[app taskRow:noteTask width:700];BOOL scrollNotes=NO;
+        for(NSView *view in noteRow.subviews)if([view isKindOfClass:NSScrollView.class] && [((NSTextView *)((NSScrollView *)view).documentView).string isEqual:noteTask[@"notes"]])scrollNotes=YES;
+        CheckUI(scrollNotes && [app taskRowHeight:noteTask base:80]==264,@"expanded notes expose full text in scrollable row");
         [app openCalendar:nil]; CheckUI(NSMinY(app.agenda.frame) >= NSMaxY(app.calendarScroll.frame), @"compact calendar places agenda beneath months");
         [app.window setContentSize:NSMakeSize(1280, 840)]; [app layout];
         CheckUI(NSMinX(app.agenda.frame) > NSMaxX(app.calendarScroll.frame), @"wide calendar places agenda alongside months");
