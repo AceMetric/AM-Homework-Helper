@@ -54,6 +54,7 @@ chmod 700 "$CONTENTS/Resources/SSAskPass.sh"
 chmod +x "$CONTENTS/MacOS/DDLManager"
 cp "$SPARKLE_DIR/LICENSE" "$CONTENTS/Resources/Sparkle-LICENSE.txt"
 cp "$SCRIPT_DIR/LICENSE" "$CONTENTS/Resources/DDL-Manager-LICENSE.txt"
+cp "$SCRIPT_DIR/Skills/am-homework-extract/SKILL.md" "$CONTENTS/Resources/am-homework-extract.md"
 cp "$SCRIPT_DIR/docs/ATTRIBUTION.md" "$CONTENTS/Resources/ATTRIBUTION.md"
 # Preserve upstream framework/helper signatures; sign the host only.
 codesign --force --sign - "$APP_DIR"

@@ -276,3 +276,5 @@ NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *pat
     if (!error || !*error) cache[key]=found;
     return found;
 }
+
+#import "SSSkill.inc"
