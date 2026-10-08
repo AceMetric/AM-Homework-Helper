@@ -55,7 +55,7 @@ static NSMutableDictionary *Fixture(void) {
         NSString *arg = args[i], *repo = SSCanonicalRepository(arg);
         if (!repo) continue;
         if ([repo isEqual:@"teacher/course"]) {
-            Check(!token.length, @"teacher read never receives application token");
+            Check(self.teacherCredentialProvider ? ([token isEqual:@"oauth-test"] && [arg hasPrefix:@"https://"]) : !token.length, @"teacher read uses only bound OAuth HTTPS or legacy local credentials");
             if (self.denyTeacher) { SSGitResult *r = SSGitResult.new; r.status = 128; r.data = NSData.data; r.diagnostic = @"private upstream access denied"; return r; }
             mapped[i] = [@"file://" stringByAppendingString:self.fixture[@"teacherBare"]];
         } else if ([repo isEqual:@"student/course"]) mapped[i] = [@"file://" stringByAppendingString:self.fixture[@"forkBare"]];
@@ -75,6 +75,7 @@ static void Cleanup(NSDictionary *fixture) { [NSFileManager.defaultManager remov
 @property NSMutableArray *forms;
 @property NSMutableArray *intervals;
 @property NSUInteger tokenStep;
+@property BOOL insufficientScope;
 @end
 @implementation FixtureAPI
 - (instancetype)init { if ((self = [super init])) { self.clientID = @"Iv1publicClient"; self.forms = NSMutableArray.array; self.intervals = NSMutableArray.array; } return self; }
@@ -89,7 +90,7 @@ static void Cleanup(NSDictionary *fixture) { [NSFileManager.defaultManager remov
         self.tokenStep++;
         if (self.tokenStep == 1) return @{@"error":@"authorization_pending"};
         if (self.tokenStep == 2) return @{@"error":@"slow_down", @"interval":@10};
-        return @{@"access_token":@"test-access", @"refresh_token":@"test-refresh", @"expires_in":@28800};
+        return @{@"access_token":@"test-access", @"refresh_token":@"test-refresh", @"expires_in":@28800,@"scope":self.insufficientScope ? @"read:user":@"repo"};
     }
     NSString *key = [url.path stringByAppendingFormat:@"%@%@", url.query.length ? @"?" : @"", url.query ?: @""];
     id result = self.responses[key]; if (!result && error) *error = GHError(@"simulated API failure"); return result;
@@ -245,6 +246,28 @@ static void APITests(void) {
     Check([api verifyCourse:wrong error:&error] == nil, @"wrong parent rejected");
     [api beginDeviceLogin:&error]; [api cancelDeviceLogin]; Check(![api completeDeviceLogin:challenge error:&error], @"device login cancellable");
 }
+static void OAuthTests(void) {
+    FixtureAPI *api=FixtureAPI.new;api.authType=@"oauth";api.clientID=@"OvpublicTestClient";api.responses=@{@"/user":@{@"login":@"student",@"id":@42},@"/user/repos?affiliation=owner&per_page=100&page=1":@[@{@"fork":@YES,@"full_name":@"student/course",@"owner":@{@"login":@"student"}},@{@"fork":@YES,@"full_name":@"someone/course",@"owner":@{@"login":@"someone"}},@{@"fork":@NO,@"owner":@{@"login":@"student"}}]};NSError *error=nil;
+    NSDictionary *challenge=[api beginDeviceLogin:&error];Check([api.forms.lastObject[@"scope"] isEqual:@"repo"],@"OAuth device flow explicitly requests repo");
+    Check([api completeDeviceLogin:challenge error:&error] && [api.credentials[@"authType"] isEqual:@"oauth"] && [api.credentials[@"userID"] isEqual:@42],@"OAuth verifies account before saving separate credentials");
+    Check([api accessibleForks:&error].count==1,@"OAuth lists own forks without installation API");
+    api.credentials=nil;api.insufficientScope=YES;api.tokenStep=2;Check(![api completeDeviceLogin:challenge error:&error] && !api.credentials,@"OAuth denied repo scope does not save a misleading login");api.insufficientScope=NO;
+    NSMutableDictionary *expiredChallenge=challenge.mutableCopy;expiredChallenge[@"expires_at"]=[NSDate dateWithTimeIntervalSinceNow:-1];NSUInteger polls=api.forms.count;Check(![api completeDeviceLogin:expiredChallenge error:&error] && api.forms.count==polls,@"expired device challenge is not extended while user waits in browser");
+    api.responses=@{};api.tokenStep=2;Check(![api completeDeviceLogin:challenge error:&error] && !api.credentials,@"OAuth account verification failure preserves prior credential store");
+    NSMutableDictionary *f=Fixture();FixtureGit *git=Service(f);git.teacherCredentialProvider=^NSString *(NSDictionary *course,NSError **issue){return @"oauth-test";};NSString *origin=Git(f[@"path"],@[@"remote",@"get-url",@"origin"]),*upstream=Git(f[@"path"],@[@"remote",@"get-url",@"upstream"]),*head=Git(f[@"path"],@[@"rev-parse",@"HEAD"]);
+    Check([git linkCourse:f error:&error],@"OAuth links existing SSH teacher remote without SSH authentication");
+    Check([git scanCourse:f cache:NSMutableDictionary.dictionary error:&error]!=nil,@"OAuth teacher scan reads verified HTTPS using local token");
+    Check([Git(f[@"path"],@[@"remote",@"get-url",@"origin"]) isEqual:origin] && [Git(f[@"path"],@[@"remote",@"get-url",@"upstream"]) isEqual:upstream] && [Git(f[@"path"],@[@"rev-parse",@"HEAD"]) isEqual:head],@"OAuth scan preserves remote settings and work branch");
+    NSString *teacher=@"https://github.com/teacher/course.git",*fork=@"https://github.com/student/course.git";
+    Check(![git remoteArguments:@[@"push",@"--",teacher,@"HEAD:refs/heads/main"] course:f role:@"teacherRead" error:&error],@"teacher context cannot push even with broad OAuth token");
+    Check(![git remoteArguments:@[@"push",@"--",teacher,@"HEAD:refs/heads/main"] course:f role:@"personalPush" error:&error],@"teacher target cannot masquerade as personal push");
+    Check(![git remoteArguments:@[@"fetch",@"--",fork,@"main"] course:f role:@"teacherRead" error:&error],@"teacher credential target is bound");
+    Check([git remoteArguments:@[@"fetch",@"--",teacher,@"main"] course:f role:@"teacherRead" error:&error]!=nil,@"teacher fetch accepted");
+    NSDictionary *matches=[git matchingDirectories:f[@"root"] courses:@[f]];Check([matches[f[@"fork"]] count]==1 && [[[matches[f[@"fork"]] firstObject] stringByResolvingSymlinksInPath] isEqual:[f[@"path"] stringByResolvingSymlinksInPath]],@"directory discovery matches Git identity at bounded depth");
+    NSString *nested=[f[@"root"] stringByAppendingPathComponent:@"one/two/three"];[NSFileManager.defaultManager createDirectoryAtPath:nested withIntermediateDirectories:YES attributes:nil error:NULL];Git(f[@"root"],@[@"clone",f[@"path"],nested]);Git(nested,@[@"remote",@"set-url",@"origin",fork]);Check([[git matchingDirectories:f[@"root"] courses:@[f]][f[@"fork"]] count]==1,@"directory discovery excludes repositories below two levels");
+    git.denyTeacher=YES;Check(![git scanCourse:f cache:NSMutableDictionary.dictionary error:&error],@"private teacher refusal remains explicit");Cleanup(f);
+    Check([GitError(@"git@github.com: Permission denied (publickey).").localizedDescription containsString:@"统一浏览器登录"],@"SSH error offers simple login remedy");
+}
 static void GitTests(void) {
     NSError *error = nil;
     NSMutableDictionary *f = Fixture(); FixtureGit *service = Service(f); NSString *path = f[@"path"];
@@ -343,4 +366,4 @@ static void GitTests(void) {
     Check([Git(path, @[@"rev-parse", @"HEAD"]) isEqual:before], @"divergence preserves local commit"); Cleanup(f);
 
 }
-int main(void) { @autoreleasepool { ParserTests(); SecurityTests(); APITests(); GitTests(); DateReferenceTests(); printf("PASS: %lu homework/API/Git/security assertions\n", (unsigned long)assertions); } return 0; }
+int main(void) { @autoreleasepool { ParserTests(); SecurityTests(); APITests(); OAuthTests(); GitTests(); DateReferenceTests(); printf("PASS: %lu homework/API/Git/security assertions\n", (unsigned long)assertions); } return 0; }

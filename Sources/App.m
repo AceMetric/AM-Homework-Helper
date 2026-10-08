@@ -993,7 +993,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
         else if ([action isEqual:@"updates"]) [owner.updates showSettings:nil];
         else if([action isEqual:@"skill-export"])[owner.courseWindow exportSkillContext:nil];
         else if([action isEqual:@"skill-import"])[owner.courseWindow importSkillResults:nil];
-        else if ([action isEqual:@"advanced"]) [owner.courseWindow setClientID:nil];
+        else if ([action isEqual:@"advanced"]) [owner.courseWindow authenticationSettings:nil];
     };
     self.settingsWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,640) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
     self.settingsWindow.title=@"设置"; self.settingsWindow.contentViewController=self.settingsController; self.settingsWindow.delegate=self;

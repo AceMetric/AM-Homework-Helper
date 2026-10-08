@@ -35,6 +35,15 @@ import Foundation
         check(courseState.current?["id"] as? String=="source-1","course detail remains linked to stable selection")
         courseState.update([],selected:"source-1",information:"all-course summary",empty:"",paused:true)
         check(courseState.current==nil && courseState.information=="all-course summary","all-course summary never retains stale selected material")
+        let setup=SetupState();setup.update([["fork":"student/one"],["fork":"student/two"]],step:0,busy:false,message:"")
+        setup.selected=["student/one","student/two"];setup.paths=["student/one":"original"]
+        var setupPayload:NSDictionary?;setup.action={setupPayload=$0};setup.send("select")
+        check((setupPayload?["selected"] as? [String])?.count==2,"setup emits one multi-course selection")
+        setup.update([["fork":"student/one","path":""],["fork":"student/two","path":"chosen"]],step:1,busy:true,message:"checking")
+        check(setup.paths["student/one"]=="" && setup.paths["student/two"]=="chosen","ambiguous directory clears stale automatic match")
+        check(setup.busy && setup.step==1 && setup.selected.count==2,"background setup retains selection and operation stage")
+        setup.query="two";check(setup.visible.count==1,"setup search filters course names")
+        setup.send("link");check((setupPayload?["paths"] as? [String:String])?["student/two"]=="chosen","setup links explicit course paths independently of current sidebar selection")
         print("PASS: \(count) SwiftUI state assertions")
     }
 }

@@ -84,5 +84,29 @@ class UpdateConfigurationTests(unittest.TestCase):
             update.validate_archive(archive, self.info)
 
 
+class AuthenticationPackagingTests(unittest.TestCase):
+    def test_public_auth_configuration(self):
+        import tempfile, subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory) / 'Info.plist'
+            bundle.write_bytes((ROOT / 'Info.plist').read_bytes())
+            subprocess.run(['python3', str(ROOT / 'Tools/configure-bundle.py'), str(ROOT / 'Config/GitHubApp.plist'), str(bundle)], check=True)
+            configured = plistlib.loads(bundle.read_bytes())
+            self.assertTrue(configured['SSOAuthClientID'].startswith('Ov'))
+            self.assertTrue(configured['SSGitHubClientID'].startswith('Iv'))
+            self.assertFalse(any('secret' in key.lower() for key in configured))
+
+    def test_askpass_bound_repository(self):
+        import os, subprocess
+        env = os.environ | {'SS_GIT_REPOSITORY':'github.com/student/course', 'SS_GIT_TOKEN':'fixture'}
+        helper = str(ROOT / 'Tools/SSAskPass.sh')
+        valid = subprocess.run(['/bin/sh', helper, "Password for 'https://" + "x-access-token@" + "github.com/Student/Course.git':"], env=env, capture_output=True, text=True)
+        self.assertEqual((valid.returncode, valid.stdout.strip()), (0,'fixture'))
+        for prompt in ["Password for 'https://github.com/teacher/course.git':", "Password for 'https://example.invalid/student/course.git':", "Password for 'https://github.com':"]:
+            result = subprocess.run(['/bin/sh', helper, prompt], env=env, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, '')
+
+
 if __name__ == '__main__':
     unittest.main()

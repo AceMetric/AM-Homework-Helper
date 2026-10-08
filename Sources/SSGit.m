@@ -5,7 +5,14 @@
 #import <signal.h>
 #include <math.h>
 
-static NSError *GitError(NSString *message) { return [NSError errorWithDomain:@"SSGit" code:1 userInfo:@{NSLocalizedDescriptionKey:SSRedactedText(message ?: @"Git 操作失败")}]; }
+static NSError *GitError(NSString *message) {
+    NSString *detail=SSRedactedText(message ?: @"Git 操作失败"),*issue=@"git",*friendly=detail;
+    if([detail containsString:@"Permission denied (publickey)"]){friendly=@"本机 SSH 身份验证失败。推荐切换到统一浏览器登录，无需配置 SSH。";issue=@"ssh";}
+    else if([detail containsString:@"Authentication failed"] || [detail containsString:@"could not read Username"] || [detail containsString:@"Invalid username or token"]){friendly=@"GitHub 登录或凭据失效，请重新登录。";issue=@"login";}
+    else if([detail containsString:@"Repository not found"]){friendly=@"无法读取课程仓库，请核对账户权限或学校授权。";issue=@"permission";}
+    else if([detail containsString:@"Could not resolve host"] || [detail containsString:@"Failed to connect"] || [detail containsString:@"timed out"]){friendly=@"无法连接 GitHub，请检查网络后重试。";issue=@"network";}
+    return [NSError errorWithDomain:@"SSGit" code:1 userInfo:@{NSLocalizedDescriptionKey:friendly,@"SSDetail":detail,@"SSIssue":issue}];
+}
 static NSError *PendingPushError(NSError *error) { return [NSError errorWithDomain:@"SSGit" code:2 userInfo:@{NSLocalizedDescriptionKey:[@"本地更新已保留，尚未推送。修复原因后选择“重试推送”：\n" stringByAppendingString:error.localizedDescription ?: @"网络或权限错误"], @"SSPendingPush":@YES}]; }
 static NSString *Trim(NSString *value) { return [value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]; }
 static NSArray *NonemptyParts(NSString *value, NSString *separator) {
@@ -31,7 +38,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSString *phase = commandIndex < arguments.count ? phases[arguments[commandIndex]] : nil; if (self.progress && phase) self.progress(phase);
     NSTask *task = NSTask.new;
     task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/git"];
-    NSMutableArray *args = [@[@"-c", @"core.hooksPath=/dev/null", @"-c", @"protocol.ext.allow=never", @"-c", @"http.followRedirects=false", @"-c", @"core.askPass=/usr/bin/false", @"-c", @"commit.gpgSign=false", @"-c", @"tag.gpgSign=false", @"-c", @"credential.helper="] mutableCopy];
+    NSMutableArray *args = [@[@"-c", @"core.hooksPath=/dev/null", @"-c", @"protocol.ext.allow=never", @"-c", @"http.followRedirects=false", @"-c", @"core.askPass=/usr/bin/false", @"-c", @"commit.gpgSign=false", @"-c", @"tag.gpgSign=false", @"-c", @"credential.helper=", @"-c", @"credential.useHttpPath=true"] mutableCopy];
     if (!token.length) [args addObjectsFromArray:@[@"-c", @"credential.helper=osxkeychain"]];
     [args addObjectsFromArray:arguments]; task.arguments = args;
     if (path.length) task.currentDirectoryURL = [NSURL fileURLWithPath:path isDirectory:YES];
@@ -47,7 +54,9 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     if (token.length) {
         NSString *askpass = [NSBundle.mainBundle pathForResource:@"SSAskPass" ofType:@"sh"];
         if (!askpass.length) { if (error) *error = GitError(@"应用缺少 Git 授权辅助程序"); return nil; }
-        environment[@"GIT_ASKPASS"] = askpass; environment[@"SS_GIT_TOKEN"] = token;
+        NSString *destination=nil;for(NSString *argument in arguments)if([argument hasPrefix:@"https://"]){if(destination || !SSCanonicalRepository(argument)){if(error)*error=GitError(@"拒绝向未经核验的地址提供凭据");return nil;}destination=argument;}
+        if(!destination || ![@[@"clone",@"fetch",@"push",@"ls-remote"] containsObject:arguments.firstObject]){if(error)*error=GitError(@"此操作不可使用网络凭据");return nil;}
+        environment[@"GIT_ASKPASS"] = askpass; environment[@"SS_GIT_TOKEN"] = token;environment[@"SS_GIT_REPOSITORY"] = [@"github.com/" stringByAppendingString:SSCanonicalRepository(destination)];
     }
     task.environment = environment;
     NSPipe *output = NSPipe.pipe, *diagnostic = NSPipe.pipe;
@@ -117,6 +126,43 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSString *login = user[@"login"], *email = [NSString stringWithFormat:@"%@+%@@users.noreply.github.com", user[@"id"], login];
     return @[@"-c", [@"user.name=" stringByAppendingString:login], @"-c", [@"user.email=" stringByAppendingString:email]];
 }
+- (NSArray *)remoteArguments:(NSArray *)arguments course:(NSDictionary *)course role:(NSString *)role error:(NSError **)error {
+    BOOL teacher=[role isEqual:@"teacherRead"], read=[role isEqual:@"personalRead"], write=[role isEqual:@"personalPush"];
+    NSString *repository=teacher ? course[@"upstream"] : course[@"fork"], *command=arguments.firstObject;
+    NSArray *allowed=teacher ? @[@"fetch",@"ls-remote"] : (read ? @[@"fetch",@"clone",@"ls-remote"] : @[@"push"]);
+    if((!teacher && !read && !write) || ![allowed containsObject:command] || !repository.length || [course[@"fork"] caseInsensitiveCompare:course[@"upstream"]]==NSOrderedSame){if(error)*error=GitError(@"操作与课程访问权限不符，已拒绝执行。");return nil;}
+    NSString *expected=[NSString stringWithFormat:@"https://github.com/%@.git",repository];NSUInteger destinations=0;
+    for(NSString *argument in arguments)if([argument containsString:@"://"] || [argument hasPrefix:@"git@"]){destinations++;if(![argument isEqual:expected]){if(error)*error=GitError(@"操作目标不是已核验的课程仓库，已停止。");return nil;}}
+    if(destinations!=1){if(error)*error=GitError(@"课程网络操作必须指定唯一仓库。");return nil;}
+    return arguments;
+}
+- (NSString *)teacherURL:(NSDictionary *)course path:(NSString *)path error:(NSError **)error {
+    if(self.teacherCredentialProvider)return [NSString stringWithFormat:@"https://github.com/%@.git",course[@"upstream"]];
+    SSGitResult *remote=[self checked:@[@"remote",@"get-url",@"upstream"] in:path token:nil error:error];return remote ? Trim([self string:remote]) : nil;
+}
+- (SSGitResult *)teacherRequest:(NSArray *)arguments course:(NSDictionary *)course error:(NSError **)error {
+    NSString *token=nil;
+    if(self.teacherCredentialProvider){
+        if(![self remoteArguments:arguments course:course role:@"teacherRead" error:error])return nil;
+        token=self.teacherCredentialProvider(course,error);if(!token.length)return nil;
+    }
+    return [self checked:arguments in:course[@"path"] token:token error:error];
+}
+- (NSDictionary *)matchingDirectories:(NSString *)root courses:(NSArray *)courses {
+    NSMutableDictionary *result=NSMutableDictionary.dictionary;for(NSDictionary *course in courses)result[course[@"fork"]]=NSMutableArray.array;
+    NSMutableArray *level=[NSMutableArray arrayWithObject:root];NSFileManager *manager=NSFileManager.defaultManager;
+    for(NSUInteger depth=0;depth<=2;depth++){
+        NSMutableArray *next=NSMutableArray.array;
+        for(NSString *path in level){
+            NSURL *url=[NSURL fileURLWithPath:path];NSNumber *symlink=nil;[url getResourceValue:&symlink forKey:NSURLIsSymbolicLinkKey error:NULL];if(symlink.boolValue)continue;
+            if([manager fileExistsAtPath:[path stringByAppendingPathComponent:@".git"]]){
+                SSGitResult *remote=[self run:@[@"config",@"--local",@"--no-includes",@"--get",@"remote.origin.url"] in:path token:nil error:NULL];NSString *identity=remote.status==0 ? SSCanonicalRepository([self string:remote]) : nil;
+                for(NSDictionary *course in courses)if([identity isEqual:[course[@"fork"] lowercaseString]])[result[course[@"fork"]] addObject:path];continue;
+            }
+            if(depth<2)for(NSURL *child in [manager contentsOfDirectoryAtURL:url includingPropertiesForKeys:@[NSURLIsDirectoryKey,NSURLIsSymbolicLinkKey] options:NSDirectoryEnumerationSkipsHiddenFiles error:NULL]){NSNumber *directory=nil,*link=nil;[child getResourceValue:&directory forKey:NSURLIsDirectoryKey error:NULL];[child getResourceValue:&link forKey:NSURLIsSymbolicLinkKey error:NULL];if(directory.boolValue && !link.boolValue)[next addObject:child.path];}
+        }level=next;
+    }return result;
+}
 - (BOOL)linkCourse:(NSDictionary *)course error:(NSError **)error {
     NSString *path = course[@"path"];
     if (![self safeConfiguration:path error:error]) return NO;
@@ -125,13 +171,13 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     SSGitResult *remote = [self run:@[@"remote", @"get-url", @"upstream"] in:path token:nil error:NULL];
     if (!remote || remote.status != 0) {
         NSString *url = course[@"upstreamURL"];
-        if ([Trim([self string:origin]) hasPrefix:@"git@"] || [Trim([self string:origin]) hasPrefix:@"ssh://"]) url = [NSString stringWithFormat:@"git@github.com:%@.git", course[@"upstream"]];
+        if (!self.teacherCredentialProvider && ([Trim([self string:origin]) hasPrefix:@"git@"] || [Trim([self string:origin]) hasPrefix:@"ssh://"])) url = [NSString stringWithFormat:@"git@github.com:%@.git", course[@"upstream"]];
         if (![SSCanonicalRepository(url ?: @"") isEqual:[course[@"upstream"] lowercaseString]]) { if (error) *error = GitError(@"老师上游地址无效。"); return NO; }
         if (![self checked:@[@"remote", @"add", @"upstream", url] in:path token:nil error:error]) return NO;
     }
     if (![self validateCourse:course error:error]) return NO;
-    SSGitResult *url = [self checked:@[@"remote", @"get-url", @"upstream"] in:path token:nil error:error]; if (!url) return NO;
-    SSGitResult *heads = [self checked:@[@"ls-remote", @"--heads", @"--", Trim([self string:url]), [@"refs/heads/" stringByAppendingString:course[@"upstreamBranch"]]] in:path token:nil error:error];
+    NSString *url=[self teacherURL:course path:path error:error];if(!url)return NO;
+    SSGitResult *heads = [self teacherRequest:@[@"ls-remote", @"--heads", @"--", url, [@"refs/heads/" stringByAppendingString:course[@"upstreamBranch"]]] course:course error:error];
     if (!heads || !Trim([self string:heads]).length) { if (error && !*error) *error = GitError(@"无法读取老师主分支。请在本机配置可用的 SSH 或 Git 钥匙串凭据。"); return NO; }
     return YES;
 }
@@ -139,9 +185,11 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     if (![self authorize:course error:error]) return NO;
     if ([NSFileManager.defaultManager fileExistsAtPath:destination]) { if (error) *error = GitError(@"目标文件夹已存在；可以直接关联已克隆的仓库。"); return NO; }
     NSString *url = [NSString stringWithFormat:@"https://github.com/%@.git", course[@"fork"]];
-    if (![self checked:@[@"clone", @"--origin", @"origin", @"--", url, destination] in:destination.stringByDeletingLastPathComponent token:token error:error]) return NO;
+    NSArray *clone=[self remoteArguments:@[@"clone",@"--origin",@"origin",@"--",url,destination] course:course role:@"personalRead" error:error];
+    if(!clone || ![self checked:clone in:destination.stringByDeletingLastPathComponent token:token error:error])return NO;
     NSString *teacherURL = course[@"upstreamURL"];
     if (![SSCanonicalRepository(teacherURL ?: @"") isEqual:[course[@"upstream"] lowercaseString]]) { if (error) *error = GitError(@"老师上游地址无效。"); return NO; }
+    if([self checked:@[@"remote",@"get-url",@"upstream"] in:destination token:nil error:NULL])return YES;
     return [self checked:@[@"remote", @"add", @"upstream", teacherURL] in:destination token:nil error:error] != nil;
 }
 - (NSString *)fetch:(NSString *)url branch:(NSString *)branch path:(NSString *)path token:(NSString *)token error:(NSError **)error {
@@ -149,8 +197,8 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     SSGitResult *head = [self checked:@[@"rev-parse", @"FETCH_HEAD"] in:path token:nil error:error];
     return head ? Trim([self string:head]) : nil;
 }
-- (NSString *)teacherBranch:(NSString *)url path:(NSString *)path error:(NSError **)error {
-    SSGitResult *refs = [self checked:@[@"ls-remote", @"--symref", @"--", url, @"HEAD"] in:path token:nil error:error];
+- (NSString *)teacherBranch:(NSString *)url course:(NSDictionary *)course error:(NSError **)error {
+    SSGitResult *refs = [self teacherRequest:@[@"ls-remote", @"--symref", @"--", url, @"HEAD"] course:course error:error];
     if (!refs) return nil;
     for (NSString *line in [[self string:refs] componentsSeparatedByString:@"\n"]) {
         if ([line hasPrefix:@"ref: refs/heads/"]) {
@@ -184,9 +232,10 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
 - (NSDictionary *)scanCourse:(NSDictionary *)course cache:(NSMutableDictionary *)cache error:(NSError **)error {
     if (![self validateCourse:course error:error]) return nil;
     NSString *path = course[@"path"];
-    SSGitResult *url = [self checked:@[@"remote", @"get-url", @"upstream"] in:path token:nil error:error]; if (!url) return nil;
-    NSString *branch = [self teacherBranch:Trim([self string:url]) path:path error:error]; if (!branch) return nil;
-    NSString *head = [self fetch:Trim([self string:url]) branch:branch path:path token:nil error:error]; if (!head) return nil;
+    NSString *url=[self teacherURL:course path:path error:error];if(!url)return nil;
+    NSString *branch=[self teacherBranch:url course:course error:error];if(!branch)return nil;
+    if(![self teacherRequest:@[@"fetch",@"--no-tags",@"--",url,[@"refs/heads/" stringByAppendingString:branch]] course:course error:error])return nil;
+    SSGitResult *tip=[self checked:@[@"rev-parse",@"FETCH_HEAD"] in:path token:nil error:error];NSString *head=tip ? Trim([self string:tip]) : nil;if(!head)return nil;
     SSGitResult *tree = [self checked:@[@"ls-tree", @"-r", @"-l", @"-z", head] in:path token:nil error:error]; if (!tree) return nil;
     NSMutableArray *candidates = NSMutableArray.array, *materials = NSMutableArray.array, *skipped = NSMutableArray.array;
     NSMutableArray *documents = NSMutableArray.array, *recognitionMessages = NSMutableArray.array;
@@ -324,7 +373,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     if (![self authorize:course error:error] || ![self validateCourse:course error:error] || ![self submissionBranch:course error:error]) return NO;
     NSString *ref = [NSString stringWithFormat:@"%@:refs/heads/%@", head, course[@"branch"]];
     // Immutable commit + a freshly verified, explicit HTTPS fork URL. Never use push.default/pushurl.
-    return [self checked:@[@"push", @"--", url, ref] in:path token:token error:error] != nil;
+    NSArray *push=[self remoteArguments:@[@"push",@"--",url,ref] course:course role:@"personalPush" error:error];return push && [self checked:push in:path token:token error:error] != nil;
 }
 - (NSDictionary *)syncCourse:(NSDictionary *)course token:(NSString *)token error:(NSError **)error {
     NSDictionary *user = [self authorize:course error:error];
@@ -332,9 +381,10 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSString *path = course[@"path"], *url = [NSString stringWithFormat:@"https://github.com/%@.git", course[@"fork"]];
     NSString *base = [self fetch:url branch:course[@"branch"] path:path token:token error:error]; if (!base) return nil;
     if (![self checked:[[self authorArguments:user] arrayByAddingObjectsFromArray:@[@"merge", @"--ff-only", base]] in:path token:nil error:error]) return nil;
-    SSGitResult *remote = [self checked:@[@"remote", @"get-url", @"upstream"] in:path token:nil error:error]; if (!remote) return nil;
-    NSString *teacherBranch = [self teacherBranch:Trim([self string:remote]) path:path error:error]; if (!teacherBranch) return nil;
-    NSString *teacher = [self fetch:Trim([self string:remote]) branch:teacherBranch path:path token:nil error:error]; if (!teacher) return nil;
+    NSString *teacherURL=[self teacherURL:course path:path error:error];if(!teacherURL)return nil;
+    NSString *teacherBranch=[self teacherBranch:teacherURL course:course error:error];if(!teacherBranch)return nil;
+    if(![self teacherRequest:@[@"fetch",@"--no-tags",@"--",teacherURL,[@"refs/heads/" stringByAppendingString:teacherBranch]] course:course error:error])return nil;
+    SSGitResult *teacherTip=[self checked:@[@"rev-parse",@"FETCH_HEAD"] in:path token:nil error:error];NSString *teacher=teacherTip ? Trim([self string:teacherTip]) : nil;if(!teacher)return nil;
     SSGitResult *merge = [self run:[[self authorArguments:user] arrayByAddingObjectsFromArray:@[@"merge", @"--no-edit", teacher]] in:path token:nil error:error]; if (!merge) return nil;
     if (merge.status != 0) {
         NSArray *files = [self conflicts:course error:NULL];

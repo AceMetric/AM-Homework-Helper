@@ -3,6 +3,10 @@
 NS_ASSUME_NONNULL_BEGIN
 @interface SSGitHub : NSObject
 @property (copy) NSString *clientID;
+@property (copy) NSString *authType; // oauth or githubApp; never inferred from a token
+@property (readonly) BOOL hasCredentials;
+- (BOOL)selectAuthentication:(NSString *)type error:(NSError **)error;
+- (NSDictionary * _Nullable)readableTeacher:(NSDictionary *)course error:(NSError **)error;
 @property (copy) NSString *installationURL;
 - (NSDictionary * _Nullable)beginDeviceLogin:(NSError **)error;
 - (BOOL)completeDeviceLogin:(NSDictionary *)challenge error:(NSError **)error;
