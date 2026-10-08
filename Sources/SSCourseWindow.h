@@ -39,6 +39,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)layoutContent;
 - (void)focusSearch;
 - (void)accountSettings:(nullable id)sender;
+- (void)authenticationSettings:(nullable id)sender;
 - (void)setClientID:(nullable id)sender;
 @end
 NS_ASSUME_NONNULL_END

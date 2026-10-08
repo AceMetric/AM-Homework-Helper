@@ -13,8 +13,8 @@ if [[ "$mode" != "--candidate" ]]; then
 import plistlib
 from pathlib import Path
 config = plistlib.loads(Path('Config/GitHubApp.plist').read_bytes())
-if not config.get('clientID') or not config.get('installationURL'):
-    raise SystemExit('正式包需要公开 GitHub App 配置，请按 docs/GITHUB_APP_SETUP.md 注册。')
+if not config.get('oauthClientID'):
+    raise SystemExit('正式包需要公开 OAuth Client ID，请按 docs/GITHUB_APP_SETUP.md 注册。')
 PY
 fi
 zsh build.sh

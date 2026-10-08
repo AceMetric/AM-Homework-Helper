@@ -6,6 +6,7 @@
 #import "DDLUI.h"
 #import "SSAssignments.h"
 #import "SSRecognition.h"
+#import "SSSecurity.h"
 #import "AMUI-Swift.h"
 
 #import "SSSubmission.inc"
@@ -58,6 +59,11 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property BOOL connected;
 @property BOOL preview;
 @property BOOL guided;
+@property AMSetupController *setupWorkspace;
+@property NSWindow *setupWindow;
+@property NSMutableArray<NSMutableDictionary *> *setupRecords;
+@property NSInteger setupStep;
+@property NSMutableDictionary *errorDetails;
 @property BOOL refreshing;
 @property NSTableView *table;
 @property NSTextView *detail;
@@ -81,7 +87,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if ((self = [super initWithNibName:nil bundle:nil])) {
         self.preview = preview; self.github = SSGitHub.new; self.git = SSGit.new;
         self.courses = NSMutableArray.array; self.candidates = NSMutableDictionary.dictionary; self.statuses = NSMutableDictionary.dictionary; self.query = @""; self.pageStates = NSMutableDictionary.dictionary;
-        self.materials = NSMutableDictionary.dictionary;
+        self.materials = NSMutableDictionary.dictionary;self.errorDetails=NSMutableDictionary.dictionary;
         NSDictionary *discoveries = preview ? nil : SSReadPlist(@"discoveries.plist");
         if ([discoveries[@"candidates"] isKindOfClass:NSDictionary.class]) [self.candidates addEntriesFromDictionary:discoveries[@"candidates"]];
         if ([discoveries[@"materials"] isKindOfClass:NSDictionary.class]) [self.materials addEntriesFromDictionary:discoveries[@"materials"]];
@@ -92,19 +98,21 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         id deferred=preview ? nil : SSReadPlist(@"automatic-review.plist");self.automaticDeferrals=[deferred isKindOfClass:NSDictionary.class] ? [deferred mutableCopy] : NSMutableDictionary.dictionary;
         NSArray *saved = preview ? @[] : SSReadPlist(@"courses.plist");
         for (id item in [saved isKindOfClass:NSArray.class] ? saved : @[]) if ([item isKindOfClass:NSDictionary.class] && [item[@"fork"] isKindOfClass:NSString.class]) [self.courses addObject:[item mutableCopy]];
-        self.connected = !preview && SSReadSecret(@"github") != nil;
+        self.connected = !preview && self.github.hasCredentials;
         __weak typeof(self) weakSelf = self;
         self.git.identityVerifier = ^NSDictionary *(NSDictionary *course, NSError **error) { return [weakSelf.github verifyCourse:course error:error]; };
+        [self configureCredentialAccess];
         self.git.progress = ^(NSString *phase) { dispatch_async(dispatch_get_main_queue(), ^{ if (weakSelf.busy) [weakSelf status:phase]; }); };
         self.queue = dispatch_queue_create("ddl.course-work", DISPATCH_QUEUE_SERIAL);
         [self buildUI]; [self refreshCourses];
     } return self;
 }
+- (void)configureCredentialAccess { __weak typeof(self) weakSelf=self;self.git.teacherCredentialProvider=[self.github.authType isEqual:@"oauth"] ? ^NSString *(NSDictionary *course,NSError **error){if(![weakSelf.github readableTeacher:course error:error])return nil;return [weakSelf.github accessToken:error];} : nil; }
 - (NSWindow *)window { return self.view.window; }
 - (BOOL)operationBusy { return self.busy; }
-- (BOOL)hasUnsavedReview { return self.reviewWorkspace.hasUnsavedChanges; }
-- (BOOL)resolveUnsavedReview { self.resolvingReview=YES; self.reviewWorkspace.paused=NO; BOOL ok=[self.reviewWorkspace resolveUnsavedChanges]; self.resolvingReview=NO; self.reviewWorkspace.paused=self.busy || self.operationsPaused; return ok; }
-- (void)discardReview { [self.reviewWorkspace discardChanges]; }
+- (BOOL)hasUnsavedReview { return self.reviewWorkspace.hasUnsavedChanges || self.setupWindow.sheetParent != nil; }
+- (BOOL)resolveUnsavedReview { if(self.setupWindow.sheetParent){NSAlert *alert=NSAlert.new;alert.messageText=@"课程配置尚未关闭";alert.informativeText=@"已成功关联的课程已经保存；尚未关联的目录选择会被放弃。";[alert addButtonWithTitle:@"继续配置"];[alert addButtonWithTitle:@"放弃未关联选择并继续"];if([alert runModal]!=NSAlertSecondButtonReturn)return NO;[self closeCourseSetup];} self.resolvingReview=YES; self.reviewWorkspace.paused=NO; BOOL ok=[self.reviewWorkspace resolveUnsavedChanges]; self.resolvingReview=NO; self.reviewWorkspace.paused=self.busy || self.operationsPaused; return ok; }
+- (void)discardReview { [self.reviewWorkspace discardChanges];[self closeCourseSetup]; }
 - (BOOL)hasSubmissionSheet { return self.submission.window.sheetParent != nil; }
 - (BOOL)hasUnsavedSubmission { return self.hasSubmissionSheet && self.submission.hasUnsavedChanges; }
 - (void)setOperationsPaused:(BOOL)paused { _operationsPaused = paused; [self refreshPresentation]; }
@@ -212,17 +220,23 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     return count;
 }
 - (void)accountSettings:(id)sender {
-    if (self.operationsPaused) return;
-    if (self.busy) { if (self.loginActive) [self cancelLogin:nil]; return; }
-    NSAlert *alert = NSAlert.new; alert.messageText = self.connected ? @"GitHub 账户已连接" : @"连接 GitHub";
-    alert.informativeText = @"先授权自己的课程仓库，再通过设备码登录。登录信息只保存在本机钥匙串。";
-    [alert addButtonWithTitle:self.connected ? @"退出登录" : @"登录 GitHub"]; [alert addButtonWithTitle:@"安装授权…"]; if (self.loginActive) [alert addButtonWithTitle:@"取消登录"]; [alert addButtonWithTitle:@"关闭"];
-    NSModalResponse answer = [alert runModal]; if (answer == NSAlertFirstButtonReturn) { if (self.connected) [self signOut:nil]; else [self login:nil]; } else if (answer == NSAlertSecondButtonReturn) [self installApp:nil]; else if (self.loginActive && answer == NSAlertThirdButtonReturn) [self cancelLogin:nil];
+    if(self.operationsPaused)return;if(self.busy){if(self.loginActive)[self cancelLogin:nil];return;}
+    if(!self.connected){self.guided=YES;[self login:nil];return;}
+    NSAlert *alert=NSAlert.new;alert.messageText=@"GitHub 已连接";alert.informativeText=[self.github.authType isEqual:@"oauth"] ? @"私有课程通过 HTTPS 访问，无需 SSH。登录令牌只保存在本机。旧 GitHub App 安装需在 GitHub 单独撤销。" : @"正在使用旧 GitHub App 登录，可切换到统一 HTTPS 登录。";
+    [alert addButtonWithTitle:@"配置课程…"];[alert addButtonWithTitle:@"退出登录"];[alert addButtonWithTitle:@"高级登录设置…"];[alert addButtonWithTitle:@"重新登录"];[alert addButtonWithTitle:@"关闭"];
+    NSModalResponse choice=[alert runModal];if(choice==NSAlertFirstButtonReturn)[self addFork:nil];else if(choice==NSAlertSecondButtonReturn)[self signOut:nil];else if(choice==NSAlertThirdButtonReturn)[self authenticationSettings:nil];else if(choice==NSAlertThirdButtonReturn+1)[self login:nil];
 }
-- (void)setup:(id)sender {
-    self.guided = YES;
-    if (!self.connected) [self accountSettings:nil]; else if ([self course] && ![[self course][@"path"] length]) [self chooseLocalFolder]; else [self addFork:nil];
+- (void)authenticationSettings:(id)sender {
+    if(self.busy || self.operationsPaused || self.preview)return;
+    NSAlert *alert=NSAlert.new;alert.messageText=@"登录与兼容设置";alert.informativeText=@"推荐统一浏览器登录。旧方式仍需要 App 安装及本机 SSH／钥匙串凭据。切换不会删除任务或旧授权。";
+    [alert addButtonWithTitle:@"统一浏览器登录"];[alert addButtonWithTitle:@"旧 GitHub App 登录"];[alert addButtonWithTitle:@"撤销旧 App 安装…"];[alert addButtonWithTitle:@"旧 App 公开配置…"];[alert addButtonWithTitle:@"旧 App 安装授权…"];[alert addButtonWithTitle:@"取消"];
+    NSModalResponse choice=[alert runModal];if(choice==NSAlertThirdButtonReturn){[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://github.com/settings/installations"]];return;}
+    if(choice==NSAlertThirdButtonReturn+1){[self setClientID:nil];return;}if(choice==NSAlertThirdButtonReturn+2){[self installApp:nil];return;}
+    if(choice!=NSAlertFirstButtonReturn && choice!=NSAlertSecondButtonReturn)return;NSError *error=nil;
+    if(![self.github selectAuthentication:choice==NSAlertFirstButtonReturn ? @"oauth":@"githubApp" error:&error]){[self showError:error];return;}
+    [self configureCredentialAccess];self.connected=self.github.hasCredentials;if(!self.connected)[self login:nil];else [self refreshPresentation];
 }
+- (void)setup:(id)sender {self.guided=YES;if(!self.connected)[self accountSettings:nil];else [self addFork:nil];}
 - (void)chooseLocalFolder {
     NSAlert *alert = NSAlert.new; alert.messageText = @"关联课程文件夹"; alert.informativeText = @"已下载课程仓库时选择已有文件夹；还未下载时选择保存位置。";
     [alert addButtonWithTitle:@"选择已有文件夹"]; [alert addButtonWithTitle:@"下载课程仓库"]; [alert addButtonWithTitle:@"稍后"];
@@ -230,8 +244,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)more:(NSButton *)sender {
     NSMenu *menu = NSMenu.new; menu.autoenablesItems = NO; NSDictionary *course = [self course];
-    for (NSArray *entry in @[@[@"添加课程…", NSStringFromSelector(@selector(addFork:))], @[@"关联文件夹…", NSStringFromSelector(@selector(linkFolder:))], @[@"下载课程仓库…", NSStringFromSelector(@selector(cloneFork:))], @[@"打开文件夹", NSStringFromSelector(@selector(openFolder:))], @[@"继续处理冲突…", NSStringFromSelector(@selector(continueMerge:))], @[@"重试推送", NSStringFromSelector(@selector(push:))], @[@"启用 / 停用自动检查", NSStringFromSelector(@selector(toggleCourse:))], @[@"仓库详情", NSStringFromSelector(@selector(repositoryDetails:))], @[@"操作详情…", NSStringFromSelector(@selector(operationDetails:))], @[@"移除课程…", NSStringFromSelector(@selector(removeCourse:))]]) {
-        NSMenuItem *item = [menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""]; item.target = self; item.enabled=course!=nil || item.action==@selector(addFork:);
+    for (NSArray *entry in @[@[@"添加课程…", NSStringFromSelector(@selector(addFork:))], @[@"关联文件夹…", NSStringFromSelector(@selector(linkFolder:))], @[@"下载课程仓库…", NSStringFromSelector(@selector(cloneFork:))], @[@"打开文件夹", NSStringFromSelector(@selector(openFolder:))], @[@"继续处理冲突…", NSStringFromSelector(@selector(continueMerge:))], @[@"重试推送", NSStringFromSelector(@selector(push:))], @[@"启用 / 停用自动检查", NSStringFromSelector(@selector(toggleCourse:))], @[@"仓库详情", NSStringFromSelector(@selector(repositoryDetails:))], @[@"操作详情…", NSStringFromSelector(@selector(operationDetails:))],@[@"恢复课程访问…",NSStringFromSelector(@selector(restoreAccess:))],@[@"高级登录设置…",NSStringFromSelector(@selector(authenticationSettings:))], @[@"移除课程…", NSStringFromSelector(@selector(removeCourse:))]]) {
+        NSMenuItem *item = [menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""]; item.target = self; item.enabled=course!=nil || item.action==@selector(addFork:) || item.action==@selector(authenticationSettings:);
         if (item.action == @selector(continueMerge:)) item.enabled = [course[@"pendingMergeTip"] length] > 0;
         if (item.action == @selector(push:)) item.enabled = [course[@"pushFailed"] boolValue];
         if (item.action == @selector(toggleCourse:)) item.title = [course[@"enabled"] isEqual:@NO] ? @"启用自动检查" : @"停用自动检查";
@@ -248,8 +262,10 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if(!self.preview && !SSWritePlist(@"courses.plist",all,&error)){[self showError:error];return;}[course setDictionary:next];[self status:@"模板已保存，下次检查生效。"]; }
 #import "SSCourseSkill.inc"
 #import "SSCourseLocal.inc"
+#import "SSCourseSetup.inc"
 - (void)repositoryDetails:(id)sender { self.sections.selectedSegment = 2; [self refreshPresentation]; }
-- (void)operationDetails:(id)sender { NSAlert *alert = NSAlert.new; alert.messageText = [self course][@"fork"] ?: @"课程检查"; alert.informativeText = self.statuses[self.selectedFork ?: @"all"] ?: @"尚无操作记录。"; [alert addButtonWithTitle:@"关闭"]; [alert beginSheetModalForWindow:self.window completionHandler:nil]; }
+- (void)operationDetails:(id)sender { NSAlert *alert=NSAlert.new;NSString *key=self.selectedFork ?: @"all";alert.messageText=[self course][@"fork"] ?: @"课程检查";alert.informativeText=self.errorDetails[key] ?: self.statuses[key] ?: @"尚无操作记录。";[alert addButtonWithTitle:@"关闭"];[alert addButtonWithTitle:@"复制详情"];[alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse choice){if(choice==NSAlertSecondButtonReturn){[NSPasteboard.generalPasteboard clearContents];[NSPasteboard.generalPasteboard setString:SSRedactedText(alert.informativeText) forType:NSPasteboardTypeString];}}]; }
+- (void)restoreAccess:(id)sender {if(self.busy || self.operationsPaused)return;NSString *issue=self.reports[self.selectedFork ?: @"all"][@"issue"];if([issue isEqual:@"login"]){self.guided=YES;[self login:nil];}else if([issue isEqual:@"ssh"]){self.guided=YES;[self authenticationSettings:nil];}else if([issue isEqual:@"sso"]){NSString *owner=[[self course][@"upstream"] componentsSeparatedByString:@"/"].firstObject;[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:[NSString stringWithFormat:@"https://github.com/orgs/%@/sso",owner]]];}else if([issue isEqual:@"approval"] || [issue isEqual:@"permission"])[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://github.com/settings/applications"]];else [self setup:nil];}
 - (void)recover:(id)sender { if ([[self course][@"pendingMergeTip"] length]) [self continueMerge:nil]; else [self push:nil]; }
 - (void)focusSearch { if(self.inbox)[self.reviewWorkspace focusSearch];else [self.view.window makeFirstResponder:self.search]; }
 - (void)sectionChanged:(id)sender { [self refreshPresentation]; }
@@ -356,7 +372,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if (self.refreshing || !self.table) return; self.refreshing = YES;
     NSDictionary *course = [self course]; NSString *key = self.selectedFork ?: @"all";
     NSDate *last = course[@"lastScan"];
-    NSString *context = course ? [NSString stringWithFormat:@"%@ · 上次检查：%@%@", course[@"upstream"], last ? DDLFormatDate(last, @"M月d日 HH:mm") : @"尚未检查", [course[@"enabled"] isEqual:@NO] ? @" · 自动检查已停用" : @""] : @"所有课程的发现结果集中在这里";
+    NSString *context = course ? [NSString stringWithFormat:@"%@ · 上次成功检查：%@%@", course[@"upstream"], last ? DDLFormatDate(last, @"M月d日 HH:mm") : @"尚未检查", [course[@"enabled"] isEqual:@NO] ? @" · 自动检查已停用" : @""] : @"所有课程的发现结果集中在这里";
     self.accountLabel.stringValue = context;
     self.statusLabel.stringValue = self.statuses[key] ?: @"";
     if (self.busy) self.statusLabel.stringValue = [NSString stringWithFormat:@"%@：%@", self.operationFork ?: @"课程检查", self.statuses[self.operationFork ?: @"all"] ?: @"正在处理…"];
@@ -396,13 +412,13 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.typeFilter.hidden = self.inbox || self.sections.selectedSegment != 0;
     NSMutableArray *content=NSMutableArray.array;for(NSDictionary *record in visible)[content addObject:SSEnrichDiscovery(record)];
     NSString *information=info ? self.detail.string : @"";
-    if(!course && !self.inbox){NSMutableArray *summary=NSMutableArray.array;for(NSDictionary *snapshot in self.courseSnapshots)[summary addObject:[NSString stringWithFormat:@"%@ · %@ · %lu 项待审核",snapshot[@"name"],snapshot[@"status"],(unsigned long)[snapshot[@"pending"] unsignedIntegerValue]]];information=[summary componentsJoinedByString:@"\n\n"];[content removeAllObjects];}
+    if(!course && !self.inbox){NSMutableArray *summary=NSMutableArray.array;for(NSDictionary *snapshot in self.courseSnapshots)[summary addObject:self.reports[snapshot[@"id"]][@"error"] ? [NSString stringWithFormat:@"%@ · %@ · 保留上次成功检查结果",snapshot[@"name"],snapshot[@"status"]] : [NSString stringWithFormat:@"%@ · %@ · %lu 项待审核",snapshot[@"name"],snapshot[@"status"],(unsigned long)[snapshot[@"pending"] unsignedIntegerValue]]];information=[summary componentsJoinedByString:@"\n\n"];[content removeAllObjects];}
     [self.courseWorkspace updateRecords:content selected:self.selectedCandidateID ?: @"" information:information empty:self.emptyLabel.stringValue paused:self.busy || self.operationsPaused];
     [self layoutContent]; self.refreshing = NO;
     if (self.stateChanged) self.stateChanged();
 }
 - (void)status:(NSString *)message { if(self.busy)self.operationPhase=message; self.statuses[self.statusFork ?: self.selectedFork ?: @"all"] = message ?: @""; [self refreshPresentation]; }
-- (void)showError:(NSError *)error { if (error) [self status:[@"⚠ " stringByAppendingString:error.localizedDescription]]; }
+- (void)showError:(NSError *)error { if (error) {self.errorDetails[self.statusFork ?: self.selectedFork ?: @"all"]=SSRedactedText(error.userInfo[@"SSDetail"] ?: error.localizedDescription);[self status:[@"⚠ " stringByAppendingString:error.localizedDescription]];} }
 - (void)work:(NSString *)message operation:(id (^)(NSError **))operation completion:(void (^)(id, NSError *))completion {
     [self work:message forCourse:[self course] operation:operation completion:completion];
 }
@@ -433,54 +449,36 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSString *installationURL = [install.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (installationURL.length && [installationURL rangeOfString:@"^https://github\\.com/apps/[a-z0-9-]+/installations/new$" options:NSRegularExpressionSearch].location == NSNotFound) { [self status:@"安装页面链接格式无效。"]; return; }
     NSError *error = nil;
-    if (!SSWritePlist(@"settings.plist", @{@"clientID":identifier, @"installationURL":installationURL}, &error)) { [self showError:error]; return; }
-    self.github.clientID = identifier; self.github.installationURL = installationURL; [self status:@"已保存公开应用信息。请先安装授权，再登录。"];
+    NSMutableDictionary *next=[SSReadPlist(@"settings.plist") mutableCopy] ?: NSMutableDictionary.dictionary;next[@"clientID"]=identifier;next[@"installationURL"]=installationURL;next[@"authType"]=@"githubApp";
+    if (!SSWritePlist(@"settings.plist", next, &error)) { [self showError:error]; return; }
+    self.github.authType=@"githubApp";self.github.clientID = identifier; self.github.installationURL = installationURL;[self configureCredentialAccess];self.connected=self.github.hasCredentials; [self status:@"已保存公开应用信息。请先安装授权，再登录。"];
 }
 - (void)login:(id)sender {
     [self work:@"正在申请 GitHub 设备授权…" operation:^id(NSError **error) { return [self.github beginDeviceLogin:error]; } completion:^(NSDictionary *challenge, NSError *error) {
         if (self.operationsPaused) return;
         if (!challenge) { [self showError:error]; return; }
         NSAlert *alert = [NSAlert new]; alert.messageText = [@"请在 GitHub 输入代码 " stringByAppendingString:challenge[@"user_code"] ?: @""];
-        alert.informativeText = @"浏览器中仅安装到你自己的课程 fork；应用不会要求老师安装。";
-        [alert addButtonWithTitle:@"打开 GitHub 并等待授权"]; [alert addButtonWithTitle:@"取消"];
+        alert.informativeText = [self.github.authType isEqual:@"oauth"] ? @"GitHub 将授权私有仓库访问（repo），范围比所选课程更宽。软件仅操作你选择的课程，令牌只存本机；无需安装 App 或配置 SSH。" : @"旧方式：先安装授权自己的 fork；老师上游仍使用本机 Git 凭据。";
+        [alert addButtonWithTitle:@"复制代码并打开 GitHub"]; [alert addButtonWithTitle:@"取消"];
         if ([alert runModal] != NSAlertFirstButtonReturn) return;
+        [NSPasteboard.generalPasteboard clearContents];[NSPasteboard.generalPasteboard setString:challenge[@"user_code"] forType:NSPasteboardTypeString];
         [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://github.com/login/device"]];
         self.loginActive = YES;
         [self work:@"等待 GitHub 授权…" operation:^id(NSError **innerError) { return @([self.github completeDeviceLogin:challenge error:innerError]); } completion:^(NSNumber *ok, NSError *innerError) {
             self.loginActive = NO;
             if (!ok.boolValue) { [self showError:innerError]; return; }
-            self.connected = YES; [self refreshPresentation]; [self status:@"GitHub 已连接"]; if (self.guided && !self.operationsPaused) { if ([self course] && ![[self course][@"path"] length]) { self.guided = NO; [self chooseLocalFolder]; } else [self addFork:nil]; }
+            self.connected = YES; [self configureCredentialAccess];[self refreshPresentation];[self status:@"GitHub 已连接，课程通过 HTTPS 访问。"];if(!self.operationsPaused)[self addFork:nil];
         }];
     }];
 }
 - (void)cancelLogin:(id)sender { if (self.loginActive) { [self.github cancelDeviceLogin]; [self status:@"正在取消登录…"]; } }
 - (void)signOut:(id)sender { if (self.busy || self.preview || self.operationsPaused) return; [self.github signOut]; self.connected = NO; [self refreshPresentation]; [self status:@"已退出登录；本地课程和 DDL 已保留。"] ; }
 - (void)addFork:(id)sender {
-    [self work:@"正在读取可访问的 fork…" operation:^id(NSError **error) { return [self.github accessibleForks:error]; } completion:^(NSArray *forks, NSError *error) {
-        if (self.operationsPaused) return;
-        if (!forks) { [self showError:error]; return; }
-        self.availableForks = forks;
-        self.connected = YES;
-        NSMutableArray *choices = [NSMutableArray array];
-        for (NSDictionary *repo in forks) if (![self courseExists:repo[@"full_name"]]) [choices addObject:repo];
-        if (!choices.count) { [self status:@"没有新的可选 fork。请在 GitHub App 安装页授权课程 fork。"] ; return; }
-        NSPopUpButton *picker = [[PastelPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 410, 28) pullsDown:NO];
-        for (NSDictionary *repo in choices) [picker addItemWithTitle:repo[@"full_name"]];
-        NSAlert *alert = [NSAlert new]; alert.messageText = @"添加自己的课程 fork"; alert.accessoryView = picker;
-        [alert addButtonWithTitle:@"添加"]; [alert addButtonWithTitle:@"取消"];
-        if ([alert runModal] != NSAlertFirstButtonReturn) return;
-        NSDictionary *choice = choices[picker.indexOfSelectedItem];
-        [self work:@"正在核验老师上游…" operation:^id(NSError **innerError) { return [self.github repository:choice[@"full_name"] error:innerError]; } completion:^(NSDictionary *details, NSError *innerError) {
-            NSDictionary *parent = details[@"parent"];
-            if (![parent isKindOfClass:NSDictionary.class] || ![parent[@"full_name"] isKindOfClass:NSString.class]) { [self status:@"该仓库没有可验证的老师上游，不能添加。"] ; return; }
-            if (!details[@"id"] || !parent[@"id"] || !details[@"owner"][@"id"]) { [self status:@"GitHub 未返回完整仓库身份，不能添加。"]; return; }
-            NSMutableDictionary *course = [@{@"enabled":@YES, @"fork":details[@"full_name"], @"upstream":parent[@"full_name"], @"forkID":details[@"id"], @"upstreamID":parent[@"id"], @"ownerID":details[@"owner"][@"id"], @"timeZone":NSTimeZone.localTimeZone.name,
-                @"branch":details[@"default_branch"] ?: @"main", @"upstreamBranch":parent[@"default_branch"] ?: @"main",
-                @"upstreamURL":parent[@"clone_url"] ?: @""} mutableCopy];
-            [self.courses addObject:course]; [self saveCourses]; [self refreshCourses];
-            self.selectedFork = course[@"fork"]; [self refreshCourses];
-            [self status:@"课程已添加，下一步关联本地文件夹"]; if (self.guided && !self.operationsPaused) { self.guided = NO; [self chooseLocalFolder]; }
-        }];
+    if(!self.connected){self.guided=YES;[self login:nil];return;}
+    [self work:@"正在读取个人课程 fork…" forCourse:nil operation:^id(NSError **error){return [self.github accessibleForks:error];} completion:^(NSArray *forks,NSError *error){
+        if(!forks){[self showError:error];return;}self.availableForks=forks;self.setupRecords=NSMutableArray.array;
+        for(NSDictionary *repo in forks){NSDictionary *existing=[self savedCourse:@{@"fork":repo[@"full_name"]}];if([existing[@"path"] length] && [existing[@"connectionAuth"] isEqual:self.github.authType] && !self.reports[existing[@"fork"]][@"error"])continue;NSMutableDictionary *row=[@{@"fork":repo[@"full_name"],@"existing":@([self courseExists:repo[@"full_name"]])} mutableCopy];[self.setupRecords addObject:row];}
+        [self presentCourseSetup];
     }];
 }
 - (BOOL)courseExists:(NSString *)fork { for (NSDictionary *course in self.courses) if ([course[@"fork"] caseInsensitiveCompare:fork] == NSOrderedSame) return YES; return NO; }
@@ -501,11 +499,12 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if ([panel runModal] != NSModalResponseOK) return;
     NSString *destination = [panel.URL.path stringByAppendingPathComponent:[current[@"fork"] lastPathComponent]];
     NSMutableDictionary *course = [current mutableCopy]; course[@"path"] = destination;
-    NSAlert *transport = [NSAlert new]; transport.messageText = @"使用哪种本机凭据读取老师上游？";
+    if([self.github.authType isEqual:@"oauth"])course[@"upstreamURL"]=[NSString stringWithFormat:@"https://github.com/%@.git",course[@"upstream"]];
+    else {NSAlert *transport = [NSAlert new]; transport.messageText = @"使用哪种本机凭据读取老师上游？";
     transport.informativeText = @"私有上游需要这台 Mac 已配置的访问权限。公开上游可直接用 HTTPS。";
     [transport addButtonWithTitle:@"HTTPS · Git 钥匙串"]; [transport addButtonWithTitle:@"SSH · 本机密钥"]; [transport addButtonWithTitle:@"取消"];
     NSModalResponse response = [transport runModal]; if (response == NSAlertThirdButtonReturn) return;
-    course[@"upstreamURL"] = response == NSAlertSecondButtonReturn ? [NSString stringWithFormat:@"git@github.com:%@.git", course[@"upstream"]] : [NSString stringWithFormat:@"https://github.com/%@.git", course[@"upstream"]];
+    course[@"upstreamURL"] = response == NSAlertSecondButtonReturn ? [NSString stringWithFormat:@"git@github.com:%@.git", course[@"upstream"]] : [NSString stringWithFormat:@"https://github.com/%@.git", course[@"upstream"]];}
     [self work:@"正在克隆自己的 fork 并验证老师上游…" operation:^id(NSError **error) {
         NSString *token = [self.github accessToken:error]; if (!token) return nil;
         if (![self.git cloneFork:course into:destination token:token error:error]) return @{@"cloned":@NO};
@@ -553,7 +552,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             NSDictionary *scan = [self.git scanCourse:course cache:cache error:&scanError];
             if(scan){NSDictionary *rules=scan;dispatch_async(dispatch_get_main_queue(),^{self.candidates[course[@"fork"]]=rules[@"candidates"];self.materials[course[@"fork"]]=rules[@"materials"];[self status:[SSCourseRecognitionSettings(recognitionSettings,course)[@"mode"] isEqual:@"rules"] ? @"规则结果已显示，正在整理结果…":@"规则结果已显示，正在补充模型分析…"];});
                 scan=[self.git enhanceScan:scan course:course settings:recognitionSettings paths:nil cache:cache];}
-            result[course[@"fork"]] = scan ?: @{@"error":scanError.localizedDescription ?: @"扫描失败"};
+            result[course[@"fork"]] = scan ?: @{@"error":scanError.localizedDescription ?: @"扫描失败",@"detail":scanError.userInfo[@"SSDetail"] ?: scanError.localizedDescription ?: @"",@"issue":scanError.userInfo[@"SSIssue"] ?: @"git"};
         }
         SSWritePlist(@"scan-cache.plist", cache, NULL);
         return result;
@@ -563,7 +562,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         NSMutableDictionary *reports = [self.reports mutableCopy] ?: NSMutableDictionary.dictionary; [reports addEntriesFromDictionary:result]; self.reports = reports;
         for (NSMutableDictionary *course in self.courses) {
             NSDictionary *scan = result[course[@"fork"]]; if (!scan) continue;
-            if (scan[@"error"]) { self.statuses[course[@"fork"]] = scan[@"error"]; [messages addObject:[NSString stringWithFormat:@"%@: %@", course[@"fork"], scan[@"error"]]]; continue; }
+            if (scan[@"error"]) { self.errorDetails[course[@"fork"]]=scan[@"detail"] ?: scan[@"error"];self.statuses[course[@"fork"]] = [@"未完成检查：" stringByAppendingString:scan[@"error"]]; [messages addObject:[NSString stringWithFormat:@"%@: %@", course[@"fork"], scan[@"error"]]]; continue; }
             self.candidates[course[@"fork"]] = scan[@"candidates"]; self.materials[course[@"fork"]] = scan[@"materials"] ?: @[];
             NSUInteger exams=0,classroom=0,unknown=0;for(NSDictionary *material in scan[@"materials"]){if([material[@"kind"] isEqual:@"exam"])exams++;else if([material[@"kind"] isEqual:@"classroom"])classroom++;else unknown++;}
             self.statuses[course[@"fork"]]=[NSString stringWithFormat:@"%@；%lu 组考试，%lu 项课上任务，%lu 项待确认类型，%lu 个文件跳过",[scan[@"candidates"] count] ? [NSString stringWithFormat:@"发现 %lu 项课后作业",[scan[@"candidates"] count]]:@"未发现课后作业",(unsigned long)exams,(unsigned long)classroom,(unsigned long)unknown,[scan[@"skipped"] count]];

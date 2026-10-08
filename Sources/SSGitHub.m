@@ -13,7 +13,9 @@ static NSError *GHError(NSString *message) { return [NSError errorWithDomain:@"S
     if ((self = [super init])) {
         id settings = SSReadPlist(@"settings.plist");
         NSString *configured = [settings isKindOfClass:NSDictionary.class] ? settings[@"clientID"] : nil;
-        self.clientID = [configured isKindOfClass:NSString.class] ? configured : ([NSBundle.mainBundle objectForInfoDictionaryKey:@"SSGitHubClientID"] ?: @"");
+        NSString *oauth = [NSBundle.mainBundle objectForInfoDictionaryKey:@"SSOAuthClientID"];
+        self.authType = [settings[@"authType"] isEqual:@"githubApp"] || !oauth.length ? @"githubApp" : @"oauth";
+        self.clientID = [self.authType isEqual:@"oauth"] ? oauth : ([configured isKindOfClass:NSString.class] ? configured : ([NSBundle.mainBundle objectForInfoDictionaryKey:@"SSGitHubClientID"] ?: @""));
         NSString *install = [settings isKindOfClass:NSDictionary.class] ? settings[@"installationURL"] : nil;
         self.installationURL = [install isKindOfClass:NSString.class] ? install : ([NSBundle.mainBundle objectForInfoDictionaryKey:@"SSGitHubInstallationURL"] ?: @"");
     }
@@ -38,7 +40,7 @@ static NSError *GHError(NSString *message) { return [NSError errorWithDomain:@"S
     dispatch_semaphore_t done = dispatch_semaphore_create(0);
     __block NSData *responseData = nil; __block NSURLResponse *response = nil; __block NSError *networkError = nil;
     NSURLSessionConfiguration *configuration = NSURLSessionConfiguration.ephemeralSessionConfiguration;
-    configuration.URLCache = nil; configuration.HTTPShouldSetCookies = NO;
+    configuration.URLCache = nil; configuration.HTTPShouldSetCookies = NO; configuration.HTTPCookieStorage = nil; configuration.URLCredentialStorage = nil;
     NSURLSession *session = [NSURLSession sessionWithConfiguration:configuration delegate:self delegateQueue:nil];
     NSURLSessionDataTask *task = [session dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *res, NSError *err) {
         responseData = data; response = res; networkError = err; dispatch_semaphore_signal(done);
@@ -51,7 +53,14 @@ static NSError *GHError(NSString *message) { return [NSError errorWithDomain:@"S
     id object = responseData ? [NSJSONSerialization JSONObjectWithData:responseData options:0 error:NULL] : nil;
     NSInteger status = [(NSHTTPURLResponse *)response statusCode];
     if (status < 200 || status >= 300 || !object) {
-        if (error) *error = GHError([object isKindOfClass:NSDictionary.class] ? (object[@"message"] ?: object[@"error_description"] ?: @"GitHub 请求失败") : @"GitHub 响应无效");
+        if (error) {
+            NSString *detail = [object isKindOfClass:NSDictionary.class] ? (object[@"message"] ?: object[@"error_description"] ?: @"GitHub 请求失败") : @"GitHub 响应无效";
+            NSDictionary *headers = [(NSHTTPURLResponse *)response allHeaderFields]; NSString *sso = @"";
+            for (NSString *key in headers) if ([key.lowercaseString isEqual:@"x-github-sso"]) sso = [headers[key] description];
+            NSString *kind = status == 401 ? @"login" : ([sso containsString:@"required"] ? @"sso" : (status == 403 && ([detail.lowercaseString containsString:@"oauth"] || [detail.lowercaseString containsString:@"organization"]) ? @"approval" : (status == 404 || status == 403 ? @"permission" : @"network")));
+            NSString *message = [kind isEqual:@"login"] ? @"GitHub 登录已失效，请重新登录。" : ([kind isEqual:@"sso"] ? @"学校要求单点登录，请在浏览器登录学校组织后重新检测。" : ([kind isEqual:@"approval"] ? @"学校组织尚未允许此应用，请申请批准后重新检测。" : ([kind isEqual:@"permission"] ? @"无法访问该仓库，请核对课程权限及学校组织授权。" : @"GitHub 暂时无法连接，请稍后重试。")));
+            *error = [NSError errorWithDomain:@"SSGitHub" code:status userInfo:@{NSLocalizedDescriptionKey:message,@"SSIssue":kind,@"SSDetail":SSRedactedText(detail)}];
+        }
         return nil;
     }
     return object;
@@ -60,8 +69,18 @@ static NSError *GHError(NSString *message) { return [NSError errorWithDomain:@"S
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task willPerformHTTPRedirection:(NSHTTPURLResponse *)response newRequest:(NSURLRequest *)request completionHandler:(void (^)(NSURLRequest *))completionHandler {
     completionHandler(nil); // Authenticated requests never follow redirects.
 }
-- (NSDictionary *)loadCredentials { return SSReadSecret(@"github"); }
-- (BOOL)storeCredentials:(NSDictionary *)credentials { return SSWriteSecret(@"github", credentials); }
+- (NSString *)credentialAccount { return [self.authType isEqual:@"oauth"] ? @"github.oauth" : @"github"; }
+- (NSDictionary *)loadCredentials { return SSReadSecret([self credentialAccount]); }
+- (BOOL)storeCredentials:(NSDictionary *)credentials { return SSWriteSecret([self credentialAccount], credentials); }
+- (BOOL)hasCredentials { NSDictionary *stored=[self loadCredentials];return [stored[@"client_id"] isEqual:self.clientID] && [stored[@"access_token"] length]>0; }
+- (BOOL)selectAuthentication:(NSString *)type error:(NSError **)error {
+    if (![@[@"oauth",@"githubApp"] containsObject:type]) {if(error)*error=GHError(@"登录方式无效");return NO;}
+    NSString *client=[type isEqual:@"oauth"] ? [NSBundle.mainBundle objectForInfoDictionaryKey:@"SSOAuthClientID"] : (SSReadPlist(@"settings.plist")[@"clientID"] ?: [NSBundle.mainBundle objectForInfoDictionaryKey:@"SSGitHubClientID"]);
+    if(!client.length){if(error)*error=GHError(@"此构建尚未配置该登录方式");return NO;}
+    NSMutableDictionary *settings=[SSReadPlist(@"settings.plist") mutableCopy] ?: NSMutableDictionary.dictionary;settings[@"authType"]=type;
+    if(!SSWritePlist(@"settings.plist",settings,error))return NO;
+    [self cancelDeviceLogin];self.authType=type;self.clientID=client;return YES;
+}
 - (BOOL)waitForPollingInterval:(NSTimeInterval)interval {
     for (NSInteger second = 0; second < ceil(interval); second++) { if (self.loginCancelled) return NO; [NSThread sleepForTimeInterval:1]; }
     return !self.loginCancelled;
@@ -70,16 +89,17 @@ static NSError *GHError(NSString *message) { return [NSError errorWithDomain:@"S
 - (NSDictionary *)beginDeviceLogin:(NSError **)error {
     self.loginCancelled = NO;
     if (!self.clientID.length) { if (error) *error = GHError(@"请先填写公开的 GitHub App Client ID"); return nil; }
-    id result = [self requestURL:[NSURL URLWithString:@"https://github.com/login/device/code"] form:@{@"client_id":self.clientID} token:nil error:error];
+    NSMutableDictionary *form=[@{@"client_id":self.clientID} mutableCopy];if([self.authType isEqual:@"oauth"])form[@"scope"]=@"repo";
+    id result = [self requestURL:[NSURL URLWithString:@"https://github.com/login/device/code"] form:form token:nil error:error];
     if (![result isKindOfClass:NSDictionary.class] || ![result[@"device_code"] isKindOfClass:NSString.class] || ![result[@"user_code"] isKindOfClass:NSString.class]) { if (error) *error = GHError(@"无法申请设备授权，请检查 Client ID 和 Enable Device Flow 设置"); return nil; }
-    return result;
+    NSMutableDictionary *challenge=[result mutableCopy];challenge[@"expires_at"]=[NSDate dateWithTimeIntervalSinceNow:MAX(0,[result[@"expires_in"] doubleValue])];return challenge;
 }
 
 - (BOOL)completeDeviceLogin:(NSDictionary *)challenge error:(NSError **)error {
     NSString *deviceCode = challenge[@"device_code"];
     if (!deviceCode.length) { if (error) *error = GHError(@"授权码无效"); return NO; }
     NSTimeInterval interval = MAX(5, [challenge[@"interval"] doubleValue]);
-    NSDate *expiry = [NSDate dateWithTimeIntervalSinceNow:MAX(60, [challenge[@"expires_in"] doubleValue])];
+    NSDate *expiry=[challenge[@"expires_at"] isKindOfClass:NSDate.class] ? challenge[@"expires_at"] : [NSDate dateWithTimeIntervalSinceNow:MAX(0,[challenge[@"expires_in"] doubleValue])];
     while ([expiry timeIntervalSinceNow] > 0) {
         if (![self waitForPollingInterval:interval]) { if (error) *error = GHError(@"已取消 GitHub 登录"); return NO; }
         id result = [self requestURL:[NSURL URLWithString:@"https://github.com/login/oauth/access_token"] form:@{@"client_id":self.clientID, @"device_code":deviceCode, @"grant_type":@"urn:ietf:params:oauth:grant-type:device_code"} token:nil error:error];
@@ -87,10 +107,18 @@ static NSError *GHError(NSString *message) { return [NSError errorWithDomain:@"S
         NSString *issue = result[@"error"];
         if ([issue isEqual:@"authorization_pending"]) continue;
         if ([issue isEqual:@"slow_down"]) { interval = MAX(interval + 5, [result[@"interval"] doubleValue]); continue; }
-        if (issue.length) { if (error) *error = GHError(result[@"error_description"] ?: issue); return NO; }
+        if (issue.length) { if (error) *error = GHError([issue isEqual:@"access_denied"] ? @"你取消了 GitHub 授权，可以重新登录。" : ([issue isEqual:@"expired_token"] ? @"设备验证码已过期，请重新登录获取新代码。" : (result[@"error_description"] ?: issue))); return NO; }
         NSString *token = result[@"access_token"];
-        if (!token.length) { if (error) *error = GHError(@"GitHub 没有返回访问令牌"); return NO; }
-        NSMutableDictionary *stored = [@{@"access_token":token, @"client_id":self.clientID} mutableCopy];
+        if (![token isKindOfClass:NSString.class] || !token.length) { if (error) *error = GHError(@"GitHub 没有返回访问令牌"); return NO; }
+        NSMutableDictionary *stored = [@{@"access_token":token, @"client_id":self.clientID, @"authType":self.authType ?: @"githubApp"} mutableCopy];
+        if ([self.authType isEqual:@"oauth"]) {
+            NSString *scope=[result[@"scope"] isKindOfClass:NSString.class] ? result[@"scope"] : @"";
+            NSArray *scopes=[[scope stringByReplacingOccurrencesOfString:@"," withString:@" "] componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+            if(![scopes containsObject:@"repo"]){if(error)*error=GHError(@"未授予私有仓库访问权限，请重新登录并授权 repo。");return NO;}
+            NSDictionary *me=[self requestURL:[NSURL URLWithString:@"https://api.github.com/user"] form:nil token:token error:error];
+            if(![me[@"id"] isKindOfClass:NSNumber.class] || ![me[@"login"] isKindOfClass:NSString.class]){if(error && !*error)*error=GHError(@"无法核验登录账户");return NO;}
+            stored[@"userID"]=me[@"id"];stored[@"login"]=me[@"login"];stored[@"scope"]=result[@"scope"];
+        }
         if ([result[@"refresh_token"] isKindOfClass:NSString.class]) stored[@"refresh_token"] = result[@"refresh_token"];
         if (result[@"expires_in"]) stored[@"expires_at"] = [NSDate dateWithTimeIntervalSinceNow:[result[@"expires_in"] doubleValue] - 60];
         if (self.loginCancelled) return NO;
@@ -112,7 +140,7 @@ static NSError *GHError(NSString *message) { return [NSError errorWithDomain:@"S
     if (!refresh.length) { if (error) *error = GHError(@"GitHub 登录已过期，请重新登录"); return nil; }
     id result = [self requestURL:[NSURL URLWithString:@"https://github.com/login/oauth/access_token"] form:@{@"client_id":stored[@"client_id"] ?: self.clientID, @"grant_type":@"refresh_token", @"refresh_token":refresh} token:nil error:error];
     if (![result[@"access_token"] isKindOfClass:NSString.class]) { if (error && !*error) *error = GHError(@"刷新登录失败，请重新登录"); return nil; }
-    NSDictionary *next = @{@"access_token":result[@"access_token"], @"refresh_token":result[@"refresh_token"] ?: refresh, @"client_id":self.clientID, @"expires_at":[NSDate dateWithTimeIntervalSinceNow:[result[@"expires_in"] doubleValue] - 60]};
+    NSMutableDictionary *next=[stored mutableCopy];next[@"access_token"]=result[@"access_token"];next[@"refresh_token"]=result[@"refresh_token"] ?: refresh;next[@"expires_at"]=[NSDate dateWithTimeIntervalSinceNow:MAX(60,[result[@"expires_in"] doubleValue])-60];
     if (![self storeCredentials:next]) { if (error) *error = GHError(@"无法更新钥匙串令牌"); return nil; }
     return next[@"access_token"];
 }
@@ -133,6 +161,14 @@ static NSError *GHError(NSString *message) { return [NSError errorWithDomain:@"S
     NSDictionary *me = [self user:error]; if (!me) return nil;
     NSString *login = me[@"login"];
     NSMutableArray *forks = [NSMutableArray array];
+    if([self.authType isEqual:@"oauth"]){
+        for(NSInteger page=1;;page++){
+            id repos=[self api:[NSString stringWithFormat:@"/user/repos?affiliation=owner&per_page=100&page=%ld",(long)page] error:error];
+            if(![repos isKindOfClass:NSArray.class])return nil;
+            for(NSDictionary *repo in repos)if([repo[@"fork"] boolValue] && [repo[@"owner"][@"login"] caseInsensitiveCompare:login]==NSOrderedSame)[forks addObject:repo];
+            if([repos count]<100)break;
+        }return forks;
+    }
     for (NSInteger page = 1; page <= 20; page++) {
         id installations = [self api:[NSString stringWithFormat:@"/user/installations?per_page=100&page=%ld", (long)page] error:error];
         if (![installations isKindOfClass:NSDictionary.class]) return nil;
@@ -159,6 +195,17 @@ static NSError *GHError(NSString *message) { return [NSError errorWithDomain:@"S
     if (!valid) { if (error) *error = GHError(@"当前账户、个人 fork 或老师上游身份变化，已阻止写操作。请重新添加课程。"); return nil; }
     return user;
 }
+- (NSDictionary *)readableTeacher:(NSDictionary *)course error:(NSError **)error {
+    if(![self verifyCourse:course error:error])return nil;
+    NSDictionary *teacher=[self repository:course[@"upstream"] error:error];
+    if(!teacher || ![teacher[@"id"] isEqual:course[@"upstreamID"]] || [teacher[@"full_name"] caseInsensitiveCompare:course[@"upstream"]]!=NSOrderedSame){if(error && !*error)*error=GHError(@"老师仓库身份已变化，请重新核验课程。");return nil;}
+    NSString *branch=teacher[@"default_branch"];
+    if(!SSValidBranch(branch)){if(error)*error=GHError(@"老师仓库默认分支无效。");return nil;}
+    // Metadata alone does not prove content access. Verify the current teacher branch.
+    NSString *ref=[NSString stringWithFormat:@"/repos/%@/git/ref/heads/%@",course[@"upstream"],[branch stringByAddingPercentEncodingWithAllowedCharacters:NSCharacterSet.URLPathAllowedCharacterSet]];
+    if(![self api:ref error:error])return nil;
+    return teacher;
+}
 - (void)cancelDeviceLogin { self.loginCancelled = YES; }
-- (void)signOut { self.loginCancelled = YES; SSDeleteSecret(@"github"); }
+- (void)signOut { self.loginCancelled = YES; SSDeleteSecret([self credentialAccount]); }
 @end

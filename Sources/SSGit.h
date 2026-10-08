@@ -4,6 +4,10 @@ NS_ASSUME_NONNULL_BEGIN
 @interface SSGit : NSObject
 /// Required before cloning, committing, merging or pushing. Rechecks GitHub ownership.
 @property (copy, nullable) void (^progress)(NSString *phase);
+/// Non-nil only for OAuth. Called after target validation; never used for legacy SSH.
+@property (copy, nullable) NSString * _Nullable (^teacherCredentialProvider)(NSDictionary *course, NSError **error);
+- (NSArray<NSString *> * _Nullable)remoteArguments:(NSArray<NSString *> *)arguments course:(NSDictionary *)course role:(NSString *)role error:(NSError **)error;
+- (NSDictionary<NSString *, NSArray<NSString *> *> *)matchingDirectories:(NSString *)root courses:(NSArray<NSDictionary *> *)courses;
 @property (copy, nullable) NSDictionary *recognitionSettings;
 @property (copy) NSDictionary * _Nullable (^identityVerifier)(NSDictionary *course, NSError **error);
 /// Course keys: fork, upstream, branch, upstreamBranch, path, upstreamURL.

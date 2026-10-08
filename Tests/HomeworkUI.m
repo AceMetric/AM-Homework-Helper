@@ -29,7 +29,7 @@ int main(void) { @autoreleasepool {
     [courses.courses addObjectsFromArray:@[course, other]]; [courses selectCourseID:course[@"fork"]]; courses.connected = YES; [courses refreshCourses];
     Check([courses.setupButton.title isEqual:@"关联文件夹…"] && !courses.syncButton.enabled && !courses.scanButton.enabled, @"unlinked course provides folder setup and blocks Git actions");
     course[@"path"] = @"/synthetic/physics"; course[@"lastScan"] = NSDate.date; [courses refreshCourses];
-    Check(courses.syncButton.enabled && courses.commitButton.enabled && [courses.accountLabel.stringValue containsString:@"上次检查"], @"linked course displays readiness and last check");
+    Check(courses.syncButton.enabled && courses.commitButton.enabled && [courses.accountLabel.stringValue containsString:@"上次成功检查"], @"linked course displays readiness and last check");
     Check([courses.emptyLabel.stringValue containsString:@"检查新作业"], @"no-results state gives refresh action");
     NSDate *due = DDLParseDate(@"2026-10-08 23:59", NSDate.date, Cal());
     NSDictionary *candidate = @{@"id":@"teacher/physics|README.md|作业一|1", @"title":@"作业一 · 实验报告", @"due":due, @"repository":@"teacher/physics", @"path":@"README.md", @"line":@12, @"blobSHA":@"version1", @"timeZone":@"Asia/Shanghai", @"needsDate":@NO, @"needsTime":@NO, @"snippet":@"## 作业一 · 实验报告\n截止时间：2026-10-08 23:59\n提交实验报告和源代码。"};
@@ -162,6 +162,10 @@ int main(void) { @autoreleasepool {
         [courses.typeFilter selectItemAtIndex:3]; [courses refreshPresentation]; Capture(app.root, [NSString stringWithFormat:@"build/qa/materials-%@.png", name]);
         [app.window setContentSize:NSMakeSize(960,640)];[app layout];Capture(app.root,[NSString stringWithFormat:@"build/qa/course-compact-%@.png",name]);[app.window setContentSize:NSMakeSize(1280,840)];[app layout];[courses.typeFilter selectItemAtIndex:0];
         [app reviewGitHubCandidate:suggested]; Capture(app.editor.window.contentView, [NSString stringWithFormat:@"build/qa/review-editor-%@.png", name]); [app closeEditor];
+        courses.setupRecords=[@[[ @{@"fork":@"student/physics",@"existing":@YES} mutableCopy],[ @{@"fork":@"student/mathematics",@"existing":@NO} mutableCopy],[ @{@"fork":@"student/computing",@"existing":@NO} mutableCopy]] mutableCopy];
+        [courses presentCourseSetup];Capture(courses.setupWindow.contentView,[NSString stringWithFormat:@"build/qa/setup-selection-%@.png",name]);Check(courses.hasUnsavedReview,@"configuration sheet participates in exit protection");
+        courses.setupStep=1;courses.setupRecords=[@[[ @{@"fork":@"student/physics",@"path":@"课程目录/物理",@"ready":@YES,@"status":@"已关联，老师仓库读取正常。"} mutableCopy],[ @{@"fork":@"student/mathematics",@"matches":@[@"课程目录/数学",@"备份目录/数学"],@"status":@"找到多个仓库，请选择使用的目录。"} mutableCopy],[ @{@"fork":@"student/computing",@"invalid":@YES,@"status":@"学校尚未批准此应用，请申请批准后重新检测。",@"helpURL":@"https://github.com/settings/applications"} mutableCopy]] mutableCopy];
+        [courses updateCourseSetup:@"成功结果已保留，未完成课程可稍后继续。"];Capture(courses.setupWindow.contentView,[NSString stringWithFormat:@"build/qa/setup-folders-%@.png",name]);[courses closeCourseSetup];Check(!courses.setupWindow,@"cancelling setup closes only configuration sheet");
         [submission selectionChanged:nil];
         Capture(submission.window.contentView, [NSString stringWithFormat:@"build/qa/submit-%@.png", name]); [submission.window orderOut:nil];
     }
