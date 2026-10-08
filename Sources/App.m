@@ -674,6 +674,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 @end
 
+static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *identifier) {
+    for(NSView *view in root.subviews){if([view isKindOfClass:NSButton.class] && ((NSButton *)view).action==action && (identifier ? [view.identifier isEqual:identifier]:view.tag==tag))return view;NSView *nested=AMFindButton(view,action,tag,identifier);if(nested)return nested;}return nil;
+}
+
 @implementation AppDelegate
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     self.preview = [NSProcessInfo.processInfo.arguments containsObject:@"--preview"];
@@ -765,11 +769,11 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)refreshAppearance {
     if (!self.window || self.renderBusy) return;
     NSResponder *focus = self.window.firstResponder; NSInteger calendarFocus = focus == self.yearPicker ? 1 : (focus == self.monthPicker ? 2 : 0);
-    ActionButton *button = [focus isKindOfClass:ActionButton.class] ? (ActionButton *)focus : nil; NSView *scope = [button isDescendantOf:self.sidebar] ? self.sidebar : ([button isDescendantOf:self.header] ? self.header : nil); SEL action = button.action; NSInteger tag = button.tag;
+    ActionButton *button = [focus isKindOfClass:ActionButton.class] ? (ActionButton *)focus : nil; NSView *scope = [button isDescendantOf:self.sidebar] ? self.sidebar : ([button isDescendantOf:self.header] ? self.header : nil); SEL action = button.action; NSInteger tag = button.tag;NSString *focusIdentifier=button.identifier;
     self.overviewSnapshot = nil; self.window.backgroundColor = Canvas();
     [self render]; [self.courseWindow refreshPresentation];
     if (calendarFocus) [self.window makeFirstResponder:calendarFocus == 1 ? self.yearPicker : self.monthPicker];
-    else if (scope) for (NSView *view in scope.subviews) if ([view isKindOfClass:ActionButton.class] && ((ActionButton *)view).action == action && view.tag == tag) { [self.window makeFirstResponder:view]; break; }
+    else if(scope){NSView *replacement=AMFindButton(scope,action,tag,focusIdentifier);if(replacement)[self.window makeFirstResponder:replacement];}
     if (self.editor) { ThemeEditor(self.editor.notesField); if (self.editor.window.firstResponder && [self.editor.window.firstResponder isKindOfClass:NSTextView.class]) ThemeEditor((NSTextView *)self.editor.window.firstResponder); }
 }
 - (void)loadPreview {
@@ -918,7 +922,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.renderBusy = NO;
 }
 - (void)renderSidebar {
-    NSPoint sidebarOffset=self.navigationScroll.contentView.bounds.origin;NSString *focusedID=[self.window.firstResponder isKindOfClass:NSButton.class] ? [(NSButton *)self.window.firstResponder identifier]:nil;
+    NSPoint sidebarOffset=self.navigationScroll.contentView.bounds.origin;NSButton *focusedButton=[self.window.firstResponder isKindOfClass:NSButton.class] ? (NSButton *)self.window.firstResponder:nil;NSString *focusedID=focusedButton.identifier;SEL focusedAction=focusedButton.action;NSInteger focusedTag=focusedButton.tag;
     Clear(self.sidebar); CGFloat h = NSHeight(self.sidebar.bounds);
     NSTextField *brand = Text(@"AM Helper", 14, NSFontWeightSemibold, Ink()); brand.maximumNumberOfLines = 1; brand.lineBreakMode = NSLineBreakByTruncatingTail; brand.accessibilityLabel = @"AM's Homework Helper"; brand.toolTip = @"AM's Homework Helper";
     Put(self.sidebar, brand, 20, 32, 160, 44);
@@ -932,10 +936,11 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if(!self.coursesCollapsed){ActionButton *all=Button(@"所有课程",self,@selector(selectSidebarCourse:),3);all.identifier=@"";all.symbol=@"books.vertical";all.selected=self.page==4 && !self.courseWindow.selectedCourseID;Put(navigation,all,20,220,160,36);
         for(NSUInteger i=0;i<snapshots.count;i++){NSDictionary *course=snapshots[i];NSString *title=[course[@"pending"] unsignedIntegerValue] ? [NSString stringWithFormat:@"%@  %@",course[@"name"],course[@"pending"]]:course[@"name"];ActionButton *button=Button(title,self,@selector(selectSidebarCourse:),3);button.symbol=course[@"symbol"];button.identifier=course[@"id"];button.selected=self.page==4 && [self.courseWindow.selectedCourseID isEqual:course[@"id"]];button.toolTip=[NSString stringWithFormat:@"%@ · %@",course[@"id"],course[@"status"]];Put(navigation,button,20,260+i*40,160,36);}}
     [self.navigationScroll.contentView scrollToPoint:offset];
-    if(focusedID)for(NSView *row in navigation.subviews)if([row.identifier isEqual:focusedID]){[self.window makeFirstResponder:row];break;}
-    ActionButton *account = Button(self.courseWindow.accountSummary ?: @"连接 GitHub", self, @selector(accountSettings:), 3); account.symbol = @"person.crop.circle";
+
+    ActionButton *account = Button(self.courseWindow.accountSummary ?: @"连接 GitHub", self, @selector(accountSettings:), 3); account.identifier=@"account";account.symbol = @"person.crop.circle";
     Put(self.sidebar, account, 12, h - 124, 168, 36);
-    ActionButton *settings = Button(@"设置", self, @selector(showSettings:), 3); settings.symbol = @"gearshape"; Put(self.sidebar, settings, 12, h - 80, 168, 36);
+    ActionButton *settings = Button(@"设置", self, @selector(showSettings:), 3); settings.identifier=@"settings";settings.symbol = @"gearshape"; Put(self.sidebar, settings, 12, h - 80, 168, 36);
+    if(focusedID){NSView *replacement=AMFindButton(self.sidebar,focusedAction,focusedTag,focusedID);if(replacement)[self.window makeFirstResponder:replacement];}
     Put(self.sidebar, Text(self.preview ? @"模拟数据 · 不会保存" : [NSString stringWithFormat:@"本机数据 · v%@", [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"1.1"], 11, NSFontWeightRegular, Muted()), 20, h - 32, 164, 16);
 }
 - (void)toggleCourses:(id)sender {self.coursesCollapsed=!self.coursesCollapsed;[self renderSidebar];}
