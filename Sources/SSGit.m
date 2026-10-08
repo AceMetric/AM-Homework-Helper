@@ -230,6 +230,24 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     }
     return @{@"candidates":SSAttachLinkedDocuments(SSConsolidateAssignments(candidates),documents), @"materials":SSGroupMaterials(materials), @"documents":documents, @"recognitionMessages":recognitionMessages, @"skipped":skipped, @"commit":head, @"branch":branch, @"date":NSDate.date};
 }
+- (NSDictionary *)enhanceScan:(NSDictionary *)scan course:(NSDictionary *)course settings:(NSDictionary *)settings paths:(NSArray *)paths cache:(NSMutableDictionary *)cache {
+    NSDictionary *scoped=SSCourseRecognitionSettings(settings,course);if([scoped[@"mode"] isEqual:@"rules"])return scan;
+    NSMutableDictionary *byID=NSMutableDictionary.dictionary;for(NSDictionary *record in scan[@"candidates"])byID[record[@"id"]]=record;
+    for(NSDictionary *group in scan[@"materials"])for(NSDictionary *record in group[@"documents"] ?: @[group])byID[record[@"id"]]=record;
+    NSMutableArray *messages=NSMutableArray.array;NSUInteger processed=0;
+    for(NSDictionary *document in scan[@"documents"]){if(paths && ![paths containsObject:document[@"path"]])continue;processed++;
+        if(self.progress)self.progress([NSString stringWithFormat:@"本地或模型分析 %lu：%@",(unsigned long)processed,document[@"path"]]);
+        NSCalendar *calendar=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];calendar.timeZone=[NSTimeZone timeZoneWithName:document[@"timeZone"]] ?: NSTimeZone.localTimeZone;
+        NSError *failure=nil;NSArray *found=SSRecognizeDocument(document[@"text"],document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,scoped,cache,&failure);
+        if(failure){[messages addObject:[NSString stringWithFormat:@"%@：%@",document[@"path"],failure.localizedDescription]];if([scoped[@"mode"] isEqual:@"local"] && ([failure.localizedDescription containsString:@"连接失败"] || [failure.localizedDescription containsString:@"超时"] || [failure.localizedDescription containsString:@"服务返回 HTTP"])){[messages addObject:@"其余文档暂用规则结果，可恢复服务后重试。"];break;}continue;}
+        for(NSDictionary *record in found){NSMutableDictionary *copy=record.mutableCopy;NSDictionary *old=byID[record[@"id"]];
+            if([record[@"relative"] boolValue]){NSDictionary *basis=old[@"dateBasis"] ? old : [self dateReferenceForCandidate:record head:scan[@"commit"] path:course[@"path"]];for(NSString *field in @[@"dateBasis",@"suggestedDue"])if(basis[field])copy[field]=basis[field];}
+            byID[record[@"id"]]=copy;
+        }
+    }
+    NSMutableArray *assignments=NSMutableArray.array,*materials=NSMutableArray.array;for(NSDictionary *record in byID.allValues)if([record[@"kind"] isEqual:@"assignment"])[assignments addObject:record];else[materials addObject:record];
+    NSMutableDictionary *result=scan.mutableCopy;result[@"candidates"]=SSAttachLinkedDocuments(SSConsolidateAssignments(assignments),scan[@"documents"]);result[@"materials"]=SSGroupMaterials(materials);result[@"recognitionMessages"]=messages;result[@"modelCompleted"]=@(messages.count==0);return result;
+}
 - (BOOL)cleanWorktree:(NSString *)path error:(NSError **)error {
     SSGitResult *status = [self checked:@[@"status", @"--porcelain=v1", @"-z", @"--untracked-files=all"] in:path token:nil error:error]; if (!status) return NO;
     if (status.data.length) { if (error) *error = GitError(@"本地有未提交修改；请先提交或自行处理，再拉取上游。"); return NO; } return YES;

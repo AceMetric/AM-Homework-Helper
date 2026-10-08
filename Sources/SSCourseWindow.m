@@ -43,6 +43,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property NSButton *syncButton;
 @property NSButton *commitButton;
 @property NSButton *moreButton;
+@property NSButton *assistantButton;
+@property NSButton *assistantImportButton;
 @property NSButton *reviewButton;
 @property NSButton *setupButton;
 @property NSButton *recoveryButton;
@@ -50,6 +52,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property NSTextField *emptyLabel;
 @property NSMutableDictionary *statuses;
 @property NSString *operationFork;
+@property NSString *operationKind;
+@property NSString *operationPhase;
 @property NSString *statusFork;
 @property BOOL connected;
 @property BOOL preview;
@@ -123,6 +127,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.syncButton = SSButton(@"同步课程文件", self, @selector(sync:), NSZeroRect); [root addSubview:self.syncButton];
     self.commitButton = SSButton(@"提交作业", self, @selector(commit:), NSZeroRect); [root addSubview:self.commitButton];
     self.moreButton = SSButton(@"更多", self, @selector(more:), NSZeroRect); [root addSubview:self.moreButton];
+    self.assistantButton=SSButton(@"交给助手识别…",self,@selector(exportSkillContext:),NSZeroRect);[root addSubview:self.assistantButton];
+    self.assistantImportButton=SSButton(@"导入助手结果…",self,@selector(importSkillResults:),NSZeroRect);[root addSubview:self.assistantImportButton];
     self.sections = Segments(@[@"课程内容", @"已加入任务", @"仓库信息"], self, @selector(sectionChanged:)); [root addSubview:self.sections];
     self.typeFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.typeFilter addItemsWithTitles:@[@"全部类型", @"作业", @"课上任务", @"考试", @"待确认类型"]]; self.typeFilter.target = self; self.typeFilter.action = @selector(sectionChanged:); [root addSubview:self.typeFilter];
     self.reviewFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.reviewFilter addItemsWithTitles:@[@"待审核", @"全部结果", @"已导入"]]; self.reviewFilter.target = self; self.reviewFilter.action = @selector(sectionChanged:); [root addSubview:self.reviewFilter];
@@ -151,7 +157,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     [self addChildViewController:self.reviewWorkspace]; [root addSubview:self.reviewWorkspace.view];
     self.courseWorkspace=AMCourseController.new;
     self.courseWorkspace.actionHandler=^(NSString *action,NSString *identifier){
-        if([action isEqual:@"select"]){if([owner.selectedCandidateID isEqual:identifier])return;owner.selectedCandidateID=identifier;[owner refreshPresentation];return;}
+        if([action isEqual:@"select"]){dispatch_async(dispatch_get_main_queue(),^{if([owner.selectedCandidateID isEqual:identifier])return;for(NSDictionary *record in owner.visible)if([record[@"id"] isEqual:identifier]){owner.selectedCandidateID=identifier;[owner refreshPresentation];break;}});return;}
         if(owner.busy || owner.operationsPaused)return;
         if([action isEqual:@"review"])[owner review:nil];else if([action isEqual:@"type"])[owner changeType:nil];
     };
@@ -162,6 +168,9 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     CGFloat w = NSWidth(self.view.bounds), h = NSHeight(self.view.bounds);
     self.accountLabel.frame = NSMakeRect(0, 0, w - 152, 28); self.setupButton.frame = NSMakeRect(w - 136, 0, 136, 36);
     self.scanButton.frame = NSMakeRect(0,48,128,36); self.syncButton.frame=NSMakeRect(140,48,136,36);self.commitButton.frame=NSMakeRect(288,48,112,36);self.moreButton.frame=NSMakeRect(w-72,48,72,36);
+    self.assistantButton.frame=NSMakeRect(140,48,148,36);self.assistantImportButton.frame=NSMakeRect(300,48,140,36);
+    self.assistantButton.hidden=self.assistantImportButton.hidden=self.inbox || [self course]!=nil;
+    self.assistantButton.enabled=self.assistantImportButton.enabled=!self.busy && !self.operationsPaused;
     self.sections.frame = NSMakeRect(0, 100, 296, 32); self.sections.hidden = self.inbox;
     self.typeFilter.frame = NSMakeRect(312, 100, 120, 32); self.typeFilter.hidden = self.inbox || self.sections.selectedSegment != 0;
     self.reviewFilter.frame = NSMakeRect(0, 100, 152, 32); self.reviewFilter.hidden = !self.inbox;
@@ -227,7 +236,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         if (item.action == @selector(push:)) item.enabled = [course[@"pushFailed"] boolValue];
         if (item.action == @selector(toggleCourse:)) item.title = [course[@"enabled"] isEqual:@NO] ? @"启用自动检查" : @"停用自动检查";
     }
-    for (NSArray *entry in @[@[@"交给助手识别…",NSStringFromSelector(@selector(exportSkillContext:))],@[@"导入助手结果…",NSStringFromSelector(@selector(importSkillResults:))],@[@"高级：课程识别模板…",NSStringFromSelector(@selector(editCourseTemplate:))]]) {NSMenuItem *item=[menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""];item.target=self;item.enabled=!self.busy && (!([entry[1] isEqual:NSStringFromSelector(@selector(editCourseTemplate:))]) || course != nil);}
+    for (NSArray *entry in @[@[@"交给助手识别…",NSStringFromSelector(@selector(exportSkillContext:))],@[@"导入助手结果…",NSStringFromSelector(@selector(importSkillResults:))],@[@"用本地模型重新识别…",NSStringFromSelector(@selector(recognizeLocal:))],@[@"高级：课程识别模板…",NSStringFromSelector(@selector(editCourseTemplate:))]]) {NSMenuItem *item=[menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""];item.target=self;item.enabled=!self.busy && ((![entry[1] isEqual:NSStringFromSelector(@selector(editCourseTemplate:))] && ![entry[1] isEqual:NSStringFromSelector(@selector(recognizeLocal:))]) || course != nil);}
     [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, NSHeight(sender.bounds)) inView:sender];
 }
 - (void)editCourseTemplate:(id)sender {
@@ -238,6 +247,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSMutableDictionary *next=course.mutableCopy;next[@"recognitionTemplate"]=template;NSMutableArray *all=self.courses.mutableCopy;all[[all indexOfObject:course]]=next;
     if(!self.preview && !SSWritePlist(@"courses.plist",all,&error)){[self showError:error];return;}[course setDictionary:next];[self status:@"模板已保存，下次检查生效。"]; }
 #import "SSCourseSkill.inc"
+#import "SSCourseLocal.inc"
 - (void)repositoryDetails:(id)sender { self.sections.selectedSegment = 2; [self refreshPresentation]; }
 - (void)operationDetails:(id)sender { NSAlert *alert = NSAlert.new; alert.messageText = [self course][@"fork"] ?: @"课程检查"; alert.informativeText = self.statuses[self.selectedFork ?: @"all"] ?: @"尚无操作记录。"; [alert addButtonWithTitle:@"关闭"]; [alert beginSheetModalForWindow:self.window completionHandler:nil]; }
 - (void)recover:(id)sender { if ([[self course][@"pendingMergeTip"] length]) [self continueMerge:nil]; else [self push:nil]; }
@@ -328,7 +338,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSMutableArray *result=NSMutableArray.array;
     for(NSDictionary *course in self.courses){NSUInteger pending=0;for(NSDictionary *record in [self discoveriesForFork:course[@"fork"]])if([record[@"kind"] isEqual:@"assignment"] && ![[self stateForCandidate:record] isEqual:@"已导入"])pending++;
         NSString *symbol=[course[@"path"] length] ? @"book.closed":@"folder.badge.questionmark";
-        if([course[@"pendingMergeTip"] length] || [course[@"pushFailed"] boolValue])symbol=@"exclamationmark.triangle";
+        if([course[@"pendingMergeTip"] length] || [course[@"pushFailed"] boolValue] || self.reports[course[@"fork"]][@"error"])symbol=@"exclamationmark.triangle";
         if(self.busy && [self.operationFork isEqual:course[@"fork"]])symbol=@"arrow.triangle.2.circlepath";
         [result addObject:@{@"id":course[@"fork"],@"name":[course[@"fork"] lastPathComponent],@"pending":@(pending),@"symbol":symbol,@"linked":@([course[@"path"] length]>0),@"status":self.statuses[course[@"fork"]] ?: ([course[@"path"] length] ? @"已关联":@"待关联目录")}];
     }return result;
@@ -355,7 +365,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.setupButton.title = !self.connected ? @"连接 GitHub" : (course && !local ? @"关联文件夹…" : @"添加课程…");
     self.setupButton.enabled = !self.busy && !self.operationsPaused; self.moreButton.enabled = !self.busy && !self.operationsPaused;
     self.syncButton.hidden = self.inbox || !course; self.commitButton.hidden = self.inbox || !course;
-    self.scanButton.title=course ? @"检查新作业":@"检查所有课程";
+    self.scanButton.title=course ? @"检查新作业":@"检查所有课程";self.scanButton.bezelColor=NSColor.controlAccentColor;
     self.syncButton.enabled = self.commitButton.enabled = !self.busy && !self.operationsPaused && local && self.connected;
     BOOL anyLocal = NO; for (NSDictionary *item in self.courses) if ([item[@"path"] length]) anyLocal = YES; self.scanButton.enabled = !self.busy && !self.operationsPaused && (local || (!course && anyLocal));
     self.recoveryButton.hidden = !course || (![course[@"pendingMergeTip"] length] && ![course[@"pushFailed"] boolValue]); self.recoveryButton.enabled = !self.busy && !self.operationsPaused;
@@ -391,7 +401,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     [self layoutContent]; self.refreshing = NO;
     if (self.stateChanged) self.stateChanged();
 }
-- (void)status:(NSString *)message { self.statuses[self.statusFork ?: self.selectedFork ?: @"all"] = message ?: @""; [self refreshPresentation]; }
+- (void)status:(NSString *)message { if(self.busy)self.operationPhase=message; self.statuses[self.statusFork ?: self.selectedFork ?: @"all"] = message ?: @""; [self refreshPresentation]; }
 - (void)showError:(NSError *)error { if (error) [self status:[@"⚠ " stringByAppendingString:error.localizedDescription]]; }
 - (void)work:(NSString *)message operation:(id (^)(NSError **))operation completion:(void (^)(id, NSError *))completion {
     [self work:message forCourse:[self course] operation:operation completion:completion];
@@ -399,7 +409,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (void)work:(NSString *)message forCourse:(NSDictionary *)course operation:(id (^)(NSError **))operation completion:(void (^)(id, NSError *))completion {
     if (self.preview) { [self status:@"模拟预览不会操作真实账户或仓库"]; return; }
     if (self.busy || (self.operationsPaused && !self.allowingExitSubmission)) return;
-    self.busy = YES; self.workGeneration++; NSUInteger generation = self.workGeneration; NSString *target = course[@"fork"]; self.operationFork = target; self.statusFork = target; [self.progress startAnimation:nil]; [self status:message];
+    self.busy = YES;self.operationKind=message;self.operationPhase=message; self.workGeneration++; NSUInteger generation = self.workGeneration; NSString *target = course[@"fork"]; self.operationFork = target; self.statusFork = target; [self.progress startAnimation:nil]; [self status:message];
     dispatch_async(self.queue, ^{
         NSError *error = nil; id value = operation(&error);
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -533,13 +543,16 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     courses = [[NSArray alloc] initWithArray:courses copyItems:YES];
     NSDictionary *recognitionSettings = self.preview ? @{@"mode":@"rules",@"automaticImport":@NO} : SSRecognitionSettings();
     [self work:@"正在扫描老师仓库…" forCourse:courses.count == 1 ? courses.firstObject : nil operation:^id(NSError **error) {
-        self.git.recognitionSettings = recognitionSettings;
+        self.git.recognitionSettings = @{@"mode":@"rules"};
         NSMutableDictionary *cache = [SSReadPlist(@"scan-cache.plist") isKindOfClass:NSDictionary.class] ? [SSReadPlist(@"scan-cache.plist") mutableCopy] : NSMutableDictionary.dictionary;
         NSMutableDictionary *result = NSMutableDictionary.dictionary;
         for (NSDictionary *course in courses) {
-            if (![course[@"path"] length]) continue;
+            if (![course[@"path"] length]){result[course[@"fork"]]=@{@"error":@"尚未关联目录，请先关联文件夹。"};continue;}
+            dispatch_async(dispatch_get_main_queue(),^{self.operationFork=course[@"fork"];self.statusFork=course[@"fork"];[self status:@"获取老师内容并进行规则识别…"];});
             NSError *scanError = nil;
             NSDictionary *scan = [self.git scanCourse:course cache:cache error:&scanError];
+            if(scan){NSDictionary *rules=scan;dispatch_async(dispatch_get_main_queue(),^{self.candidates[course[@"fork"]]=rules[@"candidates"];self.materials[course[@"fork"]]=rules[@"materials"];[self status:[SSCourseRecognitionSettings(recognitionSettings,course)[@"mode"] isEqual:@"rules"] ? @"规则结果已显示，正在整理结果…":@"规则结果已显示，正在补充模型分析…"];});
+                scan=[self.git enhanceScan:scan course:course settings:recognitionSettings paths:nil cache:cache];}
             result[course[@"fork"]] = scan ?: @{@"error":scanError.localizedDescription ?: @"扫描失败"};
         }
         SSWritePlist(@"scan-cache.plist", cache, NULL);
@@ -552,7 +565,10 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             NSDictionary *scan = result[course[@"fork"]]; if (!scan) continue;
             if (scan[@"error"]) { self.statuses[course[@"fork"]] = scan[@"error"]; [messages addObject:[NSString stringWithFormat:@"%@: %@", course[@"fork"], scan[@"error"]]]; continue; }
             self.candidates[course[@"fork"]] = scan[@"candidates"]; self.materials[course[@"fork"]] = scan[@"materials"] ?: @[];
-            self.statuses[course[@"fork"]] = [NSString stringWithFormat:@"检查完成：%lu 项课后作业，%lu 组考试或课上材料，%lu 个文件跳过", [scan[@"candidates"] count], [scan[@"materials"] count], [scan[@"skipped"] count]];
+            NSUInteger exams=0,classroom=0,unknown=0;for(NSDictionary *material in scan[@"materials"]){if([material[@"kind"] isEqual:@"exam"])exams++;else if([material[@"kind"] isEqual:@"classroom"])classroom++;else unknown++;}
+            self.statuses[course[@"fork"]]=[NSString stringWithFormat:@"%@；%lu 组考试，%lu 项课上任务，%lu 项待确认类型，%lu 个文件跳过",[scan[@"candidates"] count] ? [NSString stringWithFormat:@"发现 %lu 项课后作业",[scan[@"candidates"] count]]:@"未发现课后作业",(unsigned long)exams,(unsigned long)classroom,(unsigned long)unknown,[scan[@"skipped"] count]];
+            if([recognitionSettings[@"mode"] isEqual:@"local"] && scan[@"modelCompleted"]){SSWritePlist(@"recognition-last-result.plist",@{@"course":course[@"fork"],@"date":NSDate.date,@"model":recognitionSettings[@"model"] ?: @"",@"success":scan[@"modelCompleted"]},NULL);}
+            if([recognitionSettings[@"mode"] isEqual:@"local"] && [scan[@"modelCompleted"] boolValue])self.statuses[course[@"fork"]]=[self.statuses[course[@"fork"]] stringByAppendingString:@" · 本地模型分析完成"];
             if ([scan[@"recognitionMessages"] count]) self.statuses[course[@"fork"]] = [self.statuses[course[@"fork"]] stringByAppendingFormat:@" · %@",[scan[@"recognitionMessages"] firstObject]];
             course[@"lastScan"] = scan[@"date"];
             if (scan[@"branch"]) course[@"upstreamBranch"] = scan[@"branch"];

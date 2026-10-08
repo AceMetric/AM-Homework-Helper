@@ -219,14 +219,40 @@ private struct ReviewWorkspace: View {
     @Published var key=""
     @Published var message=""
     @Published var automatic=true
+    @Published var localAutomatic=true
+    @Published var modelDigest=""
+    @Published var installedModels:[NSDictionary]=[]
+    @Published var localStatus=""
+    @Published var localBusy=false
+    var localProbe:((NSDictionary,String,@escaping(NSDictionary)->Void)->Void)?
+    var lastMode="rules"
+    var modeProfiles:[String:(String,String,String)]=[:]
     @Published var cloudCourses:Set<String>=[]
     var availableCourses:[String]=[]
     @Published var dirty=false
     var save:((NSDictionary,String)->String)?
     var action:((String)->Void)?
-    func apply(_ settings:NSDictionary) {mode=string(settings,"mode");endpoint=string(settings,"endpoint");model=string(settings,"model");automatic=flag(settings,"automaticImport");cloudCourses=Set(settings["cloudCourses"] as? [String] ?? []);availableCourses=settings["availableCourses"] as? [String] ?? [];key="";dirty=false}
+    func apply(_ settings:NSDictionary) {mode=string(settings,"mode");endpoint=string(settings,"endpoint");model=string(settings,"model");automatic=flag(settings,"automaticImport");localAutomatic=settings["localAutomatic"] as? Bool ?? true;modelDigest=string(settings,"modelDigest");cloudCourses=Set(settings["cloudCourses"] as? [String] ?? []);availableCourses=settings["availableCourses"] as? [String] ?? [];localStatus=string(settings,"localStatus");lastMode=mode;modeProfiles[mode]=(endpoint,model,modelDigest);key="";dirty=false}
+    func changeMode(_ value:String) {
+        guard lastMode != value else{return};modeProfiles[lastMode]=(endpoint,model,modelDigest)
+        if let profile=modeProfiles[value] {endpoint=profile.0;model=profile.1;modelDigest=profile.2}
+        else if value=="local" {endpoint="http://localhost:11434";model="";modelDigest=""}
+        else if value=="cloud" {endpoint="";model="";modelDigest=""}
+        lastMode=value;installedModels=[];localStatus=""
+    }
+    func probe(_ action:String) {
+        guard !localBusy else {return};localBusy=true;localStatus=action=="models" ? "正在检测本地服务…":"正在用模拟作业测试识别…"
+        let capturedEndpoint=endpoint, capturedModel=model
+        localProbe?(["mode":"local","endpoint":endpoint,"model":model] as NSDictionary,action,{[weak self] result in
+            guard let self else{return};self.localBusy=false
+            guard self.endpoint==capturedEndpoint, action=="models" || self.model==capturedModel else{return}
+            self.localStatus=string(result,"message")
+            if let models=result["models"] as? [NSDictionary] {self.installedModels=models;if let selected=models.first(where:{string($0,"name")==self.model}) {let digest=string(selected,"digest");if self.modelDigest != digest {self.modelDigest=digest;self.dirty=true}}}
+        })
+        if localProbe==nil {localBusy=false;localStatus="本地服务检测接口不可用。"}
+    }
     func persist() -> Bool {
-        let result=save?(["mode":mode,"endpoint":endpoint,"model":model,"automaticImport":automatic,"cloudCourses":Array(cloudCourses).sorted()] as NSDictionary,key) ?? "无法保存设置。"
+        let result=save?(["mode":mode,"endpoint":endpoint,"model":model,"automaticImport":automatic,"localAutomatic":localAutomatic,"modelDigest":modelDigest,"cloudCourses":Array(cloudCourses).sorted()] as NSDictionary,key) ?? "无法保存设置。"
         message=result.isEmpty ? "设置已保存；下次检查作业时生效。" : result
         if result.isEmpty {key="";dirty=false};return result.isEmpty
     }
@@ -242,8 +268,16 @@ private struct SettingsWorkspace:View {
                     VStack(alignment:.leading,spacing:12) {
                         Picker("识别方式",selection:binding(\.mode)){Text("免费规则").tag("rules");Text("本地 Ollama").tag("local");Text("云端 API").tag("cloud")}
                         if state.mode != "rules" {
-                            TextField(state.mode == "local" ? "本地地址，例如 http://localhost:11434" : "API 基础地址，例如 https://服务地址/v1",text:binding(\.endpoint)).textFieldStyle(.roundedBorder)
-                            TextField("模型名称",text:binding(\.model)).textFieldStyle(.roundedBorder)
+                            if state.mode=="cloud" {TextField("API 基础地址，例如 https://服务地址/v1",text:binding(\.endpoint)).textFieldStyle(.roundedBorder);TextField("模型名称",text:binding(\.model)).textFieldStyle(.roundedBorder)}
+                            else {
+                                HStack{Button("检测本地服务"){state.probe("models")}.disabled(state.localBusy);Button("测试识别"){state.probe("test")}.disabled(state.localBusy || state.model.isEmpty)}
+                                if !state.installedModels.isEmpty {Picker("已安装模型",selection:binding(\.model)){Text("请选择模型").tag("");if !state.model.isEmpty && !state.installedModels.contains(where:{string($0,"name")==state.model}){Text(state.model+"（当前配置）").tag(state.model)};ForEach(state.installedModels.indices,id:\.self){i in Text(string(state.installedModels[i],"name")).tag(string(state.installedModels[i],"name"))}}.onChange(of:state.model){name in state.modelDigest=state.installedModels.first(where:{string($0,"name")==name}).map{string($0,"digest")} ?? ""}}
+                                else {Text(state.model.isEmpty ? "检测后选择这台 Mac 已安装的模型。":"当前模型："+state.model).foregroundStyle(.secondary)}
+                                Toggle("检查新作业时自动使用本地模型",isOn:binding(\.localAutomatic))
+                                Text("关闭后仍可在课程“更多”中手动重新识别。规则结果先显示，模型随后补充。").foregroundStyle(.secondary)
+                                if !state.localStatus.isEmpty {Text(state.localStatus).textSelection(.enabled)}
+                                DisclosureGroup("高级：服务地址与模型名称"){VStack(spacing:8){TextField("本地地址",text:binding(\.endpoint)).textFieldStyle(.roundedBorder);TextField("已安装模型名称",text:binding(\.model)).textFieldStyle(.roundedBorder)}}
+                            }
                             if state.mode == "cloud" {
                                 SecureField("此服务的 API 密钥（留空保留原值）",text:binding(\.key)).textFieldStyle(.roundedBorder)
                                 Text("仅发送勾选课程的老师文档：").font(.caption)
@@ -257,22 +291,23 @@ private struct SettingsWorkspace:View {
                         }
                         Toggle("自动加入完整明确日期的新作业",isOn:binding(\.automatic))
                         Text("相对日期、缺失时间和考试不会自动加入；已有任务更新仍需审核。").foregroundStyle(.secondary)
-                        Button("保存识别设置"){_ = state.persist()}.buttonStyle(.borderedProminent)
+                        Button("保存识别设置"){_ = state.persist()}.buttonStyle(.borderedProminent).disabled(state.localBusy)
                         if !state.message.isEmpty {Text(state.message).textSelection(.enabled)}
                     }.padding(8).frame(maxWidth:.infinity,alignment:.leading)
                 }
                 GroupBox("账户与提醒") {HStack{Button("GitHub 账户…"){state.action?("account")};Button("提醒设置与测试…"){state.action?("notifications")};Spacer()}.padding(8)}
                 GroupBox("软件更新") {HStack{Button("检查更新…"){state.action?("check-update")};Button("自动检查设置…"){state.action?("updates")};Spacer()}.padding(8)}
-                GroupBox("可选 Skill") {VStack(alignment:.leading,spacing:8){Text("在课程页“更多”中导出所选课程材料，交给作业提取 Skill，再导入结构化结果。应用会重新检查来源版本，结果进入审核。");Text("默认手动运行，不直接修改任务或执行 Git。").foregroundStyle(.secondary)}.padding(8)}
+                GroupBox("可选 Skill") {VStack(alignment:.leading,spacing:8){Text("一次勾选多门课程，导出一个材料包交给助手分析，再一次导入结果。默认仅处理新增或变化文档。");HStack{Button("交给助手识别…"){state.action?("skill-export")};Button("导入助手结果…"){state.action?("skill-import")}};Text("默认手动运行，不直接修改任务或执行 Git。").foregroundStyle(.secondary)}.padding(8)}
                 DisclosureGroup("高级设置") {Button("GitHub App 公开配置…"){state.action?("advanced")}.padding(.top,8)}
                 HStack{Spacer();Button("完成"){state.action?("close")}.keyboardShortcut(.cancelAction)}
             }.padding(24)
-        }.font(.system(size:13)).frame(minWidth:540,minHeight:520).background(Color(nsColor:.windowBackgroundColor)).tint(.blue)
+        }.onChange(of:state.mode){state.changeMode($0)}.font(.system(size:13)).frame(minWidth:540,minHeight:520).background(Color(nsColor:.windowBackgroundColor)).tint(.blue)
     }
 }
 @objc(AMSettingsController)
 @MainActor public final class AMSettingsController:NSViewController {
     private let state=SettingsState()
+    @objc public var localHandler:((NSDictionary,String,@escaping(NSDictionary)->Void)->Void)? {get{state.localProbe}set{state.localProbe=newValue}}
     @objc public var saveHandler:((NSDictionary,String)->String)? {get{state.save}set{state.save=newValue}}
     @objc public var actionHandler:((String)->Void)? {get{state.action}set{state.action=newValue}}
     @objc public var hasUnsavedChanges:Bool {state.dirty}

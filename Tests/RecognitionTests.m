@@ -120,5 +120,17 @@ int main(void){@autoreleasepool{
     Check(!SSSkillValidateBatch(batchAnswer,@[courseA,courseB],scans,@{},nil,NULL),@"unknown batch refuses import");
     accepted=SSSkillValidateBatch(skill,@[courseA,courseB],scans,@{},courseA[@"fork"],NULL);
     Check([accepted[@"records"][courseA[@"fork"]] count]==1,@"legacy single-course result remains compatible");
+    SSRecognitionClient *listing=SSRecognitionClient.new;__block NSURLRequest *listRequest=nil;
+    listing.transport=^NSData *(NSURLRequest *value,NSError **failure){listRequest=value;return [NSJSONSerialization dataWithJSONObject:@{@"models":@[@{@"name":@"installed-small",@"digest":@"digest-a"},@{@"name":@"installed-large",@"digest":@"digest-b"}]} options:0 error:NULL];};
+    NSArray *installed=[listing localModels:@{@"endpoint":@"http://localhost:11434"} error:NULL];
+    Check(installed.count==2 && [listRequest.URL.path isEqual:@"/api/tags"] && ![listRequest valueForHTTPHeaderField:@"Authorization"],@"model detection is read-only local API without credentials");
+    Check(![listing localModels:@{@"endpoint":@"https://outside.example.invalid"} error:NULL],@"model detection cannot send to a remote endpoint");
+    listing.transport=^NSData *(NSURLRequest *value,NSError **failure){return [@"{\"models\":[]}" dataUsingEncoding:NSUTF8StringEncoding];};
+    Check([[listing localModels:@{@"endpoint":@"http://localhost:11434"} error:NULL] count]==0,@"empty installed list is a valid connected state");
+    listing.transport=^NSData *(NSURLRequest *value,NSError **failure){return [@"{}" dataUsingEncoding:NSUTF8StringEncoding];};
+    Check(![listing localModels:@{@"endpoint":@"http://localhost:11434"} error:NULL],@"unsupported listing does not invent models");
+    Check([SSCourseRecognitionSettings(@{@"mode":@"local",@"localAutomatic":@NO},courseA)[@"mode"] isEqual:@"rules"],@"disabling local automatic keeps routine scans free of model requests");
+    Check([SSCourseRecognitionSettings(@{@"mode":@"local",@"localAutomatic":@NO,@"manualLocal":@YES},courseA)[@"mode"] isEqual:@"local"],@"manual local identification remains available when automatic is off");
+    Check([SSCourseRecognitionSettings(@{@"mode":@"local"},courseA)[@"mode"] isEqual:@"local"],@"existing local preference retains automatic behavior");
     printf("PASS: %lu recognition assertions\n",(unsigned long)assertions);
 }return 0;}

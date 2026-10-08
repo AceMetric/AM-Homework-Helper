@@ -28,6 +28,13 @@ import Foundation
         settings.key="temporary input";settings.dirty=true;settings.save={_,_ in "失败"};check(!settings.persist() && settings.dirty && !settings.key.isEmpty,"failed settings save preserves draft")
         settings.save={config,key in check(config["key"]==nil && key=="temporary input","credential separated from settings dictionary");return ""}
         check(settings.persist() && !settings.dirty && settings.key.isEmpty,"successful settings save clears secret input")
+        check(settings.localAutomatic,"legacy local automatic preference defaults on")
+        settings.localProbe={configuration,action,ready in check(configuration["key"]==nil && configuration["mode"] as? String=="local","probe config contains no cloud key");ready(["models":[["name":"installed","digest":"new-digest"] as NSDictionary],"message":"connected"] as NSDictionary)}
+        settings.model="installed";settings.probe("models");check(!settings.localBusy && settings.installedModels.count==1 && settings.modelDigest=="new-digest","local detection updates installed models and cache identity")
+        let courseState=CourseState();courseState.update([record as NSDictionary],selected:"source-1",information:"",empty:"",paused:false)
+        check(courseState.current?["id"] as? String=="source-1","course detail remains linked to stable selection")
+        courseState.update([],selected:"source-1",information:"all-course summary",empty:"",paused:true)
+        check(courseState.current==nil && courseState.information=="all-course summary","all-course summary never retains stale selected material")
         print("PASS: \(count) SwiftUI state assertions")
     }
 }
