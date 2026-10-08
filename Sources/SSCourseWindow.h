@@ -33,6 +33,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)persistForExit:(NSError **)error;
 - (instancetype)initWithPreview:(BOOL)preview;
 - (void)startAutomaticChecks;
+- (void)setup:(nullable id)sender;
+- (void)startUsing:(nullable id)sender;
+@property (copy, nullable) void (^onboardingNavigation)(BOOL review);
 - (void)refreshPresentation;
 - (NSArray<NSDictionary *> *)pendingReviewCandidates;
 - (NSArray<NSDictionary *> *)allPendingReviewCandidates;

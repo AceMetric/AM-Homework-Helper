@@ -400,6 +400,7 @@ final class SetupState: ObservableObject {
     @Published var step=0
     @Published var busy=false
     @Published var message=""
+    @Published var context:NSDictionary=[:]
     var action:((NSDictionary)->Void)?
     var visible:[NSDictionary]{records.filter{query.isEmpty || string($0,"fork").localizedCaseInsensitiveContains(query)}}
     func update(_ records:[NSDictionary],step:Int,busy:Bool,message:String){self.records=records;self.step=step;self.busy=busy;self.message=message;for record in records {let key=string(record,"fork");if let path=record["path"] as? String {paths[key]=path}}}
@@ -407,44 +408,91 @@ final class SetupState: ObservableObject {
 }
 private struct SetupWorkspace:View {
     @ObservedObject var state:SetupState
+    private var official:Bool{string(state.context,"provider").isEmpty || string(state.context,"provider")=="githubCLI"}
+    private let steps=["连接账号","选择课程","准备文件","首次检查"]
     var body:some View {
         VStack(alignment:.leading,spacing:16){
-            Text(state.step==0 ? "选择课程" : (state.step==1 ? "关联课程文件夹":"配置结果")).font(.title2.weight(.semibold))
-            Text(state.step==0 ? "勾选自己的课程 fork。老师上游和权限将自动核验。" : "优先复用已有仓库；没有文件夹的课程可以批量下载。").foregroundStyle(.secondary)
-            if state.step==0 {
-                TextField("搜索课程仓库",text:$state.query).textFieldStyle(.roundedBorder)
-                if state.records.isEmpty {Text("未找到可配置的个人课程 fork。请先在 GitHub fork 课程仓库，再重新检测。").foregroundStyle(.secondary);Button("重新读取课程"){state.send("reload")}}
-                List(state.visible,id:\.self){record in
-                    let key=string(record,"fork")
-                    Toggle(isOn:Binding(get:{state.selected.contains(key)},set:{if $0 {state.selected.insert(key)}else{state.selected.remove(key)}})){
-                        VStack(alignment:.leading,spacing:3){Text(key);if flag(record,"existing"){Text("已添加 · 可以继续完成配置").font(.caption).foregroundStyle(.secondary)}}
-                    }.toggleStyle(.checkbox)
-                }
-            } else {
-                HStack{Button("扫描课程总文件夹…"){state.send("find")};Button("下载未关联课程…"){state.send("download")};Button("重新检测权限"){state.send("retry")};Spacer()}
-                List(state.records,id:\.self){record in
-                    let key=string(record,"fork"), options=record["matches"] as? [String] ?? []
-                    VStack(alignment:.leading,spacing:6){
-                        HStack{Image(systemName:flag(record,"ready") ? "checkmark.circle":"folder");Text(key).fontWeight(.medium);Spacer();Button("选择文件夹…"){state.send("folder",key)}.disabled(flag(record,"invalid"))}
-                        if !string(record,"upstream").isEmpty {Text("老师："+string(record,"upstream")).font(.caption).foregroundStyle(.secondary)}
-                        if !options.isEmpty {
-                            Picker("已有目录",selection:Binding(get:{state.paths[key] ?? ""},set:{state.paths[key]=$0})){
-                                Text("请选择").tag("");ForEach(options,id:\.self){Text($0).tag($0)}
-                            }
-                        }
-                        if let path=state.paths[key],!path.isEmpty {Text(path).font(.caption).textSelection(.enabled).lineLimit(2)}
-                        if !string(record,"status").isEmpty{Text(string(record,"status")).foregroundStyle(flag(record,"invalid") ? Color.orange:Color.secondary).fixedSize(horizontal:false,vertical:true)}
-                        if !string(record,"helpURL").isEmpty,let url=URL(string:string(record,"helpURL")){Link("处理授权问题…",destination:url)}
-                    }.padding(.vertical,6)
-                }
+            if state.step < 4 {
+                HStack(spacing:12){ForEach(0..<4,id:\.self){index in
+                    HStack(spacing:5){Image(systemName:index < state.step ? "checkmark.circle.fill":"\(index+1).circle");Text(steps[index]).font(.caption)}.foregroundStyle(index==state.step ? Color.accentColor:Color.secondary)
+                    if index<3 {Image(systemName:"chevron.right").font(.caption2).foregroundStyle(.secondary)}
+                }}.accessibilityLabel("第 \(state.step+1) 步，共四步")
+                Divider()
             }
-            if state.busy {HStack{ProgressView().controlSize(.small);Text("正在逐门处理，成功结果会保留。")}}
+            Text(state.step < 4 ? steps[max(0,min(3,state.step))]:"开始使用 AM Helper").font(.title2.weight(.semibold))
+            content
+            if state.busy {HStack{ProgressView().controlSize(.small);Text(state.step==0 ? "正在等待登录，其他课程数据会保留。":"正在逐门处理，成功结果会保留。").foregroundStyle(.secondary)}}
             Text(state.message).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
-            HStack{Button(state.step==0 ? "取消":"稍后完成"){state.send("close")}.keyboardShortcut(.cancelAction);Spacer()
-                if state.step==0 {Button("下一步：核验课程"){state.send("select")}.disabled(state.selected.isEmpty).keyboardShortcut(.defaultAction)}
-                else {Button("关联选定目录"){state.send("link")};Button("开始检查"){state.send("check")}.keyboardShortcut(.defaultAction)}
-            }
-        }.padding(24).frame(minWidth:620,minHeight:450).font(.system(size:13)).background(Color(nsColor:.windowBackgroundColor)).disabled(state.busy)
+            Divider()
+            footer
+        }.padding(24).frame(minWidth:620,minHeight:450).font(.system(size:13)).background(Color(nsColor:.windowBackgroundColor))
+    }
+    @ViewBuilder private var content:some View {
+        if state.step==0 {
+            ScrollView {VStack(alignment:.leading,spacing:16){
+                Label("用浏览器连接 GitHub，无需 SSH 或额外安装工具。",systemImage:"person.crop.circle.badge.checkmark")
+                Text(official ? "授权页面会显示 GitHub CLI，这是软件内置的 GitHub 官方登录工具。它申请 repo、read:org、gist 权限，范围比所选课程更宽；本应用仅处理你选择的课程，登录令牌只保存在这台 Mac 的钥匙串。":"你在高级设置中选择了旧兼容登录，不使用内置官方工具。旧 OAuth 可能受组织应用限制，旧 GitHub App 需单独安装授权及本机上游凭据。登录令牌只存本机。").foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+                Text(official ? "不需要申请批准本项目应用。GitHub 登录、双重验证及学校 SSO 仍由你本人完成，课程访问权限需要已具备。":"如需简化配置，可取消引导，在高级登录设置选择 GitHub 官方登录。").foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+                if !string(state.context,"code").isEmpty {
+                    Text(string(state.context,"code")).font(.system(size:30,weight:.semibold,design:.monospaced)).textSelection(.enabled).accessibilityLabel("GitHub 验证码")
+                    HStack {Button("复制代码"){state.send("copyCode")};Button("打开 GitHub"){state.send("openLogin")}}
+                    Text("在网页输入上方代码并确认。完成后这里会自动继续。").foregroundStyle(.secondary)
+                }
+                if !string(state.context,"detail").isEmpty {DisclosureGroup("详情"){Text(string(state.context,"detail")).font(.caption).textSelection(.enabled)}}
+            }.frame(maxWidth:.infinity,alignment:.leading)}
+        } else if state.step==1 {
+            Text("勾选自己的课程 fork，老师仓库和读取权限将自动核验。").foregroundStyle(.secondary)
+            TextField("搜索课程仓库",text:$state.query).textFieldStyle(.roundedBorder).disabled(state.busy)
+            if state.records.isEmpty {Text("未找到个人课程 fork。请先在 GitHub fork 课程仓库，再重新读取。").foregroundStyle(.secondary);Button("重新读取课程"){state.send("reload")}.disabled(state.busy)}
+            List(state.visible,id:\.self){record in
+                let key=string(record,"fork")
+                Toggle(isOn:Binding(get:{state.selected.contains(key)},set:{if $0 {state.selected.insert(key)}else{state.selected.remove(key)}})){
+                    VStack(alignment:.leading,spacing:3){Text(key);if flag(record,"existing"){Text("已添加 · 将复用原目录和任务").font(.caption).foregroundStyle(.secondary)}}
+                }.toggleStyle(.checkbox)
+            }.disabled(state.busy)
+        } else if state.step==2 {
+            Text("选择课程总文件夹可批量匹配；缺少文件的课程可下载到同一个位置。").foregroundStyle(.secondary)
+            HStack{Button("选择课程总文件夹…"){state.send("find")};Button("下载缺少的课程…"){state.send("download")};Spacer();Button("重试权限检测"){state.send("retry")}}.disabled(state.busy)
+            courseRows
+        } else if state.step==3 {
+            Text("检查只读取老师内容，不合并文件、不提交或推送。失败课程可单独处理，已有结果保留。").foregroundStyle(.secondary)
+            courseRows
+        } else {
+            ScrollView {VStack(alignment:.leading,spacing:20){
+                tip("检查新作业","发现老师的新内容，不合并或推送。","magnifyingglass")
+                tip("审核作业","核对名称、内容和截止时间，保存后进入任务、日历和提醒。","tray")
+                tip("同步课程文件","更新本地文件，并安全更新你自己的 fork。","arrow.triangle.2.circlepath")
+                tip("提交作业","选择文件、预览并填写说明，只推送个人仓库。","paperplane")
+                Text("这些提示不会自动执行同步或提交。可从侧栏“开始使用”随时重看。").foregroundStyle(.secondary)
+            }.frame(maxWidth:.infinity,alignment:.leading)}
+        }
+    }
+    private func tip(_ title:String,_ description:String,_ symbol:String)->some View {HStack(alignment:.top,spacing:12){Image(systemName:symbol).frame(width:24).foregroundStyle(Color.accentColor);VStack(alignment:.leading,spacing:4){Text(title).fontWeight(.semibold);Text(description).foregroundStyle(.secondary)}}}
+    private var courseRows:some View {
+        List(state.records,id:\.self){record in
+            let key=string(record,"fork"),options=record["matches"] as? [String] ?? []
+            VStack(alignment:.leading,spacing:6){
+                HStack{Image(systemName:flag(record,"ready") ? "checkmark.circle":"exclamationmark.circle");Text(key).fontWeight(.medium);Spacer();if state.step==3 {Button("查看结果"){state.send("result",key)}.disabled(state.busy)};if state.step==2 {Button("选择文件夹…"){state.send("folder",key)}.disabled(flag(record,"invalid") || state.busy)}}
+                if !string(record,"upstream").isEmpty {Text("老师："+string(record,"upstream")).font(.caption).foregroundStyle(.secondary)}
+                if state.step==2,!options.isEmpty {Picker("已有目录",selection:Binding(get:{state.paths[key] ?? ""},set:{state.paths[key]=$0})){Text("请选择").tag("");ForEach(options,id:\.self){Text($0).tag($0)}}.disabled(state.busy)}
+                if state.step==2,let path=state.paths[key],!path.isEmpty {Text(path).font(.caption).textSelection(.enabled).lineLimit(2)}
+                if !string(record,"status").isEmpty {Text(string(record,"status")).foregroundStyle(flag(record,"invalid") ? Color.orange:Color.secondary).fixedSize(horizontal:false,vertical:true)}
+                if !string(record,"detail").isEmpty {DisclosureGroup("详情"){Text(string(record,"detail")).font(.caption).textSelection(.enabled)}}
+                if !string(record,"helpURL").isEmpty,let url=URL(string:string(record,"helpURL")){Link("打开 GitHub 处理…",destination:url)}
+            }.padding(.vertical,6)
+        }
+    }
+    private var footer:some View {
+        HStack {
+            Button(state.busy && state.step==0 ? "取消登录":(state.step==4 ? "跳过提示":"下次继续")){state.send("close")}.keyboardShortcut(.cancelAction).disabled(state.busy && state.step != 0)
+            if state.step>0 && state.step<4 {Button("返回"){state.send("back")}.disabled(state.busy)}
+            Spacer()
+            if state.step==0 {Button("浏览器登录"){state.send("login")}.disabled(state.busy || !string(state.context,"code").isEmpty).keyboardShortcut(.defaultAction)}
+            else if state.step==1 {Button("下一步：核验课程"){state.send("select")}.disabled(state.busy || state.selected.isEmpty).keyboardShortcut(.defaultAction)}
+            else if state.step==2 {Button("关联选定目录"){state.send("link")}.disabled(state.busy);Button("下一步：首次检查"){state.send("check")}.disabled(state.busy || !state.records.contains{flag($0,"ready")}).keyboardShortcut(.defaultAction)}
+            else if state.step==3 {Button("重新检查就绪课程"){state.send("check")}.disabled(state.busy);Button("完成并查看使用提示"){state.send("finish")}.disabled(state.busy).keyboardShortcut(.defaultAction)}
+            else {Button("重新运行配置引导"){state.send("restart")}.disabled(state.busy);Button("查看课程"){state.send("courses")}.keyboardShortcut(.defaultAction);Button("查看待审核"){state.send("review")}}
+        }
     }
 }
 @objc(AMSetupController)
@@ -452,5 +500,6 @@ private struct SetupWorkspace:View {
     private let state=SetupState()
     @objc public var actionHandler:((NSDictionary)->Void)?{get{state.action}set{state.action=newValue}}
     @objc public func updateRecords(_ records:[NSDictionary],step:Int,busy:Bool,message:String){state.update(records,step:step,busy:busy,message:message)}
+    @objc public func updateContext(_ context:NSDictionary){state.context=context;if let selected=context["selected"] as? [String]{state.selected=Set(selected)}}
     public override func loadView(){view=NSHostingView(rootView:SetupWorkspace(state:state))}
 }

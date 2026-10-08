@@ -742,7 +742,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     if (!self.preview) { UNUserNotificationCenter.currentNotificationCenter.delegate = self; [self refreshPermission]; [self refreshReminders]; }
     self.ticker = [NSTimer timerWithTimeInterval:60 target:self selector:@selector(tick:) userInfo:nil repeats:YES]; [NSRunLoop.mainRunLoop addTimer:self.ticker forMode:NSRunLoopCommonModes];
     [NSWorkspace.sharedWorkspace.notificationCenter addObserver:self selector:@selector(woke:) name:NSWorkspaceDidWakeNotification object:nil];
-    self.courseWindow = [[SSCourseController alloc] initWithPreview:self.preview];
+    self.courseWindow = [self makeCourseController];
     self.courseWindow.tasksProvider = ^NSArray * { return [weakSelf snapshot]; };
     self.courseWindow.saveReviewItems = ^NSString *(NSArray *items, BOOL automatic) { return [weakSelf saveReviewItems:items automatic:automatic]; };
     self.courseWindow.reviewCandidate = ^(NSDictionary *candidate) { [weakSelf reviewGitHubCandidate:candidate]; };
@@ -759,6 +759,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
         if (!ok) { weakSelf.notice = @"本机数据保存失败，已暂缓退出与更新。"; [weakSelf render]; }
         return ok;
     };
+    self.courseWindow.onboardingNavigation=^(BOOL review){NSButton *route=NSButton.new;route.tag=review ? 3:4;[weakSelf navigate:route];};
     self.courseWindow.operationStateChanged = ^{ [weakSelf.exitCoordinator operationStateChanged]; };
     self.updates.statusChanged = ^(NSString *message) { weakSelf.notice = message; [weakSelf render]; };
     [self.root addSubview:self.courseWindow.view]; self.courseWindow.view.hidden = YES;
@@ -766,6 +767,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     if (!self.preview) [self.courseWindow startAutomaticChecks];
     [self layout];
 }
+- (SSCourseController *)makeCourseController {return [[SSCourseController alloc] initWithPreview:self.preview];}
 - (void)refreshAppearance {
     if (!self.window || self.renderBusy) return;
     NSResponder *focus = self.window.firstResponder; NSInteger calendarFocus = focus == self.yearPicker ? 1 : (focus == self.monthPicker ? 2 : 0);
@@ -927,7 +929,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     NSTextField *brand = Text(@"AM Helper", 14, NSFontWeightSemibold, Ink()); brand.maximumNumberOfLines = 1; brand.lineBreakMode = NSLineBreakByTruncatingTail; brand.accessibilityLabel = @"AM's Homework Helper"; brand.toolTip = @"AM's Homework Helper";
     Put(self.sidebar, brand, 20, 32, 160, 44);
     NSPoint offset=sidebarOffset;
-    self.navigationScroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(0,96,192,MAX(140,h-232))];self.navigationScroll.hasVerticalScroller=YES;self.navigationScroll.autohidesScrollers=YES;self.navigationScroll.drawsBackground=NO;
+    self.navigationScroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(0,96,192,MAX(140,h-276))];self.navigationScroll.hasVerticalScroller=YES;self.navigationScroll.autohidesScrollers=YES;self.navigationScroll.drawsBackground=NO;
     NSArray *snapshots=self.courseWindow.courseSnapshots ?: @[];CGFloat navigationHeight=4*44+44+(self.coursesCollapsed ? 0:(snapshots.count+1)*40);
     Surface *navigation=Box(NSColor.clearColor,0);navigation.frame=NSMakeRect(0,0,192,MAX(NSHeight(self.navigationScroll.frame),navigationHeight));self.navigationScroll.documentView=navigation;[self.sidebar addSubview:self.navigationScroll];
     NSArray *names=@[@"总览",@"日历",@"任务",@"待审核作业"];NSArray *icons=@[@"square.grid.2x2",@"calendar",@"checklist",@"tray"];
@@ -938,6 +940,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     [self.navigationScroll.contentView scrollToPoint:offset];
 
     ActionButton *account = Button(self.courseWindow.accountSummary ?: @"连接 GitHub", self, @selector(accountSettings:), 3); account.identifier=@"account";account.symbol = @"person.crop.circle";
+    ActionButton *gettingStarted=Button(@"开始使用",self,@selector(startUsing:),3);gettingStarted.identifier=@"getting-started";gettingStarted.symbol=@"questionmark.circle";Put(self.sidebar,gettingStarted,12,h-168,168,36);
     Put(self.sidebar, account, 12, h - 124, 168, 36);
     ActionButton *settings = Button(@"设置", self, @selector(showSettings:), 3); settings.identifier=@"settings";settings.symbol = @"gearshape"; Put(self.sidebar, settings, 12, h - 80, 168, 36);
     if(focusedID){NSView *replacement=AMFindButton(self.sidebar,focusedAction,focusedTag,focusedID);if(replacement)[self.window makeFirstResponder:replacement];}
@@ -950,6 +953,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     NSButton *route=NSButton.new;route.tag=4;[self navigate:route];
     if([self.courseWindow selectCourseID:identifier])[self render];
 }
+- (void)startUsing:(id)sender {[self.courseWindow startUsing:sender];}
 - (void)accountSettings:(id)sender { [self.courseWindow accountSettings:sender]; }
 - (void)showSettings:(id)sender {
     [self showWindow]; if (self.window.attachedSheet) return;

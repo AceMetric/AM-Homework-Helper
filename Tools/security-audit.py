@@ -28,6 +28,9 @@ SENSITIVE_NAMES = re.compile(r'(?i)(?:^|/)(?:\.env(?:\.(?!example$|sample$|templ
 findings = set()
 counts = {'files': 0, 'history_objects': 0, 'archives': 0, 'images_ocr': 0, 'legacy_commit_email_objects': 0}
 seen = set()
+# Official, immutable GitHub CLI contains public upstream crypto fixtures and contacts.
+# Accept only the exact signed distribution bytes; any modification is scanned normally.
+PINNED_PUBLIC_BINARY = {'gh': 'aa97dfb4a82f7c56063cdcbfaa39a738b923c1bdca29bd5a041b8e959ca38e04'}
 ocr = None
 # Exact upstream attribution text, obtained from the pinned Sparkle 2.10.0 distribution.
 # Only its published author email is exempt; any changed byte or credential remains checked.
@@ -85,6 +88,9 @@ def inspect(data, label, depth=0, commit=False):
     counts['files'] += 1
     if SENSITIVE_NAMES.search(label):
         findings.add((label, 'credential-file'))
+    if PINNED_PUBLIC_BINARY.get(label.rsplit('/', 1)[-1]) == hashlib.sha256(data).hexdigest():
+        counts['verified_official_binaries'] = counts.get('verified_official_binaries', 0) + 1
+        return
     texts = [data]
     try:
         if data.startswith(b'bplist') or data.startswith(b'<?xml') and b'<plist' in data[:250]:
