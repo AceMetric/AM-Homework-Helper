@@ -97,6 +97,33 @@ static NSCalendar *Cal(void) { NSCalendar *c = [[NSCalendar alloc] initWithCalen
 - (void)selectDay:(DayButton *)sender { self.selection = sender.date; self.month = sender.date; [self reload]; if (self.onSelect) self.onSelect(sender.date); }
 @end
 
+// Selectable rows keep completion/edit buttons independent from selection.
+@interface TaskSelectionRow : Surface
+@property(copy) void (^onSelect)(void);
+@property(copy) void (^onClose)(void);
+@property(copy) void (^onMove)(NSInteger direction);
+@end
+@implementation TaskSelectionRow
+- (BOOL)acceptsFirstResponder { return YES; }
+- (NSView *)hitTest:(NSPoint)point {
+    NSView *hit=[super hitTest:point];
+    return [hit isKindOfClass:NSTextField.class] && ![(NSTextField *)hit isSelectable] ? self:hit;
+}
+- (void)mouseDown:(NSEvent *)event { if(self.onSelect)self.onSelect(); }
+- (void)keyDown:(NSEvent *)event {
+    if(event.keyCode==53){if(self.onClose)self.onClose();}
+    else if(event.keyCode==125 || event.keyCode==126){if(self.onMove)self.onMove(event.keyCode==125 ? 1:-1);}
+    else if(event.keyCode==36 || event.keyCode==49){if(self.onSelect)self.onSelect();}
+    else [super keyDown:event];
+}
+@end
+@interface TaskDetailsText : PastelNotesView
+@property(copy) void (^onClose)(void);
+@end
+@implementation TaskDetailsText
+- (void)cancelOperation:(id)sender {if(self.onClose)self.onClose();}
+@end
+
 @class AppDelegate;
 
 @interface CallbackButton : ActionButton
@@ -288,7 +315,14 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property Surface *sidebar;
 @property NSScrollView *navigationScroll;
 @property BOOL coursesCollapsed;
-@property NSMutableSet<NSString *> *expandedTaskNotes;
+@property NSString *selectedTaskID;
+@property Surface *taskDetails;
+@property NSScrollView *taskDetailsScroll;
+@property TaskDetailsText *taskDetailsText;
+@property NSString *displayedTaskID;
+@property NSDictionary *detailsSnapshot;
+@property NSString *detailsAppearance;
+@property NSSize detailsSize;
 @property Surface *header;
 @property Surface *document;
 @property NSScrollView *scroll;
@@ -658,6 +692,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     if (self.preview && [NSProcessInfo.processInfo.arguments containsObject:@"--compact"]) [self.window setContentSize:NSMakeSize(960, 640)];
     self.window.backgroundColor = Canvas();
     self.root = GradientBox(Canvas(), Panel(), 0); self.root.frame = NSMakeRect(0, 0, 1280, 840); self.window.contentView = self.root;
+    self.taskDetails = Box(Panel(), 10); self.taskDetails.stroke = Line(); self.taskDetails.hidden=YES; [self.root addSubview:self.taskDetails];
     self.sidebar = GradientBox(Panel(), Canvas(), 0); [self.root addSubview:self.sidebar];
     self.header = GradientBox(Canvas(), Panel(), 0); [self.root addSubview:self.header];
     self.search = [[NSSearchField alloc] initWithFrame:NSZeroRect]; self.search.placeholderString = @"搜索任务、学科、备注"; self.search.delegate = self; self.search.sendsSearchStringImmediately = YES; self.search.font = [NSFont systemFontOfSize:12]; [self.root addSubview:self.search];
@@ -688,7 +723,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     self.courseWindow.saveReviewItems = ^NSString *(NSArray *items, BOOL automatic) { return [weakSelf saveReviewItems:items automatic:automatic]; };
     self.courseWindow.reviewCandidate = ^(NSDictionary *candidate) { [weakSelf reviewGitHubCandidate:candidate]; };
     self.courseWindow.editTask = ^(NSString *identifier) { NSMenuItem *item = NSMenuItem.new; item.representedObject = identifier; [weakSelf editTask:item]; };
-    self.courseWindow.stateChanged = ^{ [weakSelf renderSidebar]; if(weakSelf.page==4)[weakSelf renderHeader]; if (weakSelf.page == 0) [weakSelf renderContent]; };
+    self.courseWindow.stateChanged = ^{ [weakSelf renderSidebar]; if(weakSelf.page==4)[weakSelf renderHeader]; if (weakSelf.page == 0) [weakSelf renderTaskContent]; };
     self.exitCoordinator = SSExitCoordinator.new;
     self.exitCoordinator.operationBusy = ^BOOL { return weakSelf.courseWindow.operationBusy; };
     self.exitCoordinator.pauseOperations = ^(BOOL paused) { weakSelf.courseWindow.operationsPaused = paused; };
@@ -800,28 +835,85 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     self.search.frame = NSMakeRect(w - 280, 140, 256, 32);
     self.taskFilter.frame = NSMakeRect(x, 140, 160, 32); self.sortMenu.frame = NSMakeRect(x + 176, 140, 152, 32);
     self.calendarStatus.frame = NSMakeRect(x, 140, 240, 32);
-    if (self.calendarMode) {
-        if (w >= 1180) {
-            self.calendarScroll.frame = NSMakeRect(x, 188, content - 304, h - 212);
-            self.agenda.frame = NSMakeRect(w - 304, 188, 280, h - 212);
-        } else {
-            CGFloat agendaHeight = 176;
-            self.calendarScroll.frame = NSMakeRect(x, 188, content, h - 228 - agendaHeight);
-            self.agenda.frame = NSMakeRect(x, h - 24 - agendaHeight, content, agendaHeight);
-        }
-    } else self.scroll.frame = NSMakeRect(x, 188, content, h - 212);
+    [self layoutTaskArea];
     self.courseWindow.view.hidden = !coursePage;
     if (self.courseWindow) { self.courseWindow.view.frame = NSMakeRect(x, 144, content, h - 168); [self.courseWindow layoutContent]; }
     [self render];
+}
+- (void)layoutTaskArea {
+    CGFloat w=NSWidth(self.root.bounds),h=NSHeight(self.root.bounds),x=216,content=w-x-24;
+    self.taskDetails.hidden=self.page>=3 || self.calendarMode || !self.selectedTaskID;
+    if(self.calendarMode){
+        if(w>=1180){self.calendarScroll.frame=NSMakeRect(x,188,content-304,h-212);self.agenda.frame=NSMakeRect(w-304,188,280,h-212);}
+        else {CGFloat agendaHeight=self.selectedTaskID ? 280:176;self.calendarScroll.frame=NSMakeRect(x,188,content,h-228-agendaHeight);self.agenda.frame=NSMakeRect(x,h-24-agendaHeight,content,agendaHeight);}
+    }else{
+        CGFloat inspector=self.selectedTaskID && self.page<3 ? 320:0;
+        self.scroll.frame=NSMakeRect(x,188,content-(inspector ? inspector+16:0),h-212);
+        self.taskDetails.frame=NSMakeRect(w-24-inspector,188,inspector,h-212);
+    }
+}
+- (NSArray *)selectionTasks {
+    if(self.page==2)return [[self visibleTasks] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *task,NSDictionary *bindings){return ![task[@"deleted"] boolValue];}]];
+    if(self.page==1){NSMutableArray *result=NSMutableArray.array;for(NSDictionary *task in DDLCalendarTasks(self.tasks,self.calendarStatus.selectedSegment,self.query))if([Cal() isDate:task[@"due"] inSameDayAsDate:self.selectedDay])[result addObject:task];return result;}
+    if(self.page==0){NSDate *end=[Cal() dateByAddingUnit:NSCalendarUnitDay value:8 toDate:[Cal() startOfDayForDate:NSDate.date] options:0];NSMutableArray *result=NSMutableArray.array;for(NSDictionary *task in self.tasks)if(![task[@"completed"] boolValue] && ![task[@"archived"] boolValue] && ![task[@"deleted"] boolValue] && [task[@"due"] compare:end]==NSOrderedAscending && (!self.query.length || DDLMatchesFilter(task,0,self.query,NSDate.date,Cal())))[result addObject:task];return [result sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"due"] compare:b[@"due"]];}];}
+    return @[];
+}
+- (void)validateTaskSelection {
+    if(self.page>=3 || !self.selectedTaskID)return;
+    BOOL found=NO;for(NSDictionary *task in self.selectionTasks)if([task[@"id"] isEqual:self.selectedTaskID]){found=YES;break;}
+    if(!found){self.selectedTaskID=nil;self.focusedTaskID=nil;}
+}
+- (void)selectTask:(NSButton *)sender {
+    self.selectedTaskID=sender.identifier;if(self.calendarMode)self.focusedTaskID=sender.identifier;
+    [self render];[self focusSelectedTaskRow];
+}
+- (void)focusSelectedTaskRow {
+    NSView *container=self.calendarMode ? self.agendaDocument:self.document;
+    for(NSView *view in container.subviews)if([view isKindOfClass:TaskSelectionRow.class] && [view.identifier isEqual:self.selectedTaskID]){[self.window makeFirstResponder:view];[view scrollRectToVisible:view.bounds];return;}
+    if(self.calendarMode && self.selectedTaskID)[self.window makeFirstResponder:self.taskDetailsText];
+}
+- (void)closeTaskDetails:(id)sender {self.selectedTaskID=nil;self.focusedTaskID=nil;[self.window makeFirstResponder:self.search];[self render];}
+- (void)moveTaskSelection:(NSInteger)direction {
+    NSArray *tasks=self.selectionTasks;if(!tasks.count)return;NSInteger index=0;
+    for(NSUInteger i=0;i<tasks.count;i++)if([tasks[i][@"id"] isEqual:self.selectedTaskID]){index=(NSInteger)i+direction;break;}
+    index=MAX(0,MIN(index,(NSInteger)tasks.count-1));NSButton *row=NSButton.new;row.identifier=tasks[index][@"id"];[self selectTask:row];
+}
+- (TaskSelectionRow *)selectionRowForTask:(NSDictionary *)task {
+    TaskSelectionRow *row=TaskSelectionRow.new;row.fill=Card();row.radius=10;row.stroke=[self.selectedTaskID isEqual:task[@"id"]] ? Accent():Line();row.identifier=task[@"id"];row.accessibilityLabel=[NSString stringWithFormat:@"查看任务详情：%@",task[@"title"]];
+    __weak typeof(self) owner=self;NSString *identifier=task[@"id"];
+    row.onSelect=^{NSButton *button=NSButton.new;button.identifier=identifier;[owner selectTask:button];};row.onClose=^{[owner closeTaskDetails:nil];};row.onMove=^(NSInteger direction){[owner moveTaskSelection:direction];};return row;
+}
+- (void)renderTaskDetailsIn:(Surface *)panel {
+    NSDictionary *task=[self taskWithID:self.selectedTaskID];if(!task)return;
+    NSString *appearance=[self.root.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]];
+    BOOL sameTask=[self.displayedTaskID isEqual:self.selectedTaskID];
+    if(sameTask && [self.detailsSnapshot isEqual:task] && [self.detailsAppearance isEqual:appearance] && NSEqualSizes(self.detailsSize,panel.bounds.size) && self.taskDetailsScroll.superview==panel)return;
+    NSPoint position=sameTask ? self.taskDetailsScroll.contentView.bounds.origin:NSZeroPoint;
+    BOOL restoreFocus=sameTask && self.window.firstResponder==self.taskDetailsText;NSRange selection=self.taskDetailsText.selectedRange;
+    self.detailsSnapshot=task.copy;self.detailsAppearance=appearance;self.detailsSize=panel.bounds.size;
+    self.displayedTaskID=self.selectedTaskID;Clear(panel);CGFloat w=NSWidth(panel.bounds),h=NSHeight(panel.bounds);
+    Put(panel,Text(@"任务详情",14,NSFontWeightSemibold,Ink()),16,16,w-72,24);
+    ActionButton *close=Button(@"",self,@selector(closeTaskDetails:),3);close.symbol=@"xmark";close.accessibilityLabel=@"关闭任务详情";Put(panel,close,w-44,12,28,28);
+    NSScrollView *scroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(12,52,w-24,MAX(64,h-112))];scroll.hasVerticalScroller=YES;scroll.autohidesScrollers=YES;scroll.drawsBackground=NO;
+    TaskDetailsText *text=[[TaskDetailsText alloc] initWithFrame:NSMakeRect(0,0,w-24,NSHeight(scroll.bounds))];text.editable=NO;text.selectable=YES;text.richText=YES;text.drawsBackground=NO;text.textContainerInset=NSMakeSize(4,8);text.minSize=NSMakeSize(0,NSHeight(scroll.bounds));text.maxSize=NSMakeSize(CGFLOAT_MAX,CGFLOAT_MAX);text.verticallyResizable=YES;text.horizontallyResizable=NO;text.autoresizingMask=NSViewWidthSizable;text.textContainer.widthTracksTextView=YES;ThemeEditor(text);
+    NSMutableAttributedString *body=NSMutableAttributedString.new;
+    void (^append)(NSString *,CGFloat,NSFontWeight,NSColor *)=^(NSString *value,CGFloat size,NSFontWeight weight,NSColor *color){[body appendAttributedString:[[NSAttributedString alloc] initWithString:value attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:size weight:weight],NSForegroundColorAttributeName:color}]];};
+    append([task[@"title"] stringByAppendingString:@"\n\n"],17,NSFontWeightSemibold,Ink());
+    append([NSString stringWithFormat:@"%@\n截止：%@\n%@\n\n",task[@"subject"] ?: @"",DDLFormatDate(task[@"due"],@"yyyy年M月d日 HH:mm"),[task[@"archived"] boolValue] ? @"已归档":([task[@"completed"] boolValue] ? @"已完成":@"待完成")],13,NSFontWeightRegular,Muted());
+    append(@"我的备注\n",13,NSFontWeightSemibold,Ink());append([task[@"notes"] length] ? task[@"notes"]:@"暂无备注，可通过“编辑任务”添加。",13,NSFontWeightRegular,[task[@"notes"] length] ? Ink():Muted());
+    [text.textStorage setAttributedString:body];__weak typeof(self) owner=self;text.onClose=^{[owner closeTaskDetails:nil];};scroll.documentView=text;[panel addSubview:scroll];[text.layoutManager ensureLayoutForTextContainer:text.textContainer];[text setFrameSize:NSMakeSize(w-24,MAX(NSHeight(scroll.bounds),NSMaxY([text.layoutManager usedRectForTextContainer:text.textContainer])+16))];
+    [scroll.contentView scrollToPoint:position];self.taskDetailsScroll=scroll;self.taskDetailsText=text;
+    if(restoreFocus){[self.window makeFirstResponder:text];text.selectedRange=NSMakeRange(MIN(selection.location,text.string.length),MIN(selection.length,text.string.length-MIN(selection.location,text.string.length)));}
+    ActionButton *edit=Button(@"编辑任务",self,@selector(editTask:),2);edit.identifier=task[@"id"];Put(panel,edit,16,h-48,w-32,32);
 }
 - (void)navigate:(id)sender {
     NSInteger destination = [sender tag];
     if (destination < 0 || destination > 4) return;
     if (self.page != destination) {
         if(self.courseWindow.hasUnsavedReview && ![self.courseWindow resolveUnsavedReview])return;
-        self.pageStates[@(self.page)] = @{@"query":self.query ?: @"", @"scroll":[NSValue valueWithPoint:self.scroll.contentView.bounds.origin], @"filter":@(self.filter),@"sort":@(self.sortMenu.indexOfSelectedItem)};
+        self.pageStates[@(self.page)] = @{@"query":self.query ?: @"", @"scroll":[NSValue valueWithPoint:self.scroll.contentView.bounds.origin], @"filter":@(self.filter),@"sort":@(self.sortMenu.indexOfSelectedItem),@"taskSelection":self.selectedTaskID ?: @""};
         NSDictionary *state = self.pageStates[@(destination)];
-        self.query = state[@"query"] ?: @""; self.search.stringValue = self.query;
+        self.query = state[@"query"] ?: @""; self.search.stringValue = self.query; self.selectedTaskID=[state[@"taskSelection"] length] ? state[@"taskSelection"]:nil;
         if (state[@"filter"]) self.filter = [state[@"filter"] integerValue];
         if(state[@"sort"])[self.sortMenu selectItemAtIndex:[state[@"sort"] integerValue]];
         [self.taskFilter selectItemAtIndex:self.filter];
@@ -860,9 +952,16 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 - (void)render {
     if (self.renderBusy || !self.document) return; self.renderBusy = YES;
     [self renderSidebar];
-    [self renderHeader]; [self renderContent];
+    [self renderHeader]; [self renderTaskContent];
     NSInteger pending = [self countFilter:0]; self.statusItem.button.title = pending ? [NSString stringWithFormat:@" %ld", (long)pending] : @""; self.statusItem.button.toolTip = [NSString stringWithFormat:@"%ld 项待完成 · 点击打开 / 右键菜单", (long)pending];
     self.renderBusy = NO;
+}
+- (void)renderTaskContent {
+    [self validateTaskSelection];[self layoutTaskArea];
+    BOOL rowFocused=[self.window.firstResponder isKindOfClass:TaskSelectionRow.class];
+    [self renderContent];
+    if(self.selectedTaskID && self.page<3 && !self.calendarMode)[self renderTaskDetailsIn:self.taskDetails];
+    if(rowFocused && self.selectedTaskID)[self focusSelectedTaskRow];
 }
 - (void)renderSidebar {
     NSPoint sidebarOffset=self.navigationScroll.contentView.bounds.origin;NSButton *focusedButton=[self.window.firstResponder isKindOfClass:NSButton.class] ? (NSButton *)self.window.firstResponder:nil;NSString *focusedID=focusedButton.identifier;SEL focusedAction=focusedButton.action;NSInteger focusedTag=focusedButton.tag;
@@ -980,38 +1079,18 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     self.document.frame = NSMakeRect(0, 0, self.scroll.contentSize.width, MAX(y, self.scroll.contentSize.height));
     [self.scroll.contentView scrollToPoint:position];
 }
-- (CGFloat)taskRowHeight:(NSDictionary *)task base:(CGFloat)base {
-    return base+([task[@"notes"] length] ? ([self.expandedTaskNotes containsObject:task[@"id"]] ? 184:40):0);
-}
-- (void)toggleTaskNotes:(NSButton *)sender {
-    if(!self.expandedTaskNotes)self.expandedTaskNotes=NSMutableSet.set;
-    if([self.expandedTaskNotes containsObject:sender.identifier])[self.expandedTaskNotes removeObject:sender.identifier];else [self.expandedTaskNotes addObject:sender.identifier];
-    [self render];
-}
-- (void)addNotesForTask:(NSDictionary *)task toRow:(NSView *)row width:(CGFloat)w base:(CGFloat)base {
-    NSString *notes=task[@"notes"];if(!notes.length)return;
-    BOOL expanded=[self.expandedTaskNotes containsObject:task[@"id"]];
-    ActionButton *button=Button(expanded ? @"收起备注":@"展开备注",self,@selector(toggleTaskNotes:),3);button.identifier=task[@"id"];button.accessibilityLabel=[NSString stringWithFormat:@"%@：%@",button.title,task[@"title"]];Put(row,button,w-108,base-4,96,32);
-    if(expanded){
-        NSScrollView *scroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(16,base+32,w-32,144)];scroll.hasVerticalScroller=YES;scroll.autohidesScrollers=YES;scroll.drawsBackground=NO;
-        NSTextView *text=[[PastelNotesView alloc] initWithFrame:NSMakeRect(0,0,w-52,144)];text.editable=NO;text.richText=NO;text.font=[NSFont systemFontOfSize:13];text.drawsBackground=NO;text.textColor=Ink();text.string=notes;text.textContainer.widthTracksTextView=YES;text.autoresizingMask=NSViewWidthSizable;ThemeEditor(text);scroll.documentView=text;[row addSubview:scroll];
-        Put(row,Text(@"我的备注",12,NSFontWeightMedium,Muted()),16,base,MAX(80,w-132),24);
-    }else{
-        NSTextField *preview=Text([@"备注：" stringByAppendingString:notes],12,NSFontWeightRegular,Muted());preview.maximumNumberOfLines=2;preview.lineBreakMode=NSLineBreakByWordWrapping;preview.selectable=YES;preview.toolTip=notes;Put(row,preview,16,base-4,MAX(80,w-132),36);
-    }
-}
+- (CGFloat)taskRowHeight:(NSDictionary *)task base:(CGFloat)base {return base;}
 - (Surface *)taskRow:(NSDictionary *)task width:(CGFloat)w {
     BOOL completed = [task[@"completed"] boolValue];
-    Surface *row = Box(Card(), 10); row.stroke = Line(); row.frame = NSMakeRect(0, 0, w, [self taskRowHeight:task base:80]);
+    Surface *row = [self selectionRowForTask:task]; row.frame = NSMakeRect(0, 0, w, 80);
     NSButton *check = [NSButton checkboxWithTitle:@"" target:self action:@selector(toggleTask:)]; check.identifier = task[@"id"]; check.state = completed ? NSControlStateValueOn : NSControlStateValueOff;
     check.accessibilityLabel = [NSString stringWithFormat:@"%@：%@", completed ? @"恢复待完成" : @"标记完成", task[@"title"]]; Put(row, check, 16, 26, 24, 28);
     NSTextField *title = Text(task[@"title"], 14, NSFontWeightMedium, completed ? Muted() : Ink()); title.toolTip = task[@"title"]; Put(row, title, 52, 12, w - 196, 24);
     NSString *detail = [NSString stringWithFormat:@"%@ · %@%@", task[@"subject"], DDLFormatDate(task[@"due"], @"M月d日 HH:mm"), [task[@"priority"] integerValue] == 2 ? @" · 紧急" : ([task[@"priority"] integerValue] == 1 ? @" · 重要" : @"")];
-    NSTextField *description = Text(detail, 12, NSFontWeightRegular, Muted()); description.toolTip = task[@"notes"]; Put(row, description, 52, 44, w - 260, 20);
+    NSTextField *description = Text(detail, 12, NSFontWeightRegular, Muted()); description.toolTip = detail; Put(row, description, 52, 44, w - 260, 20);
     NSTextField *status = Text(DDLRemaining(task[@"due"], NSDate.date, completed), 12, NSFontWeightMedium, EventColor(task)); status.alignment = NSTextAlignmentRight; Put(row, status, w - 188, 44, 168, 20);
     ActionButton *edit = Button(@"编辑", self, @selector(editTask:), 3); edit.identifier = task[@"id"]; Put(row, edit, w - 120, 12, 64, 32);
     ActionButton *more = Button(@"", self, @selector(taskActions:), 3); more.symbol = @"ellipsis"; more.identifier = task[@"id"]; more.accessibilityLabel = @"任务更多操作"; Put(row, more, w - 52, 12, 36, 32);
-    [self addNotesForTask:task toRow:row width:w base:80];
     return row;
 }
 - (void)taskActions:(NSButton *)sender {
@@ -1065,10 +1144,10 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 }
 - (Surface *)agendaRow:(NSDictionary *)task width:(CGFloat)w {
     BOOL done = [task[@"completed"] boolValue];
-    Surface *row = GradientBox(Card(), Canvas(), 11); row.stroke = [self.focusedTaskID isEqual:task[@"id"]] ? Accent() : Line();
+    Surface *row = [self selectionRowForTask:task];
     Put(row, Text(task[@"subject"], 10, NSFontWeightSemibold, EventColor(task)), 14, 13, w - 83, 18);
     NSTextField *time = Text(DDLFormatDate(task[@"due"], @"HH:mm"), 11, NSFontWeightSemibold, Ink()); time.alignment = NSTextAlignmentRight; Put(row, time, w - 71, 12, 57, 20);
-    NSTextField *title = Text(task[@"title"], 14, NSFontWeightMedium, done ? Muted() : Ink()); title.maximumNumberOfLines = 2; title.lineBreakMode = NSLineBreakByWordWrapping; title.selectable = YES; title.toolTip = task[@"title"];
+    NSTextField *title = Text(task[@"title"], 14, NSFontWeightMedium, done ? Muted() : Ink()); title.maximumNumberOfLines = 2; title.lineBreakMode = NSLineBreakByWordWrapping; title.selectable = NO; title.toolTip = task[@"title"];
     if (done) title.attributedStringValue = [[NSAttributedString alloc] initWithString:task[@"title"] attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:14 weight:NSFontWeightMedium], NSForegroundColorAttributeName:Muted(), NSStrikethroughStyleAttributeName:@(NSUnderlineStyleSingle)}];
     Put(row, title, 14, 40, w - 28, 40);
     NSString *state = done ? @"✓ 已完成" : DDLRemaining(task[@"due"], NSDate.date, NO);
@@ -1077,8 +1156,6 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     ActionButton *toggle = Button(done ? @"恢复待办" : @"标记完成", self, @selector(toggleTask:), done ? 2 : 1); toggle.identifier = task[@"id"]; toggle.accessibilityLabel = [NSString stringWithFormat:@"%@：%@", toggle.title, task[@"title"]]; Put(row, toggle, 14, 115, 104, 30);
     ActionButton *edit = Button(@"编辑", self, @selector(editTask:), 3); edit.identifier = task[@"id"]; edit.accessibilityLabel = [NSString stringWithFormat:@"编辑：%@", task[@"title"]]; Put(row, edit, w - 68, 115, 54, 30);
     if (done) { ActionButton *remove = Button(@"删除", self, @selector(deleteTask:), 3); remove.identifier = task[@"id"]; remove.accessibilityLabel = [NSString stringWithFormat:@"删除：%@", task[@"title"]]; Put(row, remove, 124, 115, 54, 30); }
-    row.toolTip = task[@"notes"];
-    [self addNotesForTask:task toRow:row width:w base:159];
     return row;
 }
 - (void)renderOverview {
@@ -1103,7 +1180,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
             NSTextField *monthTitle = Text(DDLFormatDate(month, @"yyyy 年 M 月"), 18, NSFontWeightSemibold, Ink()); Put(self.calendarDocument, monthTitle, 4, sectionY + 6, calendarWidth - 8, 28);
             OverviewGrid *grid = [OverviewGrid new]; grid.fill = Panel(); grid.gradientEnd = nil; grid.stroke = Line(); grid.radius = 14; grid.month = month; grid.selection = self.selectedDay; grid.tasksByDay = tasksByDay;
             grid.onSelect = ^(NSDate *date, NSString *taskID) {
-                weakSelf.selectedDay = date; weakSelf.month = date; weakSelf.focusedTaskID = taskID; weakSelf.notice = @"";
+                weakSelf.selectedDay = date; weakSelf.month = date; weakSelf.focusedTaskID = taskID; weakSelf.selectedTaskID=taskID; weakSelf.notice = @"";
                 [weakSelf.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [weakSelf render];
             };
             Put(self.calendarDocument, grid, 0, sectionY + 38, calendarWidth - 6, self.calendarSectionHeight - 48); [grid reload];
@@ -1120,6 +1197,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     [self.calendarScroll.contentView scrollToPoint:calendarPosition]; [self.calendarScroll reflectScrolledClipView:self.calendarScroll.contentView]; self.calendarNeedsCenter = NO;
     [self refreshCalendarHover];
     NSPoint position = self.agendaScroll.contentView.bounds.origin;
+    if(self.selectedTaskID){[self renderTaskDetailsIn:self.agenda];return;}
     Clear(self.agenda); Clear(self.agendaDocument);
     Put(self.agenda, Text(DDLFormatDate(self.selectedDay, @"M 月 d 日"), 23, NSFontWeightSemibold, Ink()), 18, 20, 223, 32);
     ActionButton *add = Button(@"+", self, @selector(addTask:), 2); add.accessibilityLabel = [NSString stringWithFormat:@"为 %@ 新建任务", DDLFormatDate(self.selectedDay, @"M月d日")]; add.font = [NSFont systemFontOfSize:20]; Put(self.agenda, add, NSWidth(self.agenda.bounds) - 48, 16, 32, 32);
@@ -1149,7 +1227,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     NSDate *targetMonth = nil;
     if (sender.tag == 0) {
         targetMonth = NSDate.date; self.selectedDay = NSDate.date; self.month = targetMonth;
-        self.focusedTaskID = nil; self.notice = @""; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [self render];
+        self.focusedTaskID = nil; self.selectedTaskID=nil; self.notice = @""; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [self render];
     }
     else {
         NSDate *first; [Cal() rangeOfUnit:NSCalendarUnitMonth startDate:&first interval:NULL forDate:self.month];
@@ -1184,7 +1262,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     NSDate *first = [Cal() dateFromComponents:firstParts]; if (!first) return;
     NSInteger lastDay = [Cal() rangeOfUnit:NSCalendarUnitDay inUnit:NSCalendarUnitMonth forDate:first].length;
     self.month = first; self.selectedDay = [Cal() dateByAddingUnit:NSCalendarUnitDay value:MIN(lastDay, selected.day) - 1 toDate:first options:0];
-    self.calendarBaseMonth = first; self.calendarNeedsCenter = YES; self.focusedTaskID = nil; self.notice = @""; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [self render];
+    self.calendarBaseMonth = first; self.calendarNeedsCenter = YES; self.focusedTaskID = nil; self.selectedTaskID=nil; self.notice = @""; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [self render];
 }
 - (void)calendarScrolled:(NSNotification *)notification {
     if (!self.calendarMode || self.calendarSectionHeight <= 0 || !self.calendarBaseMonth) return;
@@ -1205,7 +1283,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
         [(OverviewGrid *)view refreshHoverAtWindowPoint:point];
     }
 }
-- (void)changeCalendarStatus:(id)sender { self.focusedTaskID = nil; self.notice = @""; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [self render]; }
+- (void)changeCalendarStatus:(id)sender { self.focusedTaskID = nil; self.selectedTaskID=nil; self.notice = @""; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [self render]; }
 - (void)openCalendar:(id)sender { NSButton *route = NSButton.new; route.tag = 1; [self navigate:route]; }
 - (void)openList:(id)sender { NSButton *route = NSButton.new; route.tag = 2; [self navigate:route]; }
 - (void)renderContent {
@@ -1235,7 +1313,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     position.y = MIN(position.y, MAX(0, self.document.frame.size.height - self.scroll.contentSize.height)); [self.scroll.contentView scrollToPoint:position]; [self.scroll reflectScrolledClipView:self.scroll.contentView];
 }
 - (void)changeFilter:(id)sender { self.filter = [sender isKindOfClass:NSPopUpButton.class] ? [sender indexOfSelectedItem] : [sender tag]; self.page = 2; self.calendarMode = NO; self.notice = @""; [self.scroll.contentView scrollToPoint:NSZeroPoint]; [self layout]; }
-- (void)sortChanged:(id)sender { [self renderContent]; }
+- (void)sortChanged:(id)sender { [self renderTaskContent]; }
 - (void)controlTextDidChange:(NSNotification *)notification {
     if (notification.object != self.search) return;
     [self.searchTimer invalidate]; self.searchTimer = nil;
@@ -1248,7 +1326,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 - (void)applySearch {
     [self.searchTimer invalidate]; self.searchTimer = nil;
     [self.scroll.contentView scrollToPoint:NSZeroPoint]; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint];
-    [self renderContent];
+    [self renderTaskContent];
 }
 - (void)focusSearch:(id)sender { [self showWindow]; if (self.page >= 3) [self.courseWindow focusSearch]; else [self.window makeFirstResponder:self.search]; }
 - (void)showWindow { [self.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES]; }

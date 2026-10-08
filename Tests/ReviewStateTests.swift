@@ -53,6 +53,13 @@ import Foundation
         courseReview.update([],selected:"",information:"",empty:"没有匹配",paused:false)
         check(courseReview.current?["id"] as? String=="task-uuid" && courseReview.review.notes=="未保存草稿","search filtering cannot hide or destroy course draft")
         courseReview.review.save={_ in "写入失败"};check(!courseReview.review.saveCurrent(advance:false) && courseReview.review.dirty,"inline save failure retains notes")
+        let removal=CourseState();removal.update([record as NSDictionary],selected:"source-1",information:"",empty:"",paused:false)
+        removal.review.dirty=true
+        var next=record;next["id"]="source-next"
+        removal.review.save={_ in removal.update([next as NSDictionary],selected:"source-next",information:"",empty:"",paused:false);return ""}
+        check(removal.review.saveCurrent(advance:false) && removal.selected=="source-next" && removal.review.selected=="source-next","course save reconciles selection after synchronous dirty refresh")
+        removal.review.dirty=true;removal.review.save={_ in removal.update([],selected:"",information:"",empty:"暂无待审核作业",paused:false);return ""}
+        check(removal.review.saveCurrent(advance:false) && removal.current==nil && removal.review.current==nil && !removal.review.dirty,"final course save clears row and draft together")
         let settings=SettingsState();settings.apply(["mode":"rules","endpoint":"http://localhost:11434","model":"","automaticImport":true] as NSDictionary)
         settings.key="temporary input";settings.dirty=true;settings.save={_,_ in "失败"};check(!settings.persist() && settings.dirty && !settings.key.isEmpty,"failed settings save preserves draft")
         settings.save={config,key in check(config["key"]==nil && key=="temporary input","credential separated from settings dictionary");return ""}

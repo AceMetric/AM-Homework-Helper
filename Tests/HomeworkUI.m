@@ -46,7 +46,7 @@ int main(void) { @autoreleasepool {
     [app.editor save:nil];
     Check(app.tasks.count == before + 1 && courses.pendingCount == 1 && courses.visible.count == 1, @"save imports and updates inbox count immediately");
     Check(app.tasks.lastObject[@"_reviewCandidate"] == nil && app.tasks.lastObject[@"_existing"] == nil, @"editor-only metadata never persists");
-    [courses.reviewFilter selectItemAtIndex:2]; [courses refreshPresentation]; Check(courses.visible.count == 1, @"imported results available through filter");
+    [courses.reviewFilter selectItemAtIndex:2]; [courses refreshPresentation]; Check(courses.visible.count == 0, @"reviewed results are excluded even from update filter");
     [courses.reviewFilter selectItemAtIndex:0];
     NSMutableDictionary *saved = app.tasks.lastObject; saved[@"due"] = [due dateByAddingTimeInterval:-3 * 3600]; saved[@"leadDays"] = @(-1); saved[@"title"] = @"我的自定义标题";
     NSMutableDictionary *updated = candidate.mutableCopy; updated[@"blobSHA"] = @"version2"; updated[@"due"] = [due dateByAddingTimeInterval:86400]; courses.candidates[course[@"fork"]] = @[updated]; [courses refreshPresentation];
