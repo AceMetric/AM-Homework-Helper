@@ -244,7 +244,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)setup:(id)sender {
     if(self.busy || self.operationsPaused)return;self.guided=YES;
-    NSDictionary *saved=self.preview ? nil:SSReadPlist(@"onboarding.plist");
+    NSDictionary *saved=self.preview ? nil:SSReadPlist(@"onboarding.plist");self.setupSelection=[saved[@"completed"] boolValue] ? nil:saved[@"selected"];
     if(self.connected && ![saved[@"completed"] boolValue] && [saved[@"step"] integerValue]>=2 && [saved[@"records"] isKindOfClass:NSArray.class]){
         self.setupRecords=NSMutableArray.array;for(NSDictionary *row in saved[@"records"])[self.setupRecords addObject:row.mutableCopy];self.setupStep=MIN(3,[saved[@"step"] integerValue]);self.setupSelection=saved[@"selected"];
         [self presentCourseSetup];[self updateCourseSetup:@"继续上次配置。检查不会自动重复执行；可以重试未完成课程。"];return;
@@ -253,7 +253,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)startUsing:(id)sender {
     if(self.busy || self.operationsPaused)return;NSAlert *alert=NSAlert.new;alert.messageText=@"开始使用";alert.informativeText=@"查看四个日常操作的说明，或继续配置课程。";[alert addButtonWithTitle:@"查看使用提示"];[alert addButtonWithTitle:@"重新运行配置引导"];[alert addButtonWithTitle:@"取消"];
-    NSInteger choice=[alert runModal];if(choice==NSAlertFirstButtonReturn){self.setupStep=4;[self presentCourseSetup];[self updateCourseSetup:@""];}else if(choice==NSAlertSecondButtonReturn){self.setupStep=self.connected ? 1:0;[self presentCourseSetup];if(self.connected)[self addFork:nil];}
+    NSInteger choice=[alert runModal];if(choice==NSAlertFirstButtonReturn){self.setupStep=4;[self presentCourseSetup];[self updateCourseSetup:@""];}else if(choice==NSAlertSecondButtonReturn){self.setupSelection=nil;self.setupStep=self.connected ? 1:0;[self presentCourseSetup];if(self.connected)[self addFork:nil];}
 }
 - (void)chooseLocalFolder {
     NSAlert *alert = NSAlert.new; alert.messageText = @"关联课程文件夹"; alert.informativeText = @"已下载课程仓库时选择已有文件夹；还未下载时选择保存位置。";
@@ -283,7 +283,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 #import "SSCourseSetup.inc"
 - (void)repositoryDetails:(id)sender { self.sections.selectedSegment = 2; [self refreshPresentation]; }
 - (void)operationDetails:(id)sender { NSAlert *alert=NSAlert.new;NSString *key=self.selectedFork ?: @"all";alert.messageText=[self course][@"fork"] ?: @"课程检查";alert.informativeText=self.errorDetails[key] ?: self.statuses[key] ?: @"尚无操作记录。";[alert addButtonWithTitle:@"关闭"];[alert addButtonWithTitle:@"复制详情"];[alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse choice){if(choice==NSAlertSecondButtonReturn){[NSPasteboard.generalPasteboard clearContents];[NSPasteboard.generalPasteboard setString:SSRedactedText(alert.informativeText) forType:NSPasteboardTypeString];}}]; }
-- (void)restoreAccess:(id)sender {if(self.busy || self.operationsPaused)return;NSString *issue=self.reports[self.selectedFork ?: @"all"][@"issue"];if([issue isEqual:@"login"]){self.guided=YES;[self login:nil];}else if([issue isEqual:@"ssh"]){self.guided=YES;[self authenticationSettings:nil];}else if([issue isEqual:@"sso"]){NSString *owner=[[self course][@"upstream"] componentsSeparatedByString:@"/"].firstObject;[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:[NSString stringWithFormat:@"https://github.com/orgs/%@/sso",owner]]];}else if([issue isEqual:@"approval"] || [issue isEqual:@"permission"])[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://github.com/settings/applications"]];else [self setup:nil];}
+- (void)restoreAccess:(id)sender {if(self.busy || self.operationsPaused)return;NSString *issue=self.reports[self.selectedFork ?: @"all"][@"issue"];if([issue isEqual:@"login"]){self.guided=YES;[self login:nil];}else if([issue isEqual:@"ssh"]){self.guided=YES;[self authenticationSettings:nil];}else if([issue isEqual:@"sso"]){NSString *owner=[[self course][@"upstream"] componentsSeparatedByString:@"/"].firstObject;[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:[NSString stringWithFormat:@"https://github.com/orgs/%@/sso",owner]]];}else if([issue isEqual:@"permission"] && [self.github.authType isEqual:@"githubCLI"]){NSAlert *alert=NSAlert.new;alert.messageText=@"当前账户无法读取课程";alert.informativeText=@"先在 GitHub 打开老师仓库，核对登录账户和已有课程权限；学校要求 SSO 时完成学校登录。无需申请批准本项目应用。";[alert addButtonWithTitle:@"打开老师仓库"];[alert addButtonWithTitle:@"重新登录"];[alert addButtonWithTitle:@"稍后"];NSInteger answer=[alert runModal];NSString *teacher=[self course][@"upstream"];if(answer==NSAlertFirstButtonReturn && SSCanonicalRepository([@"https://github.com/" stringByAppendingString:teacher ?: @""]))[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:[@"https://github.com/" stringByAppendingString:teacher]]];else if(answer==NSAlertSecondButtonReturn)[self login:nil];}else if([issue isEqual:@"approval"] || [issue isEqual:@"permission"])[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://github.com/settings/applications"]];else [self setup:nil];}
 - (void)recover:(id)sender { if ([[self course][@"pendingMergeTip"] length]) [self continueMerge:nil]; else [self push:nil]; }
 - (void)focusSearch { if(self.inbox)[self.reviewWorkspace focusSearch];else [self.view.window makeFirstResponder:self.search]; }
 - (void)sectionChanged:(id)sender { [self refreshPresentation]; }
@@ -493,7 +493,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     [self work:@"正在读取个人课程 fork…" forCourse:nil operation:^id(NSError **error){return [self.github accessibleForks:error];} completion:^(NSArray *forks,NSError *error){
         if(!forks){[self updateCourseSetup:error.localizedDescription];return;}self.availableForks=forks;self.setupStep=1;self.setupRecords=NSMutableArray.array;
         for(NSDictionary *repo in forks){NSMutableDictionary *row=[@{@"fork":repo[@"full_name"],@"existing":@([self courseExists:repo[@"full_name"]])} mutableCopy];[self.setupRecords addObject:row];}
-        [self presentCourseSetup];NSMutableArray *selected=NSMutableArray.array;for(NSDictionary *row in self.setupRecords)if([row[@"existing"] boolValue])[selected addObject:row[@"fork"]];self.setupSelection=selected;[self.setupWorkspace updateContext:@{@"selected":selected}];[self updateCourseSetup:@"已添加课程默认选中；选择需要管理的其他个人 fork。"];
+        [self presentCourseSetup];NSMutableArray *selected=NSMutableArray.array;for(NSDictionary *row in self.setupRecords)if(self.setupSelection ? [self.setupSelection containsObject:row[@"fork"]]:[row[@"existing"] boolValue])[selected addObject:row[@"fork"]];self.setupSelection=selected;[self.setupWorkspace updateContext:@{@"selected":selected}];[self updateCourseSetup:@"已添加课程默认选中；选择需要管理的其他个人 fork。"];
     }];
 }
 - (BOOL)courseExists:(NSString *)fork { for (NSDictionary *course in self.courses) if ([course[@"fork"] caseInsensitiveCompare:fork] == NSOrderedSame) return YES; return NO; }
