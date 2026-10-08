@@ -283,3 +283,75 @@ private struct SettingsWorkspace:View {
     }
     public override func loadView(){view=NSHostingView(rootView:SettingsWorkspace(state:state))}
 }
+
+@MainActor final class CourseState: ObservableObject {
+    @Published var records:[NSDictionary]=[]
+    @Published var selected:String?
+    @Published var information=""
+    @Published var empty=""
+    @Published var paused=false
+    var action:((String,String)->Void)?
+    var current:NSDictionary? {records.first{identifier($0)==selected}}
+    func update(_ records:[NSDictionary], selected:String, information:String, empty:String, paused:Bool) {
+        self.records=records;self.selected=selected.isEmpty ? nil:selected;self.information=information;self.empty=empty;self.paused=paused
+    }
+}
+private struct CourseWorkspace:View {
+    @ObservedObject var state:CourseState
+    private func kind(_ record:NSDictionary)->String {flag(record,"confirmed") ? "已加入任务" : ["assignment":"作业","exam":"考试","classroom":"课上任务","unknown":"待确认类型"][string(record,"kind")] ?? "作业"}
+    private var entries:some View {
+        List(selection:Binding(get:{state.selected},set:{state.selected=$0;if let id=$0 {state.action?("select",id)}})) {
+            ForEach(state.records.indices,id:\.self) { index in
+                let record=state.records[index]
+                VStack(alignment:.leading,spacing:6) {
+                    Text(string(record,"suggestedTitle").isEmpty ? string(record,"title") : string(record,"suggestedTitle")).fontWeight(.medium).lineLimit(2)
+                    HStack {Label(kind(record),systemImage:string(record,"kind")=="exam" ? "doc.text" : "checklist");Spacer();if let due=record["due"] as? Date {Text(due,format:.dateTime.month().day().hour().minute())}}
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text(string(record,"path")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }.padding(.vertical,5).tag(identifier(record))
+            }
+        }.listStyle(.inset).frame(minWidth:240)
+    }
+    private var details:some View {
+        ScrollView {
+            VStack(alignment:.leading,spacing:16) {
+                if !state.information.isEmpty {Text(state.information).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}
+                else if let record=state.current {
+                    Text(string(record,"suggestedTitle").isEmpty ? string(record,"title") : string(record,"suggestedTitle")).font(.title3.bold())
+                    Label(kind(record),systemImage:string(record,"kind")=="exam" ? "doc.text" : "checklist").foregroundStyle(.secondary)
+                    if let due=record["due"] as? Date {Text("截止：\(due.formatted(date:.abbreviated,time:.shortened))")}
+                    if !string(record,"dateText").isEmpty {Text("老师截止原文：\(string(record,"dateText"))").textSelection(.enabled)}
+                    if !string(record,"summary").isEmpty {GroupBox("内容概括"){Text(string(record,"summary")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
+                    if !string(record,"submissionRequirements").isEmpty {GroupBox("提交要求"){Text(string(record,"submissionRequirements")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
+                    Text("\(string(record,"repository")) · \(string(record,"path"))").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    HStack {
+                        if flag(record,"confirmed") || string(record,"kind").isEmpty || string(record,"kind")=="assignment" {Button(flag(record,"confirmed") ? "编辑任务…":"审核作业…"){state.action?("review",identifier(record))}.buttonStyle(.borderedProminent).disabled(state.paused)}
+                        if !flag(record,"confirmed"){Button("更改类型…"){state.action?("type",identifier(record))}.disabled(state.paused)}
+                    }
+                    Divider()
+                    Text("老师原文").font(.headline)
+                    ForEach(Array((record["documents"] as? [NSDictionary] ?? [record]).enumerated()),id:\.offset) { _, document in
+                        VStack(alignment:.leading,spacing:8){Text(string(document,"path")).font(.caption).foregroundStyle(.secondary);Text(string(document,"snippet").isEmpty ? string(document,"notes"):string(document,"snippet")).textSelection(.enabled)}
+                    }
+                } else {VStack(alignment:.leading,spacing:12){Label(state.empty.isEmpty ? "选择课程内容查看详情":state.empty,systemImage:"tray");Text("检查只读取老师内容；同步文件与提交作业是独立操作。").foregroundStyle(.secondary)}}
+            }.padding(20).frame(maxWidth:.infinity,alignment:.leading)
+        }.frame(minWidth:260)
+    }
+    var body:some View {
+        GeometryReader { geometry in
+            if state.records.isEmpty {details}
+            else if geometry.size.width<760 {VSplitView{entries.frame(minHeight:160,idealHeight:220);details.frame(minHeight:180)}}
+            else {HSplitView{entries.frame(idealWidth:300,maxWidth:360);details}}
+        }.font(.system(size:13)).background(Color(nsColor:.windowBackgroundColor)).tint(.blue)
+    }
+}
+@objc(AMCourseController)
+@MainActor public final class AMCourseController:NSViewController {
+    private let state=CourseState()
+    @objc public var actionHandler:((String,String)->Void)? {get{state.action}set{state.action=newValue}}
+    @objc public func updateRecords(_ records:[NSDictionary],selected:String,information:String,empty:String,paused:Bool){state.update(records,selected:selected,information:information,empty:empty,paused:paused)}
+    private func scrollViews(_ view:NSView)->[NSScrollView] {var result:[NSScrollView]=[];if let scroll=view as? NSScrollView {result.append(scroll)};for child in view.subviews {result+=scrollViews(child)};return result}
+    @objc public func scrollPositions()->[NSValue] {scrollViews(view).map{NSValue(point:$0.contentView.bounds.origin)}}
+    @objc public func restoreScrollPositions(_ positions:[NSValue]) {DispatchQueue.main.async {for (scroll,value) in zip(self.scrollViews(self.view),positions){scroll.contentView.scroll(to:value.pointValue);scroll.reflectScrolledClipView(scroll.contentView)}}}
+    public override func loadView(){view=NSHostingView(rootView:CourseWorkspace(state:state))}
+}

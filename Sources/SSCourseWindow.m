@@ -15,7 +15,7 @@
 - (void)keyDown:(NSEvent *)event { if ([event.charactersIgnoringModifiers isEqual:@"\r"] && self.selectedRow >= 0) { [NSApp sendAction:self.doubleAction to:self.target from:self]; return; } [super keyDown:event]; }
 @end
 
-static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) { ActionButton *button = Button(text, target, action, 2); button.frame = frame; return button; }
+static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) { NSButton *button=[NSButton buttonWithTitle:text target:target action:action];button.bezelStyle=NSBezelStyleRounded;button.frame=frame;return button; }
 @interface SSCourseController ()
 @property SSGitHub *github;
 @property SSGit *git;
@@ -30,7 +30,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property NSButton *typeButton;
 @property NSArray<NSDictionary *> *availableForks;
 @property dispatch_queue_t queue;
-@property NSPopUpButton *coursePicker;
+@property AMCourseController *courseWorkspace;
 @property NSPopUpButton *reviewFilter;
 @property NSSegmentedControl *sections;
 @property NSSearchField *search;
@@ -119,9 +119,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     Surface *root = Box(Canvas(), 0); root.frame = NSMakeRect(0, 0, 960, 600); self.view = root;
     __weak typeof(self) weakSelf = self; root.onResize = ^{ [weakSelf layoutContent]; }; root.onAppearanceChange = ^{ [weakSelf refreshPresentation]; };
     self.accountLabel = Text(@"", 13, NSFontWeightRegular, Muted()); [root addSubview:self.accountLabel];
-    self.coursePicker = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; self.coursePicker.target = self; self.coursePicker.action = @selector(courseChanged:); [root addSubview:self.coursePicker];
-    self.scanButton = SSButton(@"检查作业", self, @selector(scan:), NSZeroRect); [root addSubview:self.scanButton];
-    self.syncButton = SSButton(@"更新作业", self, @selector(sync:), NSZeroRect); [root addSubview:self.syncButton];
+    self.scanButton = SSButton(@"检查新作业", self, @selector(scan:), NSZeroRect); [root addSubview:self.scanButton];
+    self.syncButton = SSButton(@"同步课程文件", self, @selector(sync:), NSZeroRect); [root addSubview:self.syncButton];
     self.commitButton = SSButton(@"提交作业", self, @selector(commit:), NSZeroRect); [root addSubview:self.commitButton];
     self.moreButton = SSButton(@"更多", self, @selector(more:), NSZeroRect); [root addSubview:self.moreButton];
     self.sections = Segments(@[@"课程内容", @"已加入任务", @"仓库信息"], self, @selector(sectionChanged:)); [root addSubview:self.sections];
@@ -139,7 +138,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.table.target = self; self.table.action = @selector(candidateSelected:); self.table.doubleAction = @selector(review:); scroll.documentView = self.table; [root addSubview:scroll];
     NSScrollView *detailScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; detailScroll.hasVerticalScroller = YES; detailScroll.autohidesScrollers = YES; detailScroll.drawsBackground = NO;
     self.detail = [[PastelNotesView alloc] initWithFrame:NSZeroRect]; self.detail.editable = NO; self.detail.font = [NSFont systemFontOfSize:13]; self.detail.textColor = Ink(); self.detail.backgroundColor = Canvas(); self.detail.textContainerInset = NSMakeSize(8, 8); self.detail.autoresizingMask = NSViewWidthSizable; self.detail.textContainer.widthTracksTextView = YES; detailScroll.documentView = self.detail; [root addSubview:detailScroll];
-    self.reviewButton = SSButton(@"审核作业…", self, @selector(review:), NSZeroRect); ((ActionButton *)self.reviewButton).tone = 1; [root addSubview:self.reviewButton];
+    self.reviewButton = SSButton(@"审核作业…", self, @selector(review:), NSZeroRect); self.reviewButton.bezelColor=NSColor.controlAccentColor; [root addSubview:self.reviewButton];
     self.typeButton = SSButton(@"更改类型…", self, @selector(changeType:), NSZeroRect); [root addSubview:self.typeButton];
     self.actionButtons = @[self.scanButton, self.syncButton, self.commitButton, self.moreButton, self.setupButton];
     self.reviewWorkspace = [AMReviewController new];
@@ -150,15 +149,21 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         NSString *message = owner.saveReviewItems(items, NO); if (!message.length) [owner refreshPresentation]; return message;
     };
     [self addChildViewController:self.reviewWorkspace]; [root addSubview:self.reviewWorkspace.view];
+    self.courseWorkspace=AMCourseController.new;
+    self.courseWorkspace.actionHandler=^(NSString *action,NSString *identifier){
+        if([action isEqual:@"select"]){if([owner.selectedCandidateID isEqual:identifier])return;owner.selectedCandidateID=identifier;[owner refreshPresentation];return;}
+        if(owner.busy || owner.operationsPaused)return;
+        if([action isEqual:@"review"])[owner review:nil];else if([action isEqual:@"type"])[owner changeType:nil];
+    };
+    [self addChildViewController:self.courseWorkspace];[root addSubview:self.courseWorkspace.view];
     [self layoutContent];
 }
 - (void)layoutContent {
     CGFloat w = NSWidth(self.view.bounds), h = NSHeight(self.view.bounds);
     self.accountLabel.frame = NSMakeRect(0, 0, w - 152, 28); self.setupButton.frame = NSMakeRect(w - 136, 0, 136, 36);
-    self.coursePicker.frame = NSMakeRect(0, 48, MAX(180, w - (self.inbox ? 192 : 416)), 36);
-    self.scanButton.frame = NSMakeRect(w - (self.inbox ? 184 : 408), 48, 104, 36); self.syncButton.frame = NSMakeRect(w - 296, 48, 104, 36); self.commitButton.frame = NSMakeRect(w - 184, 48, 104, 36); self.moreButton.frame = NSMakeRect(w - 72, 48, 72, 36);
+    self.scanButton.frame = NSMakeRect(0,48,128,36); self.syncButton.frame=NSMakeRect(140,48,136,36);self.commitButton.frame=NSMakeRect(288,48,112,36);self.moreButton.frame=NSMakeRect(w-72,48,72,36);
     self.sections.frame = NSMakeRect(0, 100, 296, 32); self.sections.hidden = self.inbox;
-    self.typeFilter.frame = NSMakeRect(312, 100, 120, 32); self.typeFilter.hidden = self.inbox;
+    self.typeFilter.frame = NSMakeRect(312, 100, 120, 32); self.typeFilter.hidden = self.inbox || self.sections.selectedSegment != 0;
     self.reviewFilter.frame = NSMakeRect(0, 100, 152, 32); self.reviewFilter.hidden = !self.inbox;
     self.search.frame = NSMakeRect(MAX(448, w - 272), 100, MAX(128, MIN(272, w - 448)), 32);
     if (self.inbox) self.search.frame = NSMakeRect(w - 272, 100, 272, 32);
@@ -172,6 +177,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.reviewWorkspace.view.hidden = !self.inbox;
     if (self.inbox) { self.table.enclosingScrollView.hidden = YES; self.detail.enclosingScrollView.hidden = YES; self.reviewButton.hidden = YES; self.typeButton.hidden = YES; self.emptyLabel.hidden = YES; self.search.hidden = YES; }
     else { self.detail.enclosingScrollView.hidden = NO; self.search.hidden = NO; }
+    self.courseWorkspace.view.hidden=self.inbox;self.courseWorkspace.view.frame=NSMakeRect(0,184,w,MAX(240,h-184));
+    if(!self.inbox){self.table.enclosingScrollView.hidden=YES;self.detail.enclosingScrollView.hidden=YES;self.reviewButton.hidden=YES;self.typeButton.hidden=YES;self.emptyLabel.hidden=YES;}
     CGFloat available = w - 132; self.table.tableColumns[3].width = 96;
     NSArray *weights = @[@0.34, @0.28, @0.38];
     for (NSUInteger i = 0; i < 3; i++) self.table.tableColumns[i].width = MAX(72, available * [weights[i] doubleValue]);
@@ -215,12 +222,12 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (void)more:(NSButton *)sender {
     NSMenu *menu = NSMenu.new; menu.autoenablesItems = NO; NSDictionary *course = [self course];
     for (NSArray *entry in @[@[@"添加课程…", NSStringFromSelector(@selector(addFork:))], @[@"关联文件夹…", NSStringFromSelector(@selector(linkFolder:))], @[@"下载课程仓库…", NSStringFromSelector(@selector(cloneFork:))], @[@"打开文件夹", NSStringFromSelector(@selector(openFolder:))], @[@"继续处理冲突…", NSStringFromSelector(@selector(continueMerge:))], @[@"重试推送", NSStringFromSelector(@selector(push:))], @[@"启用 / 停用自动检查", NSStringFromSelector(@selector(toggleCourse:))], @[@"仓库详情", NSStringFromSelector(@selector(repositoryDetails:))], @[@"操作详情…", NSStringFromSelector(@selector(operationDetails:))], @[@"移除课程…", NSStringFromSelector(@selector(removeCourse:))]]) {
-        NSMenuItem *item = [menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""]; item.target = self;
+        NSMenuItem *item = [menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""]; item.target = self; item.enabled=course!=nil || item.action==@selector(addFork:);
         if (item.action == @selector(continueMerge:)) item.enabled = [course[@"pendingMergeTip"] length] > 0;
         if (item.action == @selector(push:)) item.enabled = [course[@"pushFailed"] boolValue];
         if (item.action == @selector(toggleCourse:)) item.title = [course[@"enabled"] isEqual:@NO] ? @"启用自动检查" : @"停用自动检查";
     }
-    for (NSArray *entry in @[@[@"交给助手识别…",NSStringFromSelector(@selector(exportSkillContext:))],@[@"导入助手结果…",NSStringFromSelector(@selector(importSkillResults:))],@[@"高级：课程识别模板…",NSStringFromSelector(@selector(editCourseTemplate:))]]) {NSMenuItem *item=[menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""];item.target=self;item.enabled=course && [course[@"path"] length] && !self.busy;}
+    for (NSArray *entry in @[@[@"交给助手识别…",NSStringFromSelector(@selector(exportSkillContext:))],@[@"导入助手结果…",NSStringFromSelector(@selector(importSkillResults:))],@[@"高级：课程识别模板…",NSStringFromSelector(@selector(editCourseTemplate:))]]) {NSMenuItem *item=[menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""];item.target=self;item.enabled=!self.busy && (!([entry[1] isEqual:NSStringFromSelector(@selector(editCourseTemplate:))]) || course != nil);}
     [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, NSHeight(sender.bounds)) inView:sender];
 }
 - (void)editCourseTemplate:(id)sender {
@@ -313,15 +320,27 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     return records;
 }
 - (void)refreshCourses {
-    [self.coursePicker removeAllItems]; if (self.inbox) [self.coursePicker addItemWithTitle:@"全部课程"];
-    BOOL found = NO;
-    for (NSDictionary *course in self.courses) {
-        NSString *label = [NSString stringWithFormat:@"%@ · %@ · %@", [course[@"fork"] lastPathComponent], [course[@"path"] length] ? @"已关联" : @"待关联", course[@"lastScan"] ? DDLFormatDate(course[@"lastScan"], @"M/d HH:mm") : @"未检查"];
-        [self.coursePicker addItemWithTitle:label]; self.coursePicker.lastItem.representedObject = course[@"fork"];
-        if ([course[@"fork"] isEqual:self.selectedFork]) { [self.coursePicker selectItem:self.coursePicker.lastItem]; found = YES; }
-    }
-    if (!found) { self.selectedFork = self.inbox ? nil : [self.courses firstObject][@"fork"]; if (self.coursePicker.numberOfItems) [self.coursePicker selectItemAtIndex:0]; }
+    if(self.selectedFork && ![self savedCourse:@{@"fork":self.selectedFork}])self.selectedFork=nil;
     [self refreshPresentation];
+}
+- (NSString *)selectedCourseID {return self.selectedFork;}
+- (NSArray *)courseSnapshots {
+    NSMutableArray *result=NSMutableArray.array;
+    for(NSDictionary *course in self.courses){NSUInteger pending=0;for(NSDictionary *record in [self discoveriesForFork:course[@"fork"]])if([record[@"kind"] isEqual:@"assignment"] && ![[self stateForCandidate:record] isEqual:@"已导入"])pending++;
+        NSString *symbol=[course[@"path"] length] ? @"book.closed":@"folder.badge.questionmark";
+        if([course[@"pendingMergeTip"] length] || [course[@"pushFailed"] boolValue])symbol=@"exclamationmark.triangle";
+        if(self.busy && [self.operationFork isEqual:course[@"fork"]])symbol=@"arrow.triangle.2.circlepath";
+        [result addObject:@{@"id":course[@"fork"],@"name":[course[@"fork"] lastPathComponent],@"pending":@(pending),@"symbol":symbol,@"linked":@([course[@"path"] length]>0),@"status":self.statuses[course[@"fork"]] ?: ([course[@"path"] length] ? @"已关联":@"待关联目录")}];
+    }return result;
+}
+- (BOOL)selectCourseID:(NSString *)identifier {
+    if(identifier && ![self savedCourse:@{@"fork":identifier}])return NO;
+    if([self.selectedFork isEqual:identifier] || (!identifier && !self.selectedFork))return YES;
+    if(self.hasUnsavedReview && ![self resolveUnsavedReview])return NO;
+    NSString *oldKey=[@"course:" stringByAppendingString:self.selectedFork ?: @"all"];
+    self.pageStates[oldKey]=@{@"positions":[self.courseWorkspace scrollPositions],@"query":self.query ?: @"",@"id":self.selectedCandidateID ?: @"",@"section":@(self.sections.selectedSegment),@"type":@(self.typeFilter.indexOfSelectedItem),@"scroll":@(self.table.enclosingScrollView.contentView.bounds.origin.y)};
+    self.selectedFork=identifier;NSDictionary *state=self.pageStates[[@"course:" stringByAppendingString:identifier ?: @"all"]];self.query=state[@"query"] ?: @"";self.search.stringValue=self.query;self.selectedCandidateID=state[@"id"];self.sections.selectedSegment=[state[@"section"] integerValue];[self.typeFilter selectItemAtIndex:[state[@"type"] integerValue]];
+    [self refreshPresentation];[self.courseWorkspace restoreScrollPositions:state[@"positions"] ?: @[]];[self.table.enclosingScrollView.contentView scrollToPoint:NSMakePoint(0,[state[@"scroll"] doubleValue])];return YES;
 }
 - (void)refreshPresentation {
     if (self.refreshing || !self.table) return; self.refreshing = YES;
@@ -334,10 +353,11 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.statusLabel.toolTip = self.statusLabel.stringValue; self.accountLabel.toolTip = context;
     BOOL local = [course[@"path"] length] > 0;
     self.setupButton.title = !self.connected ? @"连接 GitHub" : (course && !local ? @"关联文件夹…" : @"添加课程…");
-    self.setupButton.enabled = !self.busy && !self.operationsPaused; self.moreButton.enabled = !self.busy && !self.operationsPaused && course != nil;
-    self.syncButton.hidden = self.inbox; self.commitButton.hidden = self.inbox;
+    self.setupButton.enabled = !self.busy && !self.operationsPaused; self.moreButton.enabled = !self.busy && !self.operationsPaused;
+    self.syncButton.hidden = self.inbox || !course; self.commitButton.hidden = self.inbox || !course;
+    self.scanButton.title=course ? @"检查新作业":@"检查所有课程";
     self.syncButton.enabled = self.commitButton.enabled = !self.busy && !self.operationsPaused && local && self.connected;
-    BOOL anyLocal = NO; for (NSDictionary *item in self.courses) if ([item[@"path"] length]) anyLocal = YES; self.scanButton.enabled = !self.busy && !self.operationsPaused && (local || (self.inbox && !course && anyLocal));
+    BOOL anyLocal = NO; for (NSDictionary *item in self.courses) if ([item[@"path"] length]) anyLocal = YES; self.scanButton.enabled = !self.busy && !self.operationsPaused && (local || (!course && anyLocal));
     self.recoveryButton.hidden = !course || (![course[@"pendingMergeTip"] length] && ![course[@"pushFailed"] boolValue]); self.recoveryButton.enabled = !self.busy && !self.operationsPaused;
     self.recoveryButton.title = [course[@"pendingMergeTip"] length] ? @"处理冲突…" : @"重试推送";
     NSArray *visible = [self visible];
@@ -356,7 +376,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     BOOL info = !self.inbox && self.sections.selectedSegment == 2;
     self.table.enclosingScrollView.hidden = info || !visible.count;
     self.emptyLabel.hidden = info || visible.count > 0;
-    self.emptyLabel.stringValue = !self.courses.count ? @"连接 GitHub，然后添加你的课程仓库" : (course && !local ? @"这门课尚未关联本地文件夹\n点击“关联文件夹…”继续" : (self.query.length ? @"没有匹配的作业，试试其他关键词" : (self.inbox ? @"暂无待审核作业，检查课程后会在这里显示" : @"暂无作业结果，点击“检查作业”刷新")));
+    self.emptyLabel.stringValue = !self.courses.count ? @"连接 GitHub，然后添加你的课程仓库" : (course && !local ? @"这门课尚未关联本地文件夹\n点击“关联文件夹…”继续" : (self.query.length ? @"没有匹配的作业，试试其他关键词" : (self.inbox ? @"暂无待审核作业，检查课程后会在这里显示" : @"暂无作业结果，点击“检查新作业”刷新")));
     self.emptyLabel.maximumNumberOfLines = 2; self.emptyLabel.lineBreakMode = NSLineBreakByWordWrapping;
     self.table.backgroundColor = Card(); self.detail.textColor = Ink(); ThemeEditor(self.detail);
     if (info) [self report:nil]; else [self candidateSelected:nil];
@@ -364,6 +384,10 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.table.tableColumns.firstObject.title = self.inbox ? @"作业" : @"课程内容";
     self.typeButton.hidden = info || (!self.inbox && self.sections.selectedSegment == 1);
     self.typeFilter.hidden = self.inbox || self.sections.selectedSegment != 0;
+    NSMutableArray *content=NSMutableArray.array;for(NSDictionary *record in visible)[content addObject:SSEnrichDiscovery(record)];
+    NSString *information=info ? self.detail.string : @"";
+    if(!course && !self.inbox){NSMutableArray *summary=NSMutableArray.array;for(NSDictionary *snapshot in self.courseSnapshots)[summary addObject:[NSString stringWithFormat:@"%@ · %@ · %lu 项待审核",snapshot[@"name"],snapshot[@"status"],(unsigned long)[snapshot[@"pending"] unsignedIntegerValue]]];information=[summary componentsJoinedByString:@"\n\n"];[content removeAllObjects];}
+    [self.courseWorkspace updateRecords:content selected:self.selectedCandidateID ?: @"" information:information empty:self.emptyLabel.stringValue paused:self.busy || self.operationsPaused];
     [self layoutContent]; self.refreshing = NO;
     if (self.stateChanged) self.stateChanged();
 }
@@ -450,11 +474,6 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     }];
 }
 - (BOOL)courseExists:(NSString *)fork { for (NSDictionary *course in self.courses) if ([course[@"fork"] caseInsensitiveCompare:fork] == NSOrderedSame) return YES; return NO; }
-- (void)courseChanged:(id)sender {
-    NSString *old = self.selectedFork ?: @"all"; self.pageStates[[@"selection:" stringByAppendingString:old]] = @{@"id":self.selectedCandidateID ?: @"", @"scroll":@(self.table.enclosingScrollView.contentView.bounds.origin.y)};
-    self.selectedFork = self.coursePicker.selectedItem.representedObject; NSDictionary *state = self.pageStates[[@"selection:" stringByAppendingString:self.selectedFork ?: @"all"]]; self.selectedCandidateID = state[@"id"];
-    [self refreshPresentation]; [self.table.enclosingScrollView.contentView scrollToPoint:NSMakePoint(0, [state[@"scroll"] doubleValue])];
-}
 - (void)linkFolder:(id)sender {
     NSDictionary *current = [self course]; if (!current) return;
     NSOpenPanel *panel = [NSOpenPanel openPanel]; panel.canChooseDirectories = YES; panel.canChooseFiles = NO; panel.allowsMultipleSelection = NO;
@@ -494,7 +513,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if ([alert runModal] != NSAlertFirstButtonReturn) return;
     [self.courses removeObjectAtIndex:index]; [self saveCourses]; [self refreshCourses];
 }
-- (void)scan:(id)sender { if (self.inbox && ![self course]) [self scanAll:nil]; else if ([self course]) [self scanCourses:@[[[self course] copy]]]; }
+- (void)scan:(id)sender { if (![self course]) [self scanAll:nil]; else if ([self course]) [self scanCourses:@[[[self course] copy]]]; }
 - (void)toggleCourse:(id)sender {
     NSMutableDictionary *course = [self savedCourse:[self course]]; if (!course) return;
     course[@"enabled"] = @(course[@"enabled"] ? ![course[@"enabled"] boolValue] : NO); [self saveCourses]; [self refreshCourses];
@@ -533,7 +552,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             NSDictionary *scan = result[course[@"fork"]]; if (!scan) continue;
             if (scan[@"error"]) { self.statuses[course[@"fork"]] = scan[@"error"]; [messages addObject:[NSString stringWithFormat:@"%@: %@", course[@"fork"], scan[@"error"]]]; continue; }
             self.candidates[course[@"fork"]] = scan[@"candidates"]; self.materials[course[@"fork"]] = scan[@"materials"] ?: @[];
-            self.statuses[course[@"fork"]] = [NSString stringWithFormat:@"检查完成：%lu 项作业，%lu 组课程材料，%lu 个文件跳过", [scan[@"candidates"] count], [scan[@"materials"] count], [scan[@"skipped"] count]];
+            self.statuses[course[@"fork"]] = [NSString stringWithFormat:@"检查完成：%lu 项课后作业，%lu 组考试或课上材料，%lu 个文件跳过", [scan[@"candidates"] count], [scan[@"materials"] count], [scan[@"skipped"] count]];
             if ([scan[@"recognitionMessages"] count]) self.statuses[course[@"fork"]] = [self.statuses[course[@"fork"]] stringByAppendingFormat:@" · %@",[scan[@"recognitionMessages"] firstObject]];
             course[@"lastScan"] = scan[@"date"];
             if (scan[@"branch"]) course[@"upstreamBranch"] = scan[@"branch"];
@@ -560,7 +579,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             [self showError:error]; if (!self.operationsPaused && [self.selectedFork isEqual:course[@"fork"]] && !self.window.attachedSheet) [self conflictGuide:course];
         }
         else if (!result) { if ([error.userInfo[@"SSPendingPush"] boolValue]) { [self savedCourse:course][@"pushFailed"] = @YES; [self saveCourses]; } [self showError:error]; }
-        else { [[self savedCourse:course] removeObjectForKey:@"pushFailed"]; [self saveCourses]; [self status:@"老师作业已更新到本地与个人仓库"]; [self scanCourses:@[course.copy]]; }
+        else { [[self savedCourse:course] removeObjectForKey:@"pushFailed"]; [self saveCourses]; [self status:@"课程文件已同步到本地与个人仓库，正在检查新作业"]; [self scanCourses:@[course.copy]]; }
     }];
 }
 - (void)continueMerge:(id)sender { NSDictionary *course = [[self course] copy]; if (course) [self conflictGuide:course]; }
