@@ -145,7 +145,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.assistantImportButton=SSButton(@"导入助手结果…",self,@selector(importSkillResults:),NSZeroRect);[root addSubview:self.assistantImportButton];
     self.sections = Segments(@[@"课程内容", @"已加入任务", @"仓库信息"], self, @selector(sectionChanged:)); [root addSubview:self.sections];
     self.typeFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.typeFilter addItemsWithTitles:@[@"全部类型", @"作业", @"课上任务", @"考试", @"待确认类型"]]; self.typeFilter.target = self; self.typeFilter.action = @selector(sectionChanged:); [root addSubview:self.typeFilter];
-    self.reviewFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.reviewFilter addItemsWithTitles:@[@"待审核", @"全部结果", @"已审核"]]; self.reviewFilter.target = self; self.reviewFilter.action = @selector(sectionChanged:); [root addSubview:self.reviewFilter];
+    self.reviewFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.reviewFilter addItemsWithTitles:@[@"全部待审核", @"新作业", @"更新建议"]]; self.reviewFilter.target = self; self.reviewFilter.action = @selector(sectionChanged:); [root addSubview:self.reviewFilter];
     self.search = [[NSSearchField alloc] initWithFrame:NSZeroRect]; self.search.placeholderString = @"搜索作业或来源文件"; self.search.delegate = self; self.search.sendsSearchStringImmediately = YES; [root addSubview:self.search];
     self.statusLabel = Text(@"", 12, NSFontWeightRegular, Muted()); [root addSubview:self.statusLabel];
     self.progress = [[NSProgressIndicator alloc] initWithFrame:NSZeroRect]; self.progress.style = NSProgressIndicatorStyleSpinning; self.progress.displayedWhenStopped = NO; [root addSubview:self.progress];
@@ -166,7 +166,15 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.reviewWorkspace.saveHandler = ^NSString *(NSArray *items) {
         if ((owner.operationsPaused && !owner.resolvingReview) || owner.busy) return @"请等待当前操作结束后再保存。";
         if (!owner.saveReviewItems) return @"任务保存接口尚未就绪。";
-        NSString *message = owner.saveReviewItems(items, NO); if (!message.length) [owner refreshPresentation]; return message;
+        NSString *previous=owner.selectedCandidateID;NSUInteger nextIndex=0;NSArray *before=owner.visible;
+        for(NSUInteger i=0;i<before.count;i++)if([before[i][@"id"] isEqual:previous]){nextIndex=i;break;}
+        NSString *message = owner.saveReviewItems(items, NO);
+        if (!message.length) {
+            NSArray *remaining=owner.visible;BOOL retained=NO;for(NSDictionary *record in remaining)if([record[@"id"] isEqual:previous]){retained=YES;break;}
+            if(!retained)owner.selectedCandidateID=remaining.count ? remaining[MIN(nextIndex,remaining.count-1)][@"id"]:nil;
+            [owner refreshPresentation];
+        }
+        return message;
     };
     [self addChildViewController:self.reviewWorkspace]; [root addSubview:self.reviewWorkspace.view];
     self.courseWorkspace=AMCourseController.new;
@@ -357,7 +365,9 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
                 NSArray *types = @[@"", @"assignment", @"classroom", @"exam", @"unknown"];
                 if (!self.inbox && self.typeFilter.indexOfSelectedItem > 0 && ![candidate[@"kind"] isEqual:types[self.typeFilter.indexOfSelectedItem]]) continue;
                 NSString *state = [self stateForCandidate:candidate];
-                if (self.inbox && ((self.reviewFilter.indexOfSelectedItem == 0 && [state isEqual:@"已导入"]) || (self.reviewFilter.indexOfSelectedItem == 2 && ![state isEqual:@"已导入"]))) continue;
+                // Reviewed assignments belong to tasks, never to a review/material queue.
+                if ([state isEqual:@"已导入"]) continue;
+                if (self.inbox && ((self.reviewFilter.indexOfSelectedItem == 1 && ![state isEqual:@"待审核"]) || (self.reviewFilter.indexOfSelectedItem == 2 && ![state isEqual:@"有更新"]))) continue;
                 if (![seen containsObject:candidate[@"id"]]) { [seen addObject:candidate[@"id"]]; [result addObject:candidate]; }
             }
         }
@@ -439,7 +449,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     BOOL info = !self.inbox && self.sections.selectedSegment == 2;
     self.table.enclosingScrollView.hidden = info || !visible.count;
     self.emptyLabel.hidden = info || visible.count > 0;
-    self.emptyLabel.stringValue = !self.courses.count ? @"连接 GitHub，然后添加你的课程仓库" : (course && !local ? @"这门课尚未关联本地文件夹\n点击“关联文件夹…”继续" : (self.query.length ? @"没有匹配的作业，试试其他关键词" : (self.inbox ? @"暂无待审核作业，检查课程后会在这里显示" : @"暂无作业结果，点击“检查新作业”刷新")));
+    self.emptyLabel.stringValue = !self.courses.count ? @"连接 GitHub，然后添加你的课程仓库" : (course && !local ? @"这门课尚未关联本地文件夹\n点击“关联文件夹…”继续" : (self.query.length ? @"没有匹配的作业，试试其他关键词" : (self.inbox ? @"暂无待审核作业，检查课程后会在这里显示" : @"暂无待审核作业，点击“检查新作业”刷新")));
     self.emptyLabel.maximumNumberOfLines = 2; self.emptyLabel.lineBreakMode = NSLineBreakByWordWrapping;
     self.table.backgroundColor = Card(); self.detail.textColor = Ink(); ThemeEditor(self.detail);
     if (info) [self report:nil]; else [self candidateSelected:nil];

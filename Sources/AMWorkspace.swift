@@ -58,6 +58,7 @@ final class ReviewState: ObservableObject {
     @Published var paused = false
     var activeRecord: NSDictionary?
     var save: (([NSDictionary]) -> String)?
+    var didSave: (() -> Void)?
     var originalTitle = "", originalNotes = ""
     var current: NSDictionary? { activeRecord }
     var visible: [NSDictionary] {
@@ -131,6 +132,7 @@ final class ReviewState: ObservableObject {
             if let next=visible.first(where:{identifier($0) != previous && string($0,"reviewStatus") != "已导入"}) { load(next) }
             else { activeRecord=nil; selected="" }
         }
+        didSave?()
         return true
     }
     func saveChecked() {
@@ -148,7 +150,7 @@ final class ReviewState: ObservableObject {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let result=save?(payloads) ?? "保存接口不可用。"
         message=result.isEmpty ? "已加入 \(payloads.count) 项；未完成的条目继续待审核。" : result
-        if result.isEmpty { checked.subtract(targets.map(identifier)) }
+        if result.isEmpty { checked.subtract(payloads.compactMap{($0["record"] as? NSDictionary).map(identifier)}); didSave?() }
     }
 }
 
@@ -209,7 +211,7 @@ private struct ReviewSaveBar:View {
     let advance:Bool
     var body:some View {
         HStack {
-            Text(state.message.isEmpty ? (state.dirty ? "有未保存修改" : "核对后保存；已审核内容可继续编辑") : state.message).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            Text(state.message.isEmpty ? (state.dirty ? "有未保存修改" : "核对后保存至任务") : state.message).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             Spacer()
             Button(advance ? "保存并下一项" : (state.current?["existingTask"] == nil ? "确认作业":"保存修改")){state.saveCurrent(advance:advance)}.buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(.return,modifiers:.command).disabled(state.current == nil || state.paused)
         }
@@ -236,7 +238,7 @@ private struct ReviewWorkspace: View {
                                     VStack(alignment:.leading,spacing:5) {
                                         Text(string(record,"suggestedTitle").isEmpty ? string(record,"title") : string(record,"suggestedTitle")).font(.system(size:13,weight:.medium)).lineLimit(2)
                                         Text(string(record,"repository")).font(.caption).foregroundStyle(.secondary)
-                                        Label(string(record,"reviewStatus")=="已导入" ? "已审核" : (record["existingTask"] == nil ? "新作业" : "更新建议"),systemImage:string(record,"reviewStatus")=="已导入" ? "checkmark.circle" : (record["existingTask"] == nil ? "tray" : "arrow.triangle.2.circlepath")).font(.caption).foregroundStyle(.secondary)
+                                        Label(record["existingTask"] == nil ? "新作业" : "更新建议",systemImage:record["existingTask"] == nil ? "tray" : "arrow.triangle.2.circlepath").font(.caption).foregroundStyle(.secondary)
                                     }.frame(maxWidth:.infinity,alignment:.leading).padding(8).background(state.selected == identifier(record) ? Color.accentColor.opacity(0.12) : Color.clear).cornerRadius(8)
                                 }.buttonStyle(.plain)
                             }.padding(.horizontal,4)
@@ -387,6 +389,18 @@ private struct SettingsWorkspace:View {
     var action:((String,String)->Void)?
     let review=ReviewState()
     private var draftRow:NSDictionary?
+    private var refreshedSelection=""
+    init() {
+        review.didSave = { [weak self] in
+            guard let self else { return }
+            // The controller refreshes synchronously while the old draft is dirty.
+            // Reconcile row selection only after a successful persistence callback.
+            if !self.records.contains(where:{identifier($0)==self.selected}) { self.selected=self.records.first(where:{identifier($0)==self.refreshedSelection}).map(identifier) ?? self.records.first.map(identifier) }
+            self.draftRow=self.records.first{identifier($0)==self.selected}
+            self.review.refresh(self.draftRow.flatMap(self.reviewRecord).map{[$0]} ?? [])
+            if let id=self.selected {self.action?("select",id)}
+        }
+    }
     var current:NSDictionary? {records.first{identifier($0)==selected} ?? (review.dirty ? draftRow:nil)}
     func reviewRecord(_ record:NSDictionary)->NSDictionary? {
         if let source=record["reviewRecord"] as? NSDictionary {return source}
@@ -401,7 +415,7 @@ private struct SettingsWorkspace:View {
         action?("select",id);return true
     }
     func update(_ records:[NSDictionary], selected:String, information:String, empty:String, paused:Bool) {
-        self.records=workspaceRecords(records);self.information=information;self.empty=empty;self.paused=paused;review.paused=paused
+        self.records=workspaceRecords(records);self.information=information;self.empty=empty;self.paused=paused;review.paused=paused;refreshedSelection=selected
         // Background refresh retains an unfinished draft. Navigation resolves it first.
         if !review.dirty {self.selected=selected.isEmpty ? nil:selected;draftRow=records.first{identifier($0)==self.selected}}
         if let record=current, let source=reviewRecord(record), information.isEmpty {review.refresh([source])}
@@ -417,7 +431,7 @@ private struct CourseReviewPane:View {
 }
 private struct CourseWorkspace:View {
     @ObservedObject var state:CourseState
-    private func kind(_ record:NSDictionary)->String {flag(record,"confirmed") || string(record,"reviewStatus")=="已导入" ? "已审核" : string(record,"reviewStatus")=="有更新" ? "有更新，待审核" : ["assignment":"作业","exam":"考试","classroom":"课上任务","unknown":"待确认类型"][string(record,"kind")] ?? "作业"}
+    private func kind(_ record:NSDictionary)->String {flag(record,"confirmed") ? (flag(record,"completed") ? "已完成":"待完成") : string(record,"reviewStatus")=="有更新" ? "有更新，待审核" : ["assignment":"作业","exam":"考试","classroom":"课上任务","unknown":"待确认类型"][string(record,"kind")] ?? "作业"}
     private var entries:some View {
         List(selection:Binding(get:{state.selected},set:{if let id=$0 {state.select(id)}})) {
             ForEach(workspaceRows(state.records)) { row in

@@ -129,13 +129,39 @@ int main(int argc, const char *argv[]) {
         CheckUI(!app.sidebar.hidden && app.page == 2, @"task page retains sidebar");
         [app.window setContentSize:NSMakeSize(960, 640)]; [app layout];
         CheckUI(NSMaxX(app.search.frame) <= NSWidth(app.root.bounds), @"search fits minimum window");
-        NSDictionary *noteTask=@{@"id":@"notes-fixture",@"title":@"备注显示测试",@"subject":@"模拟课程",@"notes":@"审核保存的备注\n第二行",@"due":NSDate.date,@"completed":@NO};
+        NSMutableDictionary *noteTask=[@{@"id":@"notes-fixture",@"title":@"备注显示测试",@"subject":@"模拟课程",@"notes":@"审核保存的备注\n第二行",@"due":[NSDate dateWithTimeIntervalSinceNow:3600],@"completed":@NO} mutableCopy];
+        [app.tasks addObject:noteTask];Search(app,@"");[app applySearch];
         Surface *noteRow=[app taskRow:noteTask width:700];BOOL noteVisible=NO;
         for(NSView *view in noteRow.subviews)if([view isKindOfClass:NSTextField.class] && [((NSTextField *)view).stringValue containsString:@"审核保存的备注"])noteVisible=YES;
-        CheckUI(noteVisible && [app taskRowHeight:noteTask base:80]>80,@"saved task notes are visible instead of tooltip-only");
-        NSButton *expand=NSButton.new;expand.identifier=noteTask[@"id"];[app toggleTaskNotes:expand];noteRow=[app taskRow:noteTask width:700];BOOL scrollNotes=NO;
-        for(NSView *view in noteRow.subviews)if([view isKindOfClass:NSScrollView.class] && [((NSTextView *)((NSScrollView *)view).documentView).string isEqual:noteTask[@"notes"]])scrollNotes=YES;
-        CheckUI(scrollNotes && [app taskRowHeight:noteTask base:80]==264,@"expanded notes expose full text in scrollable row");
+        CheckUI(!noteVisible && [app taskRowHeight:noteTask base:80]==80 && app.taskDetails.hidden,@"notes are hidden and rows stay compact before selection");
+        NSButton *select=NSButton.new;select.identifier=noteTask[@"id"];[app selectTask:select];
+        CheckUI(!app.taskDetails.hidden && [app.taskDetailsText.string containsString:noteTask[@"notes"]] && !app.taskDetailsText.editable && app.taskDetailsText.selectable,@"selected task exposes complete copyable notes in inspector");
+        TaskSelectionRow *interactive=(TaskSelectionRow *)[app taskRow:noteTask width:700];
+        NSView *titleHit=[interactive hitTest:NSMakePoint(80,24)],*checkHit=[interactive hitTest:NSMakePoint(24,36)];
+        CheckUI(titleHit==interactive && [checkHit isKindOfClass:NSButton.class] && ((NSButton *)checkHit).action==@selector(toggleTask:),@"row selection hit area does not intercept completion button");
+        CheckUI([app.window.firstResponder isKindOfClass:TaskSelectionRow.class],@"selected row receives keyboard focus");
+        CheckUI(NSMaxX(app.scroll.frame)<NSMinX(app.taskDetails.frame) && NSMaxX(app.taskDetails.frame)<=NSWidth(app.root.bounds),@"task list and inspector fit minimum window without overlap");
+        NSArray *ordered=app.selectionTasks;NSUInteger selectedIndex=0;for(NSUInteger i=0;i<ordered.count;i++)if([ordered[i][@"id"] isEqual:noteTask[@"id"]]){selectedIndex=i;break;}
+        NSEvent *down=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0 windowNumber:app.window.windowNumber context:nil characters:@"" charactersIgnoringModifiers:@"" isARepeat:NO keyCode:125];
+        [(TaskSelectionRow *)app.window.firstResponder keyDown:down];CheckUI([app.selectedTaskID isEqual:ordered[MIN(selectedIndex+1,ordered.count-1)][@"id"]],@"arrow key selects adjacent task by stable identity");[app selectTask:select];
+        NSEvent *escape=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0 windowNumber:app.window.windowNumber context:nil characters:@"\033" charactersIgnoringModifiers:@"\033" isARepeat:NO keyCode:53];
+        [(TaskSelectionRow *)app.window.firstResponder keyDown:escape];CheckUI(app.selectedTaskID==nil && app.taskDetails.hidden,@"Escape from selected task row closes inspector");[app selectTask:select];
+        NSArray *taskSnapshot=[[NSArray alloc] initWithArray:app.tasks copyItems:YES];TaskDetailsText *sameDetails=app.taskDetailsText;[app render];
+        CheckUI(app.taskDetailsText==sameDetails && [[[NSArray alloc] initWithArray:app.tasks copyItems:YES] isEqual:taskSnapshot],@"refresh reuses notes selection and never changes task data");
+        NSString *savedSelection=app.selectedTaskID;NSButton *overview=NSButton.new;overview.tag=0;[app navigate:overview];
+        CheckUI(app.taskDetails.hidden,@"overview starts without an inspector selection");[app selectTask:select];
+        CheckUI([app.taskDetailsText.string containsString:noteTask[@"notes"]],@"overview selection shows notes in side inspector");
+        [app openList:nil];CheckUI([app.selectedTaskID isEqual:savedSelection],@"task selection is restored independently per page");
+        noteTask[@"notes"]=[@"完整长备注\n" stringByPaddingToLength:6000 withString:@"第二行内容。\n" startingAtIndex:0];[app render];
+        CheckUI([app.taskDetailsText.string containsString:noteTask[@"notes"]] && NSHeight(app.taskDetailsText.frame)>NSHeight(app.taskDetailsScroll.bounds),@"edited long notes update immediately and can scroll");
+        for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]){NSApp.appearance=[NSAppearance appearanceNamed:appearance];[app refreshAppearance];CheckUI([app.selectedTaskID isEqual:noteTask[@"id"]] && [app.taskDetailsText.string containsString:noteTask[@"notes"]],@"appearance preserves selected task and full notes");}
+        Search(app,@"not-a-task");[app applySearch];CheckUI(app.selectedTaskID==nil && app.taskDetails.hidden,@"filtering out selected task closes inspector");Search(app,@"");[app applySearch];
+        noteTask[@"notes"]=@"";[app selectTask:select];CheckUI([app.taskDetailsText.string containsString:@"暂无备注"],@"empty notes have a short actionable hint");
+        for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]){NSApp.appearance=[NSAppearance appearanceNamed:appearance];[app refreshAppearance];[app.window displayIfNeeded];NSBitmapImageRep *preview=[app.root bitmapImageRepForCachingDisplayInRect:app.root.bounds];[app.root cacheDisplayInRect:app.root.bounds toBitmapImageRep:preview];CheckUI([[preview representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[NSString stringWithFormat:@"build/qa/task-inspector-%@.png",[appearance isEqual:NSAppearanceNameAqua] ? @"light":@"dark"] atomically:NO],@"synthetic task inspector preview exported");}
+        [app.taskDetailsText cancelOperation:nil];CheckUI(app.selectedTaskID==nil && app.taskDetails.hidden,@"Escape closes notes inspector");
+        [app selectTask:select];noteTask[@"deleted"]=@YES;[app render];CheckUI(app.selectedTaskID==nil && app.taskDetails.hidden,@"deleted task does not leave stale details");noteTask[@"deleted"]=@NO;
+        [app openCalendar:nil];app.selectedDay=noteTask[@"due"];[app selectTask:select];
+        CheckUI(app.taskDetailsScroll.superview==app.agenda && [app.taskDetailsText.string containsString:@"暂无备注"],@"calendar reuses agenda for selected task details");[app closeTaskDetails:nil];
         [app openCalendar:nil]; CheckUI(NSMinY(app.agenda.frame) >= NSMaxY(app.calendarScroll.frame), @"compact calendar places agenda beneath months");
         [app.window setContentSize:NSMakeSize(1280, 840)]; [app layout];
         CheckUI(NSMinX(app.agenda.frame) > NSMaxX(app.calendarScroll.frame), @"wide calendar places agenda alongside months");
