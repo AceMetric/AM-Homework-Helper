@@ -4,9 +4,15 @@
 
 每次写操作先从 GitHub 核对当前用户 ID、fork 仓库 ID、拥有者 ID 和老师 parent ID。每次推送在检查提交后再次核验，固定使用 `https://github.com/自己的账户/课程.git` 与明确的 `提交SHA:refs/heads/分支`。origin / upstream 不匹配时拒绝操作；默认 push 配置和 remote.pushurl 不作为推送目标。不强推，不执行仓库 hooks，不允许 URL rewrite、外部 merge driver、filter 等会改变网络或执行行为的本地配置。
 
-Git 使用 `/usr/bin/git` 和参数数组。隔离 Git 全局配置，HTTPS 禁用重定向；SSH 使用本机配置及现有密钥。GitHub App token 仅通过子进程环境与静态 askpass 在内存中提供，只用于经过身份核验的个人 fork，不传给老师仓库，不写入命令参数、远端 URL 或文件。
+Git 使用 `/usr/bin/git` 和参数数组。隔离 Git 全局配置，HTTPS 禁用重定向；默认使用 HTTPS，复用现有 SSH remote 时不改配置、不调用 SSH。高级兼容模式仍使用本机 SSH 配置及现有密钥。OAuth token 通过子进程环境与静态 askpass 在内存中提供，HTTPS 目标绑定已核验的仓库。老师上下文只允许查询和获取；只有个人 fork 上下文可推送。辅助程序核验提示中的仓库，令牌不写入命令参数、远端 URL 或文件。旧 GitHub App 模式的 token 仍只用于个人 fork。
 
 老师当前默认分支每次通过本机 `ls-remote --symref HEAD` 确认，直接读取 Git 对象，不读取本地作业文件或跟随文档符号链接。
+
+## OAuth 授权边界
+
+默认设备登录申请 `repo`，GitHub 不支持把 OAuth 私有源码范围限定为几门课或只读。令牌权限较宽，应用操作限制不能缩小令牌本身权限。令牌仅在用户 Mac 上保存和使用；没有认证代理、令牌上传或维护者服务端。维护者不能仅凭 OAuth Client ID 或 Client Secret 取得用户令牌，但用户仍需信任应用和签名更新，不能保证软件永远不可能访问数据。
+
+旧 GitHub App 安装授权是独立授权。维护者持有旧 App 私钥时，技术上可取得安装令牌访问用户此前授权的仓库；切换登录不撤销这项权限。请在 GitHub 设置中移除不再使用的安装。应用不自动为用户撤销远端权限。
 
 ## 凭据与本机数据
 
@@ -33,7 +39,7 @@ Git 使用 `/usr/bin/git` 和参数数组。隔离 Git 全局配置，HTTPS 禁�
 
 `Tools/security-audit.py` 扫描工作文件、所有可达历史对象、嵌套 ZIP 与构建包；结合本机 Vision OCR 检查历史截图。只报告位置、类别与计数，绝不打印命中的秘密。原历史的公开作者邮箱单独统计；不会擅自改写历史或删掉原作者署名。忽略规则不会自动移除已跟踪文件。
 
-GitHub Actions 持续运行检查。发布脚本重新构建、测试、检查归档和历史，阻止未配置 GitHub App 的正式包；只创建本机 ZIP，不上传、不创建远端提交。
+GitHub Actions 持续运行检查。发布脚本重新构建、测试、检查归档和历史，阻止未配置公开 OAuth Client ID 的正式包；只创建本机 ZIP，不上传、不创建远端提交。
 
 [GitHub 敏感数据移除说明](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository)
 
