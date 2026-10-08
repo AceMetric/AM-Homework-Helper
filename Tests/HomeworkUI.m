@@ -124,7 +124,8 @@ int main(void) { @autoreleasepool {
     Route(app, 3); courses.selectedFork = course[@"fork"]; courses.query = @"连续"; [courses.reviewFilter selectItemAtIndex:0]; [courses refreshPresentation];
     [courses.table deselectAll:nil]; [courses candidateSelected:nil];
     Check([courses.reviewButton.title isEqual:@"开始审核…"] && courses.reviewButton.enabled, @"start-review action does not require selecting each row");
-    [courses review:nil]; before = app.tasks.count;
+    [courses review:nil]; Check(!app.editor && !app.window.attachedSheet, @"review entry selects inline details without sheet");
+    [app reviewGitHubCandidate:courses.pendingReviewCandidates.firstObject]; before = app.tasks.count;
     Check(app.editor.reviewQueue.count == 3 && [app.editor.reviewProgress.stringValue containsString:@"3"], @"session captures only pending homework in current course and search");
     [app.editor saveAndReviewNext:nil]; [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
     Check(app.tasks.count == before + 1 && [app.editor.candidate[@"id"] isEqual:two[@"id"]], @"save-and-next imports one task and opens the next without a list round trip");

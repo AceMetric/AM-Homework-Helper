@@ -8,6 +8,7 @@ static void Check(BOOL pass,NSString *label){assertions++;if(!pass){fprintf(stde
 @implementation FailedBatchApp
 - (BOOL)replaceTasks:(NSArray *)tasks action:(NSString *)action error:(NSError **)error {if(error)*error=[NSError errorWithDomain:@"Fixture" code:1 userInfo:@{NSLocalizedDescriptionKey:@"模拟存储失败"}];return NO;}
 @end
+static NSTextView *EditableNotes(NSView *view){if([view isKindOfClass:NSTextView.class] && ((NSTextView *)view).editable)return (NSTextView *)view;for(NSView *child in view.subviews){NSTextView *found=EditableNotes(child);if(found)return found;}return nil;}
 static void Capture(NSView *view,NSString *name){[view.window makeKeyAndOrderFront:nil];[view layoutSubtreeIfNeeded];[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.5]];[view.window displayIfNeeded];NSBitmapImageRep *image=[view bitmapImageRepForCachingDisplayInRect:view.bounds];[view cacheDisplayInRect:view.bounds toBitmapImageRep:image];Check([[image representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[@"build/qa/" stringByAppendingString:name] atomically:YES],@"synthetic hybrid screenshot");}
 int main(int argc,const char *argv[]){@autoreleasepool{
     if(![NSProcessInfo.processInfo.arguments containsObject:@"--preview"])return 2;[NSApplication sharedApplication];[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];AppDelegate *app=AppDelegate.new;NSApp.delegate=app;[app applicationDidFinishLaunching:[NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification object:NSApp]];
@@ -31,7 +32,29 @@ int main(int argc,const char *argv[]){@autoreleasepool{
     Check(!SSCanAutomaticallyImport([courses discoveriesForFork:@"student/physics"].firstObject,@[],NSDate.date),@"automatic undo keeps unchanged source for manual review on next scan");
     [app saveReviewItems:@[@{@"record":record,@"draft":@{}}] automatic:YES];Check(app.tasks.count==before,@"old callback cannot bypass deferred live source state");
     NSMutableDictionary *stale=record.mutableCopy;stale[@"blobSHA"]=@"changed";Check([app saveReviewItems:@[@{@"record":stale,@"draft":@{}}] automatic:NO].length && app.tasks.count==before,@"stale source draft cannot save");
-    FailedBatchApp *failed=FailedBatchApp.new;failed.preview=YES;failed.tasks=app.tasks.mutableCopy;failed.courseWindow=courses;Check([failed saveReviewItems:@[@{@"record":record,@"draft":@{}}] automatic:NO].length && failed.tasks.count==before,@"disk failure retains entire previous batch");
+    // Inline course review uses the explicit SwiftUI row ID, without the hidden table.
+    NSButton *courseRoute=NSButton.new;courseRoute.tag=4;[app navigate:courseRoute];[courses selectCourseID:@"student/physics"];
+    Check([courses.courseWorkspace selectRecordWithID:record[@"id"]],@"course row selects inline form by source identity");
+    [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    [courses review:nil];Check(!app.editor && !app.window.attachedSheet,@"course review never opens another window");
+    [courses.courseWorkspace.view layoutSubtreeIfNeeded];
+    NSTextView *notes=EditableNotes(courses.courseWorkspace.view);Check(notes!=nil,@"course side review has editable user notes");
+    [notes insertText:@"审核保存的模拟备注\n第二行" replacementRange:NSMakeRange(0,notes.string.length)];
+    [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    Check(courses.hasUnsavedReview,@"inline notes participate in unsaved protection");
+    before=app.tasks.count;
+    Check([courses.courseWorkspace saveCurrent] && app.tasks.count==before+1 && [[courses stateForCandidate:record] isEqual:@"已导入"],@"inline confirmation saves once and changes course status");
+    Check([app.tasks.lastObject[@"notes"] isEqual:@"审核保存的模拟备注\n第二行"] && !courses.hasUnsavedReview,@"inline user notes persist after confirmation");
+    for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]){NSApp.appearance=[NSAppearance appearanceNamed:appearance];[app refreshAppearance];Capture(app.window.contentView,[NSString stringWithFormat:@"inline-course-%@.png",[appearance isEqual:NSAppearanceNameAqua] ? @"light":@"dark"]);}
+    Check([courses.courseWorkspace saveCurrent] && app.tasks.count==before+1,@"already reviewed course remains editable without creating duplicate");
+    [app navigate:route];Check(courses.visible.count==1 && courses.pendingCount==1,@"reviewed source leaves default inbox immediately");
+    [courses.reviewFilter selectItemAtIndex:1];[courses refreshPresentation];Check(courses.visible.count==2,@"all-results filter can deliberately show reviewed source");
+    [courses.reviewFilter selectItemAtIndex:0];[courses refreshPresentation];
+    [app navigate:courseRoute];courses.sections.selectedSegment=1;[courses refreshPresentation];
+    NSDictionary *joined=courses.visible.firstObject;Check(joined && [courses.courseWorkspace selectRecordWithID:joined[@"id"]] && [courses.courseWorkspace saveCurrent],@"joined task resolves its original source and edits inline");
+    [app navigate:route];
+    before=app.tasks.count;
+    FailedBatchApp *failed=FailedBatchApp.new;failed.preview=YES;failed.tasks=app.tasks.mutableCopy;failed.courseWindow=courses;Check([failed saveReviewItems:@[@{@"record":missing,@"draft":@{@"assignmentDue":record[@"due"],@"dateConfirmed":@YES}}] automatic:NO].length && failed.tasks.count==before,@"disk failure retains entire previous batch");
     [app showSettings:nil];Check(app.settingsController && app.settingsWindow.sheetParent==app.window,@"SwiftUI settings uses main window sheet");Capture(app.settingsWindow.contentView,@"hybrid-settings-dark.png");NSApp.appearance=[NSAppearance appearanceNamed:NSAppearanceNameAqua];[app refreshAppearance];Capture(app.settingsWindow.contentView,@"hybrid-settings-light.png");Check([app resolveEditsForExit:NO] && !app.settingsController,@"clean settings participate in exit coordination");
     // Regression: the same mutable Objective-C rows are changed during folder
     // association and fourth-step scans while SwiftUI retains its previous list.

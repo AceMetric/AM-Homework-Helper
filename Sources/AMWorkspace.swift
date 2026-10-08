@@ -66,7 +66,7 @@ final class ReviewState: ObservableObject {
     func refresh(_ records: [NSDictionary]) {
         let records = workspaceRecords(records)
         self.records = records
-        checked.formIntersection(Set(records.map(identifier)))
+        checked.formIntersection(Set(records.filter{string($0,"reviewStatus") != "已导入"}.map(identifier)))
         if !dirty {
             if let record = records.first(where: {identifier($0) == selected}) { load(record) }
             else if let first = records.first { load(first) }
@@ -125,16 +125,17 @@ final class ReviewState: ObservableObject {
         guard result.isEmpty else { message=result; return false }
         dirty=false; message="已保存，日历和提醒已同步。"
         if let refreshed=records.first(where:{identifier($0)==previous}) {load(refreshed)}
+        else if let next=visible.first {load(next)}
         else {activeRecord=nil;selected=""}
         if advance {
-            if let next=visible.first(where:{identifier($0) != previous}) { load(next) }
+            if let next=visible.first(where:{identifier($0) != previous && string($0,"reviewStatus") != "已导入"}) { load(next) }
             else { activeRecord=nil; selected="" }
         }
         return true
     }
     func saveChecked() {
         guard !paused, resolve() else { return }
-        let targets=visible.filter{checked.contains(identifier($0))}
+        let targets=visible.filter{checked.contains(identifier($0)) && string($0,"reviewStatus") != "已导入"}
         let payloads=targets.compactMap{payload($0,editing:false)}
         guard !payloads.isEmpty else { message="所选作业需要逐项补全或确认日期。"; return }
         let alert=NSAlert(); alert.messageText="确认加入 \(payloads.count) 项作业？"
@@ -151,12 +152,72 @@ final class ReviewState: ObservableObject {
     }
 }
 
+private struct ReviewDetails: View {
+    @ObservedObject var state:ReviewState
+    let record:NSDictionary
+    private func editing<T>(_ key:ReferenceWritableKeyPath<ReviewState,T>)->Binding<T> {
+        Binding(get:{state[keyPath:key]},set:{state[keyPath:key]=$0;state.dirty=true})
+    }
+    var body:some View {
+        VStack(alignment:.leading,spacing:16) {
+            Text(record["existingTask"] == nil ? "审核作业" : "编辑作业").font(.title3.bold())
+            if string(record,"reviewStatus")=="已导入" {Text("已加入任务，修改后保存即可同步。").foregroundStyle(.secondary)}
+            TextField("作业名称",text:editing(\.title)).textFieldStyle(.roundedBorder)
+            GroupBox("截止时间") {
+                VStack(alignment:.leading,spacing:10) {
+                    Text(string(record,"dateText").isEmpty ? "老师未说明完整截止时间" : "老师原文：\(string(record,"dateText"))").textSelection(.enabled)
+                    if let warnings=record["warnings"] as? [String] { ForEach(Array(warnings.enumerated()),id:\.offset){Text($0.element).foregroundStyle(.orange)} }
+                    if let due=record["suggestedDue"] as? Date {
+                        Text("原文日期建议：\(due.formatted(date:.abbreviated,time:.shortened))")
+                        if let basis=record["dateBasis"] as? NSDictionary, let date=basis["date"] as? Date { Text("依据：\(date.formatted()) · \(String(string(basis,"commit").prefix(7)))").font(.caption).foregroundStyle(.secondary) }
+                    }
+                    DatePicker("作业 DDL",selection:Binding(get:{state.date},set:{state.date=$0;state.hasDate=true;state.dateConfirmed=true;state.dirty=true}),displayedComponents:[.date,.hourAndMinute])
+                    if !state.hasDate || !state.dateConfirmed {
+                        Text("请补全并核对截止日期和时间；当前日期不会自动保存。").foregroundStyle(.orange)
+                        Button("确认填写的截止时间"){state.hasDate=true;state.dateConfirmed=true;state.dirty=true}
+                    }
+                    Text("课程时区：\(string(record,"timeZone"))").font(.caption).foregroundStyle(.secondary)
+                    Toggle("启用提醒",isOn:editing(\.reminders))
+                    if state.reminders {
+                        LazyVGrid(columns:[GridItem(.adaptive(minimum:85))],alignment:.leading) {
+                            ForEach([10080,4320,1440,60,0],id:\.self){offset in
+                                Toggle([10080:"7天",4320:"3天",1440:"1天",60:"1小时",0:"到期"][offset]!,isOn:Binding(get:{state.reminderOffsets.contains(offset)},set:{if $0 {state.reminderOffsets.insert(offset)}else{state.reminderOffsets.remove(offset)};state.dirty=true})).toggleStyle(.checkbox)
+                            }
+                        }
+                        let custom = state.reminderOffsets.subtracting([10080,4320,1440,60,0]).sorted(by:>)
+                        if !custom.isEmpty { Text("保留自定义提醒：\(custom.map{"提前\($0)分钟"}.joined(separator:"、"))").font(.caption).foregroundStyle(.secondary) }
+                        Button("使用全部常用提醒"){state.reminderOffsets=[10080,4320,1440,60,0];state.dirty=true}
+                    }
+                }.frame(maxWidth:.infinity,alignment:.leading).padding(4)
+                .environment(\.timeZone,TimeZone(identifier:string(record,"timeZone")) ?? .current)
+            }
+            VStack(alignment:.leading,spacing:6) { Text("我的备注（选填）").fontWeight(.medium); TextEditor(text:editing(\.notes)).frame(minHeight:100).overlay(RoundedRectangle(cornerRadius:6).stroke(Color.secondary.opacity(0.2))) }
+            if !string(record,"summary").isEmpty {GroupBox("作业内容"){Text(string(record,"summary")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
+            if !string(record,"submissionRequirements").isEmpty {GroupBox("提交要求"){Text(string(record,"submissionRequirements")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
+            GroupBox("老师原文与来源") {
+                VStack(alignment:.leading,spacing:8) {
+                    Text("\(string(record,"repository")) / \(string(record,"path")):\((record["line"] as? NSNumber)?.intValue ?? 1)").font(.caption).foregroundStyle(.secondary)
+                    Text(string(record,"snippet")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)
+                    if let attachments=record["attachments"] as? [NSDictionary] { ForEach(workspaceRows(attachments,key:"path")){Text("附件：\(string($0.record,"path"))\n\(string($0.record,"snippet"))").textSelection(.enabled)} }
+                }.padding(4)
+            }
+        }.padding(.horizontal,16).padding(.vertical,8)
+    }
+}
+private struct ReviewSaveBar:View {
+    @ObservedObject var state:ReviewState
+    let advance:Bool
+    var body:some View {
+        HStack {
+            Text(state.message.isEmpty ? (state.dirty ? "有未保存修改" : "核对后保存；已审核内容可继续编辑") : state.message).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            Spacer()
+            Button(advance ? "保存并下一项" : (state.current?["existingTask"] == nil ? "确认作业":"保存修改")){state.saveCurrent(advance:advance)}.buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(.return,modifiers:.command).disabled(state.current == nil || state.paused)
+        }
+    }
+}
 private struct ReviewWorkspace: View {
     @ObservedObject var state: ReviewState
     @FocusState private var searchFocused:Bool
-    private func editing<T>(_ key: ReferenceWritableKeyPath<ReviewState,T>) -> Binding<T> {
-        Binding(get:{state[keyPath:key]},set:{state[keyPath:key]=$0; state.dirty=true})
-    }
     var body: some View {
         VStack(spacing:12) {
             HStack {
@@ -170,12 +231,12 @@ private struct ReviewWorkspace: View {
                         ForEach(workspaceRows(state.visible)) { row in
                             let record = row.record
                             HStack(alignment:.top,spacing:8) {
-                                Toggle("选择",isOn:Binding(get:{state.checked.contains(identifier(record))},set:{if $0 {state.checked.insert(identifier(record))}else{state.checked.remove(identifier(record))}})).labelsHidden().toggleStyle(.checkbox).accessibilityLabel("选择\(string(record,"title"))")
+                                Toggle("选择",isOn:Binding(get:{state.checked.contains(identifier(record))},set:{if $0 {state.checked.insert(identifier(record))}else{state.checked.remove(identifier(record))}})).labelsHidden().toggleStyle(.checkbox).accessibilityLabel("选择\(string(record,"title"))").disabled(string(record,"reviewStatus")=="已导入")
                                 Button { state.select(record) } label: {
                                     VStack(alignment:.leading,spacing:5) {
                                         Text(string(record,"suggestedTitle").isEmpty ? string(record,"title") : string(record,"suggestedTitle")).font(.system(size:13,weight:.medium)).lineLimit(2)
                                         Text(string(record,"repository")).font(.caption).foregroundStyle(.secondary)
-                                        Label(record["existingTask"] == nil ? "新作业" : "更新建议",systemImage:record["existingTask"] == nil ? "tray" : "arrow.triangle.2.circlepath").font(.caption).foregroundStyle(.secondary)
+                                        Label(string(record,"reviewStatus")=="已导入" ? "已审核" : (record["existingTask"] == nil ? "新作业" : "更新建议"),systemImage:string(record,"reviewStatus")=="已导入" ? "checkmark.circle" : (record["existingTask"] == nil ? "tray" : "arrow.triangle.2.circlepath")).font(.caption).foregroundStyle(.secondary)
                                     }.frame(maxWidth:.infinity,alignment:.leading).padding(8).background(state.selected == identifier(record) ? Color.accentColor.opacity(0.12) : Color.clear).cornerRadius(8)
                                 }.buttonStyle(.plain)
                             }.padding(.horizontal,4)
@@ -184,59 +245,13 @@ private struct ReviewWorkspace: View {
                 }.frame(minWidth:220,idealWidth:280,maxWidth:340)
                 ScrollView {
                     if let record=state.current {
-                        VStack(alignment:.leading,spacing:16) {
-                            Text(record["existingTask"] == nil ? "审核作业" : "编辑作业").font(.title3.bold())
-                            if string(record,"reviewStatus")=="已导入" {Text("已加入任务，修改后保存即可同步。").foregroundStyle(.secondary)}
-                            TextField("作业名称",text:editing(\.title)).textFieldStyle(.roundedBorder)
-                            GroupBox("截止时间") {
-                                VStack(alignment:.leading,spacing:10) {
-                                    Text(string(record,"dateText").isEmpty ? "老师未说明完整截止时间" : "老师原文：\(string(record,"dateText"))").textSelection(.enabled)
-                                    if let warnings=record["warnings"] as? [String] { ForEach(Array(warnings.enumerated()),id:\.offset){Text($0.element).foregroundStyle(.orange)} }
-                                    if let due=record["suggestedDue"] as? Date {
-                                        Text("原文日期建议：\(due.formatted(date:.abbreviated,time:.shortened))")
-                                        if let basis=record["dateBasis"] as? NSDictionary, let date=basis["date"] as? Date { Text("依据：\(date.formatted()) · \(String(string(basis,"commit").prefix(7)))").font(.caption).foregroundStyle(.secondary) }
-                                    }
-                                    DatePicker("作业 DDL",selection:Binding(get:{state.date},set:{state.date=$0;state.hasDate=true;state.dateConfirmed=true;state.dirty=true}),displayedComponents:[.date,.hourAndMinute])
-                                    if !state.hasDate || !state.dateConfirmed {
-                                        Text("请补全并核对截止日期和时间；当前日期不会自动保存。").foregroundStyle(.orange)
-                                        Button("确认填写的截止时间"){state.hasDate=true;state.dateConfirmed=true;state.dirty=true}
-                                    }
-                                    Text("课程时区：\(string(record,"timeZone"))").font(.caption).foregroundStyle(.secondary)
-                                    Toggle("启用提醒",isOn:editing(\.reminders))
-                                    if state.reminders {
-                                        LazyVGrid(columns:[GridItem(.adaptive(minimum:85))],alignment:.leading) {
-                                            ForEach([10080,4320,1440,60,0],id:\.self){offset in
-                                                Toggle([10080:"7天",4320:"3天",1440:"1天",60:"1小时",0:"到期"][offset]!,isOn:Binding(get:{state.reminderOffsets.contains(offset)},set:{if $0 {state.reminderOffsets.insert(offset)}else{state.reminderOffsets.remove(offset)};state.dirty=true})).toggleStyle(.checkbox)
-                                            }
-                                        }
-                                        let custom = state.reminderOffsets.subtracting([10080,4320,1440,60,0]).sorted(by:>)
-                                        if !custom.isEmpty { Text("保留自定义提醒：\(custom.map{"提前\($0)分钟"}.joined(separator:"、"))").font(.caption).foregroundStyle(.secondary) }
-                                        Button("使用全部常用提醒"){state.reminderOffsets=[10080,4320,1440,60,0];state.dirty=true}
-                                    }
-                                }.frame(maxWidth:.infinity,alignment:.leading).padding(4)
-                                .environment(\.timeZone,TimeZone(identifier:string(record,"timeZone")) ?? .current)
-                            }
-                            VStack(alignment:.leading,spacing:6) { Text("我的备注（选填）").fontWeight(.medium); TextEditor(text:editing(\.notes)).frame(minHeight:100).overlay(RoundedRectangle(cornerRadius:6).stroke(Color.secondary.opacity(0.2))) }
-                            if !string(record,"summary").isEmpty {GroupBox("作业内容"){Text(string(record,"summary")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
-                            if !string(record,"submissionRequirements").isEmpty {GroupBox("提交要求"){Text(string(record,"submissionRequirements")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
-                            GroupBox("老师原文与来源") {
-                                VStack(alignment:.leading,spacing:8) {
-                                    Text("\(string(record,"repository")) / \(string(record,"path")):\((record["line"] as? NSNumber)?.intValue ?? 1)").font(.caption).foregroundStyle(.secondary)
-                                    Text(string(record,"snippet")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)
-                                    if let attachments=record["attachments"] as? [NSDictionary] { ForEach(workspaceRows(attachments,key:"path")){Text("附件：\(string($0.record,"path"))\n\(string($0.record,"snippet"))").textSelection(.enabled)} }
-                                }.padding(4)
-                            }
-                        }.padding(.horizontal,16).padding(.vertical,8)
+                        ReviewDetails(state:state,record:record)
                     } else {
                         VStack(spacing:12){Image(systemName:"tray").font(.largeTitle).foregroundStyle(.secondary);Text("暂无待审核作业");Text("检查课程后，需确认的作业会显示在这里。").foregroundStyle(.secondary)}.frame(maxWidth:.infinity,minHeight:240)
                     }
                 }.frame(minWidth:300)
             }
-            HStack {
-                Text(state.message.isEmpty ? (state.dirty ? "有未保存修改" : "核对原文后保存；明确日期可批量确认") : state.message).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                Spacer()
-                Button("保存并下一项"){state.saveCurrent(advance:true)}.buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(.return,modifiers:.command).disabled(state.current == nil || state.paused)
-            }
+            ReviewSaveBar(state:state,advance:true)
         }.padding(12).font(.system(size:13)).tint(.blue).onChange(of:state.searchToken){_ in searchFocused=true}
     }
 }
@@ -252,6 +267,7 @@ private struct ReviewWorkspace: View {
     @objc public func discardChanges() {state.dirty=false;state.refresh(state.records)}
     @objc public func saveCurrent() -> Bool {state.saveCurrent(advance:false)}
     @objc public func focusSearch(){state.searchToken += 1}
+    @objc public func selectRecord(withID identifier:String)->Bool { guard let record=state.records.first(where:{string($0,"id")==identifier}) else{return false};state.select(record);return state.selected==identifier }
     public override func loadView() {view=NSHostingView(rootView:ReviewWorkspace(state:state))}
 }
 
@@ -369,16 +385,41 @@ private struct SettingsWorkspace:View {
     @Published var empty=""
     @Published var paused=false
     var action:((String,String)->Void)?
-    var current:NSDictionary? {records.first{identifier($0)==selected}}
+    let review=ReviewState()
+    private var draftRow:NSDictionary?
+    var current:NSDictionary? {records.first{identifier($0)==selected} ?? (review.dirty ? draftRow:nil)}
+    func reviewRecord(_ record:NSDictionary)->NSDictionary? {
+        if let source=record["reviewRecord"] as? NSDictionary {return source}
+        if !flag(record,"confirmed") && (string(record,"kind").isEmpty || string(record,"kind")=="assignment") {return record}
+        return nil
+    }
+    @discardableResult func select(_ id:String)->Bool {
+        guard let record=records.first(where:{identifier($0)==id}) else{return false}
+        if selected != id && !review.resolve(){return false}
+        selected=id;draftRow=record
+        if let source=reviewRecord(record) {review.refresh([source])} else {review.refresh([])}
+        action?("select",id);return true
+    }
     func update(_ records:[NSDictionary], selected:String, information:String, empty:String, paused:Bool) {
-        self.records=workspaceRecords(records);self.selected=selected.isEmpty ? nil:selected;self.information=information;self.empty=empty;self.paused=paused
+        self.records=workspaceRecords(records);self.information=information;self.empty=empty;self.paused=paused;review.paused=paused
+        // Background refresh retains an unfinished draft. Navigation resolves it first.
+        if !review.dirty {self.selected=selected.isEmpty ? nil:selected;draftRow=records.first{identifier($0)==self.selected}}
+        if let record=current, let source=reviewRecord(record), information.isEmpty {review.refresh([source])}
+        else {review.refresh([])}
+    }
+
+}
+private struct CourseReviewPane:View {
+    @ObservedObject var state:ReviewState
+    var body:some View {
+        if let record=state.current {ReviewDetails(state:state,record:record)}
     }
 }
 private struct CourseWorkspace:View {
     @ObservedObject var state:CourseState
-    private func kind(_ record:NSDictionary)->String {flag(record,"confirmed") ? "已加入任务" : ["assignment":"作业","exam":"考试","classroom":"课上任务","unknown":"待确认类型"][string(record,"kind")] ?? "作业"}
+    private func kind(_ record:NSDictionary)->String {flag(record,"confirmed") || string(record,"reviewStatus")=="已导入" ? "已审核" : string(record,"reviewStatus")=="有更新" ? "有更新，待审核" : ["assignment":"作业","exam":"考试","classroom":"课上任务","unknown":"待确认类型"][string(record,"kind")] ?? "作业"}
     private var entries:some View {
-        List(selection:Binding(get:{state.selected},set:{state.selected=$0;if let id=$0 {state.action?("select",id)}})) {
+        List(selection:Binding(get:{state.selected},set:{if let id=$0 {state.select(id)}})) {
             ForEach(workspaceRows(state.records)) { row in
                 let record=row.record
                 VStack(alignment:.leading,spacing:6) {
@@ -394,16 +435,20 @@ private struct CourseWorkspace:View {
         ScrollView {
             VStack(alignment:.leading,spacing:16) {
                 if !state.information.isEmpty {Text(state.information).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}
-                else if let record=state.current {
+                else if let record=state.current, state.reviewRecord(record) != nil {
+                    if state.review.dirty && !state.records.contains(where:{identifier($0)==state.selected}) {Text("当前作业不在筛选结果中；未保存的内容保留。").foregroundStyle(.orange)}
+                    HStack{Label(kind(record),systemImage:"checklist");Spacer();if !flag(record,"confirmed"){Button("更改类型…"){state.action?("type",identifier(record))}.disabled(state.paused)}}
+                    CourseReviewPane(state:state.review)
+                } else if let record=state.current {
                     Text(string(record,"suggestedTitle").isEmpty ? string(record,"title") : string(record,"suggestedTitle")).font(.title3.bold())
                     Label(kind(record),systemImage:string(record,"kind")=="exam" ? "doc.text" : "checklist").foregroundStyle(.secondary)
                     if let due=record["due"] as? Date {Text("截止：\(due.formatted(date:.abbreviated,time:.shortened))")}
+                    if !string(record,"notes").isEmpty {GroupBox("我的备注"){Text(string(record,"notes")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
                     if !string(record,"dateText").isEmpty {Text("老师截止原文：\(string(record,"dateText"))").textSelection(.enabled)}
                     if !string(record,"summary").isEmpty {GroupBox("内容概括"){Text(string(record,"summary")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
                     if !string(record,"submissionRequirements").isEmpty {GroupBox("提交要求"){Text(string(record,"submissionRequirements")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
                     Text("\(string(record,"repository")) · \(string(record,"path"))").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                     HStack {
-                        if flag(record,"confirmed") || string(record,"kind").isEmpty || string(record,"kind")=="assignment" {Button(flag(record,"confirmed") ? "编辑任务…":"审核作业…"){state.action?("review",identifier(record))}.buttonStyle(.borderedProminent).disabled(state.paused)}
                         if !flag(record,"confirmed"){Button("更改类型…"){state.action?("type",identifier(record))}.disabled(state.paused)}
                     }
                     Divider()
@@ -415,11 +460,14 @@ private struct CourseWorkspace:View {
             }.padding(20).frame(maxWidth:.infinity,alignment:.leading)
         }.frame(minWidth:260)
     }
+    private var detailPane:some View {
+        VStack(spacing:0){details;if let record=state.current,state.reviewRecord(record) != nil {Divider();ReviewSaveBar(state:state.review,advance:false).padding(12)}}
+    }
     var body:some View {
         GeometryReader { geometry in
-            if state.records.isEmpty {details}
-            else if geometry.size.width<760 {VSplitView{entries.frame(minHeight:160,idealHeight:220);details.frame(minHeight:180)}}
-            else {HSplitView{entries.frame(idealWidth:300,maxWidth:360);details}}
+            if state.records.isEmpty {detailPane}
+            else if geometry.size.width<760 {VSplitView{entries.frame(minHeight:160,idealHeight:220);detailPane.frame(minHeight:180)}}
+            else {HSplitView{entries.frame(idealWidth:300,maxWidth:360);detailPane}}
         }.font(.system(size:13)).background(Color(nsColor:.windowBackgroundColor)).tint(.blue)
     }
 }
@@ -427,6 +475,13 @@ private struct CourseWorkspace:View {
 @MainActor public final class AMCourseController:NSViewController {
     private let state=CourseState()
     @objc public var actionHandler:((String,String)->Void)? {get{state.action}set{state.action=newValue}}
+    @objc public var saveHandler:(([NSDictionary])->String)? {get{state.review.save}set{state.review.save=newValue}}
+    @objc public var paused:Bool {get{state.review.paused}set{state.review.paused=newValue;state.paused=newValue}}
+    @objc public var hasUnsavedChanges:Bool {state.review.dirty}
+    @objc public func resolveUnsavedChanges()->Bool {state.review.resolve()}
+    @objc public func discardChanges(){state.review.dirty=false;state.review.refresh(state.review.records)}
+    @objc public func saveCurrent()->Bool {state.review.saveCurrent(advance:false)}
+    @objc public func selectRecord(withID id:String)->Bool {state.select(id)}
     @objc public func updateRecords(_ records:[NSDictionary],selected:String,information:String,empty:String,paused:Bool){state.update(records,selected:selected,information:information,empty:empty,paused:paused)}
     private func scrollViews(_ view:NSView)->[NSScrollView] {var result:[NSScrollView]=[];if let scroll=view as? NSScrollView {result.append(scroll)};for child in view.subviews {result+=scrollViews(child)};return result}
     @objc public func scrollPositions()->[NSValue] {scrollViews(view).map{NSValue(point:$0.contentView.bounds.origin)}}

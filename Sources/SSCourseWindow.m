@@ -33,6 +33,9 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property dispatch_queue_t queue;
 @property AMCourseController *courseWorkspace;
 @property NSPopUpButton *reviewFilter;
+@property NSInteger presentedSection;
+@property NSInteger presentedType;
+@property NSInteger presentedReviewFilter;
 @property NSSegmentedControl *sections;
 @property NSSearchField *search;
 @property NSString *query;
@@ -113,9 +116,9 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (void)configureCredentialAccess { __weak typeof(self) weakSelf=self;self.git.teacherCredentialProvider=[@[@"oauth",@"githubCLI"] containsObject:self.github.authType] ? ^NSString *(NSDictionary *course,NSError **error){if(![weakSelf.github readableTeacher:course error:error])return nil;return [weakSelf.github accessToken:error];} : nil; }
 - (NSWindow *)window { return self.view.window; }
 - (BOOL)operationBusy { return self.busy; }
-- (BOOL)hasUnsavedReview { return self.reviewWorkspace.hasUnsavedChanges || self.setupWindow.sheetParent != nil; }
-- (BOOL)resolveUnsavedReview { if(self.setupWindow.sheetParent){NSAlert *alert=NSAlert.new;alert.messageText=@"课程配置尚未关闭";alert.informativeText=@"已成功关联的课程已经保存；尚未关联的目录选择会被放弃。";[alert addButtonWithTitle:@"继续配置"];[alert addButtonWithTitle:@"放弃未关联选择并继续"];if([alert runModal]!=NSAlertSecondButtonReturn)return NO;[self closeCourseSetup];} self.resolvingReview=YES; self.reviewWorkspace.paused=NO; BOOL ok=[self.reviewWorkspace resolveUnsavedChanges]; self.resolvingReview=NO; self.reviewWorkspace.paused=self.busy || self.operationsPaused; return ok; }
-- (void)discardReview { [self.reviewWorkspace discardChanges];[self closeCourseSetup]; }
+- (BOOL)hasUnsavedReview { return self.reviewWorkspace.hasUnsavedChanges || self.courseWorkspace.hasUnsavedChanges || self.setupWindow.sheetParent != nil; }
+- (BOOL)resolveUnsavedReview { if(self.setupWindow.sheetParent){NSAlert *alert=NSAlert.new;alert.messageText=@"课程配置尚未关闭";alert.informativeText=@"已成功关联的课程已经保存；尚未关联的目录选择会被放弃。";[alert addButtonWithTitle:@"继续配置"];[alert addButtonWithTitle:@"放弃未关联选择并继续"];if([alert runModal]!=NSAlertSecondButtonReturn)return NO;[self closeCourseSetup];} self.resolvingReview=YES; self.reviewWorkspace.paused=NO; self.courseWorkspace.paused=NO; BOOL ok=[self.reviewWorkspace resolveUnsavedChanges] && [self.courseWorkspace resolveUnsavedChanges]; self.resolvingReview=NO; self.reviewWorkspace.paused=self.busy || self.operationsPaused; self.courseWorkspace.paused=self.busy || self.operationsPaused; return ok; }
+- (void)discardReview { [self.reviewWorkspace discardChanges];[self.courseWorkspace discardChanges];[self closeCourseSetup]; }
 - (BOOL)hasSubmissionSheet { return self.submission.window.sheetParent != nil; }
 - (BOOL)hasUnsavedSubmission { return self.hasSubmissionSheet && self.submission.hasUnsavedChanges; }
 - (void)setOperationsPaused:(BOOL)paused { _operationsPaused = paused; [self refreshPresentation]; }
@@ -142,7 +145,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.assistantImportButton=SSButton(@"导入助手结果…",self,@selector(importSkillResults:),NSZeroRect);[root addSubview:self.assistantImportButton];
     self.sections = Segments(@[@"课程内容", @"已加入任务", @"仓库信息"], self, @selector(sectionChanged:)); [root addSubview:self.sections];
     self.typeFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.typeFilter addItemsWithTitles:@[@"全部类型", @"作业", @"课上任务", @"考试", @"待确认类型"]]; self.typeFilter.target = self; self.typeFilter.action = @selector(sectionChanged:); [root addSubview:self.typeFilter];
-    self.reviewFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.reviewFilter addItemsWithTitles:@[@"待审核", @"全部结果", @"已导入"]]; self.reviewFilter.target = self; self.reviewFilter.action = @selector(sectionChanged:); [root addSubview:self.reviewFilter];
+    self.reviewFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.reviewFilter addItemsWithTitles:@[@"待审核", @"全部结果", @"已审核"]]; self.reviewFilter.target = self; self.reviewFilter.action = @selector(sectionChanged:); [root addSubview:self.reviewFilter];
     self.search = [[NSSearchField alloc] initWithFrame:NSZeroRect]; self.search.placeholderString = @"搜索作业或来源文件"; self.search.delegate = self; self.search.sendsSearchStringImmediately = YES; [root addSubview:self.search];
     self.statusLabel = Text(@"", 12, NSFontWeightRegular, Muted()); [root addSubview:self.statusLabel];
     self.progress = [[NSProgressIndicator alloc] initWithFrame:NSZeroRect]; self.progress.style = NSProgressIndicatorStyleSpinning; self.progress.displayedWhenStopped = NO; [root addSubview:self.progress];
@@ -167,10 +170,17 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     };
     [self addChildViewController:self.reviewWorkspace]; [root addSubview:self.reviewWorkspace.view];
     self.courseWorkspace=AMCourseController.new;
+    self.courseWorkspace.saveHandler=self.reviewWorkspace.saveHandler;
     self.courseWorkspace.actionHandler=^(NSString *action,NSString *identifier){
-        if([action isEqual:@"select"]){dispatch_async(dispatch_get_main_queue(),^{if([owner.selectedCandidateID isEqual:identifier])return;for(NSDictionary *record in owner.visible)if([record[@"id"] isEqual:identifier]){owner.selectedCandidateID=identifier;[owner refreshPresentation];break;}});return;}
+        if([action isEqual:@"select"]){dispatch_async(dispatch_get_main_queue(),^{
+            for(NSDictionary *record in owner.visible)if([record[@"id"] isEqual:identifier]){owner.selectedCandidateID=identifier;[owner refreshPresentation];break;}
+        });return;}
         if(owner.busy || owner.operationsPaused)return;
-        if([action isEqual:@"review"])[owner review:nil];else if([action isEqual:@"type"])[owner changeType:nil];
+        NSArray *visible=owner.visible;
+        for(NSUInteger index=0;index<visible.count;index++)if([visible[index][@"id"] isEqual:identifier]){
+            owner.selectedCandidateID=identifier;[owner.table selectRowIndexes:[NSIndexSet indexSetWithIndex:index] byExtendingSelection:NO];
+            if([action isEqual:@"type"]){if(owner.hasUnsavedReview && ![owner resolveUnsavedReview])return;[owner changeType:nil];}else if([action isEqual:@"review"])[owner review:nil];break;
+        }
     };
     [self addChildViewController:self.courseWorkspace];[root addSubview:self.courseWorkspace.view];
     [self layoutContent];
@@ -286,7 +296,10 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (void)restoreAccess:(id)sender {if(self.busy || self.operationsPaused)return;NSString *issue=self.reports[self.selectedFork ?: @"all"][@"issue"];if([issue isEqual:@"login"]){self.guided=YES;[self login:nil];}else if([issue isEqual:@"ssh"]){self.guided=YES;[self authenticationSettings:nil];}else if([issue isEqual:@"sso"]){NSString *owner=[[self course][@"upstream"] componentsSeparatedByString:@"/"].firstObject;[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:[NSString stringWithFormat:@"https://github.com/orgs/%@/sso",owner]]];}else if([issue isEqual:@"permission"] && [self.github.authType isEqual:@"githubCLI"]){NSAlert *alert=NSAlert.new;alert.messageText=@"当前账户无法读取课程";alert.informativeText=@"先在 GitHub 打开老师仓库，核对登录账户和已有课程权限；学校要求 SSO 时完成学校登录。无需申请批准本项目应用。";[alert addButtonWithTitle:@"打开老师仓库"];[alert addButtonWithTitle:@"重新登录"];[alert addButtonWithTitle:@"稍后"];NSInteger answer=[alert runModal];NSString *teacher=[self course][@"upstream"];if(answer==NSAlertFirstButtonReturn && SSCanonicalRepository([@"https://github.com/" stringByAppendingString:teacher ?: @""]))[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:[@"https://github.com/" stringByAppendingString:teacher]]];else if(answer==NSAlertSecondButtonReturn)[self login:nil];}else if([issue isEqual:@"approval"] || [issue isEqual:@"permission"])[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://github.com/settings/applications"]];else [self setup:nil];}
 - (void)recover:(id)sender { if ([[self course][@"pendingMergeTip"] length]) [self continueMerge:nil]; else [self push:nil]; }
 - (void)focusSearch { if(self.inbox)[self.reviewWorkspace focusSearch];else [self.view.window makeFirstResponder:self.search]; }
-- (void)sectionChanged:(id)sender { [self refreshPresentation]; }
+- (void)sectionChanged:(id)sender {
+    if(self.hasUnsavedReview && ![self resolveUnsavedReview]){[self.sections setSelectedSegment:self.presentedSection];[self.typeFilter selectItemAtIndex:self.presentedType];[self.reviewFilter selectItemAtIndex:self.presentedReviewFilter];return;}
+    [self refreshPresentation];
+}
 - (void)controlTextDidChange:(NSNotification *)notification { if (notification.object == self.search) { self.query = self.search.stringValue; [self refreshPresentation]; } }
 - (void)saveCourses { if (self.preview) return; NSError *error = nil; if (!SSWritePlist(@"courses.plist", self.courses, &error)) [self showError:error]; }
 - (NSMutableDictionary *)savedCourse:(NSDictionary *)course { for (NSMutableDictionary *saved in self.courses) if ([saved[@"fork"] isEqual:course[@"fork"]]) return saved; return nil; }
@@ -434,10 +447,22 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.table.tableColumns.firstObject.title = self.inbox ? @"作业" : @"课程内容";
     self.typeButton.hidden = info || (!self.inbox && self.sections.selectedSegment == 1);
     self.typeFilter.hidden = self.inbox || self.sections.selectedSegment != 0;
-    NSMutableArray *content=NSMutableArray.array;for(NSDictionary *record in visible)[content addObject:SSEnrichDiscovery(record)];
+    NSMutableArray *content=NSMutableArray.array;
+    for(NSDictionary *record in visible){
+        NSMutableDictionary *copy=[SSEnrichDiscovery(record) mutableCopy];
+        if([record[@"confirmed"] boolValue]){
+            NSDictionary *source=[self reviewSourceWithID:record[@"sourceID"]];
+            if(source && [source[@"kind"] isEqual:@"assignment"]){NSMutableDictionary *review=[SSEnrichDiscovery(source) mutableCopy];review[@"existingTask"]=record;review[@"reviewStatus"]=[self stateForCandidate:source];copy[@"reviewRecord"]=review;}
+        }else{
+            copy[@"reviewStatus"]=[self stateForCandidate:record];
+            for(NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[])if([task[@"sourceID"] isEqual:record[@"id"]]){copy[@"existingTask"]=task;if([copy[@"reviewStatus"] isEqual:@"已导入"])copy[@"due"]=task[@"due"];break;}
+        }
+        [content addObject:copy];
+    }
     NSString *information=info ? self.detail.string : @"";
     if(!course && !self.inbox){NSMutableArray *summary=NSMutableArray.array;for(NSDictionary *snapshot in self.courseSnapshots)[summary addObject:self.reports[snapshot[@"id"]][@"error"] ? [NSString stringWithFormat:@"%@ · %@ · 保留上次成功检查结果",snapshot[@"name"],snapshot[@"status"]] : [NSString stringWithFormat:@"%@ · %@ · %lu 项待审核",snapshot[@"name"],snapshot[@"status"],(unsigned long)[snapshot[@"pending"] unsignedIntegerValue]]];information=[summary componentsJoinedByString:@"\n\n"];[content removeAllObjects];}
     [self.courseWorkspace updateRecords:content selected:self.selectedCandidateID ?: @"" information:information empty:self.emptyLabel.stringValue paused:self.busy || self.operationsPaused];
+    self.presentedSection=self.sections.selectedSegment;self.presentedType=self.typeFilter.indexOfSelectedItem;self.presentedReviewFilter=self.reviewFilter.indexOfSelectedItem;
     [self layoutContent]; self.refreshing = NO;
     if (self.stateChanged) self.stateChanged();
 }
@@ -732,7 +757,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSInteger row = self.table.selectedRow;
     NSDictionary *candidate = row >= 0 && row < (NSInteger)self.visible.count ? self.visible[row] : nil;
     BOOL assignment = !candidate[@"kind"] || [candidate[@"kind"] isEqual:@"assignment"];
-    self.selectedCandidateID = candidate[@"id"]; BOOL canStart = self.inbox && !candidate && self.pendingReviewCandidates.count > 0;
+    if(candidate)self.selectedCandidateID = candidate[@"id"]; BOOL canStart = self.inbox && !candidate && self.pendingReviewCandidates.count > 0;
     self.reviewButton.enabled = canStart || (candidate != nil && (assignment || [candidate[@"confirmed"] boolValue])); self.reviewButton.title = canStart ? @"开始审核…" : ([candidate[@"confirmed"] boolValue] ? @"编辑任务…" : @"审核作业…");
     self.reviewButton.toolTip = @"按当前课程和搜索筛选逐项审核；Return 保存并下一项";
     self.typeButton.enabled = candidate != nil && ![candidate[@"confirmed"] boolValue] && !self.busy && !self.operationsPaused;
@@ -745,11 +770,14 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.detail.string = candidate ? preview : @"选择课程内容，查看类型、老师原文与位置。";
 }
 - (void)review:(id)sender {
-    NSInteger row = self.table.selectedRow;
-    if (row < 0 || row >= (NSInteger)self.visible.count) { if (self.inbox && self.pendingReviewCandidates.count && self.reviewCandidate) self.reviewCandidate(self.pendingReviewCandidates.firstObject); return; }
-    NSDictionary *candidate = self.visible[row];
-    if (candidate[@"kind"] && ![candidate[@"kind"] isEqual:@"assignment"] && ![candidate[@"confirmed"] boolValue]) return;
-    if ([candidate[@"confirmed"] boolValue]) { if (self.editTask) self.editTask(candidate[@"id"]); }
-    else if (self.reviewCandidate) self.reviewCandidate(candidate);
+    if(self.busy || self.operationsPaused)return;
+    NSDictionary *candidate=nil;
+    for(NSDictionary *record in self.visible)if([record[@"id"] isEqual:self.selectedCandidateID]){candidate=record;break;}
+    if(!candidate && self.inbox)candidate=self.pendingReviewCandidates.firstObject;
+    if(!candidate || (candidate[@"kind"] && ![candidate[@"kind"] isEqual:@"assignment"] && ![candidate[@"confirmed"] boolValue]))return;
+    // Both entry points select the inline form, never an AppKit review sheet.
+    BOOL selected=self.inbox ? [self.reviewWorkspace selectRecordWithID:candidate[@"id"]] : [self.courseWorkspace selectRecordWithID:candidate[@"id"]];
+    if(!selected)[self status:@"请先处理当前未保存修改，再选择作业。"];
 }
+
 @end
