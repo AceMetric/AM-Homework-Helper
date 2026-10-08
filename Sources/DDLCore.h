@@ -8,6 +8,7 @@ NSArray<NSDictionary *> *DDLReminderPlan(NSDictionary *task, NSDate *now, NSCale
 NSArray<NSNumber *> * _Nullable DDLParseReminderOffsets(NSString *input);
 NSString *DDLFormatReminderOffsets(NSArray<NSNumber *> *offsets);
 NSArray<NSNumber *> *DDLReminderOffsetsForTask(NSDictionary *task);
+NSArray<NSNumber *> *DDLDefaultReminderOffsets(void);
 NSArray<NSMutableDictionary *> *DDLNormalizeTasks(NSArray *items);
 NSArray<NSMutableDictionary *> *DDLMergeTasks(NSArray *existing, NSArray *incoming);
 BOOL DDLMatchesFilter(NSDictionary *task, NSInteger filter, NSString *query, NSDate *now, NSCalendar *calendar);

@@ -51,10 +51,8 @@ final class ReviewState: ObservableObject {
     @Published var date = Date()
     @Published var hasDate = false
     @Published var dateConfirmed = false
-    @Published var leadDays = 0
-    @Published var personalDate = Date()
-    @Published var customPersonalDate = false
     @Published var reminders = true
+    @Published var reminderOffsets: Set<Int> = [10080,4320,1440,60,0]
     @Published var dirty = false
     @Published var message = ""
     @Published var paused = false
@@ -79,19 +77,21 @@ final class ReviewState: ObservableObject {
         activeRecord = record; selected = identifier(record)
         let task = record["existingTask"] as? NSDictionary
         title = task?["title"] as? String ?? (string(record,"suggestedTitle").isEmpty ? string(record,"title") : string(record,"suggestedTitle"))
-        notes = task?["notes"] as? String ?? [string(record,"summary"),string(record,"submissionRequirements")].filter{!$0.isEmpty}.joined(separator:"\n\n")
-        if notes.isEmpty { notes = string(record,"snippet") }
-        if let value = record["due"] as? Date { date = value; hasDate = true }
-        else if let value = task?["announcedDue"] as? Date { date = value; hasDate = true }
+        notes = task?["notes"] as? String ?? ""
+        let basis = record["dateBasis"] as? NSDictionary
+        let suggestion = !flag(record,"needsTime") && (record["warnings"] as? [String] ?? []).isEmpty && basis?["date"] is Date && !string(basis ?? [:],"commit").isEmpty ? record["suggestedDue"] as? Date : nil
+        if let value = task?["due"] as? Date { date = value; hasDate = true }
+        else if let value = record["due"] as? Date { date = value; hasDate = true }
+        else if let suggestion { date = suggestion; hasDate = true }
         else if let value = record["dateOnly"] as? String {
             let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"; formatter.timeZone = TimeZone(identifier:string(record,"timeZone")) ?? .current
             date = formatter.date(from:value) ?? Date(); hasDate = false
         } else { date = Date(); hasDate = false }
         dateConfirmed = hasDate && !flag(record,"needsDate") && !flag(record,"needsTime") && (record["warnings"] as? [String] ?? []).isEmpty
-        leadDays = (task?["leadDays"] as? NSNumber)?.intValue ?? 0
-        customPersonalDate = leadDays < 0
-        personalDate = task?["due"] as? Date ?? date
+        if task==nil, suggestion != nil { dateConfirmed=true }
+        if task?["due"] is Date { dateConfirmed=true }
         reminders = ((task?["reminderOffsets"] as? [NSNumber])?.isEmpty == false) || task == nil
+        reminderOffsets = Set((task?["reminderOffsets"] as? [NSNumber])?.map(\.intValue) ?? [10080,4320,1440,60,0])
         originalTitle = title; originalNotes = notes; dirty = false
     }
     func resolve() -> Bool {
@@ -106,16 +106,15 @@ final class ReviewState: ObservableObject {
     }
     func select(_ record: NSDictionary) { guard identifier(record) != selected, resolve() else { return }; load(record) }
     func payload(_ record: NSDictionary, editing: Bool) -> NSDictionary? {
-        let due = editing ? (hasDate && dateConfirmed ? date : nil) : record["due"] as? Date
-        guard let due, !(editing ? title : string(record,"suggestedTitle")).trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { return nil }
+        let due = editing ? (hasDate && dateConfirmed ? date : nil) : ((record["existingTask"] as? NSDictionary)?["due"] as? Date ?? record["due"] as? Date)
+        let proposedTitle=string(record,"suggestedTitle").isEmpty ? string(record,"title"):string(record,"suggestedTitle")
+        guard let due, !(editing ? title : proposedTitle).trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { return nil }
         if !editing && (flag(record,"needsDate") || flag(record,"needsTime") || !(record["warnings"] as? [String] ?? []).isEmpty || flag(record,"relative") || flag(record,"modelOnly")) { return nil }
         let savedTitle=(record["existingTask"] as? NSDictionary)?["title"] as? String
-        var draft: [String:Any] = ["title": editing ? title : (savedTitle ?? (string(record,"suggestedTitle").isEmpty ? string(record,"title") : string(record,"suggestedTitle"))),"teacherDue":due,"dateConfirmed":true]
+        var draft: [String:Any] = ["title": editing ? title : (savedTitle ?? proposedTitle),"assignmentDue":due,"dateConfirmed":true]
         if editing {
-            draft["notes"] = notes; draft["leadDays"] = customPersonalDate ? -1 : max(0,leadDays)
-            if customPersonalDate { draft["personalDue"] = personalDate }
-            let old = (record["existingTask"] as? NSDictionary)?["reminderOffsets"] as? [NSNumber]
-            draft["reminderOffsets"] = reminders ? (old?.isEmpty == false ? old! : [1440,60,0] as [NSNumber]) : [NSNumber]()
+            draft["notes"] = notes
+            draft["reminderOffsets"] = reminders ? reminderOffsets.sorted(by:>) : [Int]()
         }
         return ["record":record,"draft":draft] as NSDictionary
     }
@@ -142,7 +141,7 @@ final class ReviewState: ObservableObject {
         let formatter=DateFormatter(); formatter.dateFormat="yyyy-MM-dd HH:mm z"
         alert.informativeText=payloads.map { item in
             let record=item["record"] as! NSDictionary, draft=item["draft"] as! NSDictionary
-            return "\(string(record,"repository")) · \(string(draft,"title"))\n\(formatter.string(from:draft["teacherDue"] as! Date))"
+            return "\(string(record,"repository")) · \(string(draft,"title"))\n\(formatter.string(from:draft["assignmentDue"] as! Date))"
         }.joined(separator:"\n\n") + (payloads.count < targets.count ? "\n\n其余 \(targets.count-payloads.count) 项仍待补全。" : "")
         alert.addButton(withTitle:"确认加入"); alert.addButton(withTitle:"取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -186,32 +185,40 @@ private struct ReviewWorkspace: View {
                 ScrollView {
                     if let record=state.current {
                         VStack(alignment:.leading,spacing:16) {
-                            Text(record["existingTask"] == nil ? "审核作业" : "审核更新").font(.title3.bold())
-                            if string(record,"reviewStatus")=="已导入" {Text("此版本已加入任务，可在任务页继续编辑。").foregroundStyle(.secondary)}
+                            Text(record["existingTask"] == nil ? "审核作业" : "编辑作业").font(.title3.bold())
+                            if string(record,"reviewStatus")=="已导入" {Text("已加入任务，修改后保存即可同步。").foregroundStyle(.secondary)}
                             TextField("作业名称",text:editing(\.title)).textFieldStyle(.roundedBorder)
                             GroupBox("截止时间") {
                                 VStack(alignment:.leading,spacing:10) {
                                     Text(string(record,"dateText").isEmpty ? "老师未说明完整截止时间" : "老师原文：\(string(record,"dateText"))").textSelection(.enabled)
                                     if let warnings=record["warnings"] as? [String] { ForEach(Array(warnings.enumerated()),id:\.offset){Text($0.element).foregroundStyle(.orange)} }
                                     if let due=record["suggestedDue"] as? Date {
-                                        Text("建议：\(due.formatted(date:.abbreviated,time:.shortened))")
+                                        Text("原文日期建议：\(due.formatted(date:.abbreviated,time:.shortened))")
                                         if let basis=record["dateBasis"] as? NSDictionary, let date=basis["date"] as? Date { Text("依据：\(date.formatted()) · \(String(string(basis,"commit").prefix(7)))").font(.caption).foregroundStyle(.secondary) }
-                                        Button("采用此建议"){state.date=due;state.hasDate=true;state.dateConfirmed=true;state.dirty=true}
                                     }
-                                    Toggle("填写完整截止日期与时间",isOn:editing(\.hasDate))
-                                    if state.hasDate {
-                                        DatePicker("老师截止时间",selection:editing(\.date),displayedComponents:[.date,.hourAndMinute])
-                                        Toggle("已核对日期与时间",isOn:editing(\.dateConfirmed))
+                                    DatePicker("作业 DDL",selection:Binding(get:{state.date},set:{state.date=$0;state.hasDate=true;state.dateConfirmed=true;state.dirty=true}),displayedComponents:[.date,.hourAndMinute])
+                                    if !state.hasDate || !state.dateConfirmed {
+                                        Text("请补全并核对截止日期和时间；当前日期不会自动保存。").foregroundStyle(.orange)
+                                        Button("确认填写的截止时间"){state.hasDate=true;state.dateConfirmed=true;state.dirty=true}
                                     }
-                                    Toggle("单独设置我的 DDL",isOn:editing(\.customPersonalDate))
-                                    if state.customPersonalDate { DatePicker("我的 DDL",selection:editing(\.personalDate),displayedComponents:[.date,.hourAndMinute]) }
-                                    else { Stepper("我的 DDL 提前 \(max(0,state.leadDays)) 天",value:editing(\.leadDays),in:0...365) }
                                     Text("课程时区：\(string(record,"timeZone"))").font(.caption).foregroundStyle(.secondary)
                                     Toggle("启用提醒",isOn:editing(\.reminders))
+                                    if state.reminders {
+                                        LazyVGrid(columns:[GridItem(.adaptive(minimum:85))],alignment:.leading) {
+                                            ForEach([10080,4320,1440,60,0],id:\.self){offset in
+                                                Toggle([10080:"7天",4320:"3天",1440:"1天",60:"1小时",0:"到期"][offset]!,isOn:Binding(get:{state.reminderOffsets.contains(offset)},set:{if $0 {state.reminderOffsets.insert(offset)}else{state.reminderOffsets.remove(offset)};state.dirty=true})).toggleStyle(.checkbox)
+                                            }
+                                        }
+                                        let custom = state.reminderOffsets.subtracting([10080,4320,1440,60,0]).sorted(by:>)
+                                        if !custom.isEmpty { Text("保留自定义提醒：\(custom.map{"提前\($0)分钟"}.joined(separator:"、"))").font(.caption).foregroundStyle(.secondary) }
+                                        Button("使用全部常用提醒"){state.reminderOffsets=[10080,4320,1440,60,0];state.dirty=true}
+                                    }
                                 }.frame(maxWidth:.infinity,alignment:.leading).padding(4)
                                 .environment(\.timeZone,TimeZone(identifier:string(record,"timeZone")) ?? .current)
                             }
-                            VStack(alignment:.leading,spacing:6) { Text("内容与备注").fontWeight(.medium); TextEditor(text:editing(\.notes)).frame(minHeight:120).overlay(RoundedRectangle(cornerRadius:6).stroke(Color.secondary.opacity(0.2))) }
+                            VStack(alignment:.leading,spacing:6) { Text("我的备注（选填）").fontWeight(.medium); TextEditor(text:editing(\.notes)).frame(minHeight:100).overlay(RoundedRectangle(cornerRadius:6).stroke(Color.secondary.opacity(0.2))) }
+                            if !string(record,"summary").isEmpty {GroupBox("作业内容"){Text(string(record,"summary")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
+                            if !string(record,"submissionRequirements").isEmpty {GroupBox("提交要求"){Text(string(record,"submissionRequirements")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
                             GroupBox("老师原文与来源") {
                                 VStack(alignment:.leading,spacing:8) {
                                     Text("\(string(record,"repository")) / \(string(record,"path")):\((record["line"] as? NSNumber)?.intValue ?? 1)").font(.caption).foregroundStyle(.secondary)
@@ -219,7 +226,7 @@ private struct ReviewWorkspace: View {
                                     if let attachments=record["attachments"] as? [NSDictionary] { ForEach(workspaceRows(attachments,key:"path")){Text("附件：\(string($0.record,"path"))\n\(string($0.record,"snippet"))").textSelection(.enabled)} }
                                 }.padding(4)
                             }
-                        }.padding(.horizontal,16).padding(.vertical,8).disabled(string(record,"reviewStatus")=="已导入")
+                        }.padding(.horizontal,16).padding(.vertical,8)
                     } else {
                         VStack(spacing:12){Image(systemName:"tray").font(.largeTitle).foregroundStyle(.secondary);Text("暂无待审核作业");Text("检查课程后，需确认的作业会显示在这里。").foregroundStyle(.secondary)}.frame(maxWidth:.infinity,minHeight:240)
                     }
@@ -228,7 +235,7 @@ private struct ReviewWorkspace: View {
             HStack {
                 Text(state.message.isEmpty ? (state.dirty ? "有未保存修改" : "核对原文后保存；明确日期可批量确认") : state.message).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 Spacer()
-                Button("保存并下一项"){state.saveCurrent(advance:true)}.buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(.return,modifiers:.command).disabled(state.current == nil || state.paused || string(state.current ?? [:],"reviewStatus")=="已导入")
+                Button("保存并下一项"){state.saveCurrent(advance:true)}.buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(.return,modifiers:.command).disabled(state.current == nil || state.paused)
             }
         }.padding(12).font(.system(size:13)).tint(.blue).onChange(of:state.searchToken){_ in searchFocused=true}
     }

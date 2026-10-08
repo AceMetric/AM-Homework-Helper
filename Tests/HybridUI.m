@@ -22,6 +22,11 @@ int main(int argc,const char *argv[]){@autoreleasepool{
     NSUInteger before=app.tasks.count;NSString *result=[app saveReviewItems:@[@{@"record":record,@"draft":@{}},@{@"record":missing,@"draft":@{}}] automatic:NO];Check(result.length && app.tasks.count==before,@"invalid batch saves no partial tasks");
     result=[app saveReviewItems:@[@{@"record":record,@"draft":@{}}] automatic:YES];Check(!result.length && app.tasks.count==before+1 && courses.pendingCount==1,@"automatic eligible task updates calendar source and inbox");
     Check(![app saveReviewItems:@[@{@"record":record,@"draft":@{}}] automatic:YES].length || app.tasks.count==before+1,@"repeated automatic candidate cannot duplicate task");
+    NSMutableDictionary *imported=record.mutableCopy; imported[@"existingTask"]=app.tasks.lastObject.copy;
+    [courses.reviewWorkspace updateRecords:@[imported]];
+    Check(courses.allPendingReviewCandidates.count==1 && [courses.reviewWorkspace saveCurrent] && app.tasks.count==before+1,@"already imported course source saves through SwiftUI without duplicate or stale-status failure");
+    NSMutableDictionary *changed=imported.mutableCopy;changed[@"blobSHA"]=@"obsolete";
+    Check([app saveReviewItems:@[@{@"record":changed,@"draft":@{}}] automatic:NO].length,@"editing imported task still rejects changed source version");
     [app undoAutomaticImport:nil];Check(app.tasks.count==before,@"automatic import has exact-batch undo");
     Check(!SSCanAutomaticallyImport([courses discoveriesForFork:@"student/physics"].firstObject,@[],NSDate.date),@"automatic undo keeps unchanged source for manual review on next scan");
     [app saveReviewItems:@[@{@"record":record,@"draft":@{}}] automatic:YES];Check(app.tasks.count==before,@"old callback cannot bypass deferred live source state");
