@@ -157,8 +157,10 @@ int main(void) { @autoreleasepool {
         NSApp.appearance = [NSAppearance appearanceNamed:appearance]; [app refreshAppearance]; NSString *name = [appearance isEqual:NSAppearanceNameAqua] ? @"light" : @"dark";
         Route(app, 0); Capture(app.root, [NSString stringWithFormat:@"build/qa/overview-%@.png", name]);
         Route(app, 3); [courses.reviewFilter selectItemAtIndex:1]; [courses refreshPresentation]; Capture(app.root, [NSString stringWithFormat:@"build/qa/review-%@.png", name]);
-        Route(app, 4); Capture(app.root, [NSString stringWithFormat:@"build/qa/courses-%@.png", name]);
-        courses.selectedFork = course[@"fork"]; [courses refreshCourses]; [courses.typeFilter selectItemAtIndex:3]; [courses refreshPresentation]; Capture(app.root, [NSString stringWithFormat:@"build/qa/materials-%@.png", name]); [courses.typeFilter selectItemAtIndex:0];
+        Route(app, 4); [courses selectCourseID:course[@"fork"]]; courses.query=@"";courses.search.stringValue=@"";courses.sections.selectedSegment=0;[courses.typeFilter selectItemAtIndex:0];courses.selectedCandidateID=exams.firstObject[@"id"];[courses refreshPresentation];
+        Capture(app.root, [NSString stringWithFormat:@"build/qa/courses-%@.png", name]);
+        [courses.typeFilter selectItemAtIndex:3]; [courses refreshPresentation]; Capture(app.root, [NSString stringWithFormat:@"build/qa/materials-%@.png", name]);
+        [app.window setContentSize:NSMakeSize(960,640)];[app layout];Capture(app.root,[NSString stringWithFormat:@"build/qa/course-compact-%@.png",name]);[app.window setContentSize:NSMakeSize(1280,840)];[app layout];[courses.typeFilter selectItemAtIndex:0];
         [app reviewGitHubCandidate:suggested]; Capture(app.editor.window.contentView, [NSString stringWithFormat:@"build/qa/review-editor-%@.png", name]); [app closeEditor];
         [submission selectionChanged:nil];
         Capture(submission.window.contentView, [NSString stringWithFormat:@"build/qa/submit-%@.png", name]); [submission.window orderOut:nil];
