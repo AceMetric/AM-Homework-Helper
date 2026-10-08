@@ -24,6 +24,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property NSMutableDictionary<NSString *, NSArray *> *materials;
 @property NSMutableDictionary *kindOverrides;
 @property NSMutableDictionary *automaticDeferrals;
+@property NSMutableDictionary *skillProgress;
+@property NSMutableDictionary *skillBatches;
 @property NSPopUpButton *typeFilter;
 @property NSButton *typeButton;
 @property NSArray<NSDictionary *> *availableForks;
@@ -79,6 +81,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         NSDictionary *discoveries = preview ? nil : SSReadPlist(@"discoveries.plist");
         if ([discoveries[@"candidates"] isKindOfClass:NSDictionary.class]) [self.candidates addEntriesFromDictionary:discoveries[@"candidates"]];
         if ([discoveries[@"materials"] isKindOfClass:NSDictionary.class]) [self.materials addEntriesFromDictionary:discoveries[@"materials"]];
+        self.skillProgress=[discoveries[@"skillProgress"] isKindOfClass:NSDictionary.class] ? [discoveries[@"skillProgress"] mutableCopy] : NSMutableDictionary.dictionary;
+        self.skillBatches=[discoveries[@"skillBatches"] isKindOfClass:NSDictionary.class] ? [discoveries[@"skillBatches"] mutableCopy] : NSMutableDictionary.dictionary;
         id overrides = preview ? nil : SSReadPlist(@"discovery-overrides.plist");
         self.kindOverrides = [overrides isKindOfClass:NSDictionary.class] ? [overrides mutableCopy] : NSMutableDictionary.dictionary;
         id deferred=preview ? nil : SSReadPlist(@"automatic-review.plist");self.automaticDeferrals=[deferred isKindOfClass:NSDictionary.class] ? [deferred mutableCopy] : NSMutableDictionary.dictionary;
@@ -216,7 +220,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         if (item.action == @selector(push:)) item.enabled = [course[@"pushFailed"] boolValue];
         if (item.action == @selector(toggleCourse:)) item.title = [course[@"enabled"] isEqual:@NO] ? @"启用自动检查" : @"停用自动检查";
     }
-    for (NSArray *entry in @[@[@"导出本课程供 Skill 识别…",NSStringFromSelector(@selector(exportSkillContext:))],@[@"导入 Skill 识别结果…",NSStringFromSelector(@selector(importSkillResults:))],@[@"高级：课程识别模板…",NSStringFromSelector(@selector(editCourseTemplate:))]]) {NSMenuItem *item=[menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""];item.target=self;item.enabled=course && [course[@"path"] length] && !self.busy;}
+    for (NSArray *entry in @[@[@"交给助手识别…",NSStringFromSelector(@selector(exportSkillContext:))],@[@"导入助手结果…",NSStringFromSelector(@selector(importSkillResults:))],@[@"高级：课程识别模板…",NSStringFromSelector(@selector(editCourseTemplate:))]]) {NSMenuItem *item=[menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""];item.target=self;item.enabled=course && [course[@"path"] length] && !self.busy;}
     [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, NSHeight(sender.bounds)) inView:sender];
 }
 - (void)editCourseTemplate:(id)sender {
@@ -226,38 +230,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if([alert runModal]!=NSAlertFirstButtonReturn)return;NSError *error=nil;id template=[NSJSONSerialization JSONObjectWithData:[input.string dataUsingEncoding:NSUTF8StringEncoding] options:0 error:&error];if(!template || !SSValidateCourseTemplate(template,&error)){[self showError:error];return;}
     NSMutableDictionary *next=course.mutableCopy;next[@"recognitionTemplate"]=template;NSMutableArray *all=self.courses.mutableCopy;all[[all indexOfObject:course]]=next;
     if(!self.preview && !SSWritePlist(@"courses.plist",all,&error)){[self showError:error];return;}[course setDictionary:next];[self status:@"模板已保存，下次检查生效。"]; }
-- (void)exportSkillContext:(id)sender {
-    NSDictionary *course=[[self course] copy]; if(!course || self.preview || self.busy || self.operationsPaused)return;
-    NSAlert *alert=NSAlert.new;alert.messageText=@"导出老师原文供 Skill 识别？";alert.informativeText=@"仅导出这门课老师默认分支的可读文档、路径和版本。不包含个人任务或凭据。导出文件包含课程原文，请留在本机；使用云端助手会将原文交给该服务处理。";[alert addButtonWithTitle:@"检查并导出"];[alert addButtonWithTitle:@"取消"];if([alert runModal]!=NSAlertFirstButtonReturn)return;
-    [self work:@"正在核验并读取老师原文…" forCourse:course operation:^id(NSError **error){self.git.recognitionSettings=@{@"mode":@"rules"};return [self.git scanCourse:course cache:NSMutableDictionary.dictionary error:error];} completion:^(NSDictionary *scan,NSError *error){
-        if(!scan){[self showError:error];return;}
-        NSSavePanel *panel=NSSavePanel.savePanel;panel.nameFieldStringValue=@"AM-course-context.local.json";panel.title=@"保存课程识别材料（仅留本机）";
-        [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse answer){if(answer!=NSModalResponseOK)return;NSError *failure=nil;NSData *data=[NSJSONSerialization dataWithJSONObject:@{@"format":@"am-course-context-v1",@"documents":scan[@"documents"] ?: @[]} options:NSJSONWritingPrettyPrinted error:&failure];BOOL ok=data && [data writeToURL:panel.URL options:NSDataWritingAtomic error:&failure];[self status:ok ? @"材料已导出；Skill 只生成结果文件，再回到应用导入审核。" : @"导出失败，原有任务保持完整。"]; }];
-    }];
-}
-- (void)importSkillResults:(id)sender {
-    NSDictionary *course=[[self course] copy];if(!course || self.preview || self.busy || self.operationsPaused || self.hasUnsavedReview)return;
-    NSOpenPanel *panel=NSOpenPanel.openPanel;panel.title=@"导入 Skill 识别结果";panel.canChooseDirectories=NO;panel.allowsMultipleSelection=NO;
-    [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse answer){
-        if(answer!=NSModalResponseOK)return;
-        NSNumber *size=nil;[panel.URL getResourceValue:&size forKey:NSURLFileSizeKey error:NULL];if(size.unsignedIntegerValue>2*1024*1024){[self status:@"结果文件过大，未读取。"];return;}
-        NSData *data=[NSData dataWithContentsOfURL:panel.URL];id result=data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
-        if(![result isKindOfClass:NSDictionary.class] || ![result[@"format"] isEqual:@"am-course-results-v1"] || ![result[@"documents"] isKindOfClass:NSArray.class] || [result[@"documents"] count]>1000){[self status:@"识别结果格式无效，未修改任务。"];return;}
-        [self work:@"正在重新核验 Skill 结果的来源版本…" forCourse:course operation:^id(NSError **error){
-            self.git.recognitionSettings=@{@"mode":@"rules"};NSDictionary *scan=[self.git scanCourse:course cache:NSMutableDictionary.dictionary error:error];if(!scan)return nil;
-            NSArray *records=SSValidatedSkillResults(result,scan[@"documents"],[scan[@"candidates"] arrayByAddingObjectsFromArray:scan[@"materials"]],error);if(!records)return nil;
-            NSMutableDictionary *combined=scan.mutableCopy;combined[@"skillRecords"]=records;return combined;
-        } completion:^(NSDictionary *scan,NSError *error){
-            if(!scan){[self showError:error];return;}NSMutableDictionary *byID=NSMutableDictionary.dictionary;
-            for(NSDictionary *record in [scan[@"candidates"] arrayByAddingObjectsFromArray:scan[@"materials"]])[byID setObject:record forKey:record[@"id"]];
-            for(NSDictionary *record in scan[@"skillRecords"])[byID setObject:record forKey:record[@"id"]];
-            NSMutableArray *assignments=NSMutableArray.array,*materials=NSMutableArray.array;for(NSDictionary *record in byID.allValues){if([record[@"kind"] isEqual:@"assignment"])[assignments addObject:record];else[materials addObject:record];}
-            self.candidates[course[@"fork"]]=SSConsolidateAssignments(assignments);self.materials[course[@"fork"]]=SSGroupMaterials(materials);
-            SSWritePlist(@"discoveries.plist",@{@"candidates":self.candidates,@"materials":self.materials},NULL);
-            [self status:@"Skill 结果已核验，进入审核；未直接加入任务。"];
-        }];
-    }];
-}
+#import "SSCourseSkill.inc"
 - (void)repositoryDetails:(id)sender { self.sections.selectedSegment = 2; [self refreshPresentation]; }
 - (void)operationDetails:(id)sender { NSAlert *alert = NSAlert.new; alert.messageText = [self course][@"fork"] ?: @"课程检查"; alert.informativeText = self.statuses[self.selectedFork ?: @"all"] ?: @"尚无操作记录。"; [alert addButtonWithTitle:@"关闭"]; [alert beginSheetModalForWindow:self.window completionHandler:nil]; }
 - (void)recover:(id)sender { if ([[self course][@"pendingMergeTip"] length]) [self continueMerge:nil]; else [self push:nil]; }
@@ -566,7 +539,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             if (scan[@"branch"]) course[@"upstreamBranch"] = scan[@"branch"];
             [messages addObject:[NSString stringWithFormat:@"%@：%lu 项建议，%lu 个文件跳过", course[@"fork"], [scan[@"candidates"] count], [scan[@"skipped"] count]]];
         }
-        if (!self.preview) SSWritePlist(@"discoveries.plist", @{@"candidates":self.candidates,@"materials":self.materials}, NULL);
+        if (!self.preview) SSWritePlist(@"discoveries.plist", [self discoveryEnvelope], NULL);
         if ([recognitionSettings[@"automaticImport"] boolValue] && self.saveReviewItems && !self.hasUnsavedReview && !self.operationsPaused) {
             NSMutableArray *items = NSMutableArray.array;
             for (NSDictionary *course in courses) for (NSDictionary *record in [self discoveriesForFork:course[@"fork"]]) if (SSCanAutomaticallyImport(record,self.tasksProvider ? self.tasksProvider() : @[],NSDate.date)) [items addObject:@{@"record":record,@"draft":@{}}];

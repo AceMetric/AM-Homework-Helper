@@ -97,5 +97,28 @@ int main(void){@autoreleasepool{
     NSDictionary *attachment=@{@"repository":@"teacher/course",@"path":@"resources/exercises.md",@"blobSHA":@"a1",@"text":@"解答指定题目。"};
     NSArray *withLinks=SSAttachLinkedDocuments(@[linked],@[attachment]);
     Check([withLinks[0][@"attachments"] count]==1 && [withLinks[0][@"id"] isEqual:record[@"id"]],@"repository-relative document link adds source content without changing identity or following external URL");
+    NSDictionary *courseA=@{@"fork":@"student/physics",@"upstream":@"teacher/course",@"path":@"/synthetic/physics"};
+    NSDictionary *courseB=@{@"fork":@"student/math",@"upstream":@"teacher/math",@"path":@"/synthetic/math"};
+    NSMutableDictionary *mathDoc=document.mutableCopy;mathDoc[@"repository"]=@"teacher/math";
+    NSDictionary *scans=@{courseA[@"fork"]:@{@"documents":@[document],@"candidates":@[withBasis],@"materials":@[]},courseB[@"fork"]:@{@"documents":@[mathDoc],@"candidates":@[],@"materials":@[]}};
+    NSDictionary *exported=SSSkillExport(@[courseA,courseB],scans,@{},NO);
+    Check([exported[@"context"][@"documents"] count]==2,@"first Skill batch contains both courses");
+    Check(![exported[@"context"][@"documents"][0] objectForKey:@"localPath"] && ![exported[@"context"][@"documents"][0] objectForKey:@"fork"],@"export allowlist excludes local course details");
+    Check([SSSkillExport(@[courseA,courseB],scans,@{},NO)[@"context"][@"documents"] count]==2,@"export alone does not consume pending material");
+    NSMutableDictionary *answerA=skillDocument.mutableCopy;answerA[@"courseID"]=courseA[@"fork"];
+    NSMutableDictionary *answerB=skillDocument.mutableCopy;answerB[@"courseID"]=courseB[@"fork"];answerB[@"repository"]=courseB[@"upstream"];answerB[@"activities"]=@[];
+    NSDictionary *batchAnswer=@{@"format":@"am-course-results-v2",@"batchID":exported[@"context"][@"batchID"],@"documents":@[answerA,answerB]};
+    NSDictionary *batches=@{exported[@"context"][@"batchID"]:exported[@"manifest"]};
+    NSDictionary *accepted=SSSkillValidateBatch(batchAnswer,@[courseA,courseB],scans,batches,nil,NULL);
+    Check([accepted[@"counts"] count]==2 && [accepted[@"records"][courseA[@"fork"]] count]==1,@"batch routes valid results by explicit course not UI selection");
+    Check([SSSkillExport(@[courseA,courseB],scans,accepted[@"progress"],NO)[@"context"][@"documents"] count]==0,@"successful empty result also advances incremental progress");
+    Check([SSSkillExport(@[courseA,courseB],scans,accepted[@"progress"],YES)[@"context"][@"documents"] count]==2,@"full export bypasses only incremental checkpoint");
+    answerB[@"blobSHA"]=@"stale";accepted=SSSkillValidateBatch(batchAnswer,@[courseA,courseB],scans,batches,nil,NULL);
+    Check([accepted[@"progress"] count]==1 && [accepted[@"issues"] count]==1,@"stale course does not block valid course or advance its progress");
+    answerB[@"blobSHA"]=@"v1";answerB[@"courseID"]=@"unknown/course";accepted=SSSkillValidateBatch(batchAnswer,@[courseA,courseB],scans,batches,nil,NULL);
+    Check([accepted[@"progress"] count]==1 && [accepted[@"issues"] count]==1,@"unknown course cannot be silently mapped");
+    Check(!SSSkillValidateBatch(batchAnswer,@[courseA,courseB],scans,@{},nil,NULL),@"unknown batch refuses import");
+    accepted=SSSkillValidateBatch(skill,@[courseA,courseB],scans,@{},courseA[@"fork"],NULL);
+    Check([accepted[@"records"][courseA[@"fork"]] count]==1,@"legacy single-course result remains compatible");
     printf("PASS: %lu recognition assertions\n",(unsigned long)assertions);
 }return 0;}
