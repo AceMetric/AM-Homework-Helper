@@ -291,6 +291,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSWindow *window;
 @property Surface *root;
 @property Surface *sidebar;
+@property NSScrollView *navigationScroll;
+@property BOOL coursesCollapsed;
 @property Surface *header;
 @property Surface *document;
 @property NSScrollView *scroll;
@@ -741,7 +743,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.courseWindow.saveReviewItems = ^NSString *(NSArray *items, BOOL automatic) { return [weakSelf saveReviewItems:items automatic:automatic]; };
     self.courseWindow.reviewCandidate = ^(NSDictionary *candidate) { [weakSelf reviewGitHubCandidate:candidate]; };
     self.courseWindow.editTask = ^(NSString *identifier) { NSMenuItem *item = NSMenuItem.new; item.representedObject = identifier; [weakSelf editTask:item]; };
-    self.courseWindow.stateChanged = ^{ [weakSelf renderSidebar]; if (weakSelf.page == 0) [weakSelf renderContent]; };
+    self.courseWindow.stateChanged = ^{ [weakSelf renderSidebar]; if(weakSelf.page==4)[weakSelf renderHeader]; if (weakSelf.page == 0) [weakSelf renderContent]; };
     self.exitCoordinator = SSExitCoordinator.new;
     self.exitCoordinator.operationBusy = ^BOOL { return weakSelf.courseWindow.operationBusy; };
     self.exitCoordinator.pauseOperations = ^(BOOL paused) { weakSelf.courseWindow.operationsPaused = paused; };
@@ -869,6 +871,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSInteger destination = [sender tag];
     if (destination < 0 || destination > 4) return;
     if (self.page != destination) {
+        if(self.courseWindow.hasUnsavedReview && ![self.courseWindow resolveUnsavedReview])return;
         self.pageStates[@(self.page)] = @{@"query":self.query ?: @"", @"scroll":[NSValue valueWithPoint:self.scroll.contentView.bounds.origin], @"filter":@(self.filter),@"sort":@(self.sortMenu.indexOfSelectedItem)};
         NSDictionary *state = self.pageStates[@(destination)];
         self.query = state[@"query"] ?: @""; self.search.stringValue = self.query;
@@ -915,20 +918,32 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.renderBusy = NO;
 }
 - (void)renderSidebar {
+    NSPoint sidebarOffset=self.navigationScroll.contentView.bounds.origin;NSString *focusedID=[self.window.firstResponder isKindOfClass:NSButton.class] ? [(NSButton *)self.window.firstResponder identifier]:nil;
     Clear(self.sidebar); CGFloat h = NSHeight(self.sidebar.bounds);
     NSTextField *brand = Text(@"AM Helper", 14, NSFontWeightSemibold, Ink()); brand.maximumNumberOfLines = 1; brand.lineBreakMode = NSLineBreakByTruncatingTail; brand.accessibilityLabel = @"AM's Homework Helper"; brand.toolTip = @"AM's Homework Helper";
     Put(self.sidebar, brand, 20, 32, 160, 44);
-    NSArray *names = @[@"总览", @"日历", @"任务", @"待审核作业", @"课程"];
-    NSArray *icons = @[@"square.grid.2x2", @"calendar", @"checklist", @"tray", @"books.vertical"];
-    for (NSInteger i = 0; i < 5; i++) {
-        NSString *name = i == 3 && self.courseWindow.pendingCount ? [NSString stringWithFormat:@"%@  %lu", names[i], (unsigned long)self.courseWindow.pendingCount] : names[i];
-        ActionButton *button = Button(name, self, @selector(navigate:), 3); button.symbol = icons[i]; button.tag = i; button.selected = self.page == i;
-        Put(self.sidebar, button, 12, 104 + i * 44, 168, 36);
-    }
+    NSPoint offset=sidebarOffset;
+    self.navigationScroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(0,96,192,MAX(140,h-232))];self.navigationScroll.hasVerticalScroller=YES;self.navigationScroll.autohidesScrollers=YES;self.navigationScroll.drawsBackground=NO;
+    NSArray *snapshots=self.courseWindow.courseSnapshots ?: @[];CGFloat navigationHeight=4*44+44+(self.coursesCollapsed ? 0:(snapshots.count+1)*40);
+    Surface *navigation=Box(NSColor.clearColor,0);navigation.frame=NSMakeRect(0,0,192,MAX(NSHeight(self.navigationScroll.frame),navigationHeight));self.navigationScroll.documentView=navigation;[self.sidebar addSubview:self.navigationScroll];
+    NSArray *names=@[@"总览",@"日历",@"任务",@"待审核作业"];NSArray *icons=@[@"square.grid.2x2",@"calendar",@"checklist",@"tray"];
+    for(NSInteger i=0;i<4;i++){NSString *name=i==3 && self.courseWindow.pendingCount ? [NSString stringWithFormat:@"%@  %lu",names[i],(unsigned long)self.courseWindow.pendingCount]:names[i];ActionButton *button=Button(name,self,@selector(navigate:),3);button.symbol=icons[i];button.tag=i;button.selected=self.page==i;button.identifier=[NSString stringWithFormat:@"navigation-%ld",(long)i];Put(navigation,button,12,i*44,168,36);}
+    ActionButton *group=Button(@"课程",self,@selector(toggleCourses:),3);group.symbol=self.coursesCollapsed ? @"chevron.right":@"chevron.down";group.accessibilityLabel=self.coursesCollapsed ? @"展开课程":@"收起课程";Put(navigation,group,12,176,168,36);
+    if(!self.coursesCollapsed){ActionButton *all=Button(@"所有课程",self,@selector(selectSidebarCourse:),3);all.identifier=@"";all.symbol=@"books.vertical";all.selected=self.page==4 && !self.courseWindow.selectedCourseID;Put(navigation,all,20,220,160,36);
+        for(NSUInteger i=0;i<snapshots.count;i++){NSDictionary *course=snapshots[i];NSString *title=[course[@"pending"] unsignedIntegerValue] ? [NSString stringWithFormat:@"%@  %@",course[@"name"],course[@"pending"]]:course[@"name"];ActionButton *button=Button(title,self,@selector(selectSidebarCourse:),3);button.symbol=course[@"symbol"];button.identifier=course[@"id"];button.selected=self.page==4 && [self.courseWindow.selectedCourseID isEqual:course[@"id"]];button.toolTip=[NSString stringWithFormat:@"%@ · %@",course[@"id"],course[@"status"]];Put(navigation,button,20,260+i*40,160,36);}}
+    [self.navigationScroll.contentView scrollToPoint:offset];
+    if(focusedID)for(NSView *row in navigation.subviews)if([row.identifier isEqual:focusedID]){[self.window makeFirstResponder:row];break;}
     ActionButton *account = Button(self.courseWindow.accountSummary ?: @"连接 GitHub", self, @selector(accountSettings:), 3); account.symbol = @"person.crop.circle";
     Put(self.sidebar, account, 12, h - 124, 168, 36);
     ActionButton *settings = Button(@"设置", self, @selector(showSettings:), 3); settings.symbol = @"gearshape"; Put(self.sidebar, settings, 12, h - 80, 168, 36);
     Put(self.sidebar, Text(self.preview ? @"模拟数据 · 不会保存" : [NSString stringWithFormat:@"本机数据 · v%@", [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"1.1"], 11, NSFontWeightRegular, Muted()), 20, h - 32, 164, 16);
+}
+- (void)toggleCourses:(id)sender {self.coursesCollapsed=!self.coursesCollapsed;[self renderSidebar];}
+- (void)selectSidebarCourse:(NSButton *)sender {
+    if(self.courseWindow.hasUnsavedReview && ![self.courseWindow resolveUnsavedReview])return;
+    NSString *identifier=sender.identifier.length ? sender.identifier:nil;
+    NSButton *route=NSButton.new;route.tag=4;[self navigate:route];
+    if([self.courseWindow selectCourseID:identifier])[self render];
 }
 - (void)accountSettings:(id)sender { [self.courseWindow accountSettings:sender]; }
 - (void)showSettings:(id)sender {
@@ -960,6 +975,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         else if ([action isEqual:@"notifications"]) [owner showNotificationSettings:nil];
         else if ([action isEqual:@"check-update"]) [owner.updates checkForUpdates:nil];
         else if ([action isEqual:@"updates"]) [owner.updates showSettings:nil];
+        else if([action isEqual:@"skill-export"])[owner.courseWindow exportSkillContext:nil];
+        else if([action isEqual:@"skill-import"])[owner.courseWindow importSkillResults:nil];
         else if ([action isEqual:@"advanced"]) [owner.courseWindow setClientID:nil];
     };
     self.settingsWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,640) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
@@ -970,6 +987,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     Clear(self.header); CGFloat w = NSWidth(self.header.bounds);
     if (self.calendarMode) { [self renderCalendarHeader]; return; }
     NSString *title = @[@"今日与近期安排", @"日历", @"任务", @"待审核作业", @"课程"][self.page];
+    if(self.page==4)title=self.courseWindow.selectedCourseID.lastPathComponent ?: @"所有课程";
     Put(self.header, Text(title, 25, NSFontWeightSemibold, Ink()), 0, 4, w - 152, 32);
     NSString *subtitle = (self.notice.length && self.page < 3) ? self.notice : (self.page == 0 ? DDLFormatDate(NSDate.date, @"M月d日 EEEE") : (self.page == 3 ? @"核对老师原文后，将作业加入日历与提醒" : (self.page == 4 ? @"管理课程仓库、更新与提交" : @"按截止时间安排任务")));
     Put(self.header, Text(subtitle, 13, NSFontWeightRegular, Muted()), 0, 48, w, 24);

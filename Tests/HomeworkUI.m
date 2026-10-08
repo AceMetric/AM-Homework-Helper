@@ -26,11 +26,11 @@ int main(void) { @autoreleasepool {
     Check([courses.setupButton.title isEqual:@"连接 GitHub"] && [courses.emptyLabel.stringValue containsString:@"添加"], @"first use has explanation and next step");
     NSMutableDictionary *course = [@{@"fork":@"student/physics", @"upstream":@"teacher/physics", @"branch":@"main", @"upstreamBranch":@"main", @"enabled":@YES} mutableCopy];
     NSMutableDictionary *other = [@{@"fork":@"student/math", @"upstream":@"teacher/math", @"branch":@"main", @"upstreamBranch":@"main", @"enabled":@YES, @"path":@"/synthetic/math"} mutableCopy];
-    [courses.courses addObjectsFromArray:@[course, other]]; courses.connected = YES; [courses refreshCourses];
+    [courses.courses addObjectsFromArray:@[course, other]]; [courses selectCourseID:course[@"fork"]]; courses.connected = YES; [courses refreshCourses];
     Check([courses.setupButton.title isEqual:@"关联文件夹…"] && !courses.syncButton.enabled && !courses.scanButton.enabled, @"unlinked course provides folder setup and blocks Git actions");
     course[@"path"] = @"/synthetic/physics"; course[@"lastScan"] = NSDate.date; [courses refreshCourses];
     Check(courses.syncButton.enabled && courses.commitButton.enabled && [courses.accountLabel.stringValue containsString:@"上次检查"], @"linked course displays readiness and last check");
-    Check([courses.emptyLabel.stringValue containsString:@"检查作业"], @"no-results state gives refresh action");
+    Check([courses.emptyLabel.stringValue containsString:@"检查新作业"], @"no-results state gives refresh action");
     NSDate *due = DDLParseDate(@"2026-10-08 23:59", NSDate.date, Cal());
     NSDictionary *candidate = @{@"id":@"teacher/physics|README.md|作业一|1", @"title":@"作业一 · 实验报告", @"due":due, @"repository":@"teacher/physics", @"path":@"README.md", @"line":@12, @"blobSHA":@"version1", @"timeZone":@"Asia/Shanghai", @"needsDate":@NO, @"needsTime":@NO, @"snippet":@"## 作业一 · 实验报告\n截止时间：2026-10-08 23:59\n提交实验报告和源代码。"};
     NSMutableDictionary *math = candidate.mutableCopy; math[@"id"] = @"math-homework"; math[@"repository"] = @"teacher/math"; math[@"title"] = @"数学 · 习题练习";
@@ -89,7 +89,7 @@ int main(void) { @autoreleasepool {
     Check(!courses.recoveryButton.hidden && [courses.recoveryButton.title containsString:@"冲突"], @"conflicts expose recovery entry");
     [course removeObjectForKey:@"pendingMergeTip"]; [course removeObjectForKey:@"pendingConflicts"]; course[@"pushFailed"] = @YES; [courses refreshPresentation]; Check([courses.recoveryButton.title isEqual:@"重试推送"], @"failed push exposes retry");
     courses.busy = YES; courses.operationFork = course[@"fork"]; courses.statuses[course[@"fork"]] = @"正在合并老师更新…"; courses.selectedFork = other[@"fork"]; [courses refreshCourses];
-    Check([courses.statusLabel.stringValue containsString:@"student/physics"] && !courses.commitButton.enabled && courses.coursePicker.enabled, @"browsing another course retains captured operation target and locks writes"); courses.busy = NO;
+    Check([courses.statusLabel.stringValue containsString:@"student/physics"] && !courses.commitButton.enabled && courses.courseSnapshots.count == 2, @"browsing another course retains captured operation target and locks writes"); courses.busy = NO;
     SSSubmissionController *submission = [[SSSubmissionController alloc] initWithCourse:course changes:@[@{@"path":@"answers.md", @"status":@" M", @"sensitive":@NO}, @{@"path":@".env", @"status":@"??", @"sensitive":@YES}]];
     Check(submission.checks[0].state == NSControlStateValueOff && !submission.checks[1].enabled, @"submission defaults unchecked and excludes sensitive files");
     __block NSArray *selected; submission.submit = ^(NSArray *paths, NSString *message) { selected = paths; }; [submission save:nil]; Check(selected == nil, @"empty submission is blocked");
@@ -102,6 +102,14 @@ int main(void) { @autoreleasepool {
     Check(courses.busy && !courses.setupButton.enabled && !courses.syncButton.enabled && !courses.commitButton.enabled, @"all mutations locked during work while navigation stays available");
     NSDate *limit = [NSDate dateWithTimeIntervalSinceNow:3]; while (!finished && limit.timeIntervalSinceNow > 0) [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
     Check(finished && [courses.statuses[@"student/physics"] isEqual:@"模拟完成"] && !courses.busy, @"result stored against initiating course"); courses.preview = YES;
+    courses.preview=YES;Route(app,4);[courses selectCourseID:course[@"fork"]];
+    courses.query=@"物理筛选";courses.sections.selectedSegment=2;[courses.typeFilter selectItemAtIndex:2];
+    Check([courses selectCourseID:other[@"fork"]] && courses.query.length==0,@"switch course resets only new course view state");
+    Check([courses selectCourseID:course[@"fork"]] && [courses.query isEqual:@"物理筛选"] && courses.sections.selectedSegment==2 && courses.typeFilter.indexOfSelectedItem==2,@"course retains its own query, section and type");
+    [courses selectCourseID:nil];Check(courses.syncButton.hidden && courses.commitButton.hidden && [courses.scanButton.title isEqual:@"检查所有课程"],@"all-courses view has no ambiguous sync or submit target");
+    Check(courses.courseWorkspace.view.superview!=nil && !courses.courseWorkspace.view.hidden && courses.table.enclosingScrollView.hidden,@"SwiftUI course details replace visible legacy table");
+    Check([app.navigationScroll.documentView.subviews count]>=7,@"main sidebar expands course entries without second sidebar");
+    courses.query=@"";courses.sections.selectedSegment=0;[courses.typeFilter selectItemAtIndex:0];[courses selectCourseID:course[@"fork"]];
     // Actual keyboard equivalents on the shared sheet, with no persistence in preview mode.
     [app addTask:nil]; app.editor.titleField.stringValue = @"键盘保存模拟任务"; [app.editor updateDate:DDLParseDate(@"明天 21:00", NSDate.date, Cal())]; before = app.tasks.count;
     [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.25]]; [app.editor.window makeKeyWindow];

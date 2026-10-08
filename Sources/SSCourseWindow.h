@@ -15,6 +15,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readonly) NSUInteger pendingCount;
 @property (readonly) NSString *accountSummary;
 @property (readonly) NSArray<NSString *> *courseRepositoryNames;
+@property (readonly) NSArray<NSDictionary *> *courseSnapshots;
+@property (readonly, nullable) NSString *selectedCourseID;
+- (BOOL)selectCourseID:(nullable NSString *)identifier;
+- (void)exportSkillContext:(nullable id)sender;
+- (void)importSkillResults:(nullable id)sender;
 @property (readonly) BOOL operationBusy;
 @property (nonatomic) BOOL operationsPaused;
 @property (copy, nullable) void (^operationStateChanged)(void);
