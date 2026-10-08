@@ -28,5 +28,23 @@ int main(int argc,const char *argv[]){@autoreleasepool{
     NSMutableDictionary *stale=record.mutableCopy;stale[@"blobSHA"]=@"changed";Check([app saveReviewItems:@[@{@"record":stale,@"draft":@{}}] automatic:NO].length && app.tasks.count==before,@"stale source draft cannot save");
     FailedBatchApp *failed=FailedBatchApp.new;failed.preview=YES;failed.tasks=app.tasks.mutableCopy;failed.courseWindow=courses;Check([failed saveReviewItems:@[@{@"record":record,@"draft":@{}}] automatic:NO].length && failed.tasks.count==before,@"disk failure retains entire previous batch");
     [app showSettings:nil];Check(app.settingsController && app.settingsWindow.sheetParent==app.window,@"SwiftUI settings uses main window sheet");Capture(app.settingsWindow.contentView,@"hybrid-settings-dark.png");NSApp.appearance=[NSAppearance appearanceNamed:NSAppearanceNameAqua];[app refreshAppearance];Capture(app.settingsWindow.contentView,@"hybrid-settings-light.png");Check([app resolveEditsForExit:NO] && !app.settingsController,@"clean settings participate in exit coordination");
+    // Regression: the same mutable Objective-C rows are changed during folder
+    // association and fourth-step scans while SwiftUI retains its previous list.
+    AMSetupController *guide=AMSetupController.new;
+    NSWindow *guideWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,560) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+    guideWindow.contentView=guide.view;[guideWindow orderFront:nil];
+    NSMutableArray *guideRows=NSMutableArray.array;
+    for(NSUInteger n=0;n<12;n++)[guideRows addObject:[@{@"fork":[NSString stringWithFormat:@"student/course-%lu",(unsigned long)n],@"status":@"待关联",@"matches":NSMutableArray.array} mutableCopy]];
+    [guide updateRecords:guideRows step:2 busy:NO message:@"模拟文件夹关联"];
+    Capture(guideWindow.contentView,@"identity-folders-light.png");
+    for(NSUInteger turn=0;turn<40;turn++){
+        for(NSMutableDictionary *row in guideRows){row[@"status"]=[NSString stringWithFormat:@"模拟检查阶段 %lu",(unsigned long)turn];row[@"ready"]=@(turn%2);row[@"path"]=@"/synthetic/course";if(turn%2)row[@"detail"]=@"模拟说明";else [row removeObjectForKey:@"detail"];[(NSMutableArray *)row[@"matches"] addObject:@"/synthetic/course"];}
+        if(turn%5==0){id first=guideRows.firstObject;[guideRows removeObjectAtIndex:0];[guideRows addObject:first];}
+        [guide updateRecords:guideRows step:turn<20 ? 2:3 busy:turn%2 message:@"模拟后台结果刷新"];
+        [guide.view layoutSubtreeIfNeeded];[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.025]];
+    }
+    [guide updateRecords:guideRows step:3 busy:NO message:@"模拟首次检查完成"];
+    NSApp.appearance=[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];Capture(guideWindow.contentView,@"identity-first-check-dark.png");
+    Check(guideWindow.visible,@"folder association and first-check mutable refresh remain renderable");[guideWindow orderOut:nil];
     [app.window orderOut:nil];[app.ticker invalidate];[NSStatusBar.systemStatusBar removeStatusItem:app.statusItem];printf("PASS: %lu hybrid UI assertions\n",(unsigned long)assertions);
 }return 0;}
