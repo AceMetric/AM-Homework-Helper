@@ -1,34 +1,35 @@
 # GitHub 登录、私有课程与迁移
 
-## 同学首次使用
+## 四步开始使用
 
-1. 点击侧栏“连接 GitHub”，复制设备码并打开 GitHub；确认登录的是自己的账号。
-2. 授权 AM's Homework Helper 的私有仓库访问，再回到应用。令牌只存本机，无需 SSH、手填 token 或安装 GitHub App。
-3. 一次勾选个人课程 fork。应用自动确认老师上游并逐课核验内容读取权限。
-4. 选择课程总文件夹，按 Git 身份匹配已有目录。多个匹配需选择；未找到时可选择一次下载位置，批量下载。
-5. 点击“关联选定目录”，成功后“开始检查”。单课失败不影响其他课程，可稍后重试。
+1. **连接账号**：打开应用或侧栏“连接 GitHub”，点“浏览器登录”。复制验证码并打开 GitHub，确认是自己的账户；网页授权对象显示 **GitHub CLI**，即内置的 GitHub 官方登录工具。完成后向导自动继续。
+2. **选择课程**：搜索并一次勾选个人课程 fork。软件自动识别老师上游，逐门检测读取权限；失败课程不会阻止其他课程。
+3. **准备文件**：选择课程总文件夹，软件只检查该目录及下两层，按 Git 仓库身份匹配。有多个匹配时选择一个；缺少目录的课程可批量下载，已有非空目录不覆盖。点击“关联选定目录”保存。
+4. **首次检查**：检查就绪课程，逐门查看作业、考试等结果和失败原因。完成后可查看或跳过操作提示，进入课程或待审核。
 
-## 权限和学校限制
+向导支持返回、取消和下次继续。已保存课程保留；重新打开不会自动重复首次检查。侧栏“开始使用”提供使用提示及重新运行配置引导。
 
-OAuth 使用 `repo`，GitHub 授权范围比应用内所选课程更宽，不能宣称只授予这几门课。应用禁止向老师推送，不上传令牌或课程数据给维护者。学校组织可能限制第三方 OAuth 或要求 SSO；按错误提示申请批准、完成学校登录再重新检测，软件不能绕过组织政策。
+## 权限与学校登录
 
-检查失败会保留上次结果，并标明“未完成检查”；零条审核结果不代表老师没有作业。课程“更多”提供恢复访问和已隐藏凭据的操作详情。
+无需安装 GitHub App、填写令牌、生成 SSH 密钥或申请学校批准本项目应用。GitHub 官方将 CLI 列为特许 OAuth 应用；组织限制普通 OAuth 应用时，CLI 仍可访问用户已有权限的资源。学校 SSO、双重验证和个人课程权限仍需本人完成。
+
+官方工具默认请求 `repo`、`read:org`、`gist`，权限比勾选的课程更宽。应用仅处理所选课程；令牌在本机钥匙串，不上传给维护者。首次可能出现 macOS 钥匙串访问提示，确认系统窗口即可，密码不应输入应用或发给他人。[工具、安全包装及维护说明](GITHUB_CLI.md)。
+
+检查失败显示“未完成检查”及上次成功时间，零项待审核不代表没有作业。可在对应课程重试；完整错误收进“详情”。应用不发送管理员申请、不自动切回本项目 OAuth。
 
 ## 旧版本迁移
 
-升级后默认使用 OAuth，需要重新浏览器登录一次。任务、课程和原目录保留；即使 origin/upstream 是 SSH 地址，OAuth 模式也使用核验后的 HTTPS 地址，不修改原 remote 或全局 Git 设置。已有关联目录会重新核验后复用。
+新版本默认用官方登录，需要完成一次新版浏览器连接。任务、课程及原目录保留；重新核验后可复用，即使 remote 使用 SSH，软件也使用身份核验后的 HTTPS，不修改原 remote 或全局 Git 设置。
 
-**新登录不会撤销旧 GitHub App 安装。** 完成配置后可在 [GitHub 安装设置](https://github.com/settings/installations) 卸载旧 SS Homework Manager。只删除本机旧令牌也不等于撤销安装。高级登录设置保留旧方式，切换不自动回退或删除另一种凭据。
+官方 CLI、旧 OAuth、旧 GitHub App 的本应用凭据分别保存。高级登录设置可明确选择旧方式，不自动回退。
 
-## 维护者一次性配置
+**新登录不会撤销旧 GitHub App 安装。** 请在 [安装设置](https://github.com/settings/installations) 移除不再使用的 SS Homework Manager。退出登录只删除当前本应用凭据；撤销 GitHub CLI 授权可能同时影响其他官方 CLI 工具，需在 GitHub 授权管理中自行处理。
 
-注册独立 OAuth App，Homepage 与必填 Redirect URI 填本项目公开首页，开启 Enable Device Flow；默认保留令牌到期。实际使用设备流程，不使用网页重定向认证。不要启用通配重定向，不生成或保存 Client Secret。公开配置 `Config/GitHubApp.plist` 增加 `oauthClientID`；现有 `clientID`、`installationURL` 仅用于旧兼容方式。
+## 维护者配置
 
-公开 OAuth Client ID：`Ov23libEk0uJm0Dg9t2c`。设备登录与设备令牌刷新均无需客户端密钥。复制项目的维护者应注册自己的 OAuth App，不能冒用本项目身份。默认构建必须包含公开 OAuth ID。
+默认方式不需要注册本项目 OAuth 应用或保存 Client Secret。构建下载并校验固定的官方 CLI，随应用签名和更新，不在用户电脑全局安装工具。
 
-- [官方设备登录及刷新流程](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps)
-- [OAuth 授权范围](https://docs.github.com/en/apps/oauth-apps/using-oauth-apps/authorizing-oauth-apps)
-- [学校组织审批](https://docs.github.com/en/account-and-profile/how-tos/organization-membership/requesting-organization-approval-for-oauth-apps)
+`Config/GitHubApp.plist` 保留旧 OAuth 的公开 `oauthClientID` 与旧 App 的公开 `clientID`、`installationURL`，只用于兼容。自行维护旧 OAuth 时应注册自己的公开身份、开启设备登录，并遵循组织策略；这不是默认首次配置步骤。
 
 ---
 
