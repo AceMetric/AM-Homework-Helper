@@ -19,40 +19,40 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.2.0</string>
+	<string>1.3.0</string>
 	<key>CFBundleVersion</key>
-	<string>5</string>
+	<string>6</string>
+	<key>DDLArchiveName</key>
+	<string>AM-Homework-Helper</string>
+	<key>DDLRepositoryURL</key>
+	<string>https://github.com/AceMetric/AM-Homework-Helper</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>LSUIElement</key>
 	<false/>
 	<key>NSHumanReadableCopyright</key>
 	<string>AM's Homework Helper · 原作者及贡献者署名见项目提交历史</string>
-	<key>DDLArchiveName</key>
-	<string>AM-Homework-Helper</string>
-	<key>DDLRepositoryURL</key>
-	<string>https://github.com/AceMetric/AM-Homework-Helper</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUEnableJavaScript</key>
+	<false/>
+	<key>SUEnableSystemProfiling</key>
+	<false/>
 	<key>SUFeedURL</key>
 	<string>https://acemetric.github.io/AM-Homework-Helper/updates/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>YOuYre2SPB5qM7CZxfFI8yTraaL55AvcIcnVdQSZReE=</string>
-	<key>SUEnableAutomaticChecks</key>
+	<key>SURequireSignedFeed</key>
 	<true/>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
-	<key>SUAutomaticallyUpdate</key>
-	<false/>
-	<key>SUAllowsAutomaticUpdates</key>
-	<false/>
-	<key>SUEnableSystemProfiling</key>
-	<false/>
-	<key>SUVerifyUpdateBeforeExtraction</key>
-	<true/>
-	<key>SURequireSignedFeed</key>
-	<true/>
 	<key>SUSignedFeedFailureExpirationInterval</key>
 	<integer>0</integer>
-	<key>SUEnableJavaScript</key>
-	<false/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>
