@@ -637,7 +637,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSMutableDictionary *task = self.task ? [self.task mutableCopy] : [@{@"id":NSUUID.UUID.UUIDString, @"completed":@NO, @"archived":@NO} mutableCopy];
     NSString *subject = [self.subjectField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     NSInteger legacyMode = reminderOffsets.count == 0 ? 4 : ([reminderOffsets isEqual:@[@0]] ? 0 : ([reminderOffsets isEqual:@[@60, @0]] ? 1 : ([reminderOffsets isEqual:@[@1440, @60, @0]] ? 2 : ([reminderOffsets isEqual:@[@4320, @1440, @60, @0]] ? 3 : 2))));
-    task[@"title"] = title; task[@"subject"] = subject.length ? subject : @"其他"; task[@"due"] = date; task[@"notes"] = self.notesField.string; task[@"priority"] = @(self.priority.indexOfSelectedItem); task[@"reminder"] = @(legacyMode); task[@"reminderOffsets"] = reminderOffsets;
+    task[@"title"] = title; task[@"subject"] = subject.length ? subject : @"其他"; task[@"due"] = date; task[@"notes"] = self.notesField.string;if(![self.task[@"notes"] isEqual:task[@"notes"]]){task[@"notesOrigin"]=@"user";task[@"notesUserEdited"]=@YES;} task[@"priority"] = @(self.priority.indexOfSelectedItem); task[@"reminder"] = @(legacyMode); task[@"reminderOffsets"] = reminderOffsets;
     [task removeObjectForKey:@"_reviewCandidate"]; [task removeObjectForKey:@"_existing"];
     if (self.candidate[@"dateBasis"]) task[@"sourceDateBasis"] = self.candidate[@"dateBasis"];
     if (self.candidate) {
@@ -722,6 +722,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     self.courseWindow.tasksProvider = ^NSArray * { return [weakSelf snapshot]; };
     self.courseWindow.saveReviewItems = ^NSString *(NSArray *items, BOOL automatic) { return [weakSelf saveReviewItems:items automatic:automatic]; };
     self.courseWindow.reviewCandidate = ^(NSDictionary *candidate) { [weakSelf reviewGitHubCandidate:candidate]; };
+    self.courseWindow.restoreTaskNotes=^(NSString *identifier){NSButton *button=NSButton.new;button.identifier=identifier;[weakSelf restoreTaskNotes:button];};
     self.courseWindow.editTask = ^(NSString *identifier) { NSMenuItem *item = NSMenuItem.new; item.representedObject = identifier; [weakSelf editTask:item]; };
     self.courseWindow.stateChanged = ^{ [weakSelf renderSidebar]; if(weakSelf.page==4)[weakSelf renderHeader]; if (weakSelf.page == 0) [weakSelf renderTaskContent]; };
     self.exitCoordinator = SSExitCoordinator.new;
@@ -900,11 +901,13 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     void (^append)(NSString *,CGFloat,NSFontWeight,NSColor *)=^(NSString *value,CGFloat size,NSFontWeight weight,NSColor *color){[body appendAttributedString:[[NSAttributedString alloc] initWithString:value attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:size weight:weight],NSForegroundColorAttributeName:color}]];};
     append([task[@"title"] stringByAppendingString:@"\n\n"],17,NSFontWeightSemibold,Ink());
     append([NSString stringWithFormat:@"%@\n截止：%@\n%@\n\n",task[@"subject"] ?: @"",DDLFormatDate(task[@"due"],@"yyyy年M月d日 HH:mm"),[task[@"archived"] boolValue] ? @"已归档":([task[@"completed"] boolValue] ? @"已完成":@"待完成")],13,NSFontWeightRegular,Muted());
-    append(@"我的备注\n",13,NSFontWeightSemibold,Ink());append([task[@"notes"] length] ? task[@"notes"]:@"暂无备注，可通过“编辑任务”添加。",13,NSFontWeightRegular,[task[@"notes"] length] ? Ink():Muted());
+    append(@"备注\n",13,NSFontWeightSemibold,Ink());append([task[@"notes"] length] ? task[@"notes"]:@"暂无备注，可通过“编辑任务”添加。",13,NSFontWeightRegular,[task[@"notes"] length] ? Ink():Muted());
     [text.textStorage setAttributedString:body];__weak typeof(self) owner=self;text.onClose=^{[owner closeTaskDetails:nil];};scroll.documentView=text;[panel addSubview:scroll];[text.layoutManager ensureLayoutForTextContainer:text.textContainer];[text setFrameSize:NSMakeSize(w-24,MAX(NSHeight(scroll.bounds),NSMaxY([text.layoutManager usedRectForTextContainer:text.textContainer])+16))];
     [scroll.contentView scrollToPoint:position];self.taskDetailsScroll=scroll;self.taskDetailsText=text;
     if(restoreFocus){[self.window makeFirstResponder:text];text.selectedRange=NSMakeRange(MIN(selection.location,text.string.length),MIN(selection.length,text.string.length-MIN(selection.location,text.string.length)));}
-    ActionButton *edit=Button(@"编辑任务",self,@selector(editTask:),2);edit.identifier=task[@"id"];Put(panel,edit,16,h-48,w-32,32);
+    ActionButton *edit=Button(@"编辑任务",self,@selector(editTask:),2);edit.identifier=task[@"id"];BOOL canRestore=![task[@"notes"] length] && SSSuggestedNotes(task).length;
+    Put(panel,edit,16,h-48,canRestore ? (w-40)/2:w-32,32);
+    if(canRestore){ActionButton *restore=Button(@"补全备注…",self,@selector(restoreTaskNotes:),0);restore.identifier=task[@"id"];restore.accessibilityLabel=@"从识别内容补全备注";Put(panel,restore,24+(w-40)/2,h-48,(w-40)/2,32);}
 }
 - (void)navigate:(id)sender {
     NSInteger destination = [sender tag];
@@ -1407,7 +1410,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     if (self.window.attachedSheet) return;
     NSDictionary *existing = nil;
     for (NSDictionary *task in self.tasks) if ([task[@"sourceID"] isEqual:candidate[@"id"]]) { existing = task; break; }
-    NSMutableDictionary *draft = existing ? [existing mutableCopy] : [@{@"id":NSUUID.UUID.UUIDString, @"title":candidate[@"suggestedTitle"] ?: candidate[@"title"], @"subject":[candidate[@"repository"] lastPathComponent], @"notes":@"", @"completed":@NO, @"archived":@NO, @"reminderOffsets":DDLDefaultReminderOffsets()} mutableCopy];
+    NSMutableDictionary *draft = existing ? [existing mutableCopy] : [@{@"id":NSUUID.UUID.UUIDString, @"title":candidate[@"suggestedTitle"] ?: candidate[@"title"], @"subject":[candidate[@"repository"] lastPathComponent], @"notes":SSSuggestedNotes(candidate), @"completed":@NO, @"archived":@NO, @"reminderOffsets":DDLDefaultReminderOffsets()} mutableCopy];
     draft[@"_reviewCandidate"] = candidate; draft[@"_existing"] = @(existing != nil);
     if (!existing) {
         NSDate *date = ![candidate[@"needsDate"] boolValue] && ![candidate[@"needsTime"] boolValue] ? candidate[@"due"] : nil;
@@ -1445,6 +1448,16 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 - (void)importClipboard:(id)sender {
     if (!self.editor) [self addTask:nil];
     if (self.editor && !self.editor.task) [self.editor importClipboard:sender];
+}
+- (void)restoreTaskNotes:(id)sender {
+    NSString *identifier=[self identifierForSender:sender];NSDictionary *task=[self taskWithID:identifier];NSString *generated=task ? SSSuggestedNotes(task):@"";
+    if(!task || [task[@"notes"] length] || !generated.length || self.window.attachedSheet)return;
+    NSAlert *alert=NSAlert.new;alert.messageText=@"从识别内容补全备注？";alert.informativeText=@"可在保存后继续编辑。只补全这项空备注，不覆盖其他任务。";
+    NSScrollView *scroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,440,200)];scroll.hasVerticalScroller=YES;NSTextView *preview=[[NSTextView alloc] initWithFrame:scroll.bounds];preview.editable=NO;preview.font=[NSFont systemFontOfSize:13];preview.string=generated;preview.textContainer.widthTracksTextView=YES;preview.autoresizingMask=NSViewWidthSizable;scroll.documentView=preview;alert.accessoryView=scroll;[alert addButtonWithTitle:@"补全备注"];[alert addButtonWithTitle:@"取消"];
+    if([alert runModal]!=NSAlertFirstButtonReturn)return;
+    task=[self taskWithID:identifier];if(!task || [task[@"notes"] length])return;
+    NSMutableArray *tasks=NSMutableArray.array;for(NSDictionary *item in self.tasks){NSMutableDictionary *copy=item.mutableCopy;if([item[@"id"] isEqual:identifier]){copy[@"notes"]=SSSuggestedNotes(item);copy[@"notesOrigin"]=@"generated";copy[@"notesUserEdited"]=@NO;}[tasks addObject:copy];}
+    NSError *error=nil;if(![self replaceTasks:tasks action:@"补全作业备注" error:&error]){self.notice=error.localizedDescription ?: @"备注保存失败，请重试。";[self render];}
 }
 - (void)editTask:(id)sender {
     if (self.window.attachedSheet) return; NSDictionary *task = [self taskWithID:[self identifierForSender:sender]]; if (!task) return;

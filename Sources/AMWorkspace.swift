@@ -4,6 +4,14 @@ import SwiftUI
 private func string(_ record: NSDictionary, _ key: String) -> String { record[key] as? String ?? "" }
 private func flag(_ record: NSDictionary, _ key: String) -> Bool { (record[key] as? NSNumber)?.boolValue ?? false }
 private func identifier(_ record: NSDictionary) -> String { string(record, "id") }
+func suggestedNotes(_ record:NSDictionary)->String {
+    let summary=(record["sourceSummary"] as? String ?? string(record,"summary")).trimmingCharacters(in:.whitespacesAndNewlines)
+    let requirements=(record["sourceRequirements"] as? String ?? string(record,"submissionRequirements")).trimmingCharacters(in:.whitespacesAndNewlines)
+    var parts:[String]=[]
+    if !summary.isEmpty {parts.append("作业内容\n"+summary)}
+    if !requirements.isEmpty && requirements != summary {parts.append("提交要求\n"+requirements)}
+    return parts.joined(separator:"\n\n")
+}
 private func batchDate(_ date:Date,zone:String)->String {
     let formatter=DateFormatter();formatter.dateFormat="yyyy-MM-dd HH:mm z"
     formatter.timeZone=TimeZone(identifier:zone) ?? .current
@@ -126,7 +134,7 @@ final class ReviewState: ObservableObject {
         activeRecord = record; selected = identifier(record)
         let task = record["existingTask"] as? NSDictionary
         title = task?["title"] as? String ?? (string(record,"suggestedTitle").isEmpty ? string(record,"title") : string(record,"suggestedTitle"))
-        notes = task?["notes"] as? String ?? ""
+        notes = task?["notes"] as? String ?? suggestedNotes(record)
         let suggestion=suggestion(record)
         if let value = task?["due"] as? Date { date = value; hasDate = true }
         else if let value = record["due"] as? Date { date = value; hasDate = true }
@@ -277,7 +285,7 @@ private struct ReviewDetails: View {
                 }.frame(maxWidth:.infinity,alignment:.leading).padding(4)
                 .environment(\.timeZone,TimeZone(identifier:string(record,"timeZone")) ?? .current)
             }
-            VStack(alignment:.leading,spacing:6) { Text("我的备注（选填）").fontWeight(.medium); TextEditor(text:editing(\.notes)).frame(minHeight:100).overlay(RoundedRectangle(cornerRadius:6).stroke(Color.secondary.opacity(0.2))) }
+            VStack(alignment:.leading,spacing:6) { Text("备注（可修改或清空）").fontWeight(.medium); TextEditor(text:editing(\.notes)).frame(minHeight:100).overlay(RoundedRectangle(cornerRadius:6).stroke(Color.secondary.opacity(0.2))) }
             if !string(record,"summary").isEmpty {GroupBox("作业内容"){Text(string(record,"summary")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
             if !string(record,"submissionRequirements").isEmpty {GroupBox("提交要求"){Text(string(record,"submissionRequirements")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
             GroupBox("老师原文与来源") {
@@ -608,7 +616,7 @@ private struct CourseWorkspace:View {
         ScrollView {
             VStack(alignment:.leading,spacing:16) {
                 if !state.information.isEmpty {Text(state.information).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}
-                else if let record=state.current, state.reviewRecord(record) != nil {
+                else if let record=state.current, !flag(record,"confirmed"), state.reviewRecord(record) != nil {
                     if state.review.dirty && !state.records.contains(where:{identifier($0)==state.selected}) {Text("当前作业不在筛选结果中；未保存的内容保留。").foregroundStyle(.orange)}
                     HStack{Label(kind(record),systemImage:"checklist");Spacer();if !flag(record,"confirmed"){Button("更改类型…"){state.action?("type",identifier(record))}.disabled(state.paused)}}
                     CourseReviewPane(state:state.review)
@@ -616,7 +624,10 @@ private struct CourseWorkspace:View {
                     Text(string(record,"suggestedTitle").isEmpty ? string(record,"title") : string(record,"suggestedTitle")).font(.title3.bold())
                     Label(kind(record),systemImage:string(record,"kind")=="exam" ? "doc.text" : "checklist").foregroundStyle(.secondary)
                     if let due=record["due"] as? Date {Text("截止：\(due.formatted(date:.abbreviated,time:.shortened))")}
-                    if !string(record,"notes").isEmpty {GroupBox("我的备注"){Text(string(record,"notes")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
+                    if flag(record,"confirmed") || !string(record,"notes").isEmpty {GroupBox("备注"){VStack(alignment:.leading,spacing:12){Text(string(record,"notes").isEmpty ? "暂无备注":string(record,"notes")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)
+                        if string(record,"notes").isEmpty && !suggestedNotes(record).isEmpty {Button("从识别内容补全…"){state.action?("restore-notes",identifier(record))}.disabled(state.paused)}
+                        if flag(record,"confirmed") {Button("编辑任务…"){state.action?("edit-task",identifier(record))}.disabled(state.paused)}
+                    }}}
                     if !string(record,"dateText").isEmpty {Text("老师截止原文：\(string(record,"dateText"))").textSelection(.enabled)}
                     if !string(record,"summary").isEmpty {GroupBox("内容概括"){Text(string(record,"summary")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
                     if !string(record,"submissionRequirements").isEmpty {GroupBox("提交要求"){Text(string(record,"submissionRequirements")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
@@ -634,7 +645,7 @@ private struct CourseWorkspace:View {
         }.frame(minWidth:260)
     }
     private var detailPane:some View {
-        VStack(spacing:0){ReviewFeedback(state:state.review).padding(.horizontal,12);details;if let record=state.current,state.reviewRecord(record) != nil {Divider();ReviewSaveBar(state:state.review,advance:false).padding(12)}}
+        VStack(spacing:0){ReviewFeedback(state:state.review).padding(.horizontal,12);details;if let record=state.current,!flag(record,"confirmed"),state.reviewRecord(record) != nil {Divider();ReviewSaveBar(state:state.review,advance:false).padding(12)}}
     }
     var body:some View {
         GeometryReader { geometry in

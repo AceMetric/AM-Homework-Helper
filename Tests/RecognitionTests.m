@@ -22,7 +22,7 @@ int main(void){@autoreleasepool{
     Check(!SSCanAutomaticallyImport(record,@[],DDLParseDate(@"2028-04-01 00:00",NSDate.date,calendar)),@"historical homework stays in review");
     NSDictionary *task=SSReviewedTask(record,@{},nil,&error);Check(task && [task[@"sourceID"] isEqual:record[@"id"]],@"review shares normalization and source identity");
     Check(!SSCanAutomaticallyImport(record,@[task],NSDate.date),@"existing task never silently imports again");
-    Check([task[@"notes"] isEqual:@""] && [task[@"reminderOffsets"] isEqual:DDLDefaultReminderOffsets()],@"new source does not populate notes and uses five default reminders");
+    Check([task[@"notes"] isEqual:SSSuggestedNotes(record)] && [task[@"reminderOffsets"] isEqual:DDLDefaultReminderOffsets()],@"new source prefills summary notes and uses five default reminders");
     NSMutableDictionary *old=task.mutableCopy;old[@"announcedDue"]=task[@"due"];old[@"leadDays"]=@7;old[@"notes"]=@"my note";
     NSDate *chosen=[task[@"due"] dateByAddingTimeInterval:3600];
     NSDictionary *unified=SSReviewedTask(record,@{@"assignmentDue":chosen,@"notes":@""},old,&error);
@@ -43,6 +43,15 @@ int main(void){@autoreleasepool{
     NSDictionary *model=@{@"kind":@"assignment",@"title":@"运动分析与报告",@"summary":@"分析运动。",@"submissionRequirements":@"提交报告。",@"evidence":text,@"deadlineEvidence":@"截止：2027 年 4 月 14 日（星期三）21:00 UTC+8"};
     NSDictionary *validated=SSValidatedModelResults(@[model],text,@"teacher/course",@"homework.md",@"v1",calendar,NULL).firstObject;
     Check([validated[@"id"] isEqual:record[@"id"]] && [validated[@"suggestedTitle"] isEqual:model[@"title"]],@"generated title does not change original identity");
+    NSDictionary *prefilled=SSReviewedTask(validated,@{},nil,NULL);
+    Check([prefilled[@"notes"] containsString:@"分析运动。"] && [prefilled[@"notes"] containsString:@"提交报告。"],@"new single or batch task defaults to summary and requirements notes");
+    Check([prefilled[@"notesOrigin"] isEqual:@"generated"] && ![prefilled[@"notesUserEdited"] boolValue],@"generated note provenance is optional compatible metadata");
+    NSDictionary *cleared=SSReviewedTask(validated,@{@"notes":@""},nil,NULL);
+    Check(![cleared[@"notes"] length] && [cleared[@"notesUserEdited"] boolValue],@"explicitly cleared new note never falls back to generated text");
+    Check(![SSReviewedTask(validated,@{},cleared,NULL)[@"notes"] length],@"source update preserves intentionally empty notes");
+    NSDictionary *noteEdited=SSReviewedTask(validated,@{@"notes":@"自己的补充"},prefilled,NULL);
+    Check([SSReviewedTask(validated,@{},noteEdited,NULL)[@"notes"] isEqual:@"自己的补充"],@"new model summary never overwrites user note");
+    Check([DDLNormalizeTasks(@[prefilled]).firstObject[@"sourceSummary"] isEqual:prefilled[@"sourceSummary"]] && [DDLNormalizeTasks(@[prefilled]).firstObject[@"notes"] isEqual:prefilled[@"notes"]],@"backup normalization preserves generated content and notes");
     NSMutableDictionary *brief=model.mutableCopy;brief[@"evidence"]=@"提交报告，命名为 homework.md。";
     Check([SSValidatedModelResults(@[brief],text,@"teacher/course",@"homework.md",@"v1",calendar,NULL).firstObject[@"id"] isEqual:record[@"id"]],@"submission evidence plus original deadline keeps existing source identity");
     NSMutableDictionary *renamed=model.mutableCopy;renamed[@"title"]=@"另一种概括";

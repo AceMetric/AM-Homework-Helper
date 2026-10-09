@@ -12,6 +12,8 @@ import AppKit
         let record:[String:Any]=["id":"source-1","title":"作业","suggestedTitle":"报告","repository":"teacher/course","path":"homework.md","blobSHA":"v1","kind":"assignment","due":Date(timeIntervalSince1970:2_000_000_000),"needsDate":false,"needsTime":false,"summary":"内容摘要"]
         let state=ReviewState();state.refresh([record as NSDictionary])
         check(state.title=="报告" && state.hasDate && state.dateConfirmed,"initial complete proposal")
+        check(state.notes=="作业内容\n内容摘要","new review prefills visible editable notes")
+        state.notes="";check((state.payload(record as NSDictionary,editing:true)?["draft"] as? NSDictionary)?["notes"] as? String=="","explicit clear remains empty in save payload")
         state.notes="自己的备注";state.dirty=true;var newer=record;newer["blobSHA"]="v2";state.refresh([newer as NSDictionary])
         check(state.notes=="自己的备注" && state.current?["blobSHA"] as? String=="v1","background refresh preserves draft and version")
         check(state.sourceChanged && !state.saveCurrent(advance:true) && state.dirty,"stale source preserves inputs before storage")
@@ -31,7 +33,7 @@ import AppKit
         let draft=state.payload(updated as NSDictionary,editing:true)?["draft"] as? NSDictionary
         check(draft?["assignmentDue"] as? Date==state.date && draft?["teacherDue"]==nil && draft?["personalDue"]==nil && draft?["leadDays"]==nil,"one deadline in review payload")
         state.load(record as NSDictionary)
-        check(state.notes.isEmpty && state.reminderOffsets==[10080,4320,1440,60,0],"source summary never becomes user notes and new tasks use five reminders")
+        check(state.notes==suggestedNotes(record as NSDictionary) && state.reminderOffsets==[10080,4320,1440,60,0],"source summary prefills editable notes and new tasks use five reminders")
         var suggested=relative;suggested.removeValue(forKey:"due");suggested["needsDate"]=true;suggested["suggestedDue"]=Date(timeIntervalSince1970:2_100_000_000);suggested["dateBasis"]=["date":Date(),"commit":"abc123"]
         state.load(suggested as NSDictionary)
         check(state.date==suggested["suggestedDue"] as? Date && state.hasDate && state.dateConfirmed && state.payload(suggested as NSDictionary,editing:true) != nil,"relative date with provenance is prefilled and saves without adopt action")

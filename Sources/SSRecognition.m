@@ -119,6 +119,15 @@ BOOL SSCanAutomaticallyImport(NSDictionary *record, NSArray *tasks, NSDate *now)
     for (NSDictionary *task in tasks) if (SameSource(task,record) || ([task[@"sourceRepository"] isEqual:record[@"repository"]] && [task[@"sourcePath"] isEqual:record[@"path"]])) return NO;
     return YES;
 }
+NSString *SSSuggestedNotes(NSDictionary *record) {
+    NSString *summary=[record[@"sourceSummary"] isKindOfClass:NSString.class] ? record[@"sourceSummary"]:record[@"summary"];
+    NSString *requirements=[record[@"sourceRequirements"] isKindOfClass:NSString.class] ? record[@"sourceRequirements"]:record[@"submissionRequirements"];
+    if(![summary isKindOfClass:NSString.class])summary=@"";if(![requirements isKindOfClass:NSString.class])requirements=@"";
+    NSMutableArray *parts=NSMutableArray.array;
+    if([summary isKindOfClass:NSString.class] && RTrim(summary).length)[parts addObject:[@"作业内容\n" stringByAppendingString:RTrim(summary)]];
+    if([requirements isKindOfClass:NSString.class] && RTrim(requirements).length && ![RTrim(requirements) isEqual:RTrim(summary ?: @"")])[parts addObject:[@"提交要求\n" stringByAppendingString:RTrim(requirements)]];
+    return [parts componentsJoinedByString:@"\n\n"];
+}
 NSDictionary *SSReviewedTask(NSDictionary *record, NSDictionary *draft, NSDictionary *existing, NSError **error) {
     NSString *title = RTrim(draft[@"title"] ?: record[@"suggestedTitle"] ?: record[@"title"] ?: @"");
     // due is the only active deadline. Legacy draft fields remain readable for
@@ -133,7 +142,9 @@ NSDictionary *SSReviewedTask(NSDictionary *record, NSDictionary *draft, NSDictio
     NSMutableDictionary *task = existing ? existing.mutableCopy : [@{@"id":NSUUID.UUID.UUIDString,@"completed":@NO,@"archived":@NO,@"reminderOffsets":DDLDefaultReminderOffsets()} mutableCopy];
     task[@"title"] = title;
     task[@"subject"] = draft[@"subject"] ?: existing[@"subject"] ?: [record[@"repository"] lastPathComponent] ?: @"课程";
-    task[@"notes"] = draft[@"notes"] ?: existing[@"notes"] ?: @"";
+    NSString *generated=SSSuggestedNotes(record);task[@"notes"] = draft[@"notes"] ?: existing[@"notes"] ?: generated;
+    if(!existing){task[@"notesOrigin"]=[task[@"notes"] isEqual:generated] ? @"generated":@"user";task[@"notesUserEdited"]=@(![task[@"notes"] isEqual:generated]);}
+    else if(draft[@"notes"] && ![draft[@"notes"] isEqual:existing[@"notes"]]){task[@"notesOrigin"]=@"user";task[@"notesUserEdited"]=@YES;}
     if (draft[@"reminderOffsets"]) task[@"reminderOffsets"] = draft[@"reminderOffsets"];
     task[@"due"] = teacher;
     // Original deadline evidence stays in sourceObservedDue. Old split-deadline
