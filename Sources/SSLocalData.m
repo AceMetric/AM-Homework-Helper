@@ -43,6 +43,12 @@ static NSMutableDictionary *KeychainQuery(NSString *account) {
 
 NSDictionary *SSReadSecret(NSString *account) {
     NSMutableDictionary *query = KeychainQuery(account);
+#ifdef DDL_TESTING
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    query[(__bridge id)kSecUseAuthenticationUI]=(__bridge id)kSecUseAuthenticationUIFail;
+#pragma clang diagnostic pop
+#endif
     query[(__bridge id)kSecReturnData] = @YES;
     query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
     CFTypeRef item = NULL;
