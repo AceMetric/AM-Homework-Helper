@@ -10,4 +10,6 @@ clang -DDDL_TESTING=1 -fobjc-arc -fblocks -Wall -Wextra -Werror -Wno-unused-para
  -I"$SWIFTUI_DIR" -L"$SWIFTUI_DIR" -lAMUI -Wl,-rpath,"$SWIFTUI_DIR" \
  -framework Cocoa -framework UserNotifications -framework Vision -framework UniformTypeIdentifiers -framework Security -F"$SPARKLE_DIR" -framework Sparkle -Wl,-rpath,"$SPARKLE_DIR" \
  "Tests/${AM_UI_TEST:-HybridUI}.m" Sources/DDLCore.m Sources/DDLImport.m Sources/SSRecognition.m Sources/SSAssignments.m Sources/SSLocalData.m Sources/SSGitHub.m Sources/SSGit.m Sources/SSSecurity.m Sources/DDLUI.m Sources/SSUpdateController.m Sources/SSExitCoordinator.m -o "build/tests/${AM_UI_TEST:-HybridUI}"
-python3 Tools/run-quiet-test.py "build/tests/${AM_UI_TEST:-HybridUI}" --preview
+ui_result=$(python3 Tools/run-quiet-test.py "build/tests/${AM_UI_TEST:-HybridUI}" --preview 2>&1) || { print -r -- "$ui_result"; exit 1; }
+print -r -- "$ui_result"
+[[ "$ui_result" == *"PASS:"* ]]

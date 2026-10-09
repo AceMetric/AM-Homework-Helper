@@ -18,7 +18,7 @@
 - (void)keyDown:(NSEvent *)event { if ([event.charactersIgnoringModifiers isEqual:@"\r"] && self.selectedRow >= 0) { [NSApp sendAction:self.doubleAction to:self.target from:self]; return; } [super keyDown:event]; }
 @end
 
-static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) { NSButton *button=[NSButton buttonWithTitle:text target:target action:action];button.bezelStyle=NSBezelStyleRounded;button.frame=frame;return button; }
+static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) { ActionButton *button=Button(text,target,action,0);button.frame=frame;return button; }
 @interface SSCourseController ()
 @property SSGitHub *github;
 @property SSGit *git;
@@ -145,7 +145,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     Surface *root = Box(Canvas(), 0); root.frame = NSMakeRect(0, 0, 960, 600); self.view = root;
     __weak typeof(self) weakSelf = self; root.onResize = ^{ [weakSelf layoutContent]; }; root.onAppearanceChange = ^{ [weakSelf refreshPresentation]; };
     self.accountLabel = Text(@"", 13, NSFontWeightRegular, Muted()); [root addSubview:self.accountLabel];
-    self.scanButton = SSButton(@"检查新作业", self, @selector(scan:), NSZeroRect); [root addSubview:self.scanButton];
+    self.scanButton = SSButton(@"检查新作业", self, @selector(scan:), NSZeroRect);((ActionButton *)self.scanButton).tone=1; [root addSubview:self.scanButton];
     self.syncButton = SSButton(@"同步课程文件", self, @selector(sync:), NSZeroRect); [root addSubview:self.syncButton];
     self.commitButton = SSButton(@"提交作业", self, @selector(commit:), NSZeroRect); [root addSubview:self.commitButton];
     self.moreButton = SSButton(@"更多", self, @selector(more:), NSZeroRect); [root addSubview:self.moreButton];
@@ -212,27 +212,27 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)layoutContent {
     CGFloat w = NSWidth(self.view.bounds), h = NSHeight(self.view.bounds);
-    self.accountLabel.frame = NSMakeRect(0, 0, w - 152, 28); self.setupButton.frame = NSMakeRect(w - 136, 0, 136, 36);
-    self.scanButton.frame = NSMakeRect(0,48,128,36); self.syncButton.frame=NSMakeRect(140,48,136,36);self.commitButton.frame=NSMakeRect(288,48,112,36);self.moreButton.frame=NSMakeRect(w-72,48,72,36);
-    self.assistantButton.frame=NSMakeRect([self course] ? 412:140,48,124,36);self.assistantImportButton.frame=NSMakeRect(276,48,124,36);
+    self.accountLabel.frame = NSMakeRect(0, 0, w - 152, 28); self.setupButton.frame = NSMakeRect(w - 136, 0, 136, 28);
+    self.scanButton.frame = NSMakeRect(0,32,124,32); self.syncButton.frame=NSMakeRect(136,32,132,32);self.commitButton.frame=NSMakeRect(280,32,108,32);self.moreButton.frame=NSMakeRect(w-72,32,72,32);
+    self.assistantButton.frame=NSMakeRect([self course] ? 400:136,32,124,32);self.assistantImportButton.frame=NSMakeRect(276,48,124,36);
     self.assistantButton.hidden=self.inbox;self.assistantImportButton.hidden=YES;
     self.assistantButton.enabled=self.assistantImportButton.enabled=!self.busy && !self.operationsPaused;
-    self.sections.frame = NSMakeRect(0, 100, 296, 32); self.sections.hidden = self.inbox;
-    self.typeFilter.frame = NSMakeRect(312, 100, 120, 32); self.typeFilter.hidden = self.inbox || self.sections.selectedSegment != 0;
-    self.reviewFilter.frame = NSMakeRect(0, 100, 152, 32); self.reviewFilter.hidden = !self.inbox;
-    self.search.frame = NSMakeRect(MAX(448, w - 272), 100, MAX(128, MIN(272, w - 448)), 32);
-    if (self.inbox) self.search.frame = NSMakeRect(w - 272, 100, 272, 32);
-    self.statusLabel.frame = NSMakeRect(24, 144, w - 180, 24); self.progress.frame = NSMakeRect(0, 148, 16, 16); self.recoveryButton.frame = NSMakeRect(w - 144, 140, 144, 32);
+    self.sections.frame = NSMakeRect(0, 80, 296, 28); self.sections.hidden = self.inbox;
+    self.typeFilter.frame = NSMakeRect(308, 80, 120, 28); self.typeFilter.hidden = self.inbox || self.sections.selectedSegment != 0;
+    self.reviewFilter.frame = NSMakeRect(0, 80, 152, 28); self.reviewFilter.hidden = !self.inbox;
+    self.search.frame = NSMakeRect(MAX(448, w - 272), 80, MAX(128, MIN(272, w - 448)), 28);
+    if (self.inbox) self.search.frame = NSMakeRect(w - 272, 80, 272, 28);
+    self.statusLabel.frame = NSMakeRect(24, 116, w - 180, 24); self.progress.frame = NSMakeRect(0, 120, 16, 16); self.recoveryButton.frame = NSMakeRect(w - 144, 112, 144, 28);
     self.table.enclosingScrollView.frame = NSMakeRect(0, 184, w, MAX(112, h - 348));
     self.detail.enclosingScrollView.frame = NSMakeRect(0, h - 152, w, 104); self.reviewButton.frame = NSMakeRect(w - 152, h - 40, 152, 36);
     self.typeButton.frame = NSMakeRect(0, h - 40, 136, 36);
     self.emptyLabel.frame = NSMakeRect(16, 204, w - 32, 72);
-    CGFloat reviewTop = self.inbox ? (self.statusLabel.stringValue.length ? 164 : 140) : 184;
+    CGFloat reviewTop = self.inbox ? (self.statusLabel.stringValue.length ? 144 : 116) : 144;
     self.reviewWorkspace.view.frame = NSMakeRect(0, reviewTop, w, MAX(240,h - reviewTop));
     self.reviewWorkspace.view.hidden = !self.inbox;
     if (self.inbox) { self.table.enclosingScrollView.hidden = YES; self.detail.enclosingScrollView.hidden = YES; self.reviewButton.hidden = YES; self.typeButton.hidden = YES; self.emptyLabel.hidden = YES; self.search.hidden = YES; }
     else { self.detail.enclosingScrollView.hidden = NO; self.search.hidden = NO; }
-    self.courseWorkspace.view.hidden=self.inbox;self.courseWorkspace.view.frame=NSMakeRect(0,184,w,MAX(240,h-184));
+    self.courseWorkspace.view.hidden=self.inbox;self.courseWorkspace.view.frame=NSMakeRect(0,144,w,MAX(200,h-144));
     if(!self.inbox){self.table.enclosingScrollView.hidden=YES;self.detail.enclosingScrollView.hidden=YES;self.reviewButton.hidden=YES;self.typeButton.hidden=YES;self.emptyLabel.hidden=YES;}
     CGFloat available = w - 132; self.table.tableColumns[3].width = 96;
     NSArray *weights = @[@0.34, @0.28, @0.38];

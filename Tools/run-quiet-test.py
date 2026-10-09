@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run UI fixtures with isolated storage and test-only foreground interception."""
+"""Run UI fixtures in isolated storage; quiet fixtures also intercept activation."""
 import os
 import pathlib
 import subprocess

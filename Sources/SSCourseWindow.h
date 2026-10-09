@@ -19,6 +19,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readonly) NSArray<NSDictionary *> *courseSnapshots;
 @property (readonly, nullable) NSString *selectedCourseID;
 - (BOOL)selectCourseID:(nullable NSString *)identifier;
+- (void)showSkillJobs:(nullable id)sender;
+- (void)adjustSkillCourses:(nullable id)sender;
+- (void)exportAllSkillContext:(nullable id)sender;
 - (void)exportSkillContext:(nullable id)sender;
 - (void)importSkillResults:(nullable id)sender;
 @property (readonly) BOOL operationBusy;

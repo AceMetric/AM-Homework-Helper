@@ -289,6 +289,14 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     }
     return @{@"candidates":SSAttachLinkedDocuments(SSConsolidateAssignments(candidates),documents), @"materials":SSGroupMaterials(materials), @"documents":documents, @"recognitionMessages":recognitionMessages, @"skipped":skipped, @"commit":head, @"branch":branch, @"date":NSDate.date};
 }
+- (NSDictionary *)resolveSkillDates:(NSDictionary *)validated scans:(NSDictionary *)scans courses:(NSArray *)courses {
+    NSMutableDictionary *result=validated.mutableCopy,*records=NSMutableDictionary.dictionary;
+    for(NSString *fork in validated[@"records"]){NSDictionary *course=nil;for(NSDictionary *item in courses)if([item[@"fork"] isEqual:fork]){course=item;break;}NSMutableArray *resolved=NSMutableArray.array;
+        for(NSDictionary *record in validated[@"records"][fork]){NSMutableDictionary *copy=record.mutableCopy;
+            if([record[@"relative"] boolValue] && course && [scans[fork][@"commit"] length]){NSDictionary *basis=[self dateReferenceForCandidate:record head:scans[fork][@"commit"] path:course[@"path"]];for(NSString *key in @[@"dateBasis",@"suggestedDue"])if(basis[key])copy[key]=basis[key];}
+            [resolved addObject:copy];}records[fork]=resolved;
+    }result[@"records"]=records;return result;
+}
 - (NSDictionary *)enhanceScan:(NSDictionary *)scan course:(NSDictionary *)course settings:(NSDictionary *)settings paths:(NSArray *)paths cache:(NSMutableDictionary *)cache {
     NSDictionary *scoped=SSCourseRecognitionSettings(settings,course);if([scoped[@"mode"] isEqual:@"rules"])return scan;
     NSMutableDictionary *byID=NSMutableDictionary.dictionary;for(NSDictionary *record in scan[@"candidates"])byID[record[@"id"]]=record;

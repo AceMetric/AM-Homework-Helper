@@ -692,7 +692,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     if (self.preview && [NSProcessInfo.processInfo.arguments containsObject:@"--compact"]) [self.window setContentSize:NSMakeSize(960, 640)];
     self.window.backgroundColor = Canvas();
     self.root = GradientBox(Canvas(), Panel(), 0); self.root.frame = NSMakeRect(0, 0, 1280, 840); self.window.contentView = self.root;
-    self.taskDetails = Box(Panel(), 10); self.taskDetails.stroke = Line(); self.taskDetails.hidden=YES; [self.root addSubview:self.taskDetails];
+    self.taskDetails = Box(Card(), 10); self.taskDetails.stroke = Line(); self.taskDetails.hidden=YES; [self.root addSubview:self.taskDetails];
     self.sidebar = GradientBox(Panel(), Canvas(), 0); [self.root addSubview:self.sidebar];
     self.header = GradientBox(Canvas(), Panel(), 0); [self.root addSubview:self.header];
     self.search = [[NSSearchField alloc] initWithFrame:NSZeroRect]; self.search.placeholderString = @"搜索任务、学科、备注"; self.search.delegate = self; self.search.sendsSearchStringImmediately = YES; self.search.font = [NSFont systemFontOfSize:12]; [self.root addSubview:self.search];
@@ -825,7 +825,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     if (!self.scroll) return;
     CGFloat w = NSWidth(self.root.bounds), h = NSHeight(self.root.bounds), x = 216, content = w - x - 24;
     self.sidebar.hidden = NO; self.sidebar.frame = NSMakeRect(0, 0, 192, h);
-    self.header.frame = NSMakeRect(x, 48, content, 88);
+    self.header.frame = NSMakeRect(x, 48, content, self.page>=3 ? 64:88);
     BOOL coursePage = self.page >= 3;
     self.scroll.hidden = coursePage || self.calendarMode;
     self.calendarScroll.hidden = coursePage || !self.calendarMode;
@@ -838,7 +838,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     self.calendarStatus.frame = NSMakeRect(x, 140, 240, 32);
     [self layoutTaskArea];
     self.courseWindow.view.hidden = !coursePage;
-    if (self.courseWindow) { self.courseWindow.view.frame = NSMakeRect(x, 144, content, h - 168); [self.courseWindow layoutContent]; }
+    if (self.courseWindow) { self.courseWindow.view.frame = NSMakeRect(x, 112, content, h - 136); [self.courseWindow layoutContent]; }
     [self render];
 }
 - (void)layoutTaskArea {
@@ -849,8 +849,8 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
         else {CGFloat agendaHeight=self.selectedTaskID ? 280:176;self.calendarScroll.frame=NSMakeRect(x,188,content,h-228-agendaHeight);self.agenda.frame=NSMakeRect(x,h-24-agendaHeight,content,agendaHeight);}
     }else{
         CGFloat inspector=self.selectedTaskID && self.page<3 ? 320:0;
-        self.scroll.frame=NSMakeRect(x,188,content-(inspector ? inspector+16:0),h-212);
-        self.taskDetails.frame=NSMakeRect(w-24-inspector,188,inspector,h-212);
+        if(inspector && content<760){CGFloat detailHeight=MIN(240,(h-212)*0.52);self.scroll.frame=NSMakeRect(x,188,content,MAX(120,h-228-detailHeight));self.taskDetails.frame=NSMakeRect(x,h-24-detailHeight,content,detailHeight);}
+        else {self.scroll.frame=NSMakeRect(x,188,content-(inspector ? inspector+16:0),h-212);self.taskDetails.frame=NSMakeRect(w-24-inspector,188,inspector,h-212);}
     }
 }
 - (NSArray *)selectionTasks {
@@ -1032,6 +1032,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
         return SSWritePlist(@"recognition-settings.plist",next,&error) ? @"" : (error.localizedDescription ?: @"设置保存失败。");
     };
     self.settingsController.actionHandler = ^(NSString *action) {
+
         if (![owner.settingsController resolveUnsavedChanges]) return;
         [owner.window endSheet:owner.settingsWindow]; [owner.settingsWindow orderOut:nil]; owner.settingsWindow=nil; owner.settingsController=nil;
         if ([action isEqual:@"account"]) [owner accountSettings:nil];
@@ -1040,6 +1041,9 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
         else if ([action isEqual:@"updates"]) [owner.updates showSettings:nil];
         else if([action isEqual:@"skill-export"])[owner.courseWindow exportSkillContext:nil];
         else if([action isEqual:@"skill-import"])[owner.courseWindow importSkillResults:nil];
+        else if([action isEqual:@"skill-status"])[owner.courseWindow showSkillJobs:nil];
+        else if([action isEqual:@"skill-courses"])[owner.courseWindow adjustSkillCourses:nil];
+        else if([action isEqual:@"skill-all"])[owner.courseWindow exportAllSkillContext:nil];
         else if ([action isEqual:@"advanced"]) [owner.courseWindow authenticationSettings:nil];
     };
     self.settingsWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,620,640) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
@@ -1053,7 +1057,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     if(self.page==4)title=self.courseWindow.selectedCourseID.lastPathComponent ?: @"所有课程";
     Put(self.header, Text(title, 25, NSFontWeightSemibold, Ink()), 0, 4, w - 152, 32);
     NSString *subtitle = (self.notice.length && self.page < 3) ? self.notice : (self.page == 0 ? DDLFormatDate(NSDate.date, @"M月d日 EEEE") : (self.page == 3 ? @"核对老师原文后，将作业加入日历与提醒" : (self.page == 4 ? @"先检查新作业，需要时再同步课程文件" : @"按截止时间安排任务")));
-    Put(self.header, Text(subtitle, 13, NSFontWeightRegular, Muted()), 0, 48, w, 24);
+    if(self.page<3)Put(self.header, Text(subtitle, 13, NSFontWeightRegular, Muted()), 0, 48, w, 24);
     if (self.page < 3) { ActionButton *add = Button(@"新建任务", self, @selector(addTask:), 1); add.symbol = @"plus"; Put(self.header, add, w - 136, 0, 136, 36); }
 }
 - (void)renderDashboard {

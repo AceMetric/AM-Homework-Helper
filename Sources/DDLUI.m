@@ -1,4 +1,5 @@
 #import "DDLUI.h"
+#import "AMUI-Swift.h"
 NSColor *RGB(unsigned value) { return [NSColor colorWithSRGBRed:((value >> 16) & 255) / 255.0 green:((value >> 8) & 255) / 255.0 blue:(value & 255) / 255.0 alpha:1]; }
 NSColor *Adaptive(unsigned light, unsigned dark) {
     return [NSColor colorWithName:nil dynamicProvider:^NSColor *(NSAppearance *appearance) {
@@ -6,15 +7,15 @@ NSColor *Adaptive(unsigned light, unsigned dark) {
         return RGB(isDark ? dark : light);
     }];
 }
-NSColor *Ink(void) { return Adaptive(0x20252D, 0xE8EBF0); }
-NSColor *Muted(void) { return Adaptive(0x606977, 0xADB6C5); }
-NSColor *Accent(void) { return Adaptive(0x2262B0, 0x85B7FF); }
-NSColor *Canvas(void) { return Adaptive(0xF5F6F8, 0x191C22); }
-NSColor *Card(void) { return Adaptive(0xFFFFFF, 0x252A32); }
-NSColor *Line(void) { return Adaptive(0xDCE0E6, 0x434C5B); }
-NSColor *Tint(void) { return Adaptive(0xEAF1FA, 0x293950); }
-NSColor *Panel(void) { return Adaptive(0xECEFF3, 0x20242C); }
-NSColor *Emphasis(void) { return Adaptive(0xDCEAFE, 0x324C6D); }
+NSColor *Ink(void) { return AMAppearance.ink; }
+NSColor *Muted(void) { return AMAppearance.muted; }
+NSColor *Accent(void) { return AMAppearance.accent; }
+NSColor *Canvas(void) { return AMAppearance.canvas; }
+NSColor *Card(void) { return AMAppearance.surface; }
+NSColor *Line(void) { return AMAppearance.separator; }
+NSColor *Tint(void) { return AMAppearance.selection; }
+NSColor *Panel(void) { return AMAppearance.sidebar; }
+NSColor *Emphasis(void) { return AMAppearance.selection; }
 NSTextField *Text(NSString *text, CGFloat size, NSFontWeight weight, NSColor *color) {
     NSTextField *label = [NSTextField labelWithString:text ?: @""];
     label.font = [NSFont systemFontOfSize:size weight:weight]; label.textColor = color ?: Ink();
@@ -68,13 +69,14 @@ void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight weight, NS
 - (void)mouseEntered:(NSEvent *)event { self.hovered = YES; self.needsDisplay = YES; }
 - (void)mouseExited:(NSEvent *)event { self.hovered = NO; self.needsDisplay = YES; }
 - (void)drawRect:(NSRect)dirtyRect {
-    NSColor *fill = self.tone == 1 ? Emphasis() : (self.selected || self.tone == 2 ? Tint() : Card());
+    NSColor *fill = self.tone == 1 && self.enabled ? Accent() : (self.selected ? Tint() : Card());
     BOOL hoverFill = self.allowsHoverFill && (self.hovered || self.highlighted);
     if (self.tone == 3 && !self.selected && !hoverFill) fill = NSColor.clearColor;
     if (hoverFill) fill = [fill blendedColorWithFraction:0.10 ofColor:Accent()];
     NSBezierPath *buttonPath = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 1, 1) xRadius:8 yRadius:8];
     [fill setFill]; [buttonPath fill];
-    NSColor *color = self.tone == 1 ? Accent() : (self.selected ? Accent() : Ink());
+    if(self.tone!=3 && self.tone!=1){[Line() setStroke];buttonPath.lineWidth=0.5;[buttonPath stroke];}
+    NSColor *color = self.tone == 1 && self.enabled ? NSColor.whiteColor : (self.selected ? Accent() : Ink());
     if (!self.enabled) color = Muted();
     BOOL iconOnly = self.symbol.length && self.title.length == 0;
     CGFloat tx = self.symbol.length ? 35 : 8;
@@ -98,7 +100,7 @@ Surface *GradientBox(NSColor *start, NSColor *end, CGFloat radius) { Surface *v 
 // Shared AppKit form surfaces; native editing and menu keyboard behavior are retained.
 static void DrawFieldChrome(NSRect bounds, BOOL focused, BOOL filled) {
     NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(bounds, 1, 1) xRadius:8 yRadius:8];
-    [(filled ? Tint() : Card()) setFill]; [path fill];
+    [Card() setFill]; [path fill];
     [(focused ? Accent() : Line()) setStroke]; path.lineWidth = focused ? 1.5 : 1; [path stroke];
 }
 void ThemeEditor(NSTextView *editor) {

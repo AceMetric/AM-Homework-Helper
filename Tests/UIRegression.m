@@ -141,7 +141,7 @@ int main(int argc, const char *argv[]) {
         NSView *titleHit=[interactive hitTest:NSMakePoint(80,24)],*checkHit=[interactive hitTest:NSMakePoint(24,36)];
         CheckUI(titleHit==interactive && [checkHit isKindOfClass:NSButton.class] && ((NSButton *)checkHit).action==@selector(toggleTask:),@"row selection hit area does not intercept completion button");
         CheckUI([app.window.firstResponder isKindOfClass:TaskSelectionRow.class],@"selected row receives keyboard focus");
-        CheckUI(NSMaxX(app.scroll.frame)<NSMinX(app.taskDetails.frame) && NSMaxX(app.taskDetails.frame)<=NSWidth(app.root.bounds),@"task list and inspector fit minimum window without overlap");
+        CheckUI(!NSIntersectsRect(app.scroll.frame,app.taskDetails.frame) && NSMaxX(app.taskDetails.frame)<=NSWidth(app.root.bounds) && NSMaxY(app.taskDetails.frame)<=NSHeight(app.root.bounds),@"task list and inspector fit minimum window without overlap");
         NSArray *ordered=app.selectionTasks;NSUInteger selectedIndex=0;for(NSUInteger i=0;i<ordered.count;i++)if([ordered[i][@"id"] isEqual:noteTask[@"id"]]){selectedIndex=i;break;}
         NSEvent *down=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0 windowNumber:app.window.windowNumber context:nil characters:@"" charactersIgnoringModifiers:@"" isARepeat:NO keyCode:125];
         [(TaskSelectionRow *)app.window.firstResponder keyDown:down];CheckUI([app.selectedTaskID isEqual:ordered[MIN(selectedIndex+1,ordered.count-1)][@"id"]],@"arrow key selects adjacent task by stable identity");[app selectTask:select];

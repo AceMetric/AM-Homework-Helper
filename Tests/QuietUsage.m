@@ -1,4 +1,6 @@
+#ifndef AM_FOREGROUND_TEST
 #import "QuietUI.h"
+#endif
 #define main DDLApplicationMain
 #import "../Sources/App.m"
 #undef main
@@ -24,8 +26,17 @@ static id Element(NSView *root,NSString *identity){
 }
 static void Press(NSView *root,NSString *identity){[root layoutSubtreeIfNeeded];NSBitmapImageRep *bitmap=[root bitmapImageRepForCachingDisplayInRect:root.bounds];[root cacheDisplayInRect:root.bounds toBitmapImageRep:bitmap];Drain();id button=Element(root,identity);Check([button isKindOfClass:NSButton.class] && [button isEnabled],@"real review button is enabled offscreen");[button performClick:nil];Drain();}
 int main(int argc,const char *argv[]){@autoreleasepool{
-    [NSApplication sharedApplication];[NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+    if(!NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"] || ![NSProcessInfo.processInfo.arguments containsObject:@"--preview"])return 2;
+    [NSApplication sharedApplication];
+#ifdef AM_FOREGROUND_TEST
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+#else
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+#endif
     UsageApp *app=UsageApp.new;NSApp.delegate=app;[app applicationDidFinishLaunching:[NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification object:NSApp]];
+#ifdef AM_FOREGROUND_TEST
+    [app.window makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];Drain();
+#endif
     NSString *fixture=NSProcessInfo.processInfo.environment[@"AM_USAGE_FIXTURE"];
     NSDictionary *data=fixture ? [NSDictionary dictionaryWithContentsOfFile:fixture]:nil;
     NSArray *realCourses=data[@"courses"] ?: @[@{@"fork":@"student/course",@"upstream":@"teacher/course",@"enabled":@YES}];
@@ -79,8 +90,22 @@ int main(int argc,const char *argv[]){@autoreleasepool{
         Press(courses.reviewWorkspace.view,@"review-save");Check(app.tasks.count==0 && Element(courses.reviewWorkspace.view,@"review-save")!=nil,@"failed disk write retains form and saves no task");
         [NSFileManager.defaultManager removeItemAtURL:target error:NULL];Press(courses.reviewWorkspace.view,@"review-save");Check(app.tasks.count==1,@"retry button succeeds after storage recovery");
     }
-    // Existing task copies remain editable and compatible; notes are never generated.
+    // Existing task copies retain their notes and remain editable.
     app.tasks=tasks.mutableCopy;[courses refreshPresentation];[app render];
+#ifdef AM_FOREGROUND_TEST
+    // The foreground lane exercises native windows/sheets with isolated synthetic data.
+    NSDictionary *sample=@{@"id":@"ui-long-task",@"title":@"实验报告：长标题与完整作业内容的显示检查",@"subject":@"模拟课程",@"due":[NSDate dateWithTimeIntervalSinceNow:86400],@"notes":@"作业内容\n完成实验分析，比较不同时间步长。\n\n提交要求\n提交 Markdown 报告，附计算过程。",@"completed":@NO};app.tasks=[DDLNormalizeTasks(@[sample]) mutableCopy];
+    for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]){NSApp.appearance=[NSAppearance appearanceNamed:appearance];[app refreshAppearance];
+        for(NSInteger page=0;page<5;page++){route.tag=page;[app navigate:route];[app.window setContentSize:NSMakeSize(1280,840)];[app layout];Drain();
+            NSBitmapImageRep *image=[app.root bitmapImageRepForCachingDisplayInRect:app.root.bounds];[app.root cacheDisplayInRect:app.root.bounds toBitmapImageRep:image];Check([[image representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[NSString stringWithFormat:@"build/qa/ui-1.4-%ld-%@.png",(long)page,[appearance isEqual:NSAppearanceNameAqua] ? @"light":@"dark"] atomically:YES],@"foreground page captures render in both appearances");}
+    }
+    route.tag=2;[app navigate:route];NSButton *selection=NSButton.new;selection.identifier=@"ui-long-task";[app selectTask:selection];Drain();Check([app.taskDetailsText.string containsString:@"提交 Markdown 报告"],@"selected task displays saved assignment requirements");
+    [app.window setContentSize:NSMakeSize(960,640)];[app layout];Drain();Check(NSWidth(app.taskDetails.frame)>600 && NSMinY(app.taskDetails.frame)>NSMinY(app.scroll.frame),@"narrow task inspector moves below list");
+    [app editTask:selection];Drain();Check(app.editor.window.sheetParent==app.window,@"native task edit sheet opens in foreground");app.editor.notesField.string=@"修改后的备注\n保留完整换行";[app.editor save:nil];Drain();Check([app.tasks.firstObject[@"notes"] containsString:@"修改后的备注"],@"actual edit sheet saves notes");
+    [app showSettings:nil];Drain();Check(app.settingsWindow.sheetParent==app.window,@"native settings sheet opens in foreground");[app resolveEditsForExit:NO];Drain();
+    Check(!app.settingsController && !app.window.attachedSheet,@"settings sheet dismisses without orphan window");
+    [app.window orderOut:nil];
+#endif
     [app.ticker invalidate];[NSStatusBar.systemStatusBar removeStatusItem:app.statusItem];
-    printf("PASS: %lu quiet usage assertions (%lu fixed assignments)\n",(unsigned long)checks,(unsigned long)discovered);
+    printf("PASS: %lu isolated usage assertions (%lu fixed assignments)\n",(unsigned long)checks,(unsigned long)discovered);
 }return 0;}
