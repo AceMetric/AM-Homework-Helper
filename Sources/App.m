@@ -1453,7 +1453,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 - (void)closeEditor { [self.window endSheet:self.editor.window]; [self.editor.window orderOut:nil]; self.editor = nil; }
 - (NSArray *)snapshot { return [[NSArray alloc] initWithArray:self.tasks copyItems:YES]; }
 - (BOOL)replaceTasks:(NSArray *)tasks action:(NSString *)action error:(NSError **)error {
-    NSArray *normalized=DDLNormalizeTasks(tasks); if (normalized.count!=tasks.count) return NO;
+    NSArray *normalized=DDLNormalizeTasks(tasks); if (normalized.count!=tasks.count) {if(error)*error=[NSError errorWithDomain:@"AMReview" code:1 userInfo:@{NSLocalizedDescriptionKey:@"部分任务格式无效，未写入任何修改。请核对名称和截止时间后重试。"}];return NO;}
     if (!self.preview) {
         if (!SSWritePlist(@"tasks.previous.plist",[self snapshot],error)) return NO;
         if (!SSWritePlist(@"tasks.plist",normalized,error)) return NO;
@@ -1463,24 +1463,35 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     [self.courseWindow refreshPresentation]; [self render]; return YES;
 }
 - (NSString *)saveReviewItems:(NSArray *)items automatic:(BOOL)automatic {
+    // A bounded local trace contains only stages/outcomes, never course content,
+    // source identifiers, paths, notes, tokens or underlying OS error strings.
+    void (^trace)(NSString *,NSString *)=^(NSString *stage,NSString *outcome){
+        if(self.preview)return;id stored=SSReadPlist(@"review-diagnostics.plist");NSMutableArray *events=[stored isKindOfClass:NSArray.class] ? [stored mutableCopy]:NSMutableArray.array;
+        [events addObject:@{@"date":NSDate.date,@"stage":stage,@"outcome":outcome}];while(events.count>64)[events removeObjectAtIndex:0];SSWritePlist(@"review-diagnostics.plist",events,NULL);
+    };
+    trace(@"click",@"started");
+    if(![items isKindOfClass:NSArray.class] || !items.count){trace(@"validation",@"missing-items");return @"没有可保存的作业，请重新选择。";}
     NSMutableArray *next=[[self snapshot] mutableCopy], *added=NSMutableArray.array; NSMutableSet *seen=NSMutableSet.set;NSUInteger savedCount=0;
     for (NSDictionary *item in items) {
         NSDictionary *record=item[@"record"]; NSDictionary *draft=item[@"draft"] ?: @{};
-        if (![record isKindOfClass:NSDictionary.class] || ![record[@"id"] isKindOfClass:NSString.class] || ![record[@"id"] length] || [seen containsObject:record[@"id"]]) return @"所选作业重复或格式无效，请重新选择。";
+        if (![record isKindOfClass:NSDictionary.class] || ![record[@"id"] isKindOfClass:NSString.class] || ![record[@"id"] length] || [seen containsObject:record[@"id"]]) {trace(@"validation",@"invalid-items");return @"所选作业重复或格式无效，请重新选择。";}
         [seen addObject:record[@"id"]];
         NSDictionary *live=[self.courseWindow reviewSourceWithID:record[@"id"]];
-        if (!live || ![live[@"blobSHA"] isEqual:record[@"blobSHA"]] || ![live[@"kind"] isEqual:@"assignment"]) return @"老师原文或审核状态已变化，请刷新后重新核对。";
+        if (!live || ![live[@"blobSHA"] isEqual:record[@"blobSHA"]]) {trace(@"source",@"changed");return @"老师原文已变化，整批未保存。填写内容已保留，请刷新来源并重新核对。";}
+        if (![live[@"kind"] ?: @"assignment" isEqual:@"assignment"]) {trace(@"source",@"classification");return @"材料类型已变化，整批未保存。请先确认属于作业。";}
+        for(NSString *key in @[@"dateText",@"due",@"suggestedDue",@"needsDate",@"needsTime"]){if(![(live[key] ?: NSNull.null) isEqual:(record[key] ?: NSNull.null)]){trace(@"source",@"recognition-changed");return @"截止时间识别结果已变化，整批未保存。请刷新来源并重新核对。";}}
         NSUInteger index=[next indexOfObjectPassingTest:^BOOL(NSDictionary *task,NSUInteger i,BOOL *stop){return [task[@"sourceID"] isEqual:record[@"id"]];}];
         NSDictionary *existing=index==NSNotFound ? nil : next[index];
         if (automatic && !SSCanAutomaticallyImport(live,next,NSDate.date)) continue;
-        NSError *error=nil; NSDictionary *task=SSReviewedTask(live,draft,existing,&error); if (!task) return error.localizedDescription ?: @"任务校验失败。";
+        NSError *error=nil; NSDictionary *task=SSReviewedTask(live,draft,existing,&error); if (!task) {trace(@"validation",@"missing-information");return error.localizedDescription ?: @"任务校验失败，请核对填写内容。";}
         if (existing) next[index]=task; else { [next addObject:task]; [added addObject:task]; }savedCount++;
     }
     if (![next isEqual:[self snapshot]]) {
-        NSError *error=nil; if (![self replaceTasks:next action:automatic ? @"自动加入作业" : @"审核作业" error:&error]) return error.localizedDescription ?: @"保存失败，原有任务保持完整。";
+        trace(@"write",@"started");NSError *error=nil; if (![self replaceTasks:next action:automatic ? @"自动加入作业" : @"审核作业" error:&error]) {trace(@"write",@"failed");return @"本机存储失败，整批未保存。填写内容和原有任务保留，请检查磁盘空间及应用数据目录权限后重试。";}
         if (automatic) self.automaticBatch=added;
         self.notice=[NSString stringWithFormat:@"%@ %lu 项作业，可按 ⌘Z 撤销。",automatic ? @"自动加入" : @"已保存",(unsigned long)savedCount]; [self render];
     }
+    trace(@"refresh",@"saved");
     return @"";
 }
 - (void)undoAutomaticImport:(id)sender {
@@ -1618,7 +1629,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
                 dispatch_group_enter(scheduled);
                 [center addNotificationRequest:request withCompletionHandler:^(NSError *error) {
                     dispatch_async(dispatch_get_main_queue(), ^{
-                        if (error && generation == self.notificationGeneration) { self.notificationError = error.localizedDescription; self.notice = [NSString stringWithFormat:@"提醒安排失败：%@", error.localizedDescription]; [self render]; }
+                        if (error && generation == self.notificationGeneration) { self.notificationError = error.localizedDescription; self.notice = @"任务已保存，但提醒安排失败。请在设置中查看通知权限并重试。"; [self render]; }
                         dispatch_group_leave(scheduled);
                     });
                 }];

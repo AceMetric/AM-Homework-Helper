@@ -1,15 +1,21 @@
 import Foundation
+import AppKit
 
 @main struct ReviewStateTests {
     @MainActor static func main() {
         var count=0
         func check(_ pass:Bool,_ label:String){count += 1;if !pass {fatalError(label)}}
+        let doubleClick=NSEvent.mouseEvent(with:.leftMouseUp,location:.zero,modifierFlags:[],timestamp:0,windowNumber:0,context:nil,eventNumber:1,clickCount:2,pressure:0)
+        check(isRepeatedWorkspaceEvent(doubleClick),"double mouse activation cannot save the next item")
+        let repeatKey=NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:.command,timestamp:0,windowNumber:0,context:nil,characters:"\r",charactersIgnoringModifiers:"\r",isARepeat:true,keyCode:36)
+        check(isRepeatedWorkspaceEvent(repeatKey),"held save shortcut cannot confirm successive items")
         let record:[String:Any]=["id":"source-1","title":"作业","suggestedTitle":"报告","repository":"teacher/course","path":"homework.md","blobSHA":"v1","kind":"assignment","due":Date(timeIntervalSince1970:2_000_000_000),"needsDate":false,"needsTime":false,"summary":"内容摘要"]
         let state=ReviewState();state.refresh([record as NSDictionary])
         check(state.title=="报告" && state.hasDate && state.dateConfirmed,"initial complete proposal")
         state.notes="自己的备注";state.dirty=true;var newer=record;newer["blobSHA"]="v2";state.refresh([newer as NSDictionary])
         check(state.notes=="自己的备注" && state.current?["blobSHA"] as? String=="v1","background refresh preserves draft and version")
-        state.save={_ in "存储失败"};check(!state.saveCurrent(advance:true) && state.dirty,"save failure preserves inputs")
+        check(state.sourceChanged && !state.saveCurrent(advance:true) && state.dirty,"stale source preserves inputs before storage")
+        state.reviewLatest();state.dateConfirmed=true;state.save={_ in "存储失败"};check(!state.saveCurrent(advance:true) && state.dirty,"save failure preserves inputs")
         var captured:[NSDictionary]=[];state.save={items in captured=items;state.refresh([]);return ""}
         check(state.saveCurrent(advance:true) && !state.dirty && state.current==nil,"successful save advances without reopening a sheet")
         check(captured.count==1 && (captured[0]["draft"] as? NSDictionary)?["notes"] as? String=="自己的备注","save uses edited draft")
@@ -29,7 +35,7 @@ import Foundation
         var suggested=relative;suggested.removeValue(forKey:"due");suggested["needsDate"]=true;suggested["suggestedDue"]=Date(timeIntervalSince1970:2_100_000_000);suggested["dateBasis"]=["date":Date(),"commit":"abc123"]
         state.load(suggested as NSDictionary)
         check(state.date==suggested["suggestedDue"] as? Date && state.hasDate && state.dateConfirmed && state.payload(suggested as NSDictionary,editing:true) != nil,"relative date with provenance is prefilled and saves without adopt action")
-        check(state.payload(suggested as NSDictionary,editing:false)==nil,"relative dates still excluded from unattended batch confirmation")
+        check(state.payload(suggested as NSDictionary,editing:false) != nil,"proven relative date eligible for explicit manual batch preview")
         suggested["needsTime"]=true;state.load(suggested as NSDictionary);check(!state.hasDate && !state.dateConfirmed,"missing time cannot use a suggestion")
         suggested["needsTime"]=false;suggested["warnings"]=["conflicting dates"];state.load(suggested as NSDictionary);check(!state.dateConfirmed,"conflicting evidence requires completion")
         suggested.removeValue(forKey:"warnings");suggested.removeValue(forKey:"dateBasis");state.load(suggested as NSDictionary);check(!state.hasDate,"unverified suggestion cannot prefill")
@@ -60,6 +66,27 @@ import Foundation
         check(removal.review.saveCurrent(advance:false) && removal.selected=="source-next" && removal.review.selected=="source-next","course save reconciles selection after synchronous dirty refresh")
         removal.review.dirty=true;removal.review.save={_ in removal.update([],selected:"",information:"",empty:"暂无待审核作业",paused:false);return ""}
         check(removal.review.saveCurrent(advance:false) && removal.current==nil && removal.review.current==nil && !removal.review.dirty,"final course save clears row and draft together")
+        let bulk=ReviewState();var model=record;model["id"]="model";model["modelOnly"]=true
+        ambiguous["id"]="incomplete";bulk.refresh([record as NSDictionary,model as NSDictionary,ambiguous as NSDictionary]);bulk.selectAll()
+        check(bulk.checked.count==3,"all visible source ids selected once")
+        bulk.query="报告";check(bulk.checked.count==3,"checks limited to filtered results")
+        bulk.query="missing";check(bulk.checked.isEmpty,"hidden checks cleared by search")
+        bulk.query="";bulk.selectAll();bulk.saveChecked()
+        check(bulk.batchPreview?.filter{$0.payload != nil}.count==2,"manual batch permits model result and explains missing time")
+        bulk.save={_ in "存储失败"};check(!bulk.confirmBatch() && bulk.batchPreview != nil && bulk.checked.count==3,"failed batch retains frozen preview and selection")
+        bulk.save={_ in ""};check(bulk.confirmBatch() && bulk.records.count==1,"success removes only eligible records")
+        let reentrant=ReviewState();reentrant.refresh([record as NSDictionary]);var calls=0
+        reentrant.save={_ in calls += 1;check(!reentrant.saveCurrent(advance:true),"double click blocked during persistence");return ""}
+        check(reentrant.saveCurrent(advance:true) && calls==1 && reentrant.title.isEmpty && reentrant.notes.isEmpty,"last save clears form and invokes callback once")
+        let labels=ReviewState();labels.refresh([record as NSDictionary]);labels.title=" "
+        check(!labels.saveCurrent(advance:true) && labels.message.contains("名称"),"title validation has field specific error")
+        labels.title="报告";labels.paused=true
+        check(!labels.saveCurrent(advance:true) && labels.message.contains("课程操作"),"busy validation is not misreported as date failure")
+        let filtered=ReviewState();filtered.refresh([record as NSDictionary]);filtered.notes="保留输入";filtered.dirty=true
+        filtered.sourceResolver={_ in record as NSDictionary};filtered.refresh([])
+        filtered.save={_ in ""};check(!filtered.sourceChanged && filtered.saveCurrent(advance:true),"live source resolution is independent of page filters")
+        let changedBatch=ReviewState();changedBatch.refresh([record as NSDictionary]);changedBatch.selectAll();changedBatch.saveChecked()
+        changedBatch.save={_ in "来源变化"};check(!changedBatch.confirmBatch() && changedBatch.checked.count==1 && changedBatch.batchPreview != nil,"batch source race preserves preview and checks")
         let settings=SettingsState();settings.apply(["mode":"rules","endpoint":"http://localhost:11434","model":"","automaticImport":true] as NSDictionary)
         settings.key="temporary input";settings.dirty=true;settings.save={_,_ in "失败"};check(!settings.persist() && settings.dirty && !settings.key.isEmpty,"failed settings save preserves draft")
         settings.save={config,key in check(config["key"]==nil && key=="temporary input","credential separated from settings dictionary");return ""}
@@ -107,6 +134,7 @@ import Foundation
         check(Set(malformed.map(\.id)).count==4,"duplicate or missing source IDs cannot collide in SwiftUI")
         state.refresh([mutable]);mutable["title"]="外部变更"
         check(state.records[0]["title"]==nil,"review snapshots are detached too")
+        check(state.current?["title"]==nil,"active form source uses the same detached snapshot")
         courseState.update([mutable],selected:"source-1",information:"",empty:"",paused:false)
         mutable["title"]="再次变更"
         check(courseState.current?["title"] as? String=="外部变更","course selection uses source identity with an immutable snapshot")
