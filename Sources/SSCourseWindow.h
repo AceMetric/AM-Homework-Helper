@@ -4,6 +4,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface SSCourseController : NSViewController <NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate>
 @property (copy) NSArray<NSDictionary *> * (^tasksProvider)(void);
 @property (copy) void (^reviewCandidate)(NSDictionary *candidate);
+@property (copy, nullable) void (^restoreTaskNotes)(NSString *identifier);
 @property (copy) void (^editTask)(NSString *identifier);
 @property (copy) void (^stateChanged)(void);
 @property (copy, nullable) NSString * (^saveReviewItems)(NSArray<NSDictionary *> *items, BOOL automatic);

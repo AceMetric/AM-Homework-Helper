@@ -195,6 +195,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.courseWorkspace.saveHandler=self.reviewWorkspace.saveHandler;
     self.courseWorkspace.sourceHandler=self.reviewWorkspace.sourceHandler;
     self.courseWorkspace.actionHandler=^(NSString *action,NSString *identifier){
+        if([action isEqual:@"restore-notes"]){if(owner.restoreTaskNotes)owner.restoreTaskNotes(identifier);return;}
+        if([action isEqual:@"edit-task"]){if(owner.editTask)owner.editTask(identifier);return;}
         if([action isEqual:@"select"]){dispatch_async(dispatch_get_main_queue(),^{
             for(NSDictionary *record in owner.visible)if([record[@"id"] isEqual:identifier]){owner.selectedCandidateID=identifier;[owner refreshPresentation];break;}
         });return;}
