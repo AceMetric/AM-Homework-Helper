@@ -83,7 +83,7 @@ NSArray *SSValidatedSkillResults(id result, NSArray *documents, NSArray *referen
         NSError *validation=nil;NSArray *found=SSValidatedModelResults(document[@"activities"],live[@"text"],live[@"repository"],live[@"path"],live[@"blobSHA"],calendar,&validation);
         if(validation || found.count!=[document[@"activities"] count]){if(error)*error=validation ?: RError(@"Skill 结果有无效字段或原文引用，未导入。");return nil;}
         for(NSDictionary *record in found){NSMutableDictionary *copy=record.mutableCopy;copy[@"recognizer"]=@"skill-v1";copy[@"modelOnly"]=@YES;
-            for(NSDictionary *reference in references)if([reference[@"id"] isEqual:record[@"id"]])for(NSString *field in @[@"dateBasis",@"suggestedDue"])if(reference[field])copy[field]=reference[field];
+            for(NSDictionary *reference in references)if([reference[@"id"] isEqual:record[@"id"]] && [reference[@"blobSHA"] isEqual:record[@"blobSHA"]])for(NSString *field in @[@"dateBasis",@"suggestedDue"])if(reference[field])copy[field]=reference[field];
             [records addObject:copy];}
     }
     return records;

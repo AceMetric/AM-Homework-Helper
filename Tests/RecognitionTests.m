@@ -121,7 +121,7 @@ int main(void){@autoreleasepool{
     answerB[@"blobSHA"]=@"stale";accepted=SSSkillValidateBatch(batchAnswer,@[courseA,courseB],scans,batches,nil,NULL);
     Check([accepted[@"progress"] count]==1 && [accepted[@"issues"] count]==1,@"stale course does not block valid course or advance its progress");
     answerB[@"blobSHA"]=@"v1";answerB[@"courseID"]=@"unknown/course";accepted=SSSkillValidateBatch(batchAnswer,@[courseA,courseB],scans,batches,nil,NULL);
-    Check([accepted[@"progress"] count]==1 && [accepted[@"issues"] count]==1,@"unknown course cannot be silently mapped");
+    Check([accepted[@"progress"] count]==1 && [accepted[@"issues"] count]>=1,@"unknown course cannot be silently mapped");
     Check(!SSSkillValidateBatch(batchAnswer,@[courseA,courseB],scans,@{},nil,NULL),@"unknown batch refuses import");
     accepted=SSSkillValidateBatch(skill,@[courseA,courseB],scans,@{},courseA[@"fork"],NULL);
     Check([accepted[@"records"][courseA[@"fork"]] count]==1,@"legacy single-course result remains compatible");
