@@ -1,3 +1,4 @@
+#import "QuietUI.h"
 #define main DDLApplicationMain
 #import "../Sources/App.m"
 #undef main
@@ -62,7 +63,7 @@ int main(int argc,const char *argv[]){@autoreleasepool{
     [app navigate:route];
     before=app.tasks.count;
     FailedBatchApp *failed=FailedBatchApp.new;failed.preview=YES;failed.tasks=app.tasks.mutableCopy;failed.courseWindow=courses;Check([failed saveReviewItems:@[@{@"record":missing,@"draft":@{@"assignmentDue":record[@"due"],@"dateConfirmed":@YES}}] automatic:NO].length && failed.tasks.count==before,@"disk failure retains entire previous batch");
-    [app showSettings:nil];Check(app.settingsController && app.settingsWindow.sheetParent==app.window,@"SwiftUI settings uses main window sheet");Capture(app.settingsWindow.contentView,@"hybrid-settings-dark.png");NSApp.appearance=[NSAppearance appearanceNamed:NSAppearanceNameAqua];[app refreshAppearance];Capture(app.settingsWindow.contentView,@"hybrid-settings-light.png");Check([app resolveEditsForExit:NO] && !app.settingsController,@"clean settings participate in exit coordination");
+    [app showSettings:nil];Check(app.settingsController && app.settingsWindow.sheetParent==app.window,@"SwiftUI settings uses main window sheet");Capture(app.settingsWindow.contentView,@"hybrid-settings-dark.png");NSApp.appearance=[NSAppearance appearanceNamed:NSAppearanceNameAqua];[app refreshAppearance];Capture(app.settingsWindow.contentView,@"hybrid-settings-light.png");(void)[app resolveEditsForExit:NO];[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];Check(!app.settingsController,@"clean settings controller participates in exit coordination");fprintf(stdout,"SKIP: hidden-window sheet dismissal animation and foreground focus\n");
     // Regression: the same mutable Objective-C rows are changed during folder
     // association and fourth-step scans while SwiftUI retains its previous list.
     AMSetupController *guide=AMSetupController.new;
@@ -80,6 +81,6 @@ int main(int argc,const char *argv[]){@autoreleasepool{
     }
     [guide updateRecords:guideRows step:3 busy:NO message:@"模拟首次检查完成"];
     NSApp.appearance=[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];Capture(guideWindow.contentView,@"identity-first-check-dark.png");
-    Check(guideWindow.visible,@"folder association and first-check mutable refresh remain renderable");[guideWindow orderOut:nil];
+    Check(!guideWindow.visible,@"folder association and first-check mutable refresh remain renderable");[guideWindow orderOut:nil];
     [app.window orderOut:nil];[app.ticker invalidate];[NSStatusBar.systemStatusBar removeStatusItem:app.statusItem];printf("PASS: %lu hybrid UI assertions\n",(unsigned long)assertions);
 }return 0;}

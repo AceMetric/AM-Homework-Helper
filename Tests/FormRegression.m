@@ -1,3 +1,4 @@
+#import "QuietUI.h"
 #define main DDLApplicationMain
 #import "../Sources/App.m"
 #undef main

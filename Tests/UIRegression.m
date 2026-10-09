@@ -1,3 +1,4 @@
+#import "QuietUI.h"
 // Exercise the real AppKit views with in-memory preview tasks only.
 #define main DDLApplicationMain
 #import "../Sources/App.m"

@@ -1,3 +1,4 @@
+#import "QuietUI.h"
 // Synthetic UI scenarios only: no account, repository, persistence or notifications.
 #define main DDLApplicationMain
 #import "../Sources/App.m"
