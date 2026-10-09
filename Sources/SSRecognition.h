@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 NS_ASSUME_NONNULL_BEGIN
+NSDictionary * _Nullable SSSkillReadResult(NSURL *url, NSError **error);
 NSDictionary *SSRecognitionSettings(void);
 BOOL SSValidateRecognitionSettings(NSDictionary *settings, NSError **error);
 NSArray *SSAttachLinkedDocuments(NSArray *records, NSArray *documents);

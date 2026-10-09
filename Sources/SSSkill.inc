@@ -1,3 +1,18 @@
+#import <fcntl.h>
+#import <sys/stat.h>
+#import <unistd.h>
+// Bounded no-follow read: result files are data, never executable instructions.
+NSDictionary *SSSkillReadResult(NSURL *url,NSError **error) {
+    int fd=open(url.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_NONBLOCK);struct stat info;
+    if(fd<0){if(error)*error=RError(@"无法读取结果文件，请使用普通 JSON 文件。");return nil;}
+    if(fstat(fd,&info)!=0 || !S_ISREG(info.st_mode) || info.st_size<2 || info.st_size>8*1024*1024){close(fd);if(error)*error=RError(@"结果须为不超过8 MB的普通 JSON 文件。");return nil;}
+    NSMutableData *data=[NSMutableData dataWithLength:(NSUInteger)info.st_size];NSUInteger offset=0;
+    while(offset<data.length){ssize_t count=read(fd,(char *)data.mutableBytes+offset,data.length-offset);if(count<=0)break;offset+=(NSUInteger)count;}close(fd);
+    id result=offset==data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
+    if(![result isKindOfClass:NSDictionary.class] || ![result[@"documents"] isKindOfClass:NSArray.class] || [result[@"documents"] count]>1000 || (result[@"batchID"] && ![result[@"batchID"] isKindOfClass:NSString.class])){if(error)*error=RError(@"结果尚未完整或格式无效，请让助手完整写入后重试。");return nil;}
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];CC_SHA256(data.bytes,(CC_LONG)data.length,digest);NSMutableString *fingerprint=NSMutableString.string;for(NSUInteger i=0;i<sizeof(digest);i++)[fingerprint appendFormat:@"%02x",digest[i]];
+    return @{@"result":result,@"fingerprint":fingerprint};
+}
 // Pure batch exchange: no filesystem, task writes, model calls or Git operations.
 NSString *SSSkillProgressKey(NSString *course, NSDictionary *document) {
     return [NSString stringWithFormat:@"%@|%@|%@",course,document[@"repository"],document[@"path"]];
@@ -16,7 +31,7 @@ NSDictionary *SSSkillExport(NSArray *courses, NSDictionary *scans, NSDictionary 
         copy[@"courseID"]=course[@"fork"];[documents addObject:copy];manifest[key]=version;
     }
     NSString *batch=NSUUID.UUID.UUIDString;
-    return @{@"context":@{@"format":@"am-course-context-v2",@"batchID":batch,@"documents":documents},@"manifest":manifest};
+    return @{@"context":@{@"format":@"am-course-context-v2",@"skillVersion":@3,@"batchID":batch,@"documents":documents},@"manifest":manifest};
 }
 NSDictionary *SSSkillValidateBatch(id result, NSArray *courses, NSDictionary *scans, NSDictionary *batches, NSString *legacyCourse, NSError **error) {
     BOOL legacy=[result isKindOfClass:NSDictionary.class] && [result[@"format"] isEqual:@"am-course-results-v1"];
@@ -41,5 +56,6 @@ NSDictionary *SSSkillValidateBatch(id result, NSArray *courses, NSDictionary *sc
         if(!records[target])records[target]=NSMutableArray.array;[records[target] addObjectsFromArray:found];
         progress[key]=SSSkillVersion(live);counts[target]=@([counts[target] unsignedIntegerValue]+1);
     }
+    if(!legacy)for(NSString *key in manifest)if(![seen containsObject:key])[issues addObject:@"本批有文档尚未返回结果，增量进度保留，可重新交给助手。"];
     return @{@"records":records,@"progress":progress,@"counts":counts,@"issues":issues};
 }

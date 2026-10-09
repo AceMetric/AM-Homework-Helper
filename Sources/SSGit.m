@@ -229,23 +229,22 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSCalendar *calendar = [NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian]; calendar.timeZone = [NSTimeZone timeZoneWithName:candidate[@"timeZone"] ?: @""] ?: NSTimeZone.localTimeZone;
     return SSApplyDateReference(candidate, [NSDate dateWithTimeIntervalSince1970:timestamp], commit, calendar);
 }
-- (NSDictionary *)scanCourse:(NSDictionary *)course cache:(NSMutableDictionary *)cache error:(NSError **)error {
+- (NSDictionary *)readCourseDocuments:(NSDictionary *)course paths:(NSArray *)paths fetch:(BOOL)fetch cache:(NSMutableDictionary *)cache error:(NSError **)error {
     if (![self validateCourse:course error:error]) return nil;
     NSString *path = course[@"path"];
     NSString *url=[self teacherURL:course path:path error:error];if(!url)return nil;
     NSString *branch=[self teacherBranch:url course:course error:error];if(!branch)return nil;
-    if(![self teacherRequest:@[@"fetch",@"--no-tags",@"--",url,[@"refs/heads/" stringByAppendingString:branch]] course:course error:error])return nil;
+    if(fetch && ![self teacherRequest:@[@"fetch",@"--no-tags",@"--",url,[@"refs/heads/" stringByAppendingString:branch]] course:course error:error])return nil;
     SSGitResult *tip=[self checked:@[@"rev-parse",@"FETCH_HEAD"] in:path token:nil error:error];NSString *head=tip ? Trim([self string:tip]) : nil;if(!head)return nil;
     SSGitResult *tree = [self checked:@[@"ls-tree", @"-r", @"-l", @"-z", head] in:path token:nil error:error]; if (!tree) return nil;
-    NSMutableArray *candidates = NSMutableArray.array, *materials = NSMutableArray.array, *skipped = NSMutableArray.array;
-    NSMutableArray *documents = NSMutableArray.array, *recognitionMessages = NSMutableArray.array;
-    NSDictionary *settings=SSCourseRecognitionSettings(self.recognitionSettings ?: @{@"mode":@"rules"},course);
-    NSMutableSet *dedup = NSMutableSet.set; NSUInteger total = 0;
+    NSMutableArray *skipped = NSMutableArray.array;
+    NSMutableArray *documents = NSMutableArray.array;
+    NSUInteger total = 0;
     NSCalendar *calendar = [NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];
     calendar.timeZone = [NSTimeZone timeZoneWithName:course[@"timeZone"] ?: NSTimeZone.localTimeZone.name] ?: NSTimeZone.localTimeZone;
     for (NSString *entry in NonemptyParts([self string:tree], @"\0")) {
         NSRange tab = [entry rangeOfString:@"\t"]; if (tab.location == NSNotFound) continue;
-        NSString *file = [entry substringFromIndex:NSMaxRange(tab)]; if (!SSIsSupportedDocument(file)) continue;
+        NSString *file = [entry substringFromIndex:NSMaxRange(tab)]; if (!SSIsSupportedDocument(file) || (paths && ![paths containsObject:file])) continue;
         if (SSSensitivePath(file)) { [skipped addObject:[file stringByAppendingString:@"：敏感文件名，未读取"]]; continue; }
         NSArray *fields = NonemptyParts([entry substringToIndex:tab.location], @" ");
         if (fields.count < 4 || ![fields[1] isEqual:@"blob"]) continue;
@@ -263,15 +262,26 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
             cache[key] = text;
         }
         [documents addObject:@{@"repository":course[@"upstream"],@"path":file,@"blobSHA":fields[2],@"text":text,@"timeZone":calendar.timeZone.name}];
+    }
+    return @{@"documents":documents,@"skipped":skipped,@"commit":head,@"branch":branch,@"date":NSDate.date};
+}
+- (NSDictionary *)scanCourse:(NSDictionary *)course cache:(NSMutableDictionary *)cache error:(NSError **)error {
+    NSDictionary *snapshot=[self readCourseDocuments:course paths:nil fetch:YES cache:cache error:error];if(!snapshot)return nil;
+    NSArray *documents=snapshot[@"documents"],*skipped=snapshot[@"skipped"];NSString *head=snapshot[@"commit"],*branch=snapshot[@"branch"],*path=course[@"path"];
+    NSDictionary *settings=SSCourseRecognitionSettings(self.recognitionSettings ?: @{@"mode":@"rules"},course);
+    NSMutableArray *candidates=NSMutableArray.array,*materials=NSMutableArray.array,*recognitionMessages=NSMutableArray.array;
+    NSMutableSet *dedup=NSMutableSet.set;NSCalendar *calendar=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];
+    calendar.timeZone=[NSTimeZone timeZoneWithName:course[@"timeZone"] ?: NSTimeZone.localTimeZone.name] ?: NSTimeZone.localTimeZone;
+    for(NSDictionary *document in documents){NSString *text=document[@"text"],*file=document[@"path"],*blob=document[@"blobSHA"];
         NSError *recognitionError = nil;
         if (self.progress) self.progress([NSString stringWithFormat:@"正在识别老师文档：%@",file]);
-        NSArray *found = SSRecognizeDocument(text, course[@"upstream"], file, fields[2], calendar, settings, cache, &recognitionError);
+        NSArray *found = SSRecognizeDocument(text, course[@"upstream"], file, blob, calendar, settings, cache, &recognitionError);
         if (recognitionError) [recognitionMessages addObject:[NSString stringWithFormat:@"%@：%@",file,recognitionError.localizedDescription]];
         for (NSDictionary *candidate in found) {
             if (![candidate[@"kind"] isEqual:@"assignment"]) { [materials addObject:candidate]; continue; }
             NSString *fingerprint = [NSString stringWithFormat:@"%@|%@|%@", [candidate[@"title"] lowercaseString], candidate[@"due"], candidate[@"deadlineText"] ?: @""];
             if ([dedup containsObject:fingerprint]) continue; [dedup addObject:fingerprint];
-            NSString *referenceKey = [NSString stringWithFormat:@"reference-v4|%@|%@|%@|%@|%@|%@", course[@"upstream"], head, file, fields[2], candidate[@"line"], calendar.timeZone.name];
+            NSString *referenceKey = [NSString stringWithFormat:@"reference-v4|%@|%@|%@|%@|%@|%@", course[@"upstream"], head, file, blob, candidate[@"line"], calendar.timeZone.name];
             NSDictionary *referenced = [cache[referenceKey] isKindOfClass:NSArray.class] ? [cache[referenceKey] firstObject] : nil;
             if (!referenced) { referenced = [self dateReferenceForCandidate:candidate head:head path:path]; if ([candidate[@"relative"] boolValue]) cache[referenceKey] = @[referenced]; }
             NSMutableDictionary *copy = candidate.mutableCopy;for(NSString *field in @[@"suggestedDue",@"dateBasis"])if(referenced[field])copy[field]=referenced[field]; if (!copy[@"timeZone"]) copy[@"timeZone"] = calendar.timeZone.name; [candidates addObject:copy];
