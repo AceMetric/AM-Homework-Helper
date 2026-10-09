@@ -124,7 +124,12 @@ NSDictionary *SSReviewedTask(NSDictionary *record, NSDictionary *draft, NSDictio
     // due is the only active deadline. Legacy draft fields remain readable for
     // compatibility; existing deadlines and user notes are never migrated blindly.
     NSDate *teacher = draft[@"assignmentDue"] ?: draft[@"personalDue"] ?: draft[@"teacherDue"] ?: existing[@"due"] ?: record[@"due"];
-    if (![record[@"kind"] ?: @"assignment" isEqual:@"assignment"] || !title.length || ![teacher isKindOfClass:NSDate.class] || (([record[@"needsDate"] boolValue] || [record[@"needsTime"] boolValue] || [record[@"warnings"] count]) && ![draft[@"dateConfirmed"] boolValue])) { if(error)*error=RError(@"请确认作业类型、名称和完整截止时间；含糊日期需明确确认。"); return nil; }
+    NSString *problem=nil;
+    if (![record[@"kind"] ?: @"assignment" isEqual:@"assignment"])problem=@"请先确认材料类型为作业。";
+    else if(!title.length)problem=@"请填写作业名称。";
+    else if(![teacher isKindOfClass:NSDate.class])problem=@"请补全截止日期和时间。";
+    else if(([record[@"needsDate"] boolValue] || [record[@"needsTime"] boolValue] || [record[@"warnings"] count]) && ![draft[@"dateConfirmed"] boolValue])problem=@"请核对并确认完整截止日期和时间。";
+    if(problem){if(error)*error=RError(problem);return nil;}
     NSMutableDictionary *task = existing ? existing.mutableCopy : [@{@"id":NSUUID.UUID.UUIDString,@"completed":@NO,@"archived":@NO,@"reminderOffsets":DDLDefaultReminderOffsets()} mutableCopy];
     task[@"title"] = title;
     task[@"subject"] = draft[@"subject"] ?: existing[@"subject"] ?: [record[@"repository"] lastPathComponent] ?: @"课程";

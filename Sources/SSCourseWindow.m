@@ -163,6 +163,12 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.actionButtons = @[self.scanButton, self.syncButton, self.commitButton, self.moreButton, self.setupButton];
     self.reviewWorkspace = [AMReviewController new];
     __weak typeof(self) owner = self;
+    self.reviewWorkspace.sourceHandler=^NSDictionary *(NSString *identifier){
+        NSDictionary *source=[owner reviewSourceWithID:identifier];if(!source)return nil;
+        NSMutableDictionary *copy=[SSEnrichDiscovery(source) mutableCopy];
+        for(NSDictionary *task in owner.tasksProvider ? owner.tasksProvider():@[])if([task[@"sourceID"] isEqual:identifier]){copy[@"existingTask"]=task;break;}
+        return copy;
+    };
     self.reviewWorkspace.saveHandler = ^NSString *(NSArray *items) {
         if ((owner.operationsPaused && !owner.resolvingReview) || owner.busy) return @"请等待当前操作结束后再保存。";
         if (!owner.saveReviewItems) return @"任务保存接口尚未就绪。";
@@ -179,6 +185,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     [self addChildViewController:self.reviewWorkspace]; [root addSubview:self.reviewWorkspace.view];
     self.courseWorkspace=AMCourseController.new;
     self.courseWorkspace.saveHandler=self.reviewWorkspace.saveHandler;
+    self.courseWorkspace.sourceHandler=self.reviewWorkspace.sourceHandler;
     self.courseWorkspace.actionHandler=^(NSString *action,NSString *identifier){
         if([action isEqual:@"select"]){dispatch_async(dispatch_get_main_queue(),^{
             for(NSDictionary *record in owner.visible)if([record[@"id"] isEqual:identifier]){owner.selectedCandidateID=identifier;[owner refreshPresentation];break;}
