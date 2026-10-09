@@ -17,6 +17,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// Read teacher documents without running recognition; optional paths bound result verification.
 - (NSDictionary * _Nullable)readCourseDocuments:(NSDictionary *)course paths:(nullable NSArray<NSString *> *)paths fetch:(BOOL)fetch cache:(NSMutableDictionary *)cache error:(NSError **)error;
 - (NSDictionary * _Nullable)scanCourse:(NSDictionary *)course cache:(NSMutableDictionary *)cache error:(NSError **)error;
+- (NSDictionary *)resolveSkillDates:(NSDictionary *)validated scans:(NSDictionary *)scans courses:(NSArray *)courses;
 - (NSDictionary *)enhanceScan:(NSDictionary *)scan course:(NSDictionary *)course settings:(NSDictionary *)settings paths:(nullable NSArray *)paths cache:(NSMutableDictionary *)cache;
 - (NSDictionary * _Nullable)syncCourse:(NSDictionary *)course token:(NSString *)token error:(NSError **)error;
 - (NSArray<NSDictionary *> * _Nullable)changesForCourse:(NSDictionary *)course error:(NSError **)error;
