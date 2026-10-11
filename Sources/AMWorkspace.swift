@@ -13,6 +13,7 @@ import SwiftUI
     @objc public static var selection:NSColor {accent.withAlphaComponent(0.12)}
 }
 private struct WorkspaceSection<Content:View>:View {
+    @Environment(\.colorSchemeContrast) private var contrast
     let title:String
     let content:Content
     init(_ title:String,@ViewBuilder content:()->Content){self.title=title;self.content=content()}
@@ -20,7 +21,7 @@ private struct WorkspaceSection<Content:View>:View {
         VStack(alignment:.leading,spacing:12){Text(title).font(.system(size:13,weight:.semibold));content}
             .padding(16).frame(maxWidth:.infinity,alignment:.leading)
             .background(Color(nsColor:AMAppearance.surface))
-            .overlay(RoundedRectangle(cornerRadius:10).stroke(Color(nsColor:AMAppearance.separator).opacity(0.55),lineWidth:0.5))
+            .overlay(RoundedRectangle(cornerRadius:10).stroke(Color(nsColor:contrast == .increased ? AMAppearance.muted:AMAppearance.separator).opacity(contrast == .increased ? 1:0.55),lineWidth:contrast == .increased ? 1.5:0.5))
             .clipShape(RoundedRectangle(cornerRadius:10))
     }
 }
@@ -728,7 +729,7 @@ private struct SetupWorkspace:View {
         VStack(alignment:.leading,spacing:16){
             if state.step < 4 {
                 HStack(spacing:12){ForEach(0..<4,id:\.self){index in
-                    HStack(spacing:5){Image(systemName:index < state.step ? "checkmark.circle.fill":"\(index+1).circle");Text(steps[index]).font(.caption)}.foregroundStyle(index==state.step ? Color.accentColor:Color.secondary)
+                    HStack(spacing:5){Image(systemName:index < state.step ? "checkmark.circle.fill":"\(index+1).circle");Text(steps[index]).font(.caption)}.foregroundStyle(index==state.step ? Color(nsColor:AMAppearance.accent):Color.secondary)
                     if index<3 {Image(systemName:"chevron.right").font(.caption2).foregroundStyle(.secondary)}
                 }}.accessibilityLabel("第 \(state.step+1) 步，共四步")
                 Divider()
@@ -850,4 +851,87 @@ private struct SkillJobsWorkspace:View {
     @objc public var actionHandler:((String,String)->Void)? {get{state.action}set{state.action=newValue}}
     @objc public func updateRecords(_ records:[NSDictionary],busy:Bool){state.records=records;state.busy=busy}
     public override func loadView(){view=NSHostingView(rootView:SkillJobsWorkspace(state:state))}
+}
+
+@MainActor private final class PlanningState:ObservableObject {
+    @Published var task:NSDictionary=[:]
+    @Published var sections:[NSDictionary]=[]
+    @Published var notice=""
+    var action:((String,String,String,String)->Void)?
+}
+private struct TaskPlanningView:View {
+    @ObservedObject var state:PlanningState
+    private var children:[NSDictionary] {state.task["subtasks"] as? [NSDictionary] ?? []}
+    var body:some View {
+        VStack(alignment:.leading,spacing:12){
+            HStack{Label("计划完成",systemImage:"calendar").font(.system(size:13,weight:.semibold));Spacer();WorkspaceButton(title:string(state.task,"plannedDate").isEmpty ? "安排到…":string(state.task,"plannedDate"),identity:"task-plan"){state.action?("plan",identifier(state.task),"","")}.fixedSize()}
+            Text("计划日期不会改变作业截止时间或提醒。").font(.caption).foregroundStyle(.secondary)
+            Divider()
+            HStack{Text("子任务").font(.system(size:13,weight:.semibold));Spacer();Text("\(children.filter{flag($0,"completed")}.count)/\(children.count)").foregroundStyle(.secondary);WorkspaceButton(title:"添加…",identity:"subtask-add"){state.action?("add",identifier(state.task),"","")}.fixedSize().help("添加子任务")}
+            if children.isEmpty{Text("拆成几个小步骤，逐项完成。").font(.caption).foregroundStyle(.secondary)}
+            ForEach(workspaceRows(children)){row in
+                HStack(alignment:.top,spacing:8){
+                    Button{state.action?("toggle",identifier(state.task),identifier(row.record),"")}label:{Image(systemName:flag(row.record,"completed") ? "checkmark.circle.fill":"circle").foregroundStyle(flag(row.record,"completed") ? Color(nsColor:AMAppearance.accent):Color.secondary)}.buttonStyle(.plain).accessibilityLabel((flag(row.record,"completed") ? "已完成：":"未完成：")+string(row.record,"title")).accessibilityHint("切换子任务完成状态")
+                    VStack(alignment:.leading,spacing:3){Text(string(row.record,"title")).strikethrough(flag(row.record,"completed")).lineLimit(3).help(string(row.record,"title")).fixedSize(horizontal:false,vertical:true);if !string(row.record,"plannedDate").isEmpty{Text(string(row.record,"plannedDate")).font(.caption).foregroundStyle(.secondary)}}.frame(maxWidth:.infinity,alignment:.leading)
+                    Menu{Button("编辑名称…"){state.action?("edit",identifier(state.task),identifier(row.record),"")};Button("安排到…"){state.action?("plan",identifier(state.task),identifier(row.record),"")};Button("上移"){state.action?("up",identifier(state.task),identifier(row.record),"")};Button("下移"){state.action?("down",identifier(state.task),identifier(row.record),"")};Divider();Button("删除",role:.destructive){state.action?("delete",identifier(state.task),identifier(row.record),"")}}label:{Image(systemName:"ellipsis")}.menuStyle(.borderlessButton).frame(width:24).help("子任务操作")
+                }.padding(.vertical,3)
+            }
+            if !children.isEmpty && children.allSatisfy({flag($0,"completed")}) && !flag(state.task,"completed"){Label("步骤已全部完成，可以标记整个作业完成。",systemImage:"checkmark.circle").font(.caption).foregroundStyle(.secondary)}
+        }.padding(12).font(.system(size:13)).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(Color(nsColor:AMAppearance.surface))
+    }
+}
+@objc(AMTaskPlanningController) public final class AMTaskPlanningController:NSViewController {
+    private let state=PlanningState()
+    @objc public var actionHandler:((String,String,String,String)->Void)? {didSet{state.action=actionHandler}}
+    public override func loadView(){view=NSHostingView(rootView:TaskPlanningView(state:state))}
+    @objc public func updateTask(_ task:NSDictionary){state.task=workspaceSnapshot(task) as! NSDictionary}
+}
+private struct WeeklyPlanningView:View {
+    @ObservedObject var state:PlanningState
+    private func invoke(_ action:String,_ row:NSDictionary,_ date:String=""){state.action?(action,string(row,"taskID"),string(row,"subtaskID"),date)}
+    private func item(_ row:NSDictionary)->some View {
+        Button{invoke("select",row)}label:{
+            VStack(alignment:.leading,spacing:5){Text(string(row,"title")).font(.system(size:13,weight:.medium)).lineLimit(3).frame(maxWidth:.infinity,alignment:.leading)
+                if !string(row,"parentTitle").isEmpty{Label(string(row,"parentTitle"),systemImage:"checklist").font(.caption).lineLimit(2).foregroundStyle(.secondary)}
+                if let due=row["due"] as? Date{Text("截止 "+due.formatted(.dateTime.month().day().hour().minute())).font(.caption2).foregroundStyle(.secondary)}
+            }.padding(10).background(Color(nsColor:AMAppearance.surface)).clipShape(RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).stroke(Color(nsColor:AMAppearance.separator).opacity(0.5),lineWidth:0.5))
+        }.buttonStyle(.plain).accessibilityLabel(string(row,"title")+"，查看作业详情")
+        .contextMenu{Button("安排到…"){invoke("plan",row)};Button("取消安排"){invoke("set-plan",row,"")}}
+        .onDrag{let payload=["task":string(row,"taskID"),"subtask":string(row,"subtaskID")];let data=(try? JSONSerialization.data(withJSONObject:payload)) ?? Data();return NSItemProvider(object:(String(data:data,encoding:.utf8) ?? "") as NSString)}
+    }
+    private func section(_ section:NSDictionary)->some View {
+        let rows=section["items"] as? [NSDictionary] ?? []
+        let parents=rows.filter{string($0,"subtaskID").isEmpty}.count
+        return VStack(alignment:.leading,spacing:8){Text(string(section,"label")).font(.system(size:13,weight:.semibold));Text("\(parents) 项作业 · \(rows.count-parents) 个步骤").font(.caption2).foregroundStyle(.secondary)
+            LazyVStack(spacing:8){ForEach(workspaceRows(rows)){row in item(row.record)};if rows.isEmpty{Text("暂无安排").font(.caption).foregroundStyle(.secondary).padding(.vertical,16).frame(maxWidth:.infinity)}}
+        }.padding(10).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(Color(nsColor:AMAppearance.sidebar).opacity(0.55)).clipShape(RoundedRectangle(cornerRadius:10))
+        .onDrop(of:["public.utf8-plain-text"],isTargeted:nil){providers in
+            guard let provider=providers.first,provider.canLoadObject(ofClass:NSString.self) else{return false}
+            let sectionID=identifier(section);guard sectionID != "overdue" else{return false}
+            provider.loadObject(ofClass:NSString.self){object,_ in
+                guard let text=object as? String,text.utf8.count<4096,let data=text.data(using:.utf8),let payload=(try? JSONSerialization.jsonObject(with:data)) as? [String:String],let task=payload["task"],let sub=payload["subtask"] else{return}
+                DispatchQueue.main.async{state.action?("set-plan",task,sub,sectionID == "unplanned" ? "":sectionID)}
+            };return true
+        }
+    }
+    var body:some View {
+        GeometryReader{geometry in
+            VStack(alignment:.leading,spacing:12){
+                HStack{Button{state.action?("previous","","","")}label:{Image(systemName:"chevron.left")}.help("上一周").accessibilityLabel("上一周");Button("本周"){state.action?("current","","","")}.accessibilityIdentifier("week-current");Button{state.action?("next","","","")}label:{Image(systemName:"chevron.right")}.help("下一周").accessibilityLabel("下一周");Spacer();Text(state.sections.first?["date"] as? Date ?? Date(),format:.dateTime.year().month().day()).font(.headline)}
+                Text("安排工作日期，截止时间保持不变。也可以通过“安排到…”操作，无需拖放。").font(.caption).foregroundStyle(.secondary)
+                if !state.notice.isEmpty{Text(state.notice).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)}
+                ScrollView{
+                    if geometry.size.width>=1000{HStack(alignment:.top,spacing:8){ForEach(workspaceRows(Array(state.sections.prefix(7)))){row in section(row.record)}}}
+                    else{LazyVStack(spacing:12){ForEach(workspaceRows(Array(state.sections.prefix(7)))){row in section(row.record)}}}
+                    ForEach(workspaceRows(Array(state.sections.dropFirst(7)))){row in section(row.record).padding(.top,12)}
+                }
+            }.padding(4)
+        }.background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent))
+    }
+}
+@objc(AMWeeklyPlanningController) public final class AMWeeklyPlanningController:NSViewController {
+    private let state=PlanningState()
+    @objc public var actionHandler:((String,String,String,String)->Void)? {didSet{state.action=actionHandler}}
+    public override func loadView(){view=NSHostingView(rootView:WeeklyPlanningView(state:state))}
+    @objc public func updateSections(_ sections:[NSDictionary],notice:String){state.sections=workspaceRecords(sections);state.notice=notice}
 }

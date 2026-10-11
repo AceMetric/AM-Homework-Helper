@@ -318,6 +318,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSScrollView *navigationScroll;
 @property BOOL coursesCollapsed;
 @property NSString *selectedTaskID;
+@property BOOL weeklyMode;
+@property NSInteger weekOffset;
+@property AMWeeklyPlanningController *weeklyController;
+@property AMTaskPlanningController *taskPlanningController;
 @property Surface *taskDetails;
 @property NSScrollView *taskDetailsScroll;
 @property TaskDetailsText *taskDetailsText;
@@ -719,6 +723,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     if (!self.preview) { UNUserNotificationCenter.currentNotificationCenter.delegate = self; [self refreshPermission]; [self refreshReminders]; }
     self.ticker = [NSTimer timerWithTimeInterval:60 target:self selector:@selector(tick:) userInfo:nil repeats:YES]; [NSRunLoop.mainRunLoop addTimer:self.ticker forMode:NSRunLoopCommonModes];
     [NSWorkspace.sharedWorkspace.notificationCenter addObserver:self selector:@selector(woke:) name:NSWorkspaceDidWakeNotification object:nil];
+    [NSWorkspace.sharedWorkspace.notificationCenter addObserver:self selector:@selector(accessibilityChanged:) name:NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification object:nil];
     self.courseWindow = [self makeCourseController];
     self.courseWindow.tasksProvider = ^NSArray * { return [weakSelf snapshot]; };
     self.courseWindow.saveReviewItems = ^NSString *(NSArray *items, BOOL automatic) { return [weakSelf saveReviewItems:items automatic:automatic]; };
@@ -746,6 +751,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     [self layout];
 }
 - (SSCourseController *)makeCourseController {return [[SSCourseController alloc] initWithPreview:self.preview];}
+- (void)accessibilityChanged:(NSNotification *)notification {[self refreshAppearance];}
 - (void)refreshAppearance {
     if (!self.window || self.renderBusy) return;
     NSResponder *focus = self.window.firstResponder; NSInteger calendarFocus = focus == self.yearPicker ? 1 : (focus == self.monthPicker ? 2 : 0);
@@ -845,6 +851,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     [self render];
 }
 - (void)layoutTaskArea {
+    BOOL weekly=self.page==0 && self.weeklyMode;self.weeklyController.view.hidden=!weekly;self.scroll.hidden=self.page>=3 || self.calendarMode || weekly;
     CGFloat w=NSWidth(self.root.bounds),h=NSHeight(self.root.bounds),x=216,content=w-x-24;
     self.taskDetails.hidden=self.page>=3 || self.calendarMode || !self.selectedTaskID;
     if(self.calendarMode){
@@ -859,6 +866,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 - (NSArray *)selectionTasks {
     if(self.page==2)return [[self visibleTasks] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *task,NSDictionary *bindings){return ![task[@"deleted"] boolValue];}]];
     if(self.page==1){NSMutableArray *result=NSMutableArray.array;for(NSDictionary *task in DDLCalendarTasks(self.tasks,self.calendarStatus.selectedSegment,self.query))if([Cal() isDate:task[@"due"] inSameDayAsDate:self.selectedDay])[result addObject:task];return result;}
+    if(self.page==0 && self.weeklyMode){NSMutableSet *ids=NSMutableSet.set;for(NSDictionary *section in DDLWeekSections(self.tasks,NSDate.date,self.weekOffset,Cal(),self.query ?: @""))for(NSDictionary *item in section[@"items"])[ids addObject:item[@"taskID"]];return [self.tasks filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *task,NSDictionary *bindings){return [ids containsObject:task[@"id"]];}]];}
     if(self.page==0){NSDate *end=[Cal() dateByAddingUnit:NSCalendarUnitDay value:8 toDate:[Cal() startOfDayForDate:NSDate.date] options:0];NSMutableArray *result=NSMutableArray.array;for(NSDictionary *task in self.tasks)if(![task[@"completed"] boolValue] && ![task[@"archived"] boolValue] && ![task[@"deleted"] boolValue] && [task[@"due"] compare:end]==NSOrderedAscending && (!self.query.length || DDLMatchesFilter(task,0,self.query,NSDate.date,Cal())))[result addObject:task];return [result sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"due"] compare:b[@"due"]];}];}
     return @[];
 }
@@ -902,10 +910,15 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     TaskDetailsText *text=[[TaskDetailsText alloc] initWithFrame:NSMakeRect(0,0,w-24,NSHeight(scroll.bounds))];text.editable=NO;text.selectable=YES;text.richText=YES;text.drawsBackground=NO;text.textContainerInset=NSMakeSize(4,8);text.minSize=NSMakeSize(0,NSHeight(scroll.bounds));text.maxSize=NSMakeSize(CGFLOAT_MAX,CGFLOAT_MAX);text.verticallyResizable=YES;text.horizontallyResizable=NO;text.autoresizingMask=NSViewWidthSizable;text.textContainer.widthTracksTextView=YES;ThemeEditor(text);
     NSMutableAttributedString *body=NSMutableAttributedString.new;
     void (^append)(NSString *,CGFloat,NSFontWeight,NSColor *)=^(NSString *value,CGFloat size,NSFontWeight weight,NSColor *color){[body appendAttributedString:[[NSAttributedString alloc] initWithString:value attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:size weight:weight],NSForegroundColorAttributeName:color}]];};
-    append([task[@"title"] stringByAppendingString:@"\n\n"],17,NSFontWeightSemibold,Ink());
-    append([NSString stringWithFormat:@"%@\n截止：%@\n%@\n\n",task[@"subject"] ?: @"",DDLFormatDate(task[@"due"],@"yyyy年M月d日 HH:mm"),[task[@"archived"] boolValue] ? @"已归档":([task[@"completed"] boolValue] ? @"已完成":@"待完成")],13,NSFontWeightRegular,Muted());
     append(@"备注\n",13,NSFontWeightSemibold,Ink());append([task[@"notes"] length] ? task[@"notes"]:@"暂无备注，可通过“编辑任务”添加。",13,NSFontWeightRegular,[task[@"notes"] length] ? Ink():Muted());
-    [text.textStorage setAttributedString:body];__weak typeof(self) owner=self;text.onClose=^{[owner closeTaskDetails:nil];};scroll.documentView=text;[panel addSubview:scroll];[text.layoutManager ensureLayoutForTextContainer:text.textContainer];[text setFrameSize:NSMakeSize(w-24,MAX(NSHeight(scroll.bounds),NSMaxY([text.layoutManager usedRectForTextContainer:text.textContainer])+16))];
+    [text.textStorage setAttributedString:body];__weak typeof(self) owner=self;text.onClose=^{[owner closeTaskDetails:nil];};[panel addSubview:scroll];[text.layoutManager ensureLayoutForTextContainer:text.textContainer];
+    Surface *detailDocument=Box(Card(),0);CGFloat plannerHeight=170+[task[@"subtasks"] count]*76;CGFloat textHeight=MAX(180,NSMaxY([text.layoutManager usedRectForTextContainer:text.textContainer])+16);
+    AMTaskPlanningController *planner=AMTaskPlanningController.new;self.taskPlanningController=planner;[planner updateTask:task];planner.actionHandler=^(NSString *action,NSString *taskID,NSString *subID,NSString *value){[owner planningAction:action task:taskID subtask:subID value:value];};
+    detailDocument.frame=NSMakeRect(0,0,w-24,100+plannerHeight+textHeight);
+    NSTextField *taskTitle=Text(task[@"title"],17,NSFontWeightSemibold,Ink());taskTitle.maximumNumberOfLines=2;taskTitle.toolTip=task[@"title"];Put(detailDocument,taskTitle,12,4,w-48,44);
+    Put(detailDocument,Text([NSString stringWithFormat:@"截止：%@",DDLFormatDate(task[@"due"],@"yyyy年M月d日 HH:mm")],12,NSFontWeightRegular,Muted()),12,52,w-48,22);
+    Put(detailDocument,Text([task[@"archived"] boolValue] ? @"已归档":([task[@"completed"] boolValue] ? @"已完成":@"待完成"),12,NSFontWeightRegular,Muted()),12,76,w-48,20);
+    Put(detailDocument,text,0,100,w-24,textHeight);Put(detailDocument,planner.view,0,100+textHeight,w-24,plannerHeight);scroll.documentView=detailDocument;
     [scroll.contentView scrollToPoint:position];self.taskDetailsScroll=scroll;self.taskDetailsText=text;
     if(restoreFocus){[self.window makeFirstResponder:text];text.selectedRange=NSMakeRange(MIN(selection.location,text.string.length),MIN(selection.length,text.string.length-MIN(selection.location,text.string.length)));}
     ActionButton *edit=Button(@"编辑任务",self,@selector(editTask:),2);edit.identifier=task[@"id"];BOOL canRestore=![task[@"notes"] length] && SSSuggestedNotes(task).length;
@@ -1060,12 +1073,16 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     Clear(self.header); CGFloat w = NSWidth(self.header.bounds);
     if (self.calendarMode) { [self renderCalendarHeader]; return; }
     NSString *title = @[@"今日与近期安排", @"日历", @"任务", @"待审核作业", @"课程"][self.page];
+    if(self.page==0 && self.weeklyMode)title=@"每周安排";
     if(self.page==4)title=self.courseWindow.selectedCourseID.lastPathComponent ?: @"所有课程";
     Put(self.header, Text(title, 25, NSFontWeightSemibold, Ink()), 0, 4, w - 152, 32);
     NSString *subtitle = (self.notice.length && self.page < 3) ? self.notice : (self.page == 0 ? DDLFormatDate(NSDate.date, @"M月d日 EEEE") : (self.page == 3 ? @"核对老师原文后，将作业加入日历与提醒" : (self.page == 4 ? @"先检查新作业，需要时再同步课程文件" : @"按截止时间安排任务")));
     if(self.page<3)Put(self.header, Text(subtitle, 13, NSFontWeightRegular, Muted()), 0, 48, w, 24);
+    if(self.page==0){NSSegmentedControl *mode=[NSSegmentedControl segmentedControlWithLabels:@[@"今日",@"本周"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(changeOverviewMode:)];mode.selectedSegment=self.weeklyMode ? 1:0;mode.accessibilityLabel=@"总览显示方式";Put(self.header,mode,w-300,0,144,32);}
     if (self.page < 3) { ActionButton *add = Button(@"新建任务", self, @selector(addTask:), 1); add.symbol = @"plus"; Put(self.header, add, w - 136, 0, 136, 36); }
 }
+#include "AMPlanningUI.inc"
+
 - (void)renderDashboard {
     NSPoint position = self.scroll.contentView.bounds.origin; Clear(self.document);
     CGFloat w = self.scroll.contentSize.width - 8, y = 0;
@@ -1109,7 +1126,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 - (void)taskActions:(NSButton *)sender {
     NSDictionary *task = [self taskWithID:sender.identifier]; if (!task) return;
     NSMenu *menu = NSMenu.new;
-    for (NSArray *entry in @[@[@"复制任务内容", NSStringFromSelector(@selector(copyTask:))], @[[task[@"archived"] boolValue] ? @"恢复到任务" : @"归档", NSStringFromSelector(@selector(archiveTask:))], @[@"移到最近删除", NSStringFromSelector(@selector(deleteTask:))]]) {
+    for (NSArray *entry in @[@[@"安排到…",NSStringFromSelector(@selector(planTask:))], @[@"复制任务内容", NSStringFromSelector(@selector(copyTask:))], @[[task[@"archived"] boolValue] ? @"恢复到任务" : @"归档", NSStringFromSelector(@selector(archiveTask:))], @[@"移到最近删除", NSStringFromSelector(@selector(deleteTask:))]]) {
         NSMenuItem *item = [menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""]; item.target = self; item.representedObject = task[@"id"];
     }
     [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, NSHeight(sender.bounds)) inView:sender];
@@ -1305,7 +1322,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 }
 - (void)renderContent {
     if (self.page >= 3) return;
-    if (self.page == 0) { [self renderDashboard]; return; }
+    if (self.page == 0) { if(self.weeklyMode)[self renderWeekly];else [self renderDashboard]; return; }
     if (self.calendarMode) { [self renderOverview]; return; }
     NSPoint position = self.scroll.contentView.bounds.origin;
     Clear(self.document); CGFloat w = self.scroll.contentSize.width - 8, y = 0;
@@ -1491,7 +1508,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     self.editor = [[EditorController alloc] initWithTask:task owner:self]; [self.window beginSheet:self.editor.window completionHandler:nil];
 }
 - (void)closeEditor { [self.window endSheet:self.editor.window]; [self.editor.window orderOut:nil]; self.editor = nil; }
-- (NSArray *)snapshot { return [[NSArray alloc] initWithArray:self.tasks copyItems:YES]; }
+- (NSArray *)snapshot {NSMutableArray *result=NSMutableArray.array;for(NSDictionary *task in self.tasks){NSMutableDictionary *copy=task.mutableCopy;if(task[@"subtasks"])copy[@"subtasks"]=[[NSArray alloc] initWithArray:task[@"subtasks"] copyItems:YES];[result addObject:copy.copy];}return result.copy;}
 - (BOOL)replaceTasks:(NSArray *)tasks action:(NSString *)action error:(NSError **)error {
     NSArray *normalized=DDLNormalizeTasks(tasks); if (normalized.count!=tasks.count) {if(error)*error=[NSError errorWithDomain:@"AMReview" code:1 userInfo:@{NSLocalizedDescriptionKey:@"部分任务格式无效，未写入任何修改。请核对名称和截止时间后重试。"}];return NO;}
     if (!self.preview) {
@@ -1545,9 +1562,9 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 - (void)completeVisibleTasks:(id)sender {
     NSArray *visible=[self visibleTasks]; NSMutableSet *ids=NSMutableSet.set; for (NSDictionary *task in visible) if (![task[@"completed"] boolValue] && ![task[@"deleted"] boolValue]) [ids addObject:task[@"id"]];
     if (!ids.count) return;
-    NSAlert *alert=NSAlert.new;alert.messageText=[NSString stringWithFormat:@"完成当前筛选的 %lu 项任务？",(unsigned long)ids.count];alert.informativeText=@"仅处理当前列表中未完成的任务，可按 ⌘Z 撤销。";[alert addButtonWithTitle:@"标记完成"];[alert addButtonWithTitle:@"取消"];
+    NSAlert *alert=NSAlert.new;alert.messageText=[NSString stringWithFormat:@"完成当前筛选的 %lu 项任务？",(unsigned long)ids.count];alert.informativeText=@"仅处理当前列表中未完成的任务，同时完成其剩余子任务；可按 ⌘Z 撤销。";[alert addButtonWithTitle:@"标记完成"];[alert addButtonWithTitle:@"取消"];
     if([alert runModal]!=NSAlertFirstButtonReturn)return;
-    NSMutableArray *next=[[self snapshot] mutableCopy];for(NSUInteger i=0;i<next.count;i++)if([ids containsObject:next[i][@"id"]]){NSMutableDictionary *copy=[next[i] mutableCopy];copy[@"completed"]=@YES;next[i]=copy;}
+    NSMutableArray *next=[[self snapshot] mutableCopy];for(NSUInteger i=0;i<next.count;i++)if([ids containsObject:next[i][@"id"]]){NSMutableDictionary *copy=[next[i] mutableCopy];next[i]=DDLTaskCompletion(copy,YES);}
     NSError *error=nil;self.notice=[self replaceTasks:next action:@"批量完成" error:&error] ? @"已批量完成，可按 ⌘Z 撤销。" : (error.localizedDescription ?: @"保存失败。");[self render];
 }
 - (void)prepareUndo:(NSString *)name { NSArray *snapshot = [self snapshot]; [self.taskUndo registerUndoWithTarget:self handler:^(AppDelegate *target) { [target restoreSnapshot:snapshot]; }]; [self.taskUndo setActionName:name]; }
@@ -1566,7 +1583,11 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     if(!change(next[index]))[next removeObjectAtIndex:index];NSError *error=nil;
     self.notice=[self replaceTasks:next action:action error:&error] ? [action stringByAppendingString:@"已保存，可按 ⌘Z 撤销。"] : (error.localizedDescription ?: @"保存失败，任务保持完整。");[self render];
 }
-- (void)toggleTask:(NSButton *)sender { [self changeTask:sender.identifier action:@"完成状态" change:^BOOL(NSMutableDictionary *task){task[@"completed"]=@(![task[@"completed"] boolValue]);return YES;}]; }
+- (void)toggleTask:(NSButton *)sender {
+    NSDictionary *old=[self taskWithID:sender.identifier];if(!old)return;BOOL complete=![old[@"completed"] boolValue];NSUInteger remaining=0;for(NSDictionary *sub in old[@"subtasks"])if(![sub[@"completed"] boolValue])remaining++;
+    if(complete && remaining){NSAlert *alert=NSAlert.new;alert.messageText=@"同时完成剩余子任务？";alert.informativeText=[NSString stringWithFormat:@"还有 %lu 个步骤未完成。确认后一次完成作业与剩余步骤，整次操作可按 ⌘Z 撤销。",(unsigned long)remaining];[alert addButtonWithTitle:@"全部完成"];[alert addButtonWithTitle:@"取消"];if([alert runModal]!=NSAlertFirstButtonReturn)return;}
+    [self changeTask:sender.identifier action:@"完成状态" change:^BOOL(NSMutableDictionary *task){[task setDictionary:DDLTaskCompletion(task,complete)];return YES;}];
+}
 - (void)archiveTask:(id)sender { [self changeTask:[self identifierForSender:sender] action:@"归档任务" change:^BOOL(NSMutableDictionary *task){task[@"archived"]=@(![task[@"archived"] boolValue]);return YES;}]; }
 - (void)deleteTask:(id)sender { [self changeTask:[self identifierForSender:sender] action:@"移入最近删除" change:^BOOL(NSMutableDictionary *task){task[@"deleted"]=@YES;task[@"deletedAt"]=NSDate.date;return YES;}]; }
 - (void)restoreTask:(id)sender { [self changeTask:[self identifierForSender:sender] action:@"恢复任务" change:^BOOL(NSMutableDictionary *task){task[@"deleted"]=@NO;[task removeObjectForKey:@"deletedAt"];return YES;}]; }

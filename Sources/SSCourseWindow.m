@@ -520,14 +520,15 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (void)work:(NSString *)message forCourse:(NSDictionary *)course operation:(id (^)(NSError **))operation completion:(void (^)(id, NSError *))completion {
     if (self.preview) { [self status:@"模拟预览不会操作真实账户或仓库"]; return; }
     if (self.busy || (self.operationsPaused && !self.allowingExitSubmission)) return;
-    NSDate *started=NSDate.date;self.git.cancelledReads=NO;self.git.readsCancellable=[message containsString:@"扫描"] || [message containsString:@"准备中"] || [message containsString:@"核验中"] || [message containsString:@"读取个人"] || [message containsString:@"读取冲突"];self.cancelReadButton.enabled=YES;SSDiagnostic(@"operation",@"started",0);
+    NSDate *started=NSDate.date;self.git.cancelledReads=NO;self.git.readsCancellable=[message containsString:@"扫描"] || [message containsString:@"准备中"] || [message containsString:@"核验中"] || [message containsString:@"读取个人"] || [message containsString:@"读取冲突"] || [message containsString:@"读取本地"];self.cancelReadButton.enabled=YES;SSDiagnostic(@"operation",@"started",0);
     self.busy = YES;self.operationKind=message;self.operationPhase=message; self.workGeneration++; NSUInteger generation = self.workGeneration; NSString *target = course[@"fork"]; self.operationFork = target; self.statusFork = target; [self.progress startAnimation:nil]; [self status:message];
     dispatch_async(self.queue, ^{
         NSError *error = nil; id value = operation(&error);
         dispatch_async(dispatch_get_main_queue(), ^{
             BOOL cancelled=self.git.cancelledReads;self.git.readsCancellable=NO;self.git.cancelledReads=NO;SSDiagnostic(@"operation",cancelled ? @"cancelled":(error ? @"failed":@"success"),-started.timeIntervalSinceNow);
             self.busy = NO; [self.progress stopAnimation:nil]; self.statusFork = target;
-            completion(value, error); if (self.workGeneration == generation) { self.statusFork = nil; self.operationFork = nil; } [self refreshPresentation];
+            NSError *completionError=cancelled ? [NSError errorWithDomain:@"AMOperation" code:NSUserCancelledError userInfo:@{NSLocalizedDescriptionKey:@"已取消读取；已完成的结果保留，可稍后重新检查。"}]:error;
+            completion(cancelled ? nil:value, completionError); if (self.workGeneration == generation) { self.statusFork = nil; self.operationFork = nil; } [self refreshPresentation];
             if (self.operationStateChanged) self.operationStateChanged();
         });
     });
@@ -641,11 +642,12 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         NSMutableDictionary *cache = [SSReadPlist(@"scan-cache.plist") isKindOfClass:NSDictionary.class] ? [SSReadPlist(@"scan-cache.plist") mutableCopy] : NSMutableDictionary.dictionary;
         NSMutableDictionary *result = NSMutableDictionary.dictionary;
         for (NSDictionary *course in courses) {
+            if(self.git.cancelledReads)break;
             if (![course[@"path"] length]){result[course[@"fork"]]=@{@"error":@"尚未关联目录，请先关联文件夹。"};continue;}
             dispatch_async(dispatch_get_main_queue(),^{self.operationFork=course[@"fork"];self.statusFork=course[@"fork"];[self status:@"获取老师内容并进行规则识别…"];});
             NSError *scanError = nil;
             NSDictionary *scan = [self.git scanCourse:course cache:cache error:&scanError];
-            if(scan){NSDictionary *rules=scan;dispatch_async(dispatch_get_main_queue(),^{if(self.hasUnsavedReview)return;self.candidates[course[@"fork"]]=[self retainingSkill:self.candidates[course[@"fork"]] current:rules[@"candidates"] documents:rules[@"documents"]];self.materials[course[@"fork"]]=[self retainingSkill:self.materials[course[@"fork"]] current:rules[@"materials"] documents:rules[@"documents"]];[self status:[SSCourseRecognitionSettings(recognitionSettings,course)[@"mode"] isEqual:@"rules"] ? @"规则结果已显示，正在整理结果…":@"规则结果已显示，正在补充模型分析…"];});
+            if(scan){NSDictionary *rules=scan;dispatch_async(dispatch_get_main_queue(),^{if(self.hasUnsavedReview || self.git.cancelledReads)return;self.candidates[course[@"fork"]]=[self retainingSkill:self.candidates[course[@"fork"]] current:rules[@"candidates"] documents:rules[@"documents"]];self.materials[course[@"fork"]]=[self retainingSkill:self.materials[course[@"fork"]] current:rules[@"materials"] documents:rules[@"documents"]];[self status:[SSCourseRecognitionSettings(recognitionSettings,course)[@"mode"] isEqual:@"rules"] ? @"规则结果已显示，正在整理结果…":@"规则结果已显示，正在补充模型分析…"];});
                 scan=[self.git enhanceScan:scan course:course settings:recognitionSettings paths:nil cache:cache];}
             result[course[@"fork"]] = scan ?: @{@"error":scanError.localizedDescription ?: @"扫描失败",@"detail":scanError.userInfo[@"SSDetail"] ?: scanError.localizedDescription ?: @"",@"issue":scanError.userInfo[@"SSIssue"] ?: @"git"};
         }

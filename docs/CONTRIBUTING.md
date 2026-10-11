@@ -29,6 +29,7 @@
 zsh build.sh
 zsh test.sh
 zsh verify-quality.sh
+zsh verify-planning.sh
 zsh verify-import.sh
 zsh verify-homework.sh
 zsh verify-forms.sh

@@ -49,7 +49,7 @@ void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight weight, NS
         if (self.gradientEnd) [[[NSGradient alloc] initWithStartingColor:self.fill endingColor:self.gradientEnd] drawInBezierPath:path angle:-70];
         else { [self.fill setFill]; [path fill]; }
     }
-    if (self.stroke) { [self.stroke setStroke]; [path stroke]; }
+    if (self.stroke) { BOOL contrast=NSWorkspace.sharedWorkspace.accessibilityDisplayShouldIncreaseContrast;[(contrast ? NSColor.secondaryLabelColor:self.stroke) setStroke];path.lineWidth=contrast ? 1.5:1;[path stroke]; }
 }
 - (void)setFrameSize:(NSSize)size { [super setFrameSize:size]; if (self.onResize) self.onResize(); }
 - (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay = YES; if (self.onAppearanceChange) self.onAppearanceChange(); }
@@ -75,7 +75,7 @@ void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight weight, NS
     if (hoverFill) fill = [fill blendedColorWithFraction:0.10 ofColor:Accent()];
     NSBezierPath *buttonPath = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 1, 1) xRadius:8 yRadius:8];
     [fill setFill]; [buttonPath fill];
-    if(self.tone!=3 && self.tone!=1){[Line() setStroke];buttonPath.lineWidth=0.5;[buttonPath stroke];}
+    if(self.tone!=3 && self.tone!=1){[Line() setStroke];buttonPath.lineWidth=NSWorkspace.sharedWorkspace.accessibilityDisplayShouldIncreaseContrast ? 1.5:0.5;[buttonPath stroke];}
     NSColor *color = self.tone == 1 && self.enabled ? NSColor.whiteColor : (self.selected ? Accent() : Ink());
     if (!self.enabled) color = Muted();
     BOOL iconOnly = self.symbol.length && self.title.length == 0;

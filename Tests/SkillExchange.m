@@ -21,7 +21,7 @@ int main(int argc,const char *argv[]){@autoreleasepool{
     [NSApplication sharedApplication];[NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
     SSCourseController *controller=[[SSCourseController alloc] initWithPreview:YES];controller.preview=NO;
     ExchangeGit *git=ExchangeGit.new;git.reads=NSMutableDictionary.dictionary;controller.git=git;
-    NSArray *courses=@[@{@"fork":@"student/physics",@"upstream":@"teacher/physics",@"path":@"/synthetic/physics"},@{@"fork":@"student/math",@"upstream":@"teacher/math",@"path":@"/synthetic/math"},@{@"fork":@"student/computing",@"upstream":@"teacher/computing",@"path":@"/synthetic/computing"}];
+    NSArray *courses=@[@{@"fork":@"student/physics",@"upstream":@"teacher/physics",@"path":@"/synthetic/physics",@"timeZone":@"Asia/Shanghai"},@{@"fork":@"student/math",@"upstream":@"teacher/math",@"path":@"/synthetic/math",@"timeZone":@"Asia/Shanghai"},@{@"fork":@"student/computing",@"upstream":@"teacher/computing",@"path":@"/synthetic/computing",@"timeZone":@"Asia/Shanghai"}];
     controller.courses=[NSMutableArray arrayWithArray:courses];
     NSMutableDictionary *scans=NSMutableDictionary.dictionary,*sources=NSMutableDictionary.dictionary;NSMutableArray *answers=NSMutableArray.array;
     for(NSDictionary *course in courses){NSDictionary *document=@{@"repository":course[@"upstream"],@"path":@"assignment.md",@"blobSHA":@"version-1",@"timeZone":@"Asia/Shanghai",@"text":@"# 作业\n提交实验报告。截止时间：2027年1月2日 18:00。"};sources[course[@"fork"]]=@[document];scans[course[@"fork"]]=@{@"documents":@[document]};NSMutableDictionary *answer=document.mutableCopy;[answer removeObjectForKey:@"text"];answer[@"courseID"]=course[@"fork"];answer[@"activities"]=@[];[answers addObject:answer];}

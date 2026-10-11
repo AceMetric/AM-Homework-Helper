@@ -16,4 +16,9 @@ NSDictionary<NSDate *, NSArray<NSDictionary *> *> *DDLTasksByDay(NSArray<NSDicti
 NSArray<NSDate *> *DDLMonthGrid(NSDate *month, NSCalendar *calendar);
 NSArray<NSDictionary *> *DDLCalendarTasks(NSArray *items, NSInteger status, NSString *query);
 NSDictionary<NSString *, NSNumber *> *DDLMonthSummary(NSArray *items, NSDate *month, NSDate *now, NSCalendar *calendar);
+NSString *DDLPlanKey(NSDate *date, NSCalendar *calendar);
+NSDate * _Nullable DDLPlanDate(NSString * _Nullable key, NSCalendar *calendar);
+BOOL DDLPlanningValid(NSDictionary *task);
+NSDictionary *DDLTaskCompletion(NSDictionary *task, BOOL complete);
+NSArray<NSDictionary *> *DDLWeekSections(NSArray *tasks, NSDate *now, NSInteger offset, NSCalendar *calendar, NSString *query);
 NS_ASSUME_NONNULL_END

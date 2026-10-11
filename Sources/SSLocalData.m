@@ -1,4 +1,5 @@
 #import "SSLocalData.h"
+#import "DDLCore.h"
 #import <Security/Security.h>
 
 NSURL *SSDataDirectory(void) {

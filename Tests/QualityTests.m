@@ -20,6 +20,13 @@ int main(void){@autoreleasepool{
     Check(SSSaveTasks(@[],before,NULL),@"explicit recovery can persist valid task snapshot");
     NSURL *backup=[SSDataDirectory() URLByAppendingPathComponent:@"tasks.previous.plist"];[NSFileManager.defaultManager removeItemAtURL:backup error:NULL];[NSFileManager.defaultManager createDirectoryAtURL:backup withIntermediateDirectories:NO attributes:nil error:NULL];
     Check(!SSSaveTasks(before,@[],NULL),@"backup failure prevents replacement");Check([SSLoadTasks(NULL) isEqual:before],@"backup failure preserves primary task file");
+    [NSFileManager.defaultManager removeItemAtURL:backup error:NULL];
+    NSURL *pointRoot=[SSDataDirectory() URLByAppendingPathComponent:@"TaskRecovery"];
+    for(NSInteger day=1;day<=10;day++){NSDate *date=[NSCalendar.currentCalendar dateByAddingUnit:NSCalendarUnitDay value:-day toDate:NSDate.date options:0];[@{@"tasks":before,@"date":date,@"kind":@"daily"} writeToURL:[pointRoot URLByAppendingPathComponent:[NSString stringWithFormat:@"daily-fixture-%ld.plist",(long)day]] atomically:YES];}
+    Check(SSSaveTasks(before,before,NULL),@"retention save succeeds");NSUInteger days=0;for(NSDictionary *record in SSRecoveryPoints())if([record[@"kind"] isEqual:@"daily"])days++;Check(days==7,@"daily retention keeps exactly the most recent seven calendar days");
+    NSURL *recovery=[SSDataDirectory() URLByAppendingPathComponent:@"TaskRecovery"],*hold=[SSDataDirectory() URLByAppendingPathComponent:@"RecoveryHold"],*other=[SSDataDirectory() URLByAppendingPathComponent:@"OtherFolder"];
+    [NSFileManager.defaultManager moveItemAtURL:recovery toURL:hold error:NULL];[NSFileManager.defaultManager createDirectoryAtURL:other withIntermediateDirectories:NO attributes:nil error:NULL];[NSFileManager.defaultManager createSymbolicLinkAtURL:recovery withDestinationURL:other error:NULL];
+    Check(!SSSaveTasks(before,@[],NULL),@"substituted recovery root blocks save");Check(SSRecoveryPoints().count==0 && !SSRecoveryTasks(point[@"id"],NULL),@"substituted recovery root cannot be read");[NSFileManager.defaultManager removeItemAtURL:recovery error:NULL];[NSFileManager.defaultManager moveItemAtURL:hold toURL:recovery error:NULL];
     SSDiagnostic(@"scan",@"success",1.25);SSDiagnostic(@"private-content",@"secret-value",2);
     Check(SSDiagnostics().count==1 && [SSDiagnostics()[0][@"stage"] isEqual:@"scan"],@"diagnostics allow categories only");
     for(NSUInteger i=0;i<220;i++)SSDiagnostic(@"save",@"success",0);Check(SSDiagnostics().count==200,@"diagnostic history bounded");
