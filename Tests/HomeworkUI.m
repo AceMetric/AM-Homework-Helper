@@ -7,6 +7,9 @@
 #import "../Sources/SSAssignments.h"
 static NSUInteger checks;
 static void Check(BOOL condition, NSString *label) { checks++; if (!condition) { fprintf(stderr, "FAIL: %s\n", label.UTF8String); exit(1); } }
+static void Await(BOOL (^finished)(void)) {
+    NSDate *limit=[NSDate dateWithTimeIntervalSinceNow:3];while(!finished() && limit.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+}
 static void Capture(NSView *view, NSString *path) {
     [view.window makeKeyAndOrderFront:nil]; [view.window makeFirstResponder:nil]; [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.15]]; [view.window displayIfNeeded];
     NSBitmapImageRep *bitmap = [view bitmapImageRepForCachingDisplayInRect:view.bounds]; [view cacheDisplayInRect:view.bounds toBitmapImageRep:bitmap];
@@ -131,18 +134,19 @@ int main(void) { @autoreleasepool {
     [courses review:nil]; Check(!app.editor && !app.window.attachedSheet, @"review entry selects inline details without sheet");
     [app reviewGitHubCandidate:courses.pendingReviewCandidates.firstObject]; before = app.tasks.count;
     Check(app.editor.reviewQueue.count == 3 && [app.editor.reviewProgress.stringValue containsString:@"3"], @"session captures only pending homework in current course and search");
-    [app.editor saveAndReviewNext:nil]; [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    [app.editor saveAndReviewNext:nil]; Await(^BOOL{return app.tasks.count==before+1 && [app.editor.candidate[@"id"] isEqual:two[@"id"]];});
+    if(app.tasks.count != before+1 || ![app.editor.candidate[@"id"] isEqual:two[@"id"]])fprintf(stderr,"queue diagnostic: before=%lu after=%lu next=%s validation=%s\n",(unsigned long)before,(unsigned long)app.tasks.count,[app.editor.candidate[@"id"] UTF8String],app.editor.validation.stringValue.UTF8String);
     Check(app.tasks.count == before + 1 && [app.editor.candidate[@"id"] isEqual:two[@"id"]], @"save-and-next imports one task and opens the next without a list round trip");
     app.editor.titleField.stringValue = @""; [app.editor saveAndReviewNext:nil];
     Check([app.editor.candidate[@"id"] isEqual:two[@"id"]] && app.tasks.count == before + 1, @"invalid review cannot advance or import another task");
-    app.editor.titleField.stringValue = two[@"title"]; [app.editor deferReview:nil]; [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    app.editor.titleField.stringValue = two[@"title"]; [app.editor deferReview:nil]; Await(^BOOL{return [app.editor.candidate[@"id"] isEqual:three[@"id"]];});
     BOOL deferredStillPending = [courses.pendingReviewCandidates indexOfObjectPassingTest:^BOOL(NSDictionary *item, NSUInteger idx, BOOL *stop) { return [item[@"id"] isEqual:two[@"id"]]; }] != NSNotFound;
     Check([app.editor.candidate[@"id"] isEqual:three[@"id"]] && deferredStillPending, @"defer moves to next and retains unimported homework in inbox");
     [app.editor saveAndReviewNext:nil]; Check(app.editor != nil && app.tasks.count == before + 1, @"continuous review still requires a missing teacher time");
     app.editor.deadlineField.stringValue = @"2027-04-14 20:00";
     NSEvent *reviewReturn = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0 windowNumber:app.editor.window.windowNumber context:nil characters:@"\r" charactersIgnoringModifiers:@"\r" isARepeat:NO keyCode:36];
     Check([app.editor.window performKeyEquivalent:reviewReturn], @"Return invokes save-and-next in review sheet");
-    [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    Await(^BOOL{return !app.editor && [app.notice containsString:@"本轮审核已结束"];});
     Check(!app.editor && app.tasks.count == before + 2 && [app.notice containsString:@"本轮审核已结束"], @"session ends without immediately reopening deferred homework");
     Check(courses.pendingReviewCandidates.count == 1 && [courses.pendingReviewCandidates.firstObject[@"id"] isEqual:two[@"id"]], @"other-course homework and exams never enter the filtered session");
     [app reviewGitHubCandidate:two]; NSUInteger pendingBeforeCancel = courses.pendingReviewCandidates.count; [app.editor cancel:nil];

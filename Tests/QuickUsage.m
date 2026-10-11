@@ -53,6 +53,7 @@ int main(void){@autoreleasepool{
     [AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];[app saveQuick];Check(app.tasks.count==1 && [app quickPendingEntries].count==1,@"duplicate preview can skip existing task");
     [AMQuietDialogChoices addObject:@(NSAlertThirdButtonReturn)];[app saveQuick];Check(app.tasks.count==2 && ![app quickPendingEntries].count,@"user can deliberately add repeated notice");
 #endif
+    Check([app.tasks[0][@"entryReferenceDate"] isEqual:material[@"referenceDate"]] && [app.tasks[0][@"entryTimeZone"] length],@"saved task retains its own original message basis");
     NSDictionary *backup=AMBackupEnvelope(app.tasks,NULL);Check([backup[@"format"] isEqual:@"am-helper-backup-v2"] && AMDecodeBackup(app.tasks,NULL),@"new and legacy backup formats accepted");Check(AMRestoreBackup(app.tasks,app.tasks,@[],NULL),@"restore tasks and empty records transaction");Check([SSLoadTasks(NULL)[0][@"notes"] isEqual:@"我的说明"],@"backup restore retains notes and local source");
     Check(!AMDecodeBackup(@{@"format":@"am-helper-backup-v2",@"tasks":app.tasks,@"submissions":@[@{}]},NULL),@"malformed record blocks entire import");
     app.preview=YES;[app closeQuick];[app.quickTimer invalidate];[app.ticker invalidate];[NSStatusBar.systemStatusBar removeStatusItem:app.statusItem];printf("PASS: %lu quick capture UI, Skill and backup assertions\n",(unsigned long)checks);
