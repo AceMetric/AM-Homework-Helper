@@ -1,5 +1,10 @@
 #import <Foundation/Foundation.h>
 NS_ASSUME_NONNULL_BEGIN
+NSArray *AMQuickParse(NSString *text, NSString *sourceID, NSDate *reference, NSCalendar *calendar);
+NSString *AMQuickDateText(NSDate *date, NSString *zone);
+NSDictionary *AMQuickMaterial(NSString *text, NSDate *reference, NSString *zone);
+NSDictionary * _Nullable AMQuickValidateResult(NSDictionary *result, NSDictionary *material, NSDictionary *batch, NSError **error);
+NSDictionary * _Nullable AMQuickTask(NSDictionary *entry, NSError **error);
 NSString *SSSuggestedNotes(NSDictionary *record);
 NSDictionary * _Nullable SSSkillReadResult(NSURL *url, NSError **error);
 NSDictionary *SSRecognitionSettings(void);

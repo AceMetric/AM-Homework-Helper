@@ -90,9 +90,12 @@ int main(void) { @autoreleasepool {
     courses.busy = YES; courses.operationFork = course[@"fork"]; courses.statuses[course[@"fork"]] = @"正在合并老师更新…"; courses.selectedFork = other[@"fork"]; [courses refreshCourses];
     Check([courses.statusLabel.stringValue containsString:@"student/physics"] && !courses.commitButton.enabled && courses.courseSnapshots.count == 2, @"browsing another course retains captured operation target and locks writes"); courses.busy = NO;
     SSSubmissionController *submission = [[SSSubmissionController alloc] initWithCourse:course changes:@[@{@"path":@"answers.md", @"status":@" M", @"sensitive":@NO}, @{@"path":@".env", @"status":@"??", @"sensitive":@YES}]];
+    [submission configureTasks:@[@{@"id":@"related-task",@"title":@"关联模拟作业"},@{@"id":@"other-task",@"title":@"另一份模拟作业"}] selected:@[@"related-task"]];
+    Check(submission.taskChecks[0].state==NSControlStateValueOn && submission.taskChecks[1].state==NSControlStateValueOff && submission.checks[0].enclosingScrollView.frame.origin.y>=264,@"task association does not overlap file controls or select files");
     Check(submission.checks[0].state == NSControlStateValueOff && !submission.checks[1].enabled, @"submission defaults unchecked and excludes sensitive files");
     __block NSArray *selected; submission.submit = ^(NSArray *paths, NSString *message) { selected = paths; }; [submission save:nil]; Check(selected == nil, @"empty submission is blocked");
     submission.checks[0].state = NSControlStateValueOn; submission.message.stringValue = @"完成作业"; [submission save:nil]; Check([selected isEqual:@[@"answers.md"]], @"only explicit file choices leave submission sheet");
+    Check([submission.taskIDs isEqual:@[@"related-task"]],@"explicit task association accompanies submission");
     submission.readPreview = ^(NSString *file, void (^ready)(NSString *)) { ready([@"diff preview: " stringByAppendingString:file]); };
     NSButton *previewButton = NSButton.new; previewButton.tag = 0; [submission showPreview:previewButton]; Check([submission.preview.string containsString:@"answers.md"], @"selected file preview is delivered to sheet");
     courses.preview = NO; courses.selectedFork = course[@"fork"]; __block BOOL finished = NO; __block NSDictionary *captured = course.copy;

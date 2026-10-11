@@ -20,6 +20,10 @@ jobs:
         run: zsh verify-import.sh
       - name: GitHub, Git and secret protection
         run: zsh verify-homework.sh
+      - name: Submission records and quick entry
+        run: |
+          zsh verify-submissions.sh
+          zsh verify-quick-entry.sh
       - name: Official login protection
         run: zsh verify-github-cli.sh
       - name: Recovery, diagnostics and storage
@@ -38,6 +42,7 @@ jobs:
           AM_UI_TEST=SkillExchange zsh verify-hybrid-ui.sh
           AM_UI_TEST=QualityUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=PlanningUsage zsh verify-hybrid-ui.sh
+          AM_UI_TEST=QuickUsage zsh verify-hybrid-ui.sh
       - name: Compile local image privacy scanner
         run: >-
           clang -fobjc-arc -Wall -Wextra -Werror -mmacosx-version-min=13.0

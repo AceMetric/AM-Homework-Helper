@@ -107,6 +107,7 @@
     if(changed)[self writeSkillState:NULL];
 }
 - (void)skillJobAction:(NSString *)action batch:(NSString *)batch {
+    if(self.localSkillAction && self.localSkillAction(action,batch))return;
     if([action isEqual:@"close"]){self.showingSkillJobs=NO;[self refreshPresentation];return;}if(self.busy || self.operationsPaused)return;
     if([action isEqual:@"copy"])[self copySkillBatch:batch];
     else if([action isEqual:@"reveal"]){NSURL *folder=[self skillFolder:batch];if(folder)[NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[folder]];}

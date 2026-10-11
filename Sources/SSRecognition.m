@@ -317,3 +317,5 @@ NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *pat
 }
 
 #import "SSSkill.inc"
+
+#import "AMQuick.inc"

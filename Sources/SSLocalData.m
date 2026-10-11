@@ -1,5 +1,6 @@
 #import "SSLocalData.h"
 #import "DDLCore.h"
+#import "SSSecurity.h"
 #import <Security/Security.h>
 
 NSURL *SSDataDirectory(void) {
@@ -75,3 +76,7 @@ BOOL SSWriteSecret(NSString *account, NSDictionary *value) {
 void SSDeleteSecret(NSString *account) { SecItemDelete((__bridge CFDictionaryRef)KeychainQuery(account)); }
 
 #import "SSTaskStore.inc"
+
+#import "AMSubmissionStore.inc"
+
+#import "AMBackup.inc"

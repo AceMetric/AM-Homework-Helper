@@ -1,6 +1,6 @@
 ---
 name: am-homework-extract
-description: Extract and summarize course activities from a user-selected AM's Homework Helper context export, returning a structured result file for application review.
+description: Extract and summarize course activities from a user-selected AM's Homework Helper course or local-notice context export, returning a structured result file for application review.
 ---
 
 # Course activity extraction
@@ -37,3 +37,30 @@ Write `results.local.json.tmp` in the input batch directory, then atomically ren
 Keep batchID, courseID and all source identifiers unchanged. For legacy v1 input, return am-course-results-v1 without batchID or courseID. Return all courses together in one result JSON, including documents with no activities so their successful review can advance incremental progress. Both evidence fields must be exact substrings of the corresponding original `text`. Use an empty `activities` array when appropriate. The app rechecks live source versions and validates all results before showing them for review.
 
 Do not write application data, add tasks directly, execute Git writes, call APIs, create schedules, or upload course materials. Report the completed document count briefly; the app automatically receives the proposals into its review list. If a supplied legacy export has no batch directory, write to the user-selected output location for manual import. Sharing course text with a hosted assistant uses that assistant's processing; the user should choose a suitable environment before invoking the skill.
+
+## Local notices and screenshot text
+
+For `am-local-context-v1`, analyze only its selected `documents[].text`. This is a local notice, not a repository export. Do not access Git, repositories or task databases. Screenshot exports contain OCR text only. Use the provided message/reference date and time zone as context; preserve relative deadline wording for the app to validate, and do not invent a missing time.
+
+Return `am-local-results-v1` with the unchanged `batchID` and one document per input:
+
+```json
+{
+  "format": "am-local-results-v1",
+  "batchID": "copy input batchID",
+  "documents": [{
+    "sourceID": "copy input sourceID",
+    "version": "copy input version",
+    "activities": [{
+      "kind": "assignment",
+      "title": "简短作业名称",
+      "summary": "简洁概括要完成的内容。",
+      "submissionRequirements": "仅概括原文明示的提交要求。",
+      "evidence": "exact original passage containing the assignment",
+      "deadlineEvidence": "exact original deadline sentence, or empty"
+    }]
+  }]
+}
+```
+
+Write the same atomic `results.local.json` file in the supplied batch folder. Keep evidence and deadline evidence as exact substrings of that source. Include its deadline sentence in the activity evidence when a deadline is given. A deadline must belong to this activity; never borrow another activity's date. Return multiple activities for multiple homework items. Empty activity arrays are allowed. The app protects edited and already saved entries, rechecks the local version, and requires the user to confirm before creating tasks.

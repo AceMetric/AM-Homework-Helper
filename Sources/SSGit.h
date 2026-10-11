@@ -2,6 +2,11 @@
 
 NS_ASSUME_NONNULL_BEGIN
 @interface SSGit : NSObject
+@property(copy, nullable) BOOL (^submissionCheckpoint)(NSDictionary *fields, NSError **error);
+- (NSDictionary * _Nullable)performRecordedCourse:(NSDictionary *)course kind:(NSString *)kind taskIDs:(NSArray *)taskIDs paths:(NSArray *)paths message:(NSString *)message token:(NSString *)token login:(NSString *)login userID:(NSNumber *)userID error:(NSError **)error;
+- (NSDictionary * _Nullable)verifySubmission:(NSDictionary *)record course:(NSDictionary *)course token:(NSString *)token retry:(BOOL)retry error:(NSError **)error;
+- (NSDictionary * _Nullable)submissionDetailsForCourse:(NSDictionary *)course commit:(NSString *)commit error:(NSError **)error;
+- (NSArray * _Nullable)recentCommits:(NSDictionary *)course error:(NSError **)error;
 @property(atomic) BOOL readsCancellable;
 @property(atomic) BOOL cancelledReads;
 /// Required before cloning, committing, merging or pushing. Rechecks GitHub ownership.

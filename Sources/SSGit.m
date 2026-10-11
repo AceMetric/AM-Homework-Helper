@@ -2,6 +2,7 @@
 #import "SSAssignments.h"
 #import "SSRecognition.h"
 #import "SSSecurity.h"
+#import "SSLocalData.h"
 #import <signal.h>
 #include <math.h>
 
@@ -394,6 +395,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     if (![self authorize:course error:error] || ![self validateCourse:course error:error] || ![self submissionBranch:course error:error]) return NO;
     NSString *ref = [NSString stringWithFormat:@"%@:refs/heads/%@", head, course[@"branch"]];
     // Immutable commit + a freshly verified, explicit HTTPS fork URL. Never use push.default/pushurl.
+    if(self.submissionCheckpoint){SSGitResult *files=[self checked:@[@"diff-tree",@"--root",@"-m",@"--no-commit-id",@"--name-only",@"-r",@"-z",head,@"--"] in:path token:nil error:error];if(!files || !self.submissionCheckpoint(@{@"state":@"uncertain",@"commit":head,@"files":[NSOrderedSet orderedSetWithArray:NonemptyParts([self string:files],@"\0")].array},error))return NO;}
     NSArray *push=[self remoteArguments:@[@"push",@"--",url,ref] course:course role:@"personalPush" error:error];return push && [self checked:push in:path token:token error:error] != nil;
 }
 - (NSDictionary *)syncCourse:(NSDictionary *)course token:(NSString *)token error:(NSError **)error {
@@ -413,6 +415,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
         if (error) *error = GitError(@"合并产生冲突。请打开冲突引导，编辑文件、标记解决后再继续。");
         return @{@"conflicts":files, @"mergeHead":teacher};
     }
+    if(self.submissionCheckpoint){SSGitResult *tip=[self checked:@[@"rev-parse",@"HEAD"] in:path token:nil error:error];NSString *commit=tip ? Trim([self string:tip]):nil;NSDictionary *details=commit ? [self submissionDetailsForCourse:course commit:commit error:error]:nil;if(!details || !self.submissionCheckpoint(@{@"commit":commit,@"files":details[@"files"],@"state":@"local"},error))return nil;}
     if (![self pushCourse:course token:token error:error]) { if (error) *error = PendingPushError(*error); return nil; }
     return @{@"success":@YES};
 }
@@ -450,12 +453,16 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
                 if (SSContainsSecret(blob.data)) { if (error) *error = GitError(@"所选文件含疑似凭据，已停止提交。"); return NO; }
             }
         }
+        SSGitResult *previous=[self checked:@[@"rev-parse",@"HEAD"] in:path token:nil error:error];
+        if(!previous || (self.submissionCheckpoint && !self.submissionCheckpoint(@{@"before":Trim([self string:previous]),@"files":actual},error)))return NO;
         committed = [self checked:[[self authorArguments:user] arrayByAddingObjectsFromArray:@[@"commit", @"-m", commitMessage]] in:path token:nil error:error] != nil;
     } @finally {
         self.temporaryIndex = nil; [NSFileManager.defaultManager removeItemAtPath:index error:NULL];
         [NSFileManager.defaultManager removeItemAtPath:[index stringByAppendingString:@".lock"] error:NULL];
     }
     if (!committed) return NO;
+    SSGitResult *created=[self checked:@[@"rev-parse",@"HEAD"] in:path token:nil error:error];
+    if(!created || (self.submissionCheckpoint && !self.submissionCheckpoint(@{@"commit":Trim([self string:created]),@"state":@"local"},error)))return NO;
     NSMutableArray *reset = [@[@"reset", @"--quiet", @"HEAD", @"--"] mutableCopy]; [reset addObjectsFromArray:paths];
     if (![self checked:reset in:path token:nil error:error]) return NO;
     if (![self pushCourse:course token:token error:error]) {
@@ -463,6 +470,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     }
     return YES;
 }
+#include "AMSubmissionGit.inc"
 - (NSArray<NSString *> *)conflicts:(NSDictionary *)course error:(NSError **)error {
     if (![self validateCourse:course error:error]) return nil;
     SSGitResult *files = [self checked:@[@"diff", @"--name-only", @"--diff-filter=U", @"-z"] in:course[@"path"] token:nil error:error];
