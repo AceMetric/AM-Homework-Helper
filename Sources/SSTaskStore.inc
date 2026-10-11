@@ -3,7 +3,7 @@ static NSError *StoreError(NSString *text) {return [NSError errorWithDomain:@"AM
 static BOOL ValidTasks(id value) {
     if(![value isKindOfClass:NSArray.class])return NO;
     NSMutableSet *ids=NSMutableSet.set;
-    for(id task in value){if(![task isKindOfClass:NSDictionary.class] || !DDLPlanningValid(task))return NO;if(![task isKindOfClass:NSDictionary.class] || ![task[@"title"] isKindOfClass:NSString.class] || ![task[@"due"] isKindOfClass:NSDate.class])return NO;for(NSString *field in @[@"entryID",@"entrySourceID",@"entryVersion",@"entryEvidence",@"entryDeadlineEvidence",@"courseRepository"])if(task[field] && ![task[field] isKindOfClass:NSString.class])return NO;NSString *key=task[@"id"];if(![key isKindOfClass:NSString.class] || !key.length || [ids containsObject:key])return NO;[ids addObject:key];}return YES;
+    for(id task in value){if(![task isKindOfClass:NSDictionary.class] || !DDLPlanningValid(task))return NO;if(![task isKindOfClass:NSDictionary.class] || ![task[@"title"] isKindOfClass:NSString.class] || ![task[@"due"] isKindOfClass:NSDate.class])return NO;for(NSString *field in @[@"entryID",@"entrySourceID",@"entryVersion",@"entryEvidence",@"entryDeadlineEvidence",@"entryTimeZone",@"courseRepository"])if(task[field] && ![task[field] isKindOfClass:NSString.class])return NO;if(task[@"entryReferenceDate"] && ![task[@"entryReferenceDate"] isKindOfClass:NSDate.class])return NO;NSString *key=task[@"id"];if(![key isKindOfClass:NSString.class] || !key.length || [ids containsObject:key])return NO;[ids addObject:key];}return YES;
 }
 static NSURL *RecoveryRoot(void) {return [SSDataDirectory().URLByResolvingSymlinksInPath URLByAppendingPathComponent:@"TaskRecovery" isDirectory:YES];}
 NSArray *SSLoadTasks(NSError **error) {
