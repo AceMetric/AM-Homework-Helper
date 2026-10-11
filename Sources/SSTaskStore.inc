@@ -3,10 +3,11 @@ static NSError *StoreError(NSString *text) {return [NSError errorWithDomain:@"AM
 static BOOL ValidTasks(id value) {
     if(![value isKindOfClass:NSArray.class])return NO;
     NSMutableSet *ids=NSMutableSet.set;
-    for(id task in value){if(![task isKindOfClass:NSDictionary.class] || !DDLPlanningValid(task))return NO;if(![task isKindOfClass:NSDictionary.class] || ![task[@"title"] isKindOfClass:NSString.class] || ![task[@"due"] isKindOfClass:NSDate.class])return NO;NSString *key=task[@"id"];if(![key isKindOfClass:NSString.class] || !key.length || [ids containsObject:key])return NO;[ids addObject:key];}return YES;
+    for(id task in value){if(![task isKindOfClass:NSDictionary.class] || !DDLPlanningValid(task))return NO;if(![task isKindOfClass:NSDictionary.class] || ![task[@"title"] isKindOfClass:NSString.class] || ![task[@"due"] isKindOfClass:NSDate.class])return NO;for(NSString *field in @[@"entryID",@"entrySourceID",@"entryVersion",@"entryEvidence",@"entryDeadlineEvidence",@"courseRepository"])if(task[field] && ![task[field] isKindOfClass:NSString.class])return NO;NSString *key=task[@"id"];if(![key isKindOfClass:NSString.class] || !key.length || [ids containsObject:key])return NO;[ids addObject:key];}return YES;
 }
 static NSURL *RecoveryRoot(void) {return [SSDataDirectory().URLByResolvingSymlinksInPath URLByAppendingPathComponent:@"TaskRecovery" isDirectory:YES];}
 NSArray *SSLoadTasks(NSError **error) {
+    if(!AMRecoverBackup(error))return nil;
     NSURL *url=[SSDataDirectory() URLByAppendingPathComponent:@"tasks.plist"];if(![NSFileManager.defaultManager fileExistsAtPath:url.path])return @[];
     NSData *data=[NSData dataWithContentsOfURL:url options:0 error:error];id decoded=data ? [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:NULL error:error]:nil;
     // Legacy missing IDs are normalized by the caller, but malformed records must not silently disappear.
@@ -23,6 +24,7 @@ NSArray *SSRecoveryTasks(NSString *identifier,NSError **error) {
     NSDictionary *point=[NSDictionary dictionaryWithContentsOfURL:url];if(!ValidTasks(point[@"tasks"])){if(error)*error=StoreError(@"恢复点损坏，未修改任务。");return nil;}return point[@"tasks"];
 }
 BOOL SSSaveTasks(NSArray *previous,NSArray *tasks,NSError **error) {
+    if(!AMRecoverBackup(error))return NO;
     if(!ValidTasks(previous) || !ValidTasks(tasks)){if(error)*error=StoreError(@"任务校验失败，未写入任何修改。");return NO;}
     NSFileManager *fm=NSFileManager.defaultManager;NSURL *root=RecoveryRoot();if(![root.path isEqual:root.URLByResolvingSymlinksInPath.path]){if(error)*error=StoreError(@"恢复目录路径不安全，未保存任务。请检查数据目录。");return NO;}if(![fm createDirectoryAtURL:root withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:error])return NO;
     NSDate *now=NSDate.date;NSDateFormatter *fmt=NSDateFormatter.new;fmt.locale=[NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];fmt.dateFormat=@"yyyy-MM-dd";

@@ -8,6 +8,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (copy) void (^editTask)(NSString *identifier);
 @property (copy) void (^stateChanged)(void);
 @property (copy, nullable) NSString * (^saveReviewItems)(NSArray<NSDictionary *> *items, BOOL automatic);
+@property (copy, nullable) NSArray * (^localReviewProvider)(void);
+@property (copy, nullable) NSArray * (^localSkillJobsProvider)(void);
+@property (copy, nullable) BOOL (^localSkillAction)(NSString *action, NSString *batch);
 @property (readonly) BOOL hasUnsavedReview;
 - (BOOL)resolveUnsavedReview;
 - (void)discardReview;
@@ -19,6 +22,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readonly) NSArray<NSDictionary *> *courseSnapshots;
 @property (readonly, nullable) NSString *selectedCourseID;
 - (BOOL)selectCourseID:(nullable NSString *)identifier;
+- (void)recoverSubmissionRecords;
+- (void)submitTask:(NSString *)identifier;
+- (void)showSubmissionHistory:(nullable NSString *)identifier;
 - (void)showSkillJobs:(nullable id)sender;
 - (void)adjustSkillCourses:(nullable id)sender;
 - (void)exportAllSkillContext:(nullable id)sender;

@@ -27,7 +27,7 @@ static NSString *ImportTimeAfterDate(NSString *line) {
         if ([period isEqualToString:@"凌晨"] && hour == 12) hour = 0;
         if (hour < 24 && minute < 60) return [NSString stringWithFormat:@"%02ld:%02ld", (long)hour, (long)minute];
     }
-    return @"23:59";
+    return @"";
 }
 
 static NSDate *ImportDueDate(NSString *text, NSDate *now, NSCalendar *calendar) {
@@ -49,6 +49,7 @@ static NSDate *ImportDueDate(NSString *text, NSDate *now, NSCalendar *calendar) 
             NSUInteger end = lineEnd.location == NSNotFound ? normalized.length : lineEnd.location;
             NSString *afterDate = [normalized substringWithRange:NSMakeRange(NSMaxRange(match.range), MIN((NSUInteger)36, end - NSMaxRange(match.range)))];
             NSString *time = ImportTimeAfterDate(afterDate);
+            if(!time.length)continue;
             NSString *candidate;
             if (kind <= 3) {
                 NSInteger year = kind <= 1 ? [ImportGroup(normalized, match, 1) integerValue] : [calendar component:NSCalendarUnitYear fromDate:now];

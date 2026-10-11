@@ -142,6 +142,8 @@ int main(int argc, const char *argv[]) {
         NSView *titleHit=[interactive hitTest:NSMakePoint(80,24)],*checkHit=[interactive hitTest:NSMakePoint(24,36)];
         CheckUI(titleHit==interactive && [checkHit isKindOfClass:NSButton.class] && ((NSButton *)checkHit).action==@selector(toggleTask:),@"row selection hit area does not intercept completion button");
         CheckUI([app.window.firstResponder isKindOfClass:TaskSelectionRow.class],@"selected row receives keyboard focus");
+        NSMutableDictionary *far=noteTask.mutableCopy;far[@"id"]=@"offscreen-focus";far[@"due"]=[NSDate dateWithTimeIntervalSinceNow:900*86400];[app.tasks addObject:far];NSButton *farSelect=NSButton.new;farSelect.identifier=far[@"id"];[app selectTask:farSelect];
+        CheckUI([app.window.firstResponder isKindOfClass:TaskSelectionRow.class] && [((NSView *)app.window.firstResponder).identifier isEqual:far[@"id"]],@"offscreen selection survives virtual list scroll rebuild");[app selectTask:select];
         CheckUI(!NSIntersectsRect(app.scroll.frame,app.taskDetails.frame) && NSMaxX(app.taskDetails.frame)<=NSWidth(app.root.bounds) && NSMaxY(app.taskDetails.frame)<=NSHeight(app.root.bounds),@"task list and inspector fit minimum window without overlap");
         NSArray *ordered=app.selectionTasks;NSUInteger selectedIndex=0;for(NSUInteger i=0;i<ordered.count;i++)if([ordered[i][@"id"] isEqual:noteTask[@"id"]]){selectedIndex=i;break;}
         NSEvent *down=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0 windowNumber:app.window.windowNumber context:nil characters:@"" charactersIgnoringModifiers:@"" isARepeat:NO keyCode:125];

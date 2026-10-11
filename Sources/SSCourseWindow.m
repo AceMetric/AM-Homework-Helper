@@ -20,6 +20,8 @@
 
 static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) { ActionButton *button=Button(text,target,action,0);button.frame=frame;return button; }
 @interface SSCourseController ()
+@property AMSubmissionHistoryController *submissionHistory;
+@property NSString *submissionTaskID;
 @property SSGitHub *github;
 @property SSGit *git;
 @property NSMutableArray<NSMutableDictionary *> *courses;
@@ -155,7 +157,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.moreButton = SSButton(@"更多", self, @selector(more:), NSZeroRect); [root addSubview:self.moreButton];
     self.assistantButton=SSButton(@"助手识别",self,@selector(exportSkillContext:),NSZeroRect);[root addSubview:self.assistantButton];
     self.assistantImportButton=SSButton(@"导入助手结果…",self,@selector(importSkillResults:),NSZeroRect);[root addSubview:self.assistantImportButton];
-    self.sections = Segments(@[@"课程内容", @"已加入任务", @"仓库信息"], self, @selector(sectionChanged:)); [root addSubview:self.sections];
+    self.sections = Segments(@[@"课程内容", @"已加入任务", @"仓库信息", @"提交记录"], self, @selector(sectionChanged:)); [root addSubview:self.sections];
     self.typeFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.typeFilter addItemsWithTitles:@[@"全部类型", @"作业", @"课上任务", @"考试", @"待确认类型"]]; self.typeFilter.target = self; self.typeFilter.action = @selector(sectionChanged:); [root addSubview:self.typeFilter];
     self.reviewFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.reviewFilter addItemsWithTitles:@[@"全部待审核", @"新作业", @"更新建议"]]; self.reviewFilter.target = self; self.reviewFilter.action = @selector(sectionChanged:); [root addSubview:self.reviewFilter];
     self.search = [[NSSearchField alloc] initWithFrame:NSZeroRect]; self.search.placeholderString = @"搜索作业或来源文件"; self.search.delegate = self; self.search.sendsSearchStringImmediately = YES; [root addSubview:self.search];
@@ -212,6 +214,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         }
     };
     [self addChildViewController:self.courseWorkspace];[root addSubview:self.courseWorkspace.view];
+    self.submissionHistory=AMSubmissionHistoryController.new;[self addChildViewController:self.submissionHistory];[root addSubview:self.submissionHistory.view];self.submissionHistory.view.hidden=YES;
+    __weak typeof(self) historyOwner=self;self.submissionHistory.actionHandler=^(NSString *action,NSString *identifier){[historyOwner submissionAction:action identifier:identifier];};
     self.skillJobsController=AMSkillJobsController.new;[self addChildViewController:self.skillJobsController];[root addSubview:self.skillJobsController.view];self.skillJobsController.view.hidden=YES;
     self.skillJobsController.actionHandler=^(NSString *action,NSString *batch){[owner skillJobAction:action batch:batch];};
     self.cancelReadButton=SSButton(@"取消检查",self,@selector(cancelReadOperation:),NSZeroRect);[root addSubview:self.cancelReadButton];self.cancelReadButton.hidden=YES;
@@ -224,10 +228,12 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.assistantButton.frame=NSMakeRect([self course] ? 400:136,32,124,32);self.assistantImportButton.frame=NSMakeRect(276,48,124,36);
     self.assistantButton.hidden=self.inbox;self.assistantImportButton.hidden=YES;
     self.assistantButton.enabled=self.assistantImportButton.enabled=!self.busy && !self.operationsPaused;
-    self.sections.frame = NSMakeRect(0, 80, 296, 28); self.sections.hidden = self.inbox;
-    self.typeFilter.frame = NSMakeRect(308, 80, 120, 28); self.typeFilter.hidden = self.inbox || self.sections.selectedSegment != 0;
+    CGFloat segmentWidth=MIN(380,MAX(280,w-248));
+    self.sections.frame = NSMakeRect(0, 80, segmentWidth, 28); self.sections.hidden = self.inbox;
+    self.typeFilter.frame = NSMakeRect(segmentWidth+8, 80, 112, 28); self.typeFilter.hidden = self.inbox || self.sections.selectedSegment != 0;
     self.reviewFilter.frame = NSMakeRect(0, 80, 152, 28); self.reviewFilter.hidden = !self.inbox;
-    self.search.frame = NSMakeRect(MAX(448, w - 272), 80, MAX(128, MIN(272, w - 448)), 28);
+    CGFloat searchX=self.sections.selectedSegment==0 ? segmentWidth+128:segmentWidth+8;
+    self.search.frame = NSMakeRect(searchX,80,MAX(104,w-searchX),28);
     if (self.inbox) self.search.frame = NSMakeRect(w - 272, 80, 272, 28);
     self.statusLabel.frame = NSMakeRect(24, 116, w - 180, 24); self.progress.frame = NSMakeRect(0, 120, 16, 16); self.recoveryButton.frame = NSMakeRect(w - 144, 112, 144, 28);
     self.table.enclosingScrollView.frame = NSMakeRect(0, 184, w, MAX(112, h - 348));
@@ -241,6 +247,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     else { self.detail.enclosingScrollView.hidden = NO; self.search.hidden = NO; }
     self.courseWorkspace.view.hidden=self.inbox;self.courseWorkspace.view.frame=NSMakeRect(0,144,w,MAX(200,h-144));
     if(!self.inbox){self.table.enclosingScrollView.hidden=YES;self.detail.enclosingScrollView.hidden=YES;self.reviewButton.hidden=YES;self.typeButton.hidden=YES;self.emptyLabel.hidden=YES;}
+    self.submissionHistory.view.frame=NSMakeRect(0,144,w,MAX(240,h-144));self.submissionHistory.view.hidden=self.inbox || self.sections.selectedSegment!=3 || self.showingSkillJobs;
+    if(!self.submissionHistory.view.hidden){self.courseWorkspace.view.hidden=YES;self.reviewWorkspace.view.hidden=YES;}
     self.skillJobsController.view.frame=NSMakeRect(0,144,w,MAX(240,h-144));self.skillJobsController.view.hidden=!self.showingSkillJobs;
     if(self.showingSkillJobs){self.courseWorkspace.view.hidden=YES;self.reviewWorkspace.view.hidden=YES;}
     self.cancelReadButton.frame=NSMakeRect(w-144,112,144,28);self.cancelReadButton.hidden=!self.busy || !self.git.readsCancellable;
@@ -270,7 +278,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (NSUInteger)pendingCount {
     NSUInteger count = 0; NSMutableSet *seen = NSMutableSet.set;
     for (NSDictionary *course in self.courses) for (NSDictionary *candidate in [self discoveriesForFork:course[@"fork"]]) if ([candidate[@"kind"] isEqual:@"assignment"] && ![seen containsObject:candidate[@"id"]] && ![[self stateForCandidate:candidate] isEqual:@"已导入"]) { [seen addObject:candidate[@"id"]]; count++; }
-    return count;
+    return count+(self.localReviewProvider ? self.localReviewProvider().count:0);
 }
 - (void)accountSettings:(id)sender {
     if(self.operationsPaused)return;if(self.busy){if(self.loginActive)[self cancelLogin:nil];return;}
@@ -383,7 +391,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (NSArray *)visible {
     NSMutableArray *result = NSMutableArray.array; NSMutableSet *seen = NSMutableSet.set;
     if (!self.inbox && self.sections.selectedSegment == 1) {
-        for (NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[]) if (![task[@"deleted"] boolValue] && [task[@"sourceRepository"] isEqual:[self course][@"upstream"]]) {
+        for (NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[]) if (![task[@"deleted"] boolValue] && ([task[@"sourceRepository"] isEqual:[self course][@"upstream"]] || [task[@"courseRepository"] isEqual:[self course][@"fork"]])) {
             NSMutableDictionary *copy = task.mutableCopy; copy[@"confirmed"] = @YES; copy[@"path"] = task[@"sourcePath"] ?: @""; copy[@"line"] = task[@"sourceLine"] ?: @0; [result addObject:copy];
         }
     } else {
@@ -401,6 +409,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             }
         }
     }
+    if(self.inbox && self.localReviewProvider)[result addObjectsFromArray:self.localReviewProvider()];
     NSString *query = [self.query stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (query.length) [result filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *item, NSDictionary *bindings) { NSString *text = [NSString stringWithFormat:@"%@ %@ %@", item[@"title"], item[@"path"], item[@"repository"] ?: item[@"subject"]]; return [text rangeOfString:query options:NSCaseInsensitiveSearch].location != NSNotFound; }]];
     return result;
@@ -413,9 +422,11 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (NSArray<NSDictionary *> *)allPendingReviewCandidates {
     NSMutableArray *records=NSMutableArray.array; NSMutableSet *seen=NSMutableSet.set;
     for (NSDictionary *course in self.courses) for (NSDictionary *record in [self discoveriesForFork:course[@"fork"]]) if ([record[@"kind"] isEqual:@"assignment"] && ![seen containsObject:record[@"id"]] && ![[self stateForCandidate:record] isEqual:@"已导入"]) { [seen addObject:record[@"id"]]; [records addObject:record]; }
+    if(self.localReviewProvider)[records addObjectsFromArray:self.localReviewProvider()];
     return records;
 }
 - (NSDictionary *)reviewSourceWithID:(NSString *)identifier {
+    for(NSDictionary *record in self.localReviewProvider ? self.localReviewProvider():@[])if([record[@"id"] isEqual:identifier])return record;
     for(NSString *fork in self.deferredScans){NSDictionary *scan=self.deferredScans[fork];for(NSDictionary *row in [(scan[@"candidates"] ?: @[]) arrayByAddingObjectsFromArray:scan[@"materials"] ?: @[]])if([row[@"id"] isEqual:identifier]){NSMutableDictionary *record=row.mutableCopy;if(self.kindOverrides[identifier])record[@"kind"]=self.kindOverrides[identifier];return record;}for(NSDictionary *row in self.candidates[fork])if([row[@"id"] isEqual:identifier])return nil;}
     // An imported source is still valid for editing. Pending status and active
     // page filters must never decide whether its source version is current.
@@ -472,7 +483,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         for (NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[]) if ([task[@"sourceID"] isEqual:record[@"id"]]) { copy[@"existingTask"] = task; break; }
         [reviewRecords addObject:copy];
     }
-    NSMutableArray *jobs=NSMutableArray.array;for(NSString *key in self.skillJobs){NSMutableDictionary *row=[self.skillJobs[key] mutableCopy];row[@"id"]=key;[jobs addObject:row];}[jobs sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [b[@"date"] compare:a[@"date"]];}];[self.skillJobsController updateRecords:jobs busy:self.busy || self.operationsPaused];
+    NSMutableArray *jobs=NSMutableArray.array;for(NSString *key in self.skillJobs){NSMutableDictionary *row=[self.skillJobs[key] mutableCopy];row[@"id"]=key;[jobs addObject:row];}if(self.localSkillJobsProvider)[jobs addObjectsFromArray:self.localSkillJobsProvider()];[jobs sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [b[@"date"] compare:a[@"date"]];}];[self.skillJobsController updateRecords:jobs busy:self.busy || self.operationsPaused];
     self.scanButton.toolTip=self.busy ? @"已有课程操作正在执行，请等待完成或取消安全读取。":(!local && !anyLocal ? @"先关联或下载课程文件夹，再检查新作业。":@"只读取老师内容，不合并或推送。");
     self.syncButton.toolTip=self.connected && local ? @"合并老师更新，再安全更新个人 fork。":@"需要登录并关联本地课程文件夹。";self.commitButton.toolTip=self.syncButton.toolTip;
     self.reviewWorkspace.paused = self.operationsPaused;
@@ -508,6 +519,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if(!course && !self.inbox){NSMutableArray *summary=NSMutableArray.array;for(NSDictionary *snapshot in self.courseSnapshots)[summary addObject:self.reports[snapshot[@"id"]][@"error"] ? [NSString stringWithFormat:@"%@ · %@ · 保留上次成功检查结果",snapshot[@"name"],snapshot[@"status"]] : [NSString stringWithFormat:@"%@ · %@ · %lu 项待审核",snapshot[@"name"],snapshot[@"status"],(unsigned long)[snapshot[@"pending"] unsignedIntegerValue]]];information=[summary componentsJoinedByString:@"\n\n"];[content removeAllObjects];}
     [self.courseWorkspace updateRecords:content selected:self.selectedCandidateID ?: @"" information:information empty:self.emptyLabel.stringValue paused:self.busy || self.operationsPaused];
     self.presentedSection=self.sections.selectedSegment;self.presentedType=self.typeFilter.indexOfSelectedItem;self.presentedReviewFilter=self.reviewFilter.indexOfSelectedItem;
+    NSError *historyError=nil;NSArray *storedHistory=AMSubmissionRecords(&historyError);if(historyError && !self.inbox && self.sections.selectedSegment==3)self.statusLabel.stringValue=historyError.localizedDescription;
+    NSMutableArray *history=NSMutableArray.array;for(NSDictionary *record in storedHistory ?: @[])if(!course || [record[@"repository"] isEqual:course[@"fork"]]){NSMutableDictionary *row=record.mutableCopy;row[@"label"]=AMSubmissionStateLabel(record);[history insertObject:row atIndex:0];}[self.submissionHistory updateRecords:history busy:self.busy || self.operationsPaused];
     [self layoutContent]; self.refreshing = NO;
     if (self.stateChanged) self.stateChanged();
 }
@@ -685,7 +698,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSDictionary *course = [[self course] copy]; if (!course) return;
     [self work:@"正在安全合并上游，并更新自己的 fork…" forCourse:course operation:^id(NSError **error) {
         NSString *token = [self.github accessToken:error]; if (!token) return nil;
-        return [self.git syncCourse:course token:token error:error];
+        NSDictionary *record=[self.git performRecordedCourse:course kind:@"sync" taskIDs:@[] paths:@[] message:@"同步课程文件" token:token login:@"" userID:@0 error:error];
+        if([record[@"state"] isEqual:@"confirmed"])return @{@"success":@YES};if(record[@"conflicts"])return @{@"conflicts":record[@"conflicts"],@"mergeHead":record[@"mergeHead"]};return nil;
     } completion:^(NSDictionary *result, NSError *error) {
         if (result[@"conflicts"]) {
             NSMutableDictionary *saved = [self savedCourse:course]; saved[@"pendingMergeTip"] = result[@"mergeHead"]; saved[@"pendingConflicts"] = result[@"conflicts"]; [self saveCourses];
@@ -699,7 +713,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (void)finishMerge:(NSDictionary *)course {
     [self work:@"正在完成合并并更新自己的 fork…" forCourse:course operation:^id(NSError **error) {
         NSString *token = [self.github accessToken:error]; if (!token) return @NO;
-        return @([self.git continueMergeForCourse:course token:token error:error]);
+        NSDictionary *record=[self.git performRecordedCourse:course kind:@"merge" taskIDs:@[] paths:@[] message:@"完成课程合并" token:token login:@"" userID:@0 error:error];return @([record[@"state"] isEqual:@"confirmed"]);
     } completion:^(NSNumber *ok, NSError *error) { if (ok.boolValue || [error.userInfo[@"SSPendingPush"] boolValue]) { NSMutableDictionary *saved = [self savedCourse:course]; [saved removeObjectForKey:@"pendingMergeTip"]; [saved removeObjectForKey:@"pendingConflicts"]; [self saveCourses]; if (ok.boolValue) [self status:@"冲突合并已完成，并已推送到自己的 fork。"]; else { saved[@"pushFailed"] = @YES; [self saveCourses]; [self showError:error]; } } else [self showError:error]; }];
 }
 - (void)openFolder:(id)sender { NSString *path = [self course][@"path"]; if (path.length) [NSWorkspace.sharedWorkspace openURL:[NSURL fileURLWithPath:path]]; }
@@ -715,8 +729,13 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSDictionary *course = [[self course] copy]; if (!course) return;
     [self work:@"正在检查待推送历史和 fork 身份…" forCourse:course operation:^id(NSError **error) {
         NSString *token = [self.github accessToken:error]; if (!token) return @NO;
+        NSArray *records=AMSubmissionRecords(error);if(!records)return @NO;
+        for(NSDictionary *record in records.reverseObjectEnumerator)if([record[@"repository"] isEqual:course[@"fork"]] && [record[@"branch"] isEqual:course[@"branch"]] && [record[@"commit"] length] && ![record[@"state"] isEqual:@"confirmed"]){
+            NSDictionary *verified=[self.git verifySubmission:record course:course token:token retry:YES error:error];return @([verified[@"state"] isEqual:@"confirmed"]);
+        }
+        // Legacy versions did not persist a commit identity; retain their explicitly requested retry.
         return @([self.git pushCourse:course token:token error:error]);
-    } completion:^(NSNumber *ok, NSError *error) { if (ok.boolValue) { [[self savedCourse:course] removeObjectForKey:@"pushFailed"]; [self saveCourses]; [self status:@"本地提交已推送到自己的仓库"]; } else [self showError:error]; }];
+    } completion:^(NSNumber *ok, NSError *error) { if (ok.boolValue) { [[self savedCourse:course] removeObjectForKey:@"pushFailed"]; [self saveCourses]; [self status:@"本地提交已核验并推送到自己的仓库"]; } else [self showError:error]; }];
 }
 - (void)conflictGuide:(NSDictionary *)course {
     [self work:@"正在读取冲突状态…" forCourse:course operation:^id(NSError **error) { return [self.git conflicts:course error:error]; } completion:^(NSArray *files, NSError *error) {
@@ -751,6 +770,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         [self work:@"正在检查并标记冲突文件…" forCourse:course operation:^id(NSError **innerError) { return @([self.git stageResolvedFiles:course paths:selected error:innerError]); } completion:^(NSNumber *ok, NSError *innerError) { if (!ok.boolValue) [self showError:innerError]; else [self conflictGuide:course]; }];
     }];
 }
+#include "AMSubmissionUI.inc"
 - (void)commit:(id)sender {
     NSDictionary *course = [[self course] copy]; if (!course) return;
     [self work:@"正在读取本地修改…" forCourse:course operation:^id(NSError **error) { return [self.git changesForCourse:course error:error]; } completion:^(NSArray *changes, NSError *error) {
@@ -759,20 +779,25 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         if (!changes.count) { [self status:@"没有需要提交的改动。"] ; return; }
         if (self.window.attachedSheet) { [self status:@"请先关闭当前编辑弹窗，再打开“提交作业”。"]; return; }
         self.submission = [[SSSubmissionController alloc] initWithCourse:course changes:changes];
+        NSMutableArray *related=NSMutableArray.array;for(NSDictionary *task in self.tasksProvider ? self.tasksProvider():@[])if(![task[@"deleted"] boolValue] && ([task[@"courseRepository"] isEqual:course[@"fork"]] || [task[@"sourceRepository"] isEqual:course[@"upstream"]]))[related addObject:task];
+        [self.submission configureTasks:related selected:self.submissionTaskID ? @[self.submissionTaskID]:@[]];self.submissionTaskID=nil;
         __weak typeof(self) weakSelf = self;
         self.submission.readPreview = ^(NSString *file, void (^ready)(NSString *)) {
             dispatch_async(weakSelf.queue, ^{ NSError *previewError = nil; NSString *text = [weakSelf.git previewForCourse:course path:file error:&previewError]; dispatch_async(dispatch_get_main_queue(), ^{ ready(text ?: previewError.localizedDescription); }); });
         };
         self.submission.submit = ^(NSArray *paths, NSString *message) {
             SSCourseController *self = weakSelf; if (!self) return;
+        __block NSDictionary *operationRecord=nil;NSArray *taskIDs=self.submission.taskIDs.copy;
         [self work:@"正在检查、提交并推送到自己的 fork…" forCourse:course operation:^id(NSError **innerError) {
             NSDictionary *user = [self.github user:innerError]; if (!user) return @NO;
             NSString *token = [self.github accessToken:innerError]; if (!token) return @NO;
-            return @([self.git commitCourse:course paths:paths message:message login:user[@"login"] userID:user[@"id"] token:token error:innerError]);
+            NSDictionary *result=[self.git performRecordedCourse:course kind:@"submission" taskIDs:taskIDs paths:paths message:message token:token login:user[@"login"] userID:user[@"id"] error:innerError];
+            operationRecord=result;return @([result[@"state"] isEqual:@"confirmed"]);
         } completion:^(NSNumber *ok, NSError *innerError) {
             if (self.exitSubmissionInFlight) { self.submissionFailedDuringExit = !ok.boolValue; self.exitSubmissionInFlight = NO; }
             if (ok.boolValue) { [[self savedCourse:course] removeObjectForKey:@"pushFailed"]; [self saveCourses]; [self status:@"所选文件已提交到自己的仓库"]; }
             else {
+                if([operationRecord[@"commit"] length]){[self savedCourse:course][@"pushFailed"]=@YES;[self saveCourses];[self status:@"本地提交已保留，请到“提交记录”核验或重试，不要再次创建提交。"];return;}
                 if ([innerError.userInfo[@"SSPendingPush"] boolValue]) { [self savedCourse:course][@"pushFailed"] = @YES; [self saveCourses]; }
                 else if (!self.window.attachedSheet) {
                     self.submission.validation.stringValue = innerError.localizedDescription ?: @"提交未完成，请检查后重试。";

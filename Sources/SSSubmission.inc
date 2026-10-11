@@ -3,6 +3,8 @@
 @property NSArray *changes;
 @property NSArray<NSButton *> *checks;
 @property NSTextField *message;
+@property NSArray<NSButton *> *taskChecks;
+@property NSArray *taskIDs;
 @property NSTextField *validation;
 @property NSTextView *preview;
 @property (copy) void (^readPreview)(NSString *, void (^)(NSString *));
@@ -21,7 +23,7 @@
         Surface *root = Box(Canvas(), 0); root.frame = NSMakeRect(0, 0, 760, 580); panel.contentView = root;
         Put(root, Text(@"提交作业", 23, NSFontWeightSemibold, Ink()), 24, 24, 712, 32);
         NSTextField *target = Text([NSString stringWithFormat:@"目标：%@ · %@", course[@"fork"], course[@"branch"]], 13, NSFontWeightMedium, Accent()); target.toolTip = target.stringValue; Put(root, target, 24, 64, 712, 24);
-        Put(root, Text(@"逐项勾选文件。推送前会检查全部待推送提交。", 13, NSFontWeightRegular, Muted()), 24, 96, 712, 24);
+        Put(root, Text(@"逐项勾选文件；下方可关联作业。推送前检查全部待推送提交。", 13, NSFontWeightRegular, Muted()), 24, 96, 712, 24);
         Put(root, Text(@"本次提交的文件", 13, NSFontWeightSemibold, Ink()), 24, 136, 304, 24);
         Put(root, Text(@"变更预览", 13, NSFontWeightSemibold, Ink()), 344, 136, 392, 24);
         Surface *list = Box(Card(), 8); list.frame = NSMakeRect(0, 0, 288, MAX(272, changes.count * 64)); NSMutableArray *checks = NSMutableArray.array;
@@ -39,9 +41,20 @@
         ActionButton *save = Button(@"检查并提交", self, @selector(save:), 1); save.keyEquivalent = @"\r"; save.keyEquivalentModifierMask = 0; Put(root, save, 568, 520, 168, 36); panel.initialFirstResponder = self.message; panel.defaultButtonCell = save.cell;
     } return self;
 }
+- (void)configureTasks:(NSArray *)tasks selected:(NSArray *)selected {
+    if(self.taskChecks)return;
+    NSView *root=self.window.contentView;[self.window setContentSize:NSMakeSize(760,676)];root.frame=NSMakeRect(0,0,760,676);
+    for(NSView *view in root.subviews)if(view.frame.origin.y>=136){NSRect frame=view.frame;frame.origin.y+=96;view.frame=frame;}
+    Put(root,Text(@"关联作业（可选，不会自动选择文件）",13,NSFontWeightSemibold,Ink()),24,128,712,24);
+    NSStackView *stack=NSStackView.new;stack.orientation=NSUserInterfaceLayoutOrientationVertical;stack.alignment=NSLayoutAttributeLeading;stack.spacing=4;
+    NSMutableArray *checks=NSMutableArray.array;
+    for(NSDictionary *task in tasks){NSButton *check=[NSButton checkboxWithTitle:task[@"title"] target:nil action:nil];check.identifier=task[@"id"];check.toolTip=task[@"title"];check.state=[selected containsObject:task[@"id"]] ? NSControlStateValueOn:NSControlStateValueOff;[stack addArrangedSubview:check];[checks addObject:check];}
+    stack.frame=NSMakeRect(0,0,650,MAX(28,checks.count*24));NSScrollView *scroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,156,712,60)];scroll.hasVerticalScroller=YES;scroll.documentView=stack;[self.window.contentView addSubview:scroll];self.taskChecks=checks;
+}
 - (BOOL)hasUnsavedChanges {
     [self.window makeFirstResponder:nil];
     if (self.message.stringValue.length) return YES;
+    for (NSButton *check in self.taskChecks) if(check.state==NSControlStateValueOn)return YES;
     for (NSButton *check in self.checks) if (check.state == NSControlStateValueOn) return YES;
     return NO;
 }
@@ -57,6 +70,7 @@
     NSMutableArray *paths = NSMutableArray.array; for (NSUInteger i = 0; i < self.checks.count; i++) if (self.checks[i].enabled && self.checks[i].state == NSControlStateValueOn) [paths addObject:self.changes[i][@"path"]];
     NSString *message = [self.message.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!paths.count || !message.length) { self.validation.stringValue = @"请至少选择一个文件，并填写提交说明。"; self.validation.textColor = NSColor.systemRedColor; return; }
+    NSMutableArray *ids=NSMutableArray.array;for(NSButton *check in self.taskChecks)if(check.state==NSControlStateValueOn)[ids addObject:check.identifier];self.taskIDs=ids;
     [self cancel:nil]; if (self.submit) self.submit(paths.copy, message);
 }
 @end

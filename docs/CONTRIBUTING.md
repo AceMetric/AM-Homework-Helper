@@ -17,6 +17,8 @@
 | `Sources/SSGit.m` | 上游文档读取、安全合并、所选文件提交与明确目标推送 |
 | `Sources/SSUpdateController.m`、`SSExitCoordinator.m` | 原生更新窗口、偏好、退出等待与保存保护 |
 | `Sources/SSLocalData.m`、`SSSecurity.m` | 本机数据与钥匙串、敏感内容检查 |
+| `Sources/AMSubmission*.inc` | 提交检查点、本机记录、只读恢复与历史入口 |
+| `Sources/AMQuick*.inc`、`AMBackup.inc` | 本机录入、材料证据、草稿与联合备份事务 |
 | `Tools/security-audit.py` | 源码、历史、图片、归档和发布产物的隐私检查 |
 
 `SS` 前缀与旧测试版内部数据标识暂时保留，用于兼容已有任务和登录信息。软件显示名称与应用包名称为 AM's Homework Helper；内部可执行文件保持 DDLManager，ZIP 使用 AM-Homework-Helper 前缀。上游正式发行时，维护者应结合原版数据格式决定是否迁移内部标识；单纯改名不触发数据迁移。
@@ -30,6 +32,8 @@ zsh build.sh
 zsh test.sh
 zsh verify-quality.sh
 zsh verify-planning.sh
+zsh verify-submissions.sh
+zsh verify-quick-entry.sh
 zsh verify-import.sh
 zsh verify-homework.sh
 zsh verify-forms.sh
@@ -37,6 +41,7 @@ zsh verify-course-ui.sh
 zsh verify-update.sh
 zsh verify-recognition.sh
 zsh verify-hybrid-ui.sh
+AM_UI_TEST=QuickUsage zsh verify-hybrid-ui.sh
 python3 Tests/SecurityAuditTests.py
 python3 Tools/security-audit.py --history --artifacts "build/AM's Homework Helper.app" --ocr build/tests/privacy-ocr
 ```
@@ -74,3 +79,5 @@ PR 不需要向接收仓库直接 push。提交代码后由本项目维护者审
 SwiftUI 通过 `Tools/prepare-swiftui.py` 编译为应用内 `libAMUI.dylib`，生成 Objective-C 桥接头；目标保持 macOS 13，依赖系统 Swift 运行库。后台结果在主线程送入视图，业务保存与 Git 操作仍只有现有应用入口。不要引入第二个主窗口或任务库。识别公开测试不得包含真实课程原文，详细配置见 [识别说明](RECOGNITION.md)。
 
 质量回归：`AM_UI_TEST=QualityUsage zsh verify-hybrid-ui.sh` 使用2000项任务及20门模拟课程检查启动、列表虚拟化、搜索和选择耗时。任务恢复点仅在本机；诊断导出先预览，无遥测。通知送达、同学可用性及最低系统实机结果须单独记录。
+
+提交记录测试使用临时 Git 仓库与模拟个人远端，覆盖已提交未推送、重试不重复提交、异常退出及备份事务。快速录入测试不需要真实 GitHub：`verify-quick-entry.sh` 校验日期、时区与材料证据；`QuickUsage` 驱动真实控制器和保存入口，模拟磁盘写入失败。`AM_UI_TEST=QuickForeground zsh verify-hybrid-ui.sh` 是显式前台测试，只使用模拟通知和隔离目录，可检查原生输入、按钮、两种外观与窄窗口。测试截图不提交仓库。

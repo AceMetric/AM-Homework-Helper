@@ -15,6 +15,13 @@ NSArray * _Nullable SSLoadTasks(NSError **error);
 BOOL SSSaveTasks(NSArray *previous, NSArray *tasks, NSError **error);
 NSArray<NSDictionary *> *SSRecoveryPoints(void);
 NSArray * _Nullable SSRecoveryTasks(NSString *identifier, NSError **error);
+BOOL AMRecoverBackup(NSError **error);
+NSDictionary * _Nullable AMBackupEnvelope(NSArray *tasks, NSError **error);
+NSDictionary * _Nullable AMDecodeBackup(id value, NSError **error);
+BOOL AMRestoreBackup(NSArray *previous, NSArray *tasks, NSArray *records, NSError **error);
+NSArray * _Nullable AMSubmissionRecords(NSError **error);
+BOOL AMStoreSubmission(NSDictionary *record, NSError **error);
+NSString *AMSubmissionStateLabel(NSDictionary *record);
 void SSDiagnostic(NSString *stage, NSString *outcome, NSTimeInterval seconds);
 NSArray<NSDictionary *> *SSDiagnostics(void);
 

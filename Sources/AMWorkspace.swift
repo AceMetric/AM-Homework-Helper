@@ -158,7 +158,7 @@ final class ReviewState: ObservableObject {
         activeRecord = record; selected = identifier(record)
         let task = record["existingTask"] as? NSDictionary
         title = task?["title"] as? String ?? (string(record,"suggestedTitle").isEmpty ? string(record,"title") : string(record,"suggestedTitle"))
-        notes = task?["notes"] as? String ?? suggestedNotes(record)
+        notes = task?["notes"] as? String ?? (string(record,"sourceType")=="local" ? string(record,"notes"):suggestedNotes(record))
         let suggestion=suggestion(record)
         if let value = task?["due"] as? Date { date = value; hasDate = true }
         else if let value = record["due"] as? Date { date = value; hasDate = true }
@@ -935,3 +935,111 @@ private struct WeeklyPlanningView:View {
     public override func loadView(){view=NSHostingView(rootView:WeeklyPlanningView(state:state))}
     @objc public func updateSections(_ sections:[NSDictionary],notice:String){state.sections=workspaceRecords(sections);state.notice=notice}
 }
+
+@MainActor private final class SubmissionHistoryState:ObservableObject {
+    @Published var records:[NSDictionary]=[]
+    @Published var selected:String?
+    @Published var busy=false
+    var action:((String,String)->Void)?
+}
+private struct SubmissionHistoryView:View {
+    @ObservedObject var state:SubmissionHistoryState
+    private var current:NSDictionary? {state.records.first{recordIdentifier($0)==state.selected}}
+    private func details(_ r:NSDictionary)->some View {
+        ScrollView{VStack(alignment:.leading,spacing:16){
+            Text(string(r,"label")).font(.headline)
+            Text("\(string(r,"repository")) · \(string(r,"branch"))").foregroundStyle(.secondary)
+            Text(string(r,"kind")=="submission" || string(r,"kind")=="existing" ? "作业提交":"课程同步／合并").font(.caption)
+            Text(string(r,"message")).textSelection(.enabled)
+            if !string(r,"commit").isEmpty{WorkspaceSection("提交版本"){Text(string(r,"commit")).font(.system(.caption,design:.monospaced)).textSelection(.enabled);Button("在 GitHub 查看"){state.action?("open",identifier(r))}}}
+            WorkspaceSection("操作与核验"){Text("本机操作：\((r["date"] as? Date ?? Date()).formatted())");if let checked=r["checkedAt"] as? Date{Text("最近核验：\(checked.formatted())")};if let confirmed=r["confirmedAt"] as? Date{Text("曾确认推送：\(confirmed.formatted())")};Text("提交记录与作业完成状态分别管理。").foregroundStyle(.secondary)}
+            WorkspaceSection("实际文件"){ForEach(r["files"] as? [String] ?? [],id:\.self){Text($0).font(.caption).textSelection(.enabled)}}
+            HStack{Button("重新核验"){state.action?("verify",identifier(r))};if string(r,"state") != "confirmed" && !string(r,"commit").isEmpty{Button("核验并重试推送"){state.action?("retry",identifier(r))}}}.disabled(state.busy)
+        }.padding(16).frame(maxWidth:.infinity,alignment:.leading)}
+    }
+    var body:some View {GeometryReader{geo in
+        let list=List(selection:Binding(get:{state.selected},set:{state.selected=$0})){ForEach(workspaceRows(state.records)){row in let r=row.record;VStack(alignment:.leading,spacing:5){Text(string(r,"message").isEmpty ? "课程操作":string(r,"message")).lineLimit(2);Text(string(r,"label")).font(.caption).foregroundStyle(string(r,"state")=="confirmed" ? Color.secondary:Color.orange);Text(String(string(r,"commit").prefix(12))).font(.caption2.monospaced())}.padding(.vertical,4).tag(identifier(r))}}.listStyle(.inset)
+        VStack(alignment:.leading,spacing:8){HStack{Text("提交记录").font(.headline);Spacer();Button("关联已有提交…"){state.action?("existing","")}.disabled(state.busy)}.padding(.horizontal,12)
+            if state.records.isEmpty{VStack(spacing:12){Image(systemName:"clock.arrow.circlepath").font(.largeTitle);Text("暂无提交记录").font(.headline);Text("通过应用提交后，可在这里确认推送状态并回查版本。").foregroundStyle(.secondary)}.frame(maxWidth:.infinity,maxHeight:.infinity)}
+            else if geo.size.width<760{VStack(spacing:0){list.frame(height:max(150,geo.size.height*0.4));Divider();if let r=current{details(r)}else{Text("选择一条记录查看详情").foregroundStyle(.secondary).padding()}}}
+            else{HStack(spacing:0){list.frame(width:280);Divider();if let r=current{details(r)}else{Text("选择提交记录，查看文件、提交号与推送状态。").foregroundStyle(.secondary).frame(maxWidth:.infinity,maxHeight:.infinity)}}}
+        }.background(Color(nsColor:AMAppearance.canvas))
+    }}
+}
+@objc(AMSubmissionHistoryController) @MainActor public final class AMSubmissionHistoryController:NSViewController {
+    private let state=SubmissionHistoryState()
+    @objc public var actionHandler:((String,String)->Void)? {didSet{state.action=actionHandler}}
+    @objc public func updateRecords(_ records:[NSDictionary],busy:Bool){state.records=workspaceRecords(records);state.busy=busy;if !state.records.contains(where:{recordIdentifier($0)==state.selected}){state.selected=state.records.first.map{recordIdentifier($0)}}}
+    public override func loadView(){view=NSHostingView(rootView:SubmissionHistoryView(state:state))}
+}
+
+private struct CaptureTextEditor:NSViewRepresentable {
+    @Binding var text:String
+    final class Coordinator:NSObject,NSTextViewDelegate {
+        var binding:Binding<String>
+        init(_ binding:Binding<String>){self.binding=binding}
+        func textDidChange(_ notification:Notification){if let view=notification.object as? NSTextView{binding.wrappedValue=view.string}}
+    }
+    func makeCoordinator()->Coordinator{Coordinator($text)}
+    func makeNSView(context:Context)->NSScrollView {
+        let scroll=NSScrollView();scroll.hasVerticalScroller=true;scroll.borderType = .noBorder
+        let view=NSTextView(frame:.zero);view.isRichText=false;view.allowsUndo=true;view.font = .systemFont(ofSize:13);view.textContainerInset=NSSize(width:8,height:8);view.textColor = .textColor;view.backgroundColor = .textBackgroundColor
+        view.isVerticallyResizable=true;view.isHorizontallyResizable=false;view.autoresizingMask = [.width];view.textContainer?.widthTracksTextView=true;view.delegate=context.coordinator;view.setAccessibilityIdentifier("quick-input");view.setAccessibilityLabel("作业通知原文");scroll.documentView=view;return scroll
+    }
+    func updateNSView(_ scroll:NSScrollView,context:Context){context.coordinator.binding=$text;if let view=scroll.documentView as? NSTextView,view.string != text{view.string=text}}
+}
+
+@MainActor final class QuickEntryState:ObservableObject {
+    @Published var text=""
+    @Published var entries:[NSDictionary]=[]
+    @Published var selected:String?
+    @Published var notice=""
+    @Published var busy=false
+    @Published var explicitReference=false
+    @Published var reference=Date()
+    var courses:[NSDictionary]=[]
+    var action:((String,NSDictionary)->Void)?
+    var current:NSDictionary? {entries.first{identifier($0)==selected}}
+    var snapshot:NSDictionary {["text":text,"entries":entries,"referenceDate":reference,"explicitReference":explicitReference]}
+    func send(_ name:String){action?(name,snapshot)}
+    func change(_ key:String,_ value:Any){guard let id=selected,let index=entries.firstIndex(where:{identifier($0)==id})else{return};let copy=entries[index].mutableCopy() as! NSMutableDictionary;copy[key]=value;if key != "selected"{copy["edited"]=true;var fields=Set(copy["editedFields"] as? [String] ?? []);fields.insert(key);copy["editedFields"]=Array(fields)};entries[index]=copy.copy() as! NSDictionary;send("draft")}
+    func field(_ key:String)->Binding<String>{Binding(get:{self.current.map{string($0,key)} ?? ""},set:{self.change(key,$0)})}
+}
+private struct QuickEntryView:View {
+    @ObservedObject var state:QuickEntryState
+    private var rows:some View {
+        List(selection:Binding(get:{state.selected},set:{state.selected=$0})){ForEach(workspaceRows(state.entries)){row in let r=row.record
+            HStack(alignment:.top){Toggle("",isOn:Binding(get:{flag(r,"selected")},set:{new in state.selected=identifier(r);state.change("selected",new)})).labelsHidden().accessibilityLabel("选择 \(string(r,"title"))");VStack(alignment:.leading,spacing:5){Text(string(r,"title").isEmpty ? "待填写名称":string(r,"title")).lineLimit(2);Text(string(r,"dateText").isEmpty ? "待补全截止时间":string(r,"dateText")).font(.caption).foregroundStyle(.secondary)}}.padding(.vertical,4).tag(identifier(r))
+        }}.listStyle(.inset).onCommand(#selector(NSText.selectAll(_:))){for index in state.entries.indices{let copy=state.entries[index].mutableCopy() as! NSMutableDictionary;copy["selected"]=true;state.entries[index]=copy};state.send("draft")}
+    }
+    private var details:some View {
+        ScrollView{VStack(alignment:.leading,spacing:12){if let r=state.current {
+            WorkspaceSection("作业信息"){TextField("作业名称",text:state.field("title")).accessibilityIdentifier("quick-title");TextField("课程或分类",text:state.field("subject"));if !state.courses.isEmpty{Menu("关联 GitHub 课程（可选）"){Button("不关联"){state.change("courseRepository","")};ForEach(workspaceRows(state.courses)){row in Button(string(row.record,"name")){state.change("courseRepository",identifier(row.record));state.change("subject",string(row.record,"name"))}}}}}
+            WorkspaceSection("截止时间"){TextField("例如 2026-10-20 18:00",text:state.field("dateText")).accessibilityIdentifier("quick-deadline");Text(string(r,"hint")).font(.caption).foregroundStyle(.secondary);Text("时区：\(string(r,"timeZone")) · 消息／录入日期：\(state.reference.formatted())").font(.caption2).foregroundStyle(.secondary)}
+            WorkspaceSection("备注"){TextEditor(text:state.field("notes")).frame(minHeight:90).accessibilityIdentifier("quick-notes");Text("概括和提交要求已预填，可修改或清空。").font(.caption).foregroundStyle(.secondary)}
+            WorkspaceSection("提醒"){ForEach([10080,4320,1440,60,0],id:\.self){minutes in let values=(r["reminderOffsets"] as? [NSNumber] ?? []).map(\.intValue);Toggle([10080:"提前7天",4320:"提前3天",1440:"提前1天",60:"提前1小时",0:"到期"][minutes]!,isOn:Binding(get:{values.contains(minutes)},set:{yes in var next=Set(values);if yes{next.insert(minutes)}else{next.remove(minutes)};state.change("reminderOffsets",Array(next).sorted(by:>))}))}}
+            DisclosureGroup("查看原文"){Text(string(r,"evidence")).font(.caption).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}
+        }else{Text("识别后选中一项，在这里核对和修改。").foregroundStyle(.secondary)}}.padding(12)}
+    }
+    var body:some View {GeometryReader{geo in VStack(alignment:.leading,spacing:12){
+        HStack{Text("快速录入作业").font(.title2.bold());Spacer();Button("保存草稿并关闭"){state.send("close")}.keyboardShortcut(.cancelAction)}
+        Text("粘贴通知、输入一句话或识别截图；核对后加入安排。").foregroundStyle(.secondary)
+        CaptureTextEditor(text:$state.text).frame(height:90).overlay(RoundedRectangle(cornerRadius:6).stroke(Color(nsColor:.separatorColor))).onChange(of:state.text){_ in state.send("draft")}
+        HStack{Button("粘贴"){state.send("paste")};Button("选择截图…"){state.send("image")};WorkspaceButton(title:"识别文字",enabled:!state.busy,prominent:true,identity:"quick-parse"){state.send("parse")}.fixedSize();Button("助手识别…"){state.send("skill")};Spacer();if state.busy{ProgressView().controlSize(.small)}}.disabled(state.busy)
+        HStack{Toggle("指定消息日期",isOn:$state.explicitReference).onChange(of:state.explicitReference){_ in state.send("draft")};if state.explicitReference{DatePicker("",selection:$state.reference).labelsHidden().onChange(of:state.reference){_ in state.send("draft")}};Spacer()}
+        HStack{Button("全选"){for i in state.entries.indices{let copy=state.entries[i].mutableCopy() as! NSMutableDictionary;copy["selected"]=true;state.entries[i]=copy};state.send("draft")};Button("取消选择"){for i in state.entries.indices{let copy=state.entries[i].mutableCopy() as! NSMutableDictionary;copy["selected"]=false;state.entries[i]=copy};state.send("draft")};Text("已选 \(state.entries.filter{flag($0,"selected")}.count) / \(state.entries.count)").foregroundStyle(.secondary);Spacer()}
+        if geo.size.width<760{VStack(spacing:0){rows.frame(height:150);Divider();details}}else{HStack(spacing:0){rows.frame(width:260);Divider();details}}
+        Divider();Text(state.notice).font(.callout).foregroundStyle(Color(nsColor:.labelColor)).textSelection(.enabled).accessibilityIdentifier("quick-status")
+        HStack{Button("手动导入助手结果…"){state.send("import")};Spacer();WorkspaceButton(title:"确认选中作业…",enabled:!state.busy && state.entries.contains{flag($0,"selected")},prominent:true,identity:"quick-save",saveShortcut:true){state.send("save")}.fixedSize()}
+    }.padding(16).font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).accessibilityElement(children:.contain)}}
+}
+@objc(AMQuickEntryController) @MainActor public final class AMQuickEntryController:NSViewController {
+    private let state=QuickEntryState()
+    @objc public var actionHandler:((String,NSDictionary)->Void)? {didSet{state.action=actionHandler}}
+    @objc public var snapshot:NSDictionary {state.snapshot}
+    @objc public func updateDraft(_ draft:NSDictionary,courses:[NSDictionary],notice:String,busy:Bool){state.text=string(draft,"text");state.entries=workspaceRecords(draft["entries"] as? [NSDictionary] ?? []);state.reference=draft["referenceDate"] as? Date ?? Date();state.explicitReference=flag(draft,"explicitReference");state.courses=workspaceRecords(courses);state.notice=notice;state.busy=busy;if !state.entries.contains(where:{recordIdentifier($0)==state.selected}){state.selected=state.entries.first.map{recordIdentifier($0)}}}
+    @objc public func setNotice(_ notice:String,busy:Bool){state.notice=notice;state.busy=busy}
+    public override func loadView(){view=NSHostingView(rootView:QuickEntryView(state:state))}
+}
+
+private func recordIdentifier(_ record:NSDictionary)->String {identifier(record)}
