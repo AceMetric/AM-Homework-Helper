@@ -173,6 +173,7 @@ NSArray<NSMutableDictionary *> *DDLNormalizeTasks(NSArray *items) {
     NSMutableSet *ids = [NSMutableSet set];
     for (id item in items) {
         if (![item isKindOfClass:NSDictionary.class] || ![item[@"due"] isKindOfClass:NSDate.class] || ![item[@"title"] isKindOfClass:NSString.class]) continue;
+        if (!DDLPlanningValid(item)) continue;
         NSMutableDictionary *task = [item mutableCopy];
         NSString *identifier = [task[@"id"] isKindOfClass:NSString.class] ? task[@"id"] : nil;
         if (!identifier.length || [ids containsObject:identifier]) identifier = NSUUID.UUID.UUIDString;
@@ -285,3 +286,5 @@ NSDictionary<NSString *, NSNumber *> *DDLMonthSummary(NSArray *items, NSDate *mo
     }
     return @{@"total":@(total), @"completed":@(completed), @"pending":@(total - completed), @"overdue":@(overdue)};
 }
+
+#include "AMPlanning.inc"

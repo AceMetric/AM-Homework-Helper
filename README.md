@@ -18,7 +18,7 @@
 
 ## 安装与使用
 
-从 [GitHub Releases](https://github.com/AceMetric/AM-Homework-Helper/releases/latest) 下载 **1.4.1** 的 `AM-Homework-Helper-1.4.1-macOS-arm64.zip`，安装说明与校验文件作为独立附件提供。当前构建使用临时签名，**未经 Apple 公证**。
+从 [GitHub Releases](https://github.com/AceMetric/AM-Homework-Helper/releases/latest) 下载 **1.5.0** 的 `AM-Homework-Helper-1.5.0-macOS-arm64.zip`，安装说明与校验文件作为独立附件提供。当前构建使用临时签名，**未经 Apple 公证**。
 
 解压后将 `AM's Homework Helper.app` 放入“应用程序”。首次打开若被系统阻止，可在“系统设置 → 隐私与安全性”按系统提示选择“仍要打开”。更新前退出正在运行的旧测试版。
 
@@ -107,3 +107,9 @@ zsh verify-homework.sh
 本项目沿用上游的 [MIT 许可证](LICENSE)，保留原作者版权声明，并另列本分支改动的署名。随应用分发的 Sparkle 保留其独立许可证。
 
 来源与授权依据见 [原作者与授权记录](docs/ATTRIBUTION.md)；原版用户指南保存在 [原版说明](docs/UPSTREAM_README.md)。
+
+### 手动每周安排与子任务
+
+在总览选择“本周”，按周一至周日查看计划；任务详情的“安排到…”和拖放都能设置计划日期。计划日期与作业截止时间分开，不改变提醒；过期的未完成计划显示在“待重新安排”，不会自动滚动到今天。
+
+选中任务后可添加子任务、修改名称、调整顺序、标记完成或安排日期。子任务使用父作业截止时间，不单独提醒。所有步骤完成后仍由你决定是否完成整个作业；完成父作业时可一次完成剩余步骤，整次操作可撤销。备份、恢复和老师原文更新保留计划与子任务。

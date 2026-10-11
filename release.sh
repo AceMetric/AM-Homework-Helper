@@ -11,6 +11,7 @@ fi
 zsh verify-quiet.sh
 zsh build.sh
 zsh verify-quality.sh
+zsh verify-planning.sh
 zsh verify-import.sh
 zsh verify-homework.sh
 zsh verify-github-cli.sh
@@ -22,9 +23,11 @@ zsh verify-hybrid-ui.sh
 AM_UI_TEST=QuietUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=SkillExchange zsh verify-hybrid-ui.sh
 AM_UI_TEST=QualityUsage zsh verify-hybrid-ui.sh
+AM_UI_TEST=PlanningUsage zsh verify-hybrid-ui.sh
 # Foreground tests are an explicit maintainer lane; do not activate windows in routine builds.
 if [[ "${AM_FOREGROUND_QA:-0}" == "1" ]]; then
   AM_UI_TEST=ForegroundUsage zsh verify-hybrid-ui.sh
+  AM_UI_TEST=PlanningForeground zsh verify-hybrid-ui.sh
 fi
 python3 Tests/SecurityAuditTests.py
 product_name=$(python3 -c 'import plistlib; print(plistlib.load(open("Info.plist", "rb"))["CFBundleName"])')
