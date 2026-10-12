@@ -1,9 +1,14 @@
 #import "SSGit.h"
+#import "AMPreflight.h"
 #import "SSAssignments.h"
 #import "SSRecognition.h"
 #import "SSSecurity.h"
 #import "SSLocalData.h"
 #import <signal.h>
+#import <fcntl.h>
+#import <unistd.h>
+#import <sys/stat.h>
+#import <errno.h>
 #include <math.h>
 
 static NSError *GitError(NSString *message) {
@@ -453,6 +458,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
                 if (SSContainsSecret(blob.data)) { if (error) *error = GitError(@"所选文件含疑似凭据，已停止提交。"); return NO; }
             }
         }
+        if(![self validatePreflightIndex:paths course:course error:error])return NO;
         SSGitResult *previous=[self checked:@[@"rev-parse",@"HEAD"] in:path token:nil error:error];
         if(!previous || (self.submissionCheckpoint && !self.submissionCheckpoint(@{@"before":Trim([self string:previous]),@"files":actual},error)))return NO;
         committed = [self checked:[[self authorArguments:user] arrayByAddingObjectsFromArray:@[@"commit", @"-m", commitMessage]] in:path token:nil error:error] != nil;
@@ -471,6 +477,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     return YES;
 }
 #include "AMSubmissionGit.inc"
+#include "AMPreflightGit.inc"
 - (NSArray<NSString *> *)conflicts:(NSDictionary *)course error:(NSError **)error {
     if (![self validateCourse:course error:error]) return nil;
     SSGitResult *files = [self checked:@[@"diff", @"--name-only", @"--diff-filter=U", @"-z"] in:course[@"path"] token:nil error:error];

@@ -2,6 +2,11 @@
 
 NS_ASSUME_NONNULL_BEGIN
 @interface SSGit : NSObject
+@property(copy, nullable) NSDictionary *expectedSubmissionSnapshot;
+@property(copy, nullable) NSDictionary *submissionReviewSummary;
+- (NSDictionary * _Nullable)preflightSnapshotForCourse:(NSDictionary *)course paths:(NSArray *)paths error:(NSError **)error;
+- (NSString *)preflightRequirementsForCourse:(NSDictionary *)course tasks:(NSArray *)tasks;
+- (BOOL)validatePreflightIndex:(NSArray *)paths course:(NSDictionary *)course error:(NSError **)error;
 @property(copy, nullable) BOOL (^submissionCheckpoint)(NSDictionary *fields, NSError **error);
 - (NSDictionary * _Nullable)performRecordedCourse:(NSDictionary *)course kind:(NSString *)kind taskIDs:(NSArray *)taskIDs paths:(NSArray *)paths message:(NSString *)message token:(NSString *)token login:(NSString *)login userID:(NSNumber *)userID error:(NSError **)error;
 - (NSDictionary * _Nullable)verifySubmission:(NSDictionary *)record course:(NSDictionary *)course token:(NSString *)token retry:(BOOL)retry error:(NSError **)error;

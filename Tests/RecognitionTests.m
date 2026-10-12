@@ -11,6 +11,9 @@ static NSUInteger assertions;
 static void Check(BOOL pass,NSString *message){assertions++;if(!pass){fprintf(stderr,"FAIL: %s\n",message.UTF8String);exit(1);}}
 int main(void){@autoreleasepool{
     NSCalendar *calendar=NSCalendar.currentCalendar.copy;calendar.timeZone=[NSTimeZone timeZoneWithName:@"Asia/Shanghai"];
+    NSArray *noDate=SSDiscoveriesFromDocument(@"# Assignment 1\n## Setup\nRun the supplied demonstration and inspect the output.\n",@"teacher/course",@"assignment-1/README.md",@"v1",NSDate.date,calendar);
+    Check(noDate.count==1 && [noDate[0][@"kind"] isEqual:@"assignment"] && !noDate[0][@"due"],@"explicit English assignment without deadline is reviewable");
+    NSString *privatePath=NSProcessInfo.processInfo.environment[@"AM_PRIVATE_ASSIGNMENT_DOCUMENT"];if(privatePath.length){NSString *privateText=[NSString stringWithContentsOfFile:privatePath encoding:NSUTF8StringEncoding error:NULL];NSArray *actual=SSRecognizeDocument(privateText,@"teacher/private-course",@"assignment-1/README.md",@"fixed-local-version",calendar,@{@"mode":@"rules"},NSMutableDictionary.dictionary,NULL);Check(actual.count==1 && [actual[0][@"kind"] isEqual:@"assignment"] && !actual[0][@"due"],@"private real no-deadline assignment recognized without inventing time");Check(!SSCanAutomaticallyImport(actual[0],@[],NSDate.date),@"private no-deadline assignment stays reviewable");}
     NSString *text=@"# 作业六\n截止：2027 年 4 月 14 日（星期三）21:00 UTC+8\n## 任务\n完成运动分析。\n提交报告，命名为 homework.md。\n";
     NSMutableDictionary *cache=NSMutableDictionary.dictionary;NSError *error=nil;
     NSArray *records=SSRecognizeDocument(text,@"teacher/course",@"homework.md",@"v1",calendar,@{@"mode":@"rules"},cache,&error);

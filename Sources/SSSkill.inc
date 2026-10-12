@@ -9,7 +9,8 @@ NSDictionary *SSSkillReadResult(NSURL *url,NSError **error) {
     NSMutableData *data=[NSMutableData dataWithLength:(NSUInteger)info.st_size];NSUInteger offset=0;
     while(offset<data.length){ssize_t count=read(fd,(char *)data.mutableBytes+offset,data.length-offset);if(count<=0)break;offset+=(NSUInteger)count;}close(fd);
     id result=offset==data.length ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
-    if(![result isKindOfClass:NSDictionary.class] || ![result[@"documents"] isKindOfClass:NSArray.class] || [result[@"documents"] count]>1000 || (result[@"batchID"] && ![result[@"batchID"] isKindOfClass:NSString.class])){if(error)*error=RError(@"结果尚未完整或格式无效，请让助手完整写入后重试。");return nil;}
+    BOOL preflight=[result isKindOfClass:NSDictionary.class] && [result[@"format"] isEqual:@"am-preflight-results-v1"];
+    if(![result isKindOfClass:NSDictionary.class] || ![result[preflight ? @"findings":@"documents"] isKindOfClass:NSArray.class] || [result[preflight ? @"findings":@"documents"] count]>1000 || (result[@"batchID"] && ![result[@"batchID"] isKindOfClass:NSString.class])){if(error)*error=RError(@"结果尚未完整或格式无效，请让助手完整写入后重试。");return nil;}
     unsigned char digest[CC_SHA256_DIGEST_LENGTH];CC_SHA256(data.bytes,(CC_LONG)data.length,digest);NSMutableString *fingerprint=NSMutableString.string;for(NSUInteger i=0;i<sizeof(digest);i++)[fingerprint appendFormat:@"%02x",digest[i]];
     return @{@"result":result,@"fingerprint":fingerprint};
 }
