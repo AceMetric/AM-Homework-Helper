@@ -927,7 +927,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     void (^append)(NSString *,CGFloat,NSFontWeight,NSColor *)=^(NSString *value,CGFloat size,NSFontWeight weight,NSColor *color){[body appendAttributedString:[[NSAttributedString alloc] initWithString:value attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:size weight:weight],NSForegroundColorAttributeName:color}]];};
     append(@"备注\n",13,NSFontWeightSemibold,Ink());append([task[@"notes"] length] ? task[@"notes"]:@"暂无备注，可通过“编辑任务”添加。",13,NSFontWeightRegular,[task[@"notes"] length] ? Ink():Muted());
     [text.textStorage setAttributedString:body];__weak typeof(self) owner=self;text.onClose=^{[owner closeTaskDetails:nil];};[panel addSubview:scroll];[text.layoutManager ensureLayoutForTextContainer:text.textContainer];
-    Surface *detailDocument=Box(Card(),0);CGFloat plannerHeight=170+[task[@"subtasks"] count]*76;CGFloat submissionHeight=104;CGFloat textHeight=MAX(180,NSMaxY([text.layoutManager usedRectForTextContainer:text.textContainer])+16);
+    Surface *detailDocument=Box(Card(),0);CGFloat plannerHeight=170+[task[@"subtasks"] count]*76;CGFloat submissionHeight=148;CGFloat textHeight=MAX(180,NSMaxY([text.layoutManager usedRectForTextContainer:text.textContainer])+16);
     AMTaskPlanningController *planner=AMTaskPlanningController.new;self.taskPlanningController=planner;[planner updateTask:task];planner.actionHandler=^(NSString *action,NSString *taskID,NSString *subID,NSString *value){[owner planningAction:action task:taskID subtask:subID value:value];};
     detailDocument.frame=NSMakeRect(0,0,w-24,100+plannerHeight+textHeight+submissionHeight);
     NSTextField *taskTitle=Text(task[@"title"],17,NSFontWeightSemibold,Ink());taskTitle.maximumNumberOfLines=2;taskTitle.toolTip=task[@"title"];Put(detailDocument,taskTitle,12,4,w-48,44);
@@ -937,6 +937,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     CGFloat sy=100+textHeight+plannerHeight;Put(detailDocument,Text([@"提交：" stringByAppendingString:lastLabel],12,NSFontWeightRegular,Muted()),12,sy,w-48,24);
     ActionButton *history=Button(@"提交记录",self,@selector(taskSubmissionHistory:),0);history.identifier=task[@"id"];Put(detailDocument,history,12,sy+32,120,32);
     if([task[@"sourceRepository"] length] || [task[@"courseRepository"] length]){ActionButton *submit=Button(@"提交作业…",self,@selector(submitSelectedTask:),0);submit.identifier=task[@"id"];Put(detailDocument,submit,144,sy+32,120,32);}
+    ActionButton *check=Button(@"检查作业…",self,@selector(checkSelectedTask:),0);check.identifier=task[@"id"];Put(detailDocument,check,12,sy+76,120,32);
     scroll.documentView=detailDocument;
     [scroll.contentView scrollToPoint:position];self.taskDetailsScroll=scroll;self.taskDetailsText=text;
     if(restoreFocus){[self.window makeFirstResponder:text];text.selectedRange=NSMakeRange(MIN(selection.location,text.string.length),MIN(selection.length,text.string.length-MIN(selection.location,text.string.length)));}
@@ -1404,9 +1405,9 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     }
     if (self.courseWindow.hasSubmissionSheet) {
         if (self.courseWindow.hasUnsavedSubmission) {
-            NSAlert *alert = NSAlert.new; alert.messageText = @"提交窗口有未完成内容";
-            alert.informativeText = @"选择“检查并提交”会执行所选文件的提交与推送，完成后才继续退出或更新。验证或提交失败将暂缓退出。";
-            [alert addButtonWithTitle:updating ? @"检查并提交后更新" : @"检查并提交后退出"];
+            NSAlert *alert = NSAlert.new; alert.messageText = @"作业检查或提交尚未完成";
+            alert.informativeText = @"请返回提交窗口，完成检查并明确提交；也可放弃本次输入后退出。退出或更新不会替你提交。";
+            [alert addButtonWithTitle:@"返回作业窗口"];
             [alert addButtonWithTitle:updating ? @"放弃填写并更新" : @"放弃填写并退出"];
             [alert addButtonWithTitle:updating ? @"稍后更新" : @"取消退出"];
             NSModalResponse choice = [alert runModal];
@@ -1726,6 +1727,8 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     }];
 }
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)notification withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
+    NSString *taskID=notification.request.content.userInfo[@"taskID"];
+    if(taskID){NSDictionary *task=[self taskWithID:taskID];if(!task || [task[@"completed"] boolValue] || [task[@"archived"] boolValue] || [task[@"deleted"] boolValue]){completionHandler(UNNotificationPresentationOptionNone);return;}}
     completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionList | UNNotificationPresentationOptionSound);
 }
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center didReceiveNotificationResponse:(UNNotificationResponse *)response withCompletionHandler:(void (^)(void))completionHandler {

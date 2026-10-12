@@ -840,7 +840,7 @@ private struct SkillJobsWorkspace:View {
                     Text("\((record["count"] as? NSNumber)?.intValue ?? 0) 份文档 · \((record["courses"] as? [String] ?? []).map{String($0.split(separator:"/").last ?? "")}.joined(separator:"、"))").font(.caption).foregroundStyle(.secondary)
                     if !string(record,"message").isEmpty {Text(string(record,"message")).textSelection(.enabled)}
                     if flag(record,"cleaned"){Text("材料已清理；识别进度仍保留").font(.caption).foregroundStyle(.secondary)}
-                    HStack{if !flag(record,"cleaned"){Button("复制指令"){state.action?("copy",key)};Button("显示材料"){state.action?("reveal",key)}};if status=="需处理" {Button("重试接回"){state.action?("retry",key)};Button("重新准备未成功材料"){state.action?("prepare-failed",key)}}}.disabled(state.busy)
+                    HStack{if !flag(record,"cleaned"){Button("复制指令"){state.action?("copy",key)};Button("显示材料"){state.action?("reveal",key)};if !string(record,"reportVersion").isEmpty {Button("查看检查报告"){state.action?("view-report",key)}}};if status=="需处理" {Button("重试接回"){state.action?("retry",key)};if string(record,"reportVersion").isEmpty {Button("重新准备未成功材料"){state.action?("prepare-failed",key)}}}}.disabled(state.busy)
                 }.padding(.vertical,8)
             }.listStyle(.inset)}
         }.padding(16).font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent))
@@ -953,6 +953,7 @@ private struct SubmissionHistoryView:View {
             Text(string(r,"message")).textSelection(.enabled)
             if !string(r,"commit").isEmpty{WorkspaceSection("提交版本"){Text(string(r,"commit")).font(.system(.caption,design:.monospaced)).textSelection(.enabled);Button("在 GitHub 查看"){state.action?("open",identifier(r))}}}
             WorkspaceSection("操作与核验"){Text("本机操作：\((r["date"] as? Date ?? Date()).formatted())");if let checked=r["checkedAt"] as? Date{Text("最近核验：\(checked.formatted())")};if let confirmed=r["confirmedAt"] as? Date{Text("曾确认推送：\(confirmed.formatted())")};Text("提交记录与作业完成状态分别管理。").foregroundStyle(.secondary)}
+            if let review=r["review"] as? NSDictionary {WorkspaceSection("提交前检查"){Text("\((review["date"] as? Date ?? Date()).formatted()) · \((review["count"] as? NSNumber)?.intValue ?? 0) 条建议");Text(string(review,"coverage")=="local" ? "本机检查，用户确认继续":(string(review,"coverage")=="partial" ? "含助手复核；部分未完成，用户确认继续":"含助手复核，用户确认继续")).foregroundStyle(.secondary)}}
             WorkspaceSection("实际文件"){ForEach(r["files"] as? [String] ?? [],id:\.self){Text($0).font(.caption).textSelection(.enabled)}}
             HStack{Button("重新核验"){state.action?("verify",identifier(r))};if string(r,"state") != "confirmed" && !string(r,"commit").isEmpty{Button("核验并重试推送"){state.action?("retry",identifier(r))}}}.disabled(state.busy)
         }.padding(16).frame(maxWidth:.infinity,alignment:.leading)}

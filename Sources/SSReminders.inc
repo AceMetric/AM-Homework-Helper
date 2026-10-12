@@ -1,6 +1,11 @@
 @interface AMReminderScheduler:NSObject
 @property NSInteger generation;
 @property NSInteger scheduled;
+@property BOOL running;
+@property NSArray *latestTasks;
+@property id center;
+- (void)startSchedule;
+- (void)finishSchedule:(NSInteger)generation;
 @property NSString *error;
 @property NSString *notice;
 @property(copy) void (^changed)(NSInteger,NSString *,NSString *);
@@ -9,17 +14,26 @@
 @implementation AMReminderScheduler
 - (void)publish {if(self.changed)self.changed(self.scheduled,self.error,self.notice);}
 - (void)schedule:(NSArray *)tasks {
+    self.latestTasks=tasks;self.generation++;
+    if(!self.running)[self startSchedule];
+}
+- (void)finishSchedule:(NSInteger)generation {
+    self.running=NO;
+    if(generation!=self.generation)[self startSchedule];
+}
+- (void)startSchedule {
+    self.running=YES;NSArray *tasks=self.latestTasks;
     self.error = nil;self.notice=nil;
-    NSInteger generation = ++self.generation;
+    NSInteger generation = self.generation;
     NSDate *now = NSDate.date; NSMutableArray *plans = [NSMutableArray array];
     for (NSDictionary *task in tasks) [plans addObjectsFromArray:DDLReminderPlan(task, now, Cal())];
     [plans sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) { return [a[@"date"] compare:b[@"date"]]; }];
     // Keep the nearest reminders queued. Refill while running, on wake, and on launch.
     NSArray *queue = [plans subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)60, plans.count))];
-    UNUserNotificationCenter *center = UNUserNotificationCenter.currentNotificationCenter;
+    UNUserNotificationCenter *center = self.center ?: UNUserNotificationCenter.currentNotificationCenter;
     [center getPendingNotificationRequestsWithCompletionHandler:^(NSArray<UNNotificationRequest *> *pending) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (generation != self.generation) return;
+            if (generation != self.generation) {[self finishSchedule:generation];return;}
             NSMutableDictionary *existing = [NSMutableDictionary dictionary]; for (UNNotificationRequest *r in pending) existing[r.identifier] = r;
             NSMutableSet *desired = [NSMutableSet set];
             dispatch_group_t scheduled = dispatch_group_create();
@@ -47,13 +61,13 @@
             dispatch_group_notify(scheduled, dispatch_get_main_queue(), ^{
                 [center getPendingNotificationRequestsWithCompletionHandler:^(NSArray<UNNotificationRequest *> *actual) {
                     dispatch_async(dispatch_get_main_queue(), ^{
-                        if (generation != self.generation) return;
+                        if (generation != self.generation) {[self finishSchedule:generation];return;}
                         NSInteger count = 0; for (UNNotificationRequest *r in actual) if ([desired containsObject:r.identifier]) count++;
-                        self.scheduled = count;SSDiagnostic(@"reminder",self.error ? @"failed":@"success",0); [self publish];
+                        self.scheduled = count;SSDiagnostic(@"reminder",self.error ? @"failed":@"success",0); [self publish];[self finishSchedule:generation];
                     });
                 }];
             });
-            NSMutableSet *activeIDs = [NSMutableSet set]; for (NSDictionary *task in tasks) if (![task[@"completed"] boolValue] && ![task[@"archived"] boolValue]) [activeIDs addObject:task[@"id"]];
+            NSMutableSet *activeIDs = [NSMutableSet set]; for (NSDictionary *task in tasks) if (![task[@"completed"] boolValue] && ![task[@"archived"] boolValue] && ![task[@"deleted"] boolValue]) [activeIDs addObject:task[@"id"]];
             [center getDeliveredNotificationsWithCompletionHandler:^(NSArray<UNNotification *> *notifications) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     if (generation != self.generation) return;
