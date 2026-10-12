@@ -41,17 +41,8 @@
 - (void)taskSubmissionHistory:(id)sender {NSButton *route=NSButton.new;route.tag=4;[self navigate:route];[self.courseWindow showSubmissionHistory:[self identifierForSender:sender]];}
 - (void)submitSelectedTask:(id)sender {NSButton *route=NSButton.new;route.tag=4;[self navigate:route];[self.courseWindow submitTask:[self identifierForSender:sender]];}
 - (void)checkSelectedTask:(id)sender {
-    // Capture the stable task identity before navigation rebuilds the detail view.
+    // Keep the task and its inspector visible; local review does not navigate or edit a course.
     NSString *identifier=[[self identifierForSender:sender] copy];
-    NSDictionary *task=[self taskWithID:identifier];
-    if(!task){self.notice=@"这项任务已不存在，请重新选择任务。";[self render];return;}
-    if(self.courseWindow.operationBusy || self.courseWindow.operationsPaused || self.window.attachedSheet){
-        NSAlert *alert=NSAlert.new;alert.messageText=@"暂时无法检查作业";
-        alert.informativeText=@"请先完成当前课程操作或关闭正在编辑的窗口，再检查作业。";
-        [alert addButtonWithTitle:@"好"];[alert runModal];return;
-    }
-    NSButton *route=NSButton.new;route.tag=4;[self navigate:route];
-    if(self.page!=4)return; // Navigation may be cancelled to protect an unsaved draft.
     [self.courseWindow checkTask:identifier];
 }
 - (NSURL *)quickFolder:(NSString *)batch {
