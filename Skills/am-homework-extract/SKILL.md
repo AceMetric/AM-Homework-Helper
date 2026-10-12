@@ -98,4 +98,9 @@ Return one `am-preflight-results-v1` JSON with unchanged `batchID` and
 An empty findings list is valid; list coverage honestly. All mathematical and
 semantic findings remain suggestions for human review. Atomically replace
 `results.local.json` using the same temporary-file procedure as extraction.
-The app automatically receives the report; it will never submit from this result.
+For a local assistant with authorized filesystem access, the app automatically receives
+the report written to the batch folder. For an uploaded attachment package, do not
+try to access the user's Mac path: return a downloadable `results.local.json` file
+for the user to import into the report. If ZIP reading or image viewing is unavailable,
+state the limitation and ask for the unpacked files; never claim local write-back.
+The app will never submit from this result.

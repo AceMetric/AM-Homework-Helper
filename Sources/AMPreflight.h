@@ -1,6 +1,10 @@
 #import <Cocoa/Cocoa.h>
 NS_ASSUME_NONNULL_BEGIN
 NSString *AMPreflightHash(NSData *data);
+NSString *AMPreflightSpellingProse(NSString *text);
+NSURL * _Nullable AMPreflightAttachmentArchive(NSString *batch, NSError **error);
+NSString *AMPreflightAttachmentPrompt(void);
+BOOL AMPreflightImportResult(NSURL *url, NSString *batch, NSError **error);
 NSArray *AMPreflightImageReferences(NSString *text);
 NSString * _Nullable AMPreflightResolveImage(NSString *document, NSString *reference);
 NSArray *AMPreflightListSelectedFiles(NSURL *folder, NSArray *paths);
