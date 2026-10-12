@@ -81,11 +81,29 @@ static NSArray *PFMatches(NSString *s,NSString *pattern){return [[NSRegularExpre
 static NSString *PFGroup(NSString *s,NSTextCheckingResult *m,NSUInteger n){NSRange r=[m rangeAtIndex:n];return r.location==NSNotFound ? @"" : [s substringWithRange:r];}
 static NSString *PFVisible(NSString *text){
     NSMutableArray *lines=NSMutableArray.array;NSString *fence=nil;NSUInteger count=0;
-    for(NSString *line in [text componentsSeparatedByString:@"\n"]){NSString *t=RTrim(line);NSArray *f=PFMatches(t,@"^(`{3,}|~{3,})");if(f.count){NSString *mark=PFGroup(t,f[0],1);if(!fence){fence=[mark substringToIndex:1];count=mark.length;}else if([mark hasPrefix:fence] && mark.length>=count && !RTrim([t substringFromIndex:mark.length]).length)fence=nil;[lines addObject:@""];continue;}[lines addObject:fence ? @"" : line];}
+    for(NSString *line in [text componentsSeparatedByString:@"\n"]){NSString *t=RTrim(line);NSArray *f=PFMatches(t,@"^(`{3,}|~{3,})");if(f.count){NSString *mark=PFGroup(t,f[0],1);if(!fence){fence=[mark substringToIndex:1];count=mark.length;}else if([mark hasPrefix:fence] && mark.length>=count && !RTrim([t substringFromIndex:mark.length]).length)fence=nil;[lines addObject:[@"" stringByPaddingToLength:line.length withString:@" " startingAtIndex:0]];continue;}[lines addObject:fence ? [@"" stringByPaddingToLength:line.length withString:@" " startingAtIndex:0] : line];}
     NSMutableString *s=[[lines componentsJoinedByString:@"\n"] mutableCopy];
     // Mask inline code and comments without moving line anchors.
     for(NSString *pattern in @[@"(`+)[^`\\n]*\\1",@"<!--[\\s\\S]*?-->"]){NSArray *matches=PFMatches(s,pattern);for(NSTextCheckingResult *m in matches.reverseObjectEnumerator){NSString *part=[s substringWithRange:m.range];NSMutableString *mask=NSMutableString.string;for(NSUInteger i=0;i<part.length;i++)[mask appendString:[part characterAtIndex:i]=='\n' ? @"\n":@" "];[s replaceCharactersInRange:m.range withString:mask];}}
     return s;
+}
+// Keep UTF-16 offsets intact so a repeated word points to its actual line.
+NSString *AMPreflightSpellingProse(NSString *text){
+    NSMutableString *prose=PFVisible(text).mutableCopy;
+    for(NSString *pattern in @[@"<[^>]*>",@"\\$\\$[\\s\\S]*?\\$\\$",@"\\$[^$\\n]*\\$",@"\\\\\\([\\s\\S]*?\\\\\\)",@"\\\\\\[[\\s\\S]*?\\\\\\]",@"\\\\[A-Za-z]+(?:\\{[^}]*\\})?",@"!?\\[[^]\\n]*\\]\\([^\\n]*?\\)",@"(?m)^\\s*\\[[^]\\n]+\\]:[^\\n]*",@"https?://[^\\s]+",@"[A-Za-z0-9_.-]+(?:[/\\\\][^\\s<>]*)+",@"\\b[^\\s]*[_.][A-Za-z0-9_.-]+\\b"]){
+        for(NSTextCheckingResult *m in PFMatches(prose,pattern)){
+            NSMutableString *mask=[[prose substringWithRange:m.range] mutableCopy];
+            for(NSUInteger i=0;i<mask.length;i++)if([mask characterAtIndex:i]!='\n')[mask replaceCharactersInRange:NSMakeRange(i,1) withString:@" "];
+            [prose replaceCharactersInRange:m.range withString:mask];
+        }
+    }
+    return prose;
+}
+static BOOL PFSpellingWord(NSString *word){
+    if(!PFMatches(word,@"^[a-z]{3,}$").count)return NO;
+    // Acronyms, mixed-case identifiers and SI symbols are not prose misspellings.
+    if(![word isEqual:word.lowercaseString] && ![word isEqual:word.lowercaseString.capitalizedString])return NO;
+    return ![@[@"mol",@"rad",@"mrad",@"kpa",@"mpa",@"ghz",@"mhz",@"khz",@"kev",@"mev",@"kwh"] containsObject:word.lowercaseString];
 }
 NSArray *AMPreflightImageReferences(NSString *text){
     NSString *visible=PFVisible(text);NSMutableDictionary *definitions=NSMutableDictionary.dictionary;
@@ -138,7 +156,7 @@ static NSDictionary *PFPython(NSString *source){
 NSDictionary *AMPreflightCheck(NSDictionary *snapshot,NSString *requirements,NSMutableDictionary *cache,BOOL (^cancelled)(void)){
     NSMutableArray *issues=NSMutableArray.array,*coverage=NSMutableArray.array,*images=NSMutableArray.array;NSDictionary *files=snapshot[@"files"];
     for(NSString *path in snapshot[@"paths"]){if(cancelled && cancelled())return @{@"cancelled":@YES};NSDictionary *entry=files[path];if([entry[@"deleted"] boolValue])continue;
-        NSString *key=[NSString stringWithFormat:@"preflight-v1|%@|%@",path,entry[@"version"] ?: @""];NSDictionary *cached=cache[key];
+        NSString *key=[NSString stringWithFormat:@"preflight-v2|%@|%@",path,entry[@"version"] ?: @""];NSDictionary *cached=cache[key];
         if(!cached){NSMutableArray *found=NSMutableArray.array;NSString *text=entry[@"text"],*ext=path.pathExtension.lowercaseString,*status=@"未检查：不支持的文件类型";
             if(entry[@"problem"])[found addObject:PFIssue(@"format",@"error",path,@1,entry[@"problem"],@"",@"检查文件格式与大小后重新检查。")];
             else if(text){status=@"已检查：文本结构与明显未完成项";NSArray *lines=[text componentsSeparatedByString:@"\n"];BOOL markdown=[@[@"md",@"markdown",@"mdx"] containsObject:ext];NSString *visible=markdown ? PFVisible(text):text;NSArray *viewLines=[visible componentsSeparatedByString:@"\n"];
@@ -147,9 +165,9 @@ NSDictionary *AMPreflightCheck(NSDictionary *snapshot,NSString *requirements,NSM
                     if(PFMatches(markdown ? v:line,@"(?i)\\b(?:TODO|FIXME|TBD)\\b|待完成|此处填写|(?m)^\\s*[-*+]\\s+\\[ \\]").count)[found addObject:PFIssue(@"incomplete",@"warning",path,@(i+1),@"疑似未完成内容",line,@"核对这部分是否需要作答。")];}
                 if(markdown){NSUInteger fences=0;NSString *mark=nil;NSUInteger length=0;for(NSString *line in lines){NSArray *m=PFMatches(RTrim(line),@"^(`{3,}|~{3,})");if(!m.count)continue;NSString *token=PFGroup(RTrim(line),m[0],1);if(!mark){mark=[token substringToIndex:1];length=token.length;fences++;}else if([token hasPrefix:mark] && token.length>=length && !RTrim([RTrim(line) substringFromIndex:token.length]).length){mark=nil;fences--;}}if(fences)[found addObject:PFIssue(@"format",@"warning",path,@1,@"代码围栏可能未闭合",@"",@"核对 Markdown 预览；这是结构提示。")];
                     // Check natural language only. Formulae, code and URLs are excluded.
-                    NSMutableString *prose=visible.mutableCopy;for(NSString *pattern in @[@"\\$\\$[\\s\\S]*?\\$\\$",@"\\$[^$\\n]*\\$",@"\\[[^]\\n]*\\]\\([^\\n]*?\\)",@"https?://[^\\s]+"]){for(NSTextCheckingResult *m in [PFMatches(prose,pattern) reverseObjectEnumerator])[prose replaceCharactersInRange:m.range withString:@""];}
+                    NSMutableString *prose=AMPreflightSpellingProse(text).mutableCopy;
                     if(prose.length>100000)prose=[[prose substringToIndex:100000] mutableCopy];
-                    NSArray *words=PFMatches(prose,@"\\b[A-Za-z]{3,}\\b");if(words.count){__block NSArray *spelling=nil;void (^check)(void)=^{NSSpellChecker *checker=NSSpellChecker.sharedSpellChecker;NSMutableArray *matches=NSMutableArray.array;NSUInteger position=0;while(position<prose.length && matches.count<20){NSRange r=[checker checkSpellingOfString:prose startingAt:position language:@"en_US" wrap:NO inSpellDocumentWithTag:0 wordCount:NULL];if(r.location==NSNotFound || !r.length)break;[matches addObject:[NSTextCheckingResult spellCheckingResultWithRange:r]];position=NSMaxRange(r);}spelling=matches;};if(NSThread.isMainThread)check();else dispatch_sync(dispatch_get_main_queue(),check);NSUInteger count=0;for(NSTextCheckingResult *m in spelling){if(m.range.location==NSNotFound || NSMaxRange(m.range)>prose.length)continue;NSString *word=[prose substringWithRange:m.range];NSRange loc=[text rangeOfString:word];if(loc.location==NSNotFound)continue;NSUInteger line=[[text substringToIndex:loc.location] componentsSeparatedByString:@"\n"].count;[found addObject:PFIssue(@"spelling",@"info",path,@(line),@"系统拼写检查建议核对",word,@"专有名词可能误报，可忽略。")];if(++count>=20)break;}}
+                    NSArray *words=PFMatches(prose,@"\\b[A-Za-z]{3,}\\b");if(words.count){__block NSArray *spelling=nil;void (^check)(void)=^{NSSpellChecker *checker=NSSpellChecker.sharedSpellChecker;NSMutableArray *matches=NSMutableArray.array;NSUInteger position=0;while(position<prose.length && matches.count<200){NSRange r=[checker checkSpellingOfString:prose startingAt:position language:@"en_US" wrap:NO inSpellDocumentWithTag:0 wordCount:NULL];if(r.location==NSNotFound || !r.length)break;[matches addObject:[NSTextCheckingResult spellCheckingResultWithRange:r]];position=NSMaxRange(r);}spelling=matches;};if(NSThread.isMainThread)check();else dispatch_sync(dispatch_get_main_queue(),check);NSUInteger count=0;for(NSTextCheckingResult *m in spelling){if(m.range.location==NSNotFound || NSMaxRange(m.range)>prose.length)continue;NSString *word=[prose substringWithRange:m.range];if(!PFSpellingWord(word))continue;NSRange loc=m.range;NSUInteger line=[[text substringToIndex:loc.location] componentsSeparatedByString:@"\n"].count;[found addObject:PFIssue(@"spelling",@"info",path,@(line),@"英文拼写建议（非语法错误）",word,@"仅供参考；课程术语与专有名词可忽略。")];if(++count>=20)break;}}
                 }
                 if([ext isEqual:@"py"]){NSDictionary *parse=PFPython(text);status=parse[@"status"];if(parse[@"syntax"][@"message"])[found addObject:PFIssue(@"format",@"warning",path,parse[@"syntax"][@"line"],@"Python 语法可能有误",parse[@"syntax"][@"message"],@"核对目标 Python 版本和语法；未执行代码。")];}
                 if([ext isEqual:@"ipynb"]){id notebook=[NSJSONSerialization JSONObjectWithData:entry[@"data"] options:0 error:NULL];BOOL ok=[notebook isKindOfClass:NSDictionary.class] && [notebook[@"cells"] isKindOfClass:NSArray.class] && [notebook[@"nbformat"] isKindOfClass:NSNumber.class];if(ok)for(id cell in notebook[@"cells"])if(![cell isKindOfClass:NSDictionary.class] || ![@[@"code",@"markdown",@"raw"] containsObject:cell[@"cell_type"]] || !([cell[@"source"] isKindOfClass:NSString.class] || [cell[@"source"] isKindOfClass:NSArray.class])){ok=NO;break;}if(!ok)[found addObject:PFIssue(@"format",@"error",path,@1,@"Notebook JSON 或单元结构无效",@"",@"用 Notebook 编辑器检查文件；未执行任何单元。")];}
@@ -172,7 +190,7 @@ NSDictionary *AMPreflightCheck(NSDictionary *snapshot,NSString *requirements,NSM
     [coverage addObject:@{@"path":@"",@"status":@"未检查：答案、推导、中文语义及程序运行；可交给助手复核"}];
     NSArray *sorted=[issues sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){NSArray *levels=@[@"error",@"warning",@"info"];NSUInteger x=[levels indexOfObject:a[@"severity"]],y=[levels indexOfObject:b[@"severity"]];return x<y ? NSOrderedAscending : x>y ? NSOrderedDescending:NSOrderedSame;}];
     NSMutableArray *uniqueImages=NSMutableArray.array;NSMutableSet *imagePaths=NSMutableSet.set;for(NSDictionary *image in images)if(![imagePaths containsObject:image[@"path"]]){[imagePaths addObject:image[@"path"]];[uniqueImages addObject:image];}
-    return @{@"version":AMPreflightHash([[NSString stringWithFormat:@"%@|%@",snapshot[@"version"],requirements] dataUsingEncoding:NSUTF8StringEncoding]),@"snapshotVersion":snapshot[@"version"],@"issues":sorted,@"coverage":coverage,@"images":uniqueImages,@"date":NSDate.date,@"assistant":@"未检查"};
+    return @{@"version":AMPreflightHash([[NSString stringWithFormat:@"preflight-v2|%@|%@",snapshot[@"version"],requirements] dataUsingEncoding:NSUTF8StringEncoding]),@"snapshotVersion":snapshot[@"version"],@"issues":sorted,@"coverage":coverage,@"images":uniqueImages,@"date":NSDate.date,@"assistant":@"未检查"};
 }
 static BOOL PFWrite(NSData *data,NSURL *url,NSError **error){
     if(![url.path isEqual:url.URLByResolvingSymlinksInPath.path]){if(error)*error=RError(@"交换目录不安全。");return NO;}
@@ -183,7 +201,7 @@ NSDictionary *AMPreflightExport(NSDictionary *report,NSDictionary *snapshot,NSSt
     if(![folder.path isEqual:folder.URLByResolvingSymlinksInPath.path] || [NSFileManager.defaultManager fileExistsAtPath:folder.path]){if(error)*error=RError(@"材料目录已经存在或不安全，请重新准备。");return nil;}
     if(![NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:error])return nil;
     NSMutableArray *documents=NSMutableArray.array,*assets=NSMutableArray.array;NSUInteger total=0;
-    for(NSString *path in snapshot[@"paths"]){NSDictionary *file=snapshot[@"files"][path];if([file[@"version"] isEqual:@"secret"]){if(error)*error=RError(@"所选文件含疑似凭据，无法导出。");return nil;}if(!file[@"text"])continue;total+=[file[@"data"] length];if(total>32*1024*1024){if(error)*error=RError(@"材料总量过大，请减少选择后分批复核。");return nil;}[documents addObject:@{@"path":path,@"version":file[@"version"],@"text":file[@"text"]}];}
+    for(NSString *path in snapshot[@"paths"]){NSDictionary *file=snapshot[@"files"][path];if([file[@"version"] isEqual:@"secret"]){if(error)*error=RError(@"所选文件含疑似凭据，无法导出。");return nil;}if(!file[@"text"])continue;if(SSSensitivePath(path) || SSContainsSecret([file[@"text"] dataUsingEncoding:NSUTF8StringEncoding])){if(error)*error=RError(@"材料含疑似凭据，无法导出。");return nil;}total+=[file[@"data"] length];if(total>32*1024*1024){if(error)*error=RError(@"材料总量过大，请减少选择后分批复核。");return nil;}[documents addObject:@{@"path":path,@"version":file[@"version"],@"text":file[@"text"]}];}
     NSMutableSet *seen=NSMutableSet.set;NSUInteger index=0;
     for(NSDictionary *image in images){NSString *path=image[@"path"];if([seen containsObject:path])continue;[seen addObject:path];NSDictionary *source=snapshot[@"files"][path];NSData *png=PFImage(source[@"data"]);if(!png){if(error)*error=RError(@"图片无法解码，未发送材料。");return nil;}total+=png.length;if(total>64*1024*1024){if(error)*error=RError(@"图片材料总量超过64 MB，请减少图片或分批复核。");return nil;}
         NSError *ocrError=nil;NSString *ocr=DDLOCRTextFromImage([[NSImage alloc] initWithData:png],&ocrError);if(ocrError){if(error)*error=RError(@"图片隐私检查未完成，未导出；可排除图片后重试。");return nil;}if(SSContainsSecret([ocr dataUsingEncoding:NSUTF8StringEncoding])){if(error)*error=RError(@"图片文字含疑似凭据，请先排除该图片。");return nil;}
@@ -191,6 +209,7 @@ NSDictionary *AMPreflightExport(NSDictionary *report,NSDictionary *snapshot,NSSt
         [assets addObject:@{@"id":resource,@"path":path,@"document":image[@"document"],@"line":image[@"line"],@"version":source[@"version"],@"resource":resource,@"resourceHash":AMPreflightHash(png)}];
     }
     NSMutableArray *excluded=NSMutableArray.array;for(NSDictionary *image in report[@"images"])if(![seen containsObject:image[@"path"]])[excluded addObject:[NSString stringWithFormat:@"%@：用户排除的图片未交给助手",image[@"path"]]];
+    for(NSDictionary *row in report[@"coverage"]){NSString *path=row[@"path"];if(snapshot[@"files"][path][@"text"] && ![snapshot[@"paths"] containsObject:path])[excluded addObject:[NSString stringWithFormat:@"%@：用户排除的文档未交给助手",path]];}
     NSDictionary *context=@{@"unverifiedImages":excluded,@"format":@"am-preflight-context-v1",@"batchID":folder.lastPathComponent,@"reportVersion":report[@"version"],@"snapshotVersion":snapshot[@"version"],@"requirements":requirements ?: @"",@"documents":documents,@"images":assets};
     NSData *json=[NSJSONSerialization dataWithJSONObject:context options:NSJSONWritingPrettyPrinted error:error];if(!json || !PFWrite(json,[folder URLByAppendingPathComponent:@"context.local.json"],error))return nil;
     NSString *skill=[NSString stringWithContentsOfFile:[NSBundle.mainBundle pathForResource:@"am-homework-extract" ofType:@"md"] ?: @"Skills/am-homework-extract/SKILL.md" encoding:NSUTF8StringEncoding error:NULL];if(!skill.length || !PFWrite([skill dataUsingEncoding:NSUTF8StringEncoding],[folder URLByAppendingPathComponent:@"SKILL.md"],error))return nil;
@@ -245,8 +264,49 @@ BOOL AMPreflightJobAction(NSString *action,NSString *batch){@synchronized(NSSpel
     for(NSDictionary *value in old){NSMutableDictionary *job=value.mutableCopy;[next addObject:job];BOOL target=clean ? [job[@"state"] isEqual:@"已接回"]:[job[@"id"] isEqual:batch];if(!target)continue;matched=YES;NSURL *folder=AMPreflightFolder(job[@"id"]);
         if(clean){if(folder && ![job[@"cleaned"] boolValue]){[NSFileManager.defaultManager removeItemAtURL:folder error:NULL];job[@"cleaned"]=@YES;[job removeObjectForKey:@"result"];job[@"report"]=@{};}}
         else if([action isEqual:@"retry"] || [action isEqual:@"prepare-failed"]){[job removeObjectForKey:@"fingerprint"];job[@"state"]=@"等待助手";job[@"message"]=@"等待重新接回复核结果";}
-        else if([action isEqual:@"copy"]){NSString *prompt=[NSString stringWithFormat:@"读取 %@ 中的 SKILL.md 和 context.local.json，按提交前复核模式检查文本与图片。将结果先写入 results.local.json.tmp，再原子重命名为 results.local.json；不修改作业或执行代码。",folder.path];[NSPasteboard.generalPasteboard clearContents];[NSPasteboard.generalPasteboard setString:prompt forType:NSPasteboardTypeString];}
+        else if([action isEqual:@"copy"]){NSString *prompt=[NSFileManager.defaultManager fileExistsAtPath:[[folder URLByAppendingPathComponent:@"AM-Helper-review.zip"] path]] ? AMPreflightAttachmentPrompt():[NSString stringWithFormat:@"仅用于可访问本机文件的助手：读取 %@ 中的 SKILL.md 和 context.local.json，按提交前复核模式检查文本与图片。将结果先写入 results.local.json.tmp，再原子重命名为 results.local.json；不修改作业或执行代码。",folder.path];[NSPasteboard.generalPasteboard clearContents];[NSPasteboard.generalPasteboard setString:prompt forType:NSPasteboardTypeString];}
         else if([action isEqual:@"reveal"])[NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[folder]];
     }
     if(clean || [action isEqual:@"retry"] || [action isEqual:@"prepare-failed"])if(matched)SSWritePlist(@"preflight-jobs.plist",next,NULL);return matched;
 }}
+// A portable handoff contains only the already reviewed, registered materials.
+static NSDictionary *PFContextForBatch(NSString *batch,NSError **error){
+    NSURL *folder=AMPreflightFolder(batch);NSData *data=PFRead([folder URLByAppendingPathComponent:@"context.local.json"],32*1024*1024);NSDictionary *context=data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;BOOL intact=NO;
+    for(NSDictionary *job in AMPreflightJobs())if([job[@"id"] isEqual:batch] && [job[@"contextHash"] isEqual:AMPreflightHash(data ?: NSData.data)])intact=YES;
+    if(intact && [context isKindOfClass:NSDictionary.class] && [context[@"batchID"] isEqual:batch]){
+        for(NSDictionary *image in context[@"images"]){NSString *name=image[@"resource"];if(![name isEqual:name.lastPathComponent] || ![AMPreflightHash(PFRead([folder URLByAppendingPathComponent:name],64*1024*1024) ?: NSData.data) isEqual:image[@"resourceHash"]]){intact=NO;break;}}
+    }else intact=NO;
+    if(!intact){if(error)*error=RError(@"本机复核材料已变化或清理，请重新准备。");return nil;}return context;
+}
+NSString *AMPreflightAttachmentPrompt(void){return @"请解压我上传的 AM-Helper-review.zip，读取其中的 SKILL.md 与 context.local.json，按提交前复核模式检查文本和图片。不执行代码、不修改作业。只检查附件中的材料；看不清的符号或无法读取的文件列入 unverified。按 Skill 格式返回可下载的 results.local.json，保留 batchID、reportVersion、文件 version 与原文证据。你无需访问我的 Mac 路径；我会在 AM Helper 的检查报告中点‘导入助手结果…’接回。若不能读取 ZIP，请说明，我会解压后上传其中的文件。";}
+NSURL *AMPreflightAttachmentArchive(NSString *batch,NSError **error){
+    NSDictionary *context=PFContextForBatch(batch,error);if(!context)return nil;NSURL *folder=AMPreflightFolder(batch);
+    NSString *readme=@"提交前作业复核\n\n在支持附件的助手中上传本 ZIP；如不支持 ZIP，请解压后上传 SKILL.md、context.local.json 和 image-*.png。\n按 SKILL.md 的 Pre-submission review 模式检查，只返回 results.local.json。\n下载结果后，在 AM Helper 检查报告中选择‘导入助手结果…’。\n本包不提供访问原电脑的能力；不会自动上传材料或提交作业。\n";
+    if(!PFWrite([readme dataUsingEncoding:NSUTF8StringEncoding],[folder URLByAppendingPathComponent:@"README.txt"],error))return nil;
+    NSMutableArray *names=[@[@"SKILL.md",@"context.local.json",@"README.txt"] mutableCopy];for(NSDictionary *image in context[@"images"])[names addObject:image[@"resource"]];
+    // Freeze validated bytes into an isolated staging directory. ZIP never re-reads
+    // the watched batch directory or any original homework file.
+    NSURL *stage=[folder URLByAppendingPathComponent:[NSString stringWithFormat:@"attachment-%@",NSUUID.UUID.UUIDString]];
+    if(![NSFileManager.defaultManager createDirectoryAtURL:stage withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:error])return nil;
+    @try {
+        for(NSString *name in names){NSData *data=PFRead([folder URLByAppendingPathComponent:name],64*1024*1024);BOOL valid=data!=nil;
+            if([name isEqual:@"context.local.json"])valid=valid && [[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] isEqual:context];
+            for(NSDictionary *image in context[@"images"])if([image[@"resource"] isEqual:name])valid=valid && [AMPreflightHash(data ?: NSData.data) isEqual:image[@"resourceHash"]];
+            if(![name hasPrefix:@"image-"] && SSContainsSecret(data))valid=NO;
+            if(!valid || !PFWrite(data,[stage URLByAppendingPathComponent:name],error)){if(error && !*error)*error=RError(@"材料已变化或含疑似凭据，未创建附件包。");return nil;}
+        }
+        NSURL *temp=[stage URLByAppendingPathComponent:@"attachment.zip"];NSTask *task=NSTask.new;task.executableURL=[NSURL fileURLWithPath:@"/usr/bin/zip"];task.currentDirectoryURL=stage;task.arguments=[@[@"-q",@"-X",temp.lastPathComponent] arrayByAddingObjectsFromArray:names];task.environment=@{@"PATH":@"/usr/bin:/bin",@"LC_ALL":@"C"};task.standardOutput=NSFileHandle.fileHandleWithNullDevice;task.standardError=NSFileHandle.fileHandleWithNullDevice;
+        if(![task launchAndReturnError:error])return nil;[task waitUntilExit];NSData *zip=task.terminationStatus==0 ? PFRead(temp,100*1024*1024):nil;NSURL *archive=[folder URLByAppendingPathComponent:@"AM-Helper-review.zip"];BOOL ok=zip && PFWrite(zip,archive,error);if(!ok && error && !*error)*error=RError(@"附件包未创建，请重试。");return ok ? archive:nil;
+    }@finally{[NSFileManager.defaultManager removeItemAtURL:stage error:NULL];}
+
+}
+BOOL AMPreflightImportResult(NSURL *url,NSString *batch,NSError **error){
+    @synchronized(NSSpellChecker.class){
+        NSDictionary *context=PFContextForBatch(batch,error),*read=context ? SSSkillReadResult(url,error):nil;
+        if(!read || !AMPreflightValidateResult(read[@"result"],context,error))return NO;
+        for(NSDictionary *job in AMPreflightJobs())if([job[@"id"] isEqual:batch] && [job[@"state"] isEqual:@"已接回"]){NSDictionary *saved=SSSkillReadResult([AMPreflightFolder(batch) URLByAppendingPathComponent:@"results.local.json"],NULL);if([saved[@"result"] isEqual:read[@"result"]])return YES;if(error)*error=RError(@"此批次已经接回。需要重新复核时请准备新材料。");return NO;}
+        NSData *data=[NSJSONSerialization dataWithJSONObject:read[@"result"] options:NSJSONWritingPrettyPrinted error:error];if(!data || !PFWrite(data,[AMPreflightFolder(batch) URLByAppendingPathComponent:@"results.local.json"],error))return NO;
+        AMPreflightPoll();NSString *fingerprint=SSSkillReadResult([AMPreflightFolder(batch) URLByAppendingPathComponent:@"results.local.json"],NULL)[@"fingerprint"];for(NSDictionary *job in AMPreflightJobs())if([job[@"id"] isEqual:batch] && job[@"result"] && [job[@"fingerprint"] isEqual:fingerprint])return YES;
+        if(error)*error=RError(@"结果未保存到报告；文件已保留，可重试。");return NO;
+    }
+}
