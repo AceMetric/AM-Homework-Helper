@@ -107,6 +107,10 @@
     if(changed)[self writeSkillState:NULL];
 }
 - (void)skillJobAction:(NSString *)action batch:(NSString *)batch {
+    if([action isEqual:@"view-report"]){if(self.window.attachedSheet || self.busy)return;for(NSDictionary *job in AMPreflightJobs())if([job[@"id"] isEqual:batch] && ![job[@"cleaned"] boolValue]){self.submission=[[SSSubmissionController alloc] initWithCourse:@{@"fork":[job[@"courses"] firstObject] ?: @"本机作业",@"branch":@"历史检查"} changes:@[]];self.submission.checkOnly=YES;[self.submission buildCheckPage];self.submission.report=job[@"report"];self.submission.snapshot=AMPreflightSavedSnapshot(batch);[self.submission refreshReport];self.submission.assistantButton.enabled=NO;self.submission.supplement.editable=NO;self.submission.validation.stringValue=@"历史检查仅供参考，不代表当前文件已检查；本窗口不会提交。";[self.window beginSheet:self.submission.window completionHandler:nil];return;}}
+
+    if(AMPreflightJobAction(action,batch) && ![action isEqual:@"clean"]){[self refreshPresentation];return;}
+    if([action isEqual:@"clean"])AMPreflightJobAction(action,batch);
     if(self.localSkillAction && self.localSkillAction(action,batch))return;
     if([action isEqual:@"close"]){self.showingSkillJobs=NO;[self refreshPresentation];return;}if(self.busy || self.operationsPaused)return;
     if([action isEqual:@"copy"])[self copySkillBatch:batch];
@@ -117,6 +121,7 @@
     else if([action isEqual:@"prepare"])[self prepareSkill:NO];
 }
 - (void)pollSkillResults:(id)sender {
+    if(!self.preview)dispatch_async(self.queue,^{AMPreflightPoll();});
     if(self.preview || self.busy || self.operationsPaused || self.hasUnsavedReview || self.hasSubmissionSheet)return;
     for(NSString *batch in self.skillJobs.allKeys){NSDictionary *job=self.skillJobs[batch];if([job[@"state"] isEqual:@"已接回"])continue;NSURL *folder=[self skillFolder:batch];if(!folder || ![NSFileManager.defaultManager fileExistsAtPath:folder.path]){if(![job[@"state"] isEqual:@"需处理"])[self setSkillJob:batch state:@"需处理" message:@"材料目录已移除或不安全，请重新准备材料。"];continue;}
         NSURL *url=[folder URLByAppendingPathComponent:@"results.local.json"];if(![NSFileManager.defaultManager fileExistsAtPath:url.path])continue;

@@ -29,8 +29,9 @@
         else {NSString *text=[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];if(text)entry[@"text"]=text;}
         return entry;
     };
-    for(NSString *path in paths){if(self.readsCancellable && self.cancelledReads){if(error)*error=GitError(@"检查已取消。");return nil;}NSDictionary *entry=read(path,YES);files[path]=entry;}
-    for(NSString *path in paths)if([@[@"md",@"markdown",@"mdx"] containsObject:path.pathExtension.lowercaseString])for(NSDictionary *ref in AMPreflightImageReferences(files[path][@"text"] ?: @"")){NSString *asset=AMPreflightResolveImage(path,ref[@"reference"]);if(asset && !files[asset]){NSDictionary *entry=read(asset,local || [selected containsObject:asset]);if(entry)files[asset]=entry;}}
+    NSUInteger total=0;
+    for(NSString *path in paths){if(self.readsCancellable && self.cancelledReads){if(error)*error=GitError(@"检查已取消。");return nil;}NSDictionary *entry=read(path,YES);total+=[entry[@"data"] length];if(total>64*1024*1024){if(error)*error=GitError(@"检查材料超过64 MB，请减少选择后分批检查。");return nil;}files[path]=entry;}
+    for(NSString *path in paths)if([@[@"md",@"markdown",@"mdx"] containsObject:path.pathExtension.lowercaseString])for(NSDictionary *ref in AMPreflightImageReferences(files[path][@"text"] ?: @"")){NSString *asset=AMPreflightResolveImage(path,ref[@"reference"]);if(asset && !files[asset]){NSDictionary *entry=read(asset,local || [selected containsObject:asset]);if(entry){total+=[entry[@"data"] length];if(total>64*1024*1024){if(error)*error=GitError(@"引用图片使材料超过64 MB，请分批检查。");return nil;}files[asset]=entry;}}}
     NSMutableString *stamp=[NSMutableString stringWithFormat:@"%@|%@|%@",course[@"fork"],course[@"branch"],(local ? @"local":Trim([self string:head]))];for(NSString *file in [files.allKeys sortedArrayUsingSelector:@selector(compare:)])[stamp appendFormat:@"|%@:%@:%@:%d",file,files[file][@"version"],files[file][@"mode"] ?: @"",[selected containsObject:file]];
     return @{@"head":local ? @"local":Trim([self string:head]),@"repository":course[@"fork"] ?: @"",@"branch":course[@"branch"] ?: @"",@"paths":paths.copy,@"files":files,@"version":AMPreflightHash([stamp dataUsingEncoding:NSUTF8StringEncoding])};
 }

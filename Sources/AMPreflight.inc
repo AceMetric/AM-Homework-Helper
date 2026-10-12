@@ -163,7 +163,7 @@ void AMPreflightPoll(void){@synchronized(NSSpellChecker.class){NSArray *old=PFJo
         BOOL intact=[AMPreflightHash(data ?: NSData.data) isEqual:job[@"contextHash"]];
         if(intact)for(NSDictionary *image in context[@"images"]){NSString *resource=image[@"resource"];if(![resource isEqual:resource.lastPathComponent] || ![AMPreflightHash(PFRead([folder URLByAppendingPathComponent:resource],64*1024*1024) ?: NSData.data) isEqual:image[@"resourceHash"]]){intact=NO;break;}}
         NSDictionary *result=read && intact ? AMPreflightValidateResult(read[@"result"],context,&failure):nil;
-        if(result){job[@"result"]=result;job[@"state"]=@"已接回";job[@"message"]=[NSString stringWithFormat:@"提交前复核：%lu 条建议%@；仅适用于导出版本",(unsigned long)[result[@"issues"] count],[result[@"partial"] boolValue] ? @"，部分未完成":@""];}
+        if(result){job[@"result"]=result;job[@"state"]=[result[@"partial"] boolValue] ? @"需处理":@"已接回";job[@"message"]=[NSString stringWithFormat:@"提交前复核：%lu 条建议%@；仅适用于导出版本",(unsigned long)[result[@"issues"] count],[result[@"partial"] boolValue] ? @"，部分未完成":@""];}
         else {job[@"state"]=@"需处理";job[@"message"]=failure.localizedDescription ?: @"复核材料版本变化，请重新准备材料。";}
         if(fingerprint)job[@"fingerprint"]=fingerprint;dirty=YES;
     }

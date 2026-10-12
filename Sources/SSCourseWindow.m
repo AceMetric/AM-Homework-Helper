@@ -483,7 +483,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         for (NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[]) if ([task[@"sourceID"] isEqual:record[@"id"]]) { copy[@"existingTask"] = task; break; }
         [reviewRecords addObject:copy];
     }
-    NSMutableArray *jobs=NSMutableArray.array;for(NSString *key in self.skillJobs){NSMutableDictionary *row=[self.skillJobs[key] mutableCopy];row[@"id"]=key;[jobs addObject:row];}if(self.localSkillJobsProvider)[jobs addObjectsFromArray:self.localSkillJobsProvider()];[jobs sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [b[@"date"] compare:a[@"date"]];}];[self.skillJobsController updateRecords:jobs busy:self.busy || self.operationsPaused];
+    NSMutableArray *jobs=NSMutableArray.array;for(NSString *key in self.skillJobs){NSMutableDictionary *row=[self.skillJobs[key] mutableCopy];row[@"id"]=key;[jobs addObject:row];}if(self.localSkillJobsProvider)[jobs addObjectsFromArray:self.localSkillJobsProvider()];[jobs addObjectsFromArray:AMPreflightJobs()];[jobs sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [b[@"date"] compare:a[@"date"]];}];[self.skillJobsController updateRecords:jobs busy:self.busy || self.operationsPaused];
     self.scanButton.toolTip=self.busy ? @"已有课程操作正在执行，请等待完成或取消安全读取。":(!local && !anyLocal ? @"先关联或下载课程文件夹，再检查新作业。":@"只读取老师内容，不合并或推送。");
     self.syncButton.toolTip=self.connected && local ? @"合并老师更新，再安全更新个人 fork。":@"需要登录并关联本地课程文件夹。";self.commitButton.toolTip=self.syncButton.toolTip;
     self.reviewWorkspace.paused = self.operationsPaused;
@@ -771,6 +771,32 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     }];
 }
 #include "AMSubmissionUI.inc"
+- (void)configurePreflight:(SSSubmissionController *)sheet course:(NSDictionary *)course tasks:(NSArray *)tasks {
+    __weak typeof(self) owner=self;
+    sheet.performCheck=^NSDictionary *(NSArray *paths,NSArray *ids,NSString *extra,NSMutableDictionary *cache,BOOL(^cancelled)(void),NSError **error){
+        SSCourseController *self=owner;if(!self || cancelled())return nil;__block NSDictionary *snapshot=nil;__block NSString *requirements=nil;__block NSError *failure=nil;
+        dispatch_sync(self.queue,^{if(cancelled())return;SSGit *reader=SSGit.new;reader.readsCancellable=YES;dispatch_source_t cancellation=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_global_queue(QOS_CLASS_UTILITY,0));dispatch_source_set_timer(cancellation,dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),100*NSEC_PER_MSEC,10*NSEC_PER_MSEC);dispatch_source_set_event_handler(cancellation,^{if(cancelled())reader.cancelledReads=YES;});dispatch_resume(cancellation);NSMutableArray *selected=NSMutableArray.array;for(NSDictionary *task in tasks)if([ids containsObject:task[@"id"]])[selected addObject:task];snapshot=[reader preflightSnapshotForCourse:course paths:paths error:&failure];requirements=[reader preflightRequirementsForCourse:course tasks:selected];dispatch_source_cancel(cancellation);});
+        if(!snapshot || cancelled()){if(error)*error=failure;return nil;}
+        if(extra.length)requirements=[NSString stringWithFormat:@"%@\n\n用户补充题目：\n%@",requirements ?: @"",extra];
+        NSDictionary *report=AMPreflightCheck(snapshot,requirements ?: @"",cache,cancelled);return @{@"snapshot":snapshot,@"requirements":requirements ?: @"",@"report":report};
+    };
+}
+- (void)checkTask:(NSString *)identifier {
+    if(self.busy || self.operationsPaused || self.window.attachedSheet){[self status:@"请先完成当前操作，再检查作业。"];return;}
+    NSDictionary *task=nil,*course=nil;for(NSDictionary *item in self.tasksProvider ? self.tasksProvider():@[])if([item[@"id"] isEqual:identifier])task=item;
+    for(NSDictionary *item in self.courses)if([task[@"courseRepository"] isEqual:item[@"fork"]] || [task[@"sourceRepository"] isEqual:item[@"upstream"]]){course=item.copy;break;}
+    if(!task)return;
+    if(course && ![course[@"path"] length]){[self status:@"请先关联这门课的本地文件夹，再检查作业。"];return;}
+    if(!course){NSOpenPanel *root=NSOpenPanel.openPanel;root.message=@"选择本次作业文件所在文件夹；仅检查你接下来选择的文件和引用图片。";root.canChooseDirectories=YES;root.canChooseFiles=NO;if([root runModal]!=NSModalResponseOK)return;course=@{@"path":root.URL.path,@"preflightLocal":@YES};}
+    NSOpenPanel *picker=NSOpenPanel.openPanel;picker.message=@"选择要检查的作业文件（不会提交）";picker.allowsMultipleSelection=YES;picker.canChooseDirectories=NO;picker.directoryURL=[NSURL fileURLWithPath:course[@"path"]];if([picker runModal]!=NSModalResponseOK)return;
+    NSString *root=[[course[@"path"] stringByResolvingSymlinksInPath] stringByAppendingString:@"/"];NSMutableArray *changes=NSMutableArray.array;
+    for(NSURL *url in picker.URLs){NSString *full=url.path.stringByResolvingSymlinksInPath;if(![full hasPrefix:root]){[self status:@"请选择作业文件夹内的文件。"];return;}NSString *path=[full substringFromIndex:root.length];[changes addObject:@{@"path":path,@"status":@"只读检查",@"sensitive":@(SSSensitivePath(path))}];}
+    self.submission=[[SSSubmissionController alloc] initWithCourse:course changes:changes];self.submission.checkOnly=YES;self.submission.window.title=@"检查作业（不提交）";self.submission.primary.title=@"下一步：检查";self.submission.message.hidden=YES;
+    [self.submission configureTasks:@[task] selected:@[identifier]];[self configurePreflight:self.submission course:course tasks:@[task]];
+    // The file picker is an explicit selection; no submission attachment is selected on behalf of the user.
+    for(NSButton *check in self.submission.checks)if(check.enabled)check.state=NSControlStateValueOn;
+    self.submission.readPreview=^(NSString *path,void(^ready)(NSString *)){ready(@"本入口只读检查文件，不创建提交或推送。");};[self.window beginSheet:self.submission.window completionHandler:nil];
+}
 - (void)commit:(id)sender {
     NSDictionary *course = [[self course] copy]; if (!course) return;
     [self work:@"正在读取本地修改…" forCourse:course operation:^id(NSError **error) { return [self.git changesForCourse:course error:error]; } completion:^(NSArray *changes, NSError *error) {
@@ -780,6 +806,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         if (self.window.attachedSheet) { [self status:@"请先关闭当前编辑弹窗，再打开“提交作业”。"]; return; }
         self.submission = [[SSSubmissionController alloc] initWithCourse:course changes:changes];
         NSMutableArray *related=NSMutableArray.array;for(NSDictionary *task in self.tasksProvider ? self.tasksProvider():@[])if(![task[@"deleted"] boolValue] && ([task[@"courseRepository"] isEqual:course[@"fork"]] || [task[@"sourceRepository"] isEqual:course[@"upstream"]]))[related addObject:task];
+        [self configurePreflight:self.submission course:course tasks:related];
         [self.submission configureTasks:related selected:self.submissionTaskID ? @[self.submissionTaskID]:@[]];self.submissionTaskID=nil;
         __weak typeof(self) weakSelf = self;
         self.submission.readPreview = ^(NSString *file, void (^ready)(NSString *)) {
@@ -787,10 +814,11 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         };
         self.submission.submit = ^(NSArray *paths, NSString *message) {
             SSCourseController *self = weakSelf; if (!self) return;
-        __block NSDictionary *operationRecord=nil;NSArray *taskIDs=self.submission.taskIDs.copy;
+        __block NSDictionary *operationRecord=nil;NSArray *taskIDs=self.submission.taskIDs.copy;NSDictionary *snapshot=self.submission.snapshot.copy,*review=self.submission.reviewSummary.copy;
         [self work:@"正在检查、提交并推送到自己的 fork…" forCourse:course operation:^id(NSError **innerError) {
             NSDictionary *user = [self.github user:innerError]; if (!user) return @NO;
             NSString *token = [self.github accessToken:innerError]; if (!token) return @NO;
+            self.git.expectedSubmissionSnapshot=snapshot;self.git.submissionReviewSummary=review;
             NSDictionary *result=[self.git performRecordedCourse:course kind:@"submission" taskIDs:taskIDs paths:paths message:message token:token login:user[@"login"] userID:user[@"id"] error:innerError];
             operationRecord=result;return @([result[@"state"] isEqual:@"confirmed"]);
         } completion:^(NSNumber *ok, NSError *innerError) {
