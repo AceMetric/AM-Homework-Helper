@@ -34,13 +34,17 @@
 @property NSArray *selectedPaths;
 @property NSTimer *resultTimer;
 @property BOOL checkOnly;
+@property(copy) void (^backToScope)(void);
+@property NSDictionary *reportFrames;
 @property BOOL checking;
+@property BOOL reportStale;
 @property BOOL closed;
 @property BOOL finalValidation;
 @property NSString *assistantFingerprint;
 @property(copy) NSDictionary *(^performCheck)(NSArray *,NSArray *,NSString *,NSMutableDictionary *,BOOL(^)(void),NSError **);
 - (void)buildCheckPage;
 - (void)checkNow:(id)sender;
+- (void)layoutReport;
 - (void)backToFiles:(id)sender;
 - (void)refreshReport;
 - (void)pollReview:(id)sender;
@@ -49,11 +53,29 @@
 - (instancetype)initWithCourse:(NSDictionary *)course changes:(NSArray *)changes;
 @end
 @implementation SSSubmissionController
+- (void)layoutReport {
+    if(!self.reportFrames)return;CGFloat w=NSWidth(self.checkPage.bounds),h=NSHeight(self.checkPage.bounds),width=w-48;BOOL narrow=w<740;CGFloat bottom=h-188,body=MAX(120,bottom-264),left=floor((width-16)*.46);
+    for(NSView *view in self.checkPage.subviews){NSRect f=[self.reportFrames[view.identifier] rectValue];
+        if(f.origin.y>=536){f.origin.y+=h-676;if(f.origin.x==568)f.origin.x=w-192;else if(f.origin.x==464)f.origin.x=w-296;if(f.size.width==712)f.size.width=width;}
+        else if(f.origin.y==488){f.origin.y=bottom;if(f.origin.x==368)f.origin.x=narrow ? w-136:40+left;}
+        else if(f.origin.y>=252 && f.origin.y<=384){
+            if(f.origin.x==24){f=NSMakeRect(24,252,narrow ? width:left,narrow ? body*.40:body);}
+            else if(f.origin.x==368){f.origin.x=narrow ? 24:40+left;f.size.width=narrow ? width:width-left-16;
+                if(f.origin.y==252){f.origin.y=narrow ? 260+body*.40:252;f.size.height=narrow ? MAX(32,body*.30-8):MAX(64,body-100);}
+                else {f.origin.y=narrow ? 260+body*.70:bottom-100;f.size.height=narrow ? MAX(24,body*.30-12):88;}
+                if(view==self.findingDetail.enclosingScrollView && self.findingImage.hidden)f.size.height=narrow ? MAX(48,body*.60-8):body;
+            }
+        }else if(f.size.width==712)f.size.width=width;
+        view.frame=f;
+    }
+    if(self.findingsTable){self.findingsTable.tableColumns.firstObject.width=MAX(160,NSWidth(self.findingsTable.enclosingScrollView.bounds)-24);}
+}
+
 - (instancetype)initWithCourse:(NSDictionary *)course changes:(NSArray *)changes {
-    DDLFormPanel *panel = [[DDLFormPanel alloc] initWithContentRect:NSMakeRect(0, 0, 760, 580) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+    DDLFormPanel *panel = [[DDLFormPanel alloc] initWithContentRect:NSMakeRect(0, 0, 760, 580) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
     if ((self = [super initWithWindow:panel])) {
         __weak typeof(self) weakSelf = self; panel.onConfirm = ^{ [weakSelf save:nil]; }; panel.onCancel = ^{ [weakSelf cancel:nil]; };
-        self.course=course;self.checkCache=NSMutableDictionary.dictionary; self.changes = changes; panel.title = @"提交作业"; panel.releasedWhenClosed = NO;
+        panel.minSize=NSMakeSize(620,600);self.course=course;self.checkCache=NSMutableDictionary.dictionary; self.changes = changes; panel.title = @"提交作业"; panel.releasedWhenClosed = NO;
         Surface *root = Box(Canvas(), 0); root.frame = NSMakeRect(0, 0, 760, 580); panel.contentView = root;
         Put(root, Text(@"提交作业", 23, NSFontWeightSemibold, Ink()), 24, 24, 712, 32);
         NSTextField *target = Text([NSString stringWithFormat:@"目标：%@ · %@", course[@"fork"], course[@"branch"]], 13, NSFontWeightMedium, Accent()); target.toolTip = target.stringValue; Put(root, target, 24, 64, 712, 24);
@@ -77,7 +99,7 @@
 }
 - (void)configureTasks:(NSArray *)tasks selected:(NSArray *)selected {
     if(self.taskChecks)return;
-    NSView *root=self.window.contentView;[self.window setContentSize:NSMakeSize(760,676)];root.frame=NSMakeRect(0,0,760,676);
+    NSView *root=self.window.contentView;self.window.minSize=NSMakeSize(760,676);[self.window setContentSize:NSMakeSize(760,676)];root.frame=NSMakeRect(0,0,760,676);
     for(NSView *view in root.subviews)if(view.frame.origin.y>=136){NSRect frame=view.frame;frame.origin.y+=96;view.frame=frame;}
     Put(root,Text(@"关联作业（可选，不会自动选择文件）",13,NSFontWeightSemibold,Ink()),24,128,712,24);
     NSStackView *stack=NSStackView.new;stack.orientation=NSUserInterfaceLayoutOrientationVertical;stack.alignment=NSLayoutAttributeLeading;stack.spacing=4;
@@ -113,24 +135,26 @@
 }
 - (void)buildCheckPage {
     if(self.checkPage){self.checkPage.hidden=NO;self.validation=self.checkValidation;self.window.defaultButtonCell=self.primary.cell;return;}
-    [self.window setContentSize:NSMakeSize(760,676)];Surface *page=Box(Canvas(),0);page.frame=NSMakeRect(0,0,760,676);[self.window.contentView addSubview:page];self.checkPage=page;
-    Put(page,Text(self.checkOnly ? @"检查作业":@"提交前检查",23,NSFontWeightSemibold,Ink()),24,20,712,32);
-    Put(page,Text(@"质量建议供你核对；凭据与个人仓库安全检查始终强制执行。",12,NSFontWeightRegular,Muted()),24,58,712,24);
+    self.window.minSize=NSMakeSize(620,600);[self.window setContentSize:NSMakeSize(760,676)];Surface *page=Box(Canvas(),0);page.frame=NSMakeRect(0,0,760,676);[self.window.contentView addSubview:page];self.checkPage=page;
+    Put(page,Text(self.checkOnly ? @"检查作业文件 · 检查报告":@"提交作业 · 检查报告",20,NSFontWeightSemibold,Ink()),24,20,712,32);
+    Put(page,Text(self.checkOnly ? @"当前本机文件 · 本机检查和助手复核分别显示覆盖范围。":@"拟提交版本 · 质量建议可确认，凭据与推送安全检查始终强制执行。",12,NSFontWeightRegular,Muted()),24,58,712,24);
     self.coverage=PFText(page,NSMakeRect(24,92,712,56),NO);
     Put(page,Text(@"补充题目／评分要求（可选；修改后请重新检查）",12,NSFontWeightMedium,Ink()),24,154,712,22);
     self.supplement=PFText(page,NSMakeRect(24,180,712,58),YES);self.supplement.delegate=self;self.supplement.accessibilityLabel=@"补充题目与要求";
     NSScrollView *list=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,252,328,224)];list.hasVerticalScroller=YES;self.findingsTable=NSTableView.new;NSTableColumn *column=[[NSTableColumn alloc] initWithIdentifier:@"finding"];column.width=306;[self.findingsTable addTableColumn:column];self.findingsTable.headerView=nil;self.findingsTable.rowHeight=48;self.findingsTable.dataSource=self;self.findingsTable.delegate=self;self.findingsTable.accessibilityLabel=@"检查问题";list.documentView=self.findingsTable;[page addSubview:list];
-    self.findingDetail=PFText(page,NSMakeRect(368,252,368,128),NO);self.findingImage=[[PFImageView alloc] initWithFrame:NSMakeRect(368,384,368,92)];[page addSubview:self.findingImage];
+    self.findingDetail=PFText(page,NSMakeRect(368,252,368,128),NO);self.findingImage=[[PFImageView alloc] initWithFrame:NSMakeRect(368,384,368,92)];self.findingImage.hidden=YES;[page addSubview:self.findingImage];
     Put(page,Button(@"显示文件…",self,@selector(openFinding:),0),368,488,112,32);
     self.assistantButton=Button(@"交给助手复核…",self,@selector(assistantReview:),0);Put(page,self.assistantButton,24,488,164,32);
     NSButton *recheck=Button(@"重新检查",self,@selector(checkNow:),0);recheck.enabled=self.performCheck!=nil;Put(page,recheck,200,488,128,32);
     self.acknowledge=[NSButton checkboxWithTitle:@"我已核对质量建议与未检查项，继续提交此版本" target:nil action:nil];self.acknowledge.font=[NSFont systemFontOfSize:12];self.acknowledge.hidden=self.checkOnly;Put(page,self.acknowledge,24,536,712,24);
     self.validation=Text(@"正在读取拟提交版本…",12,NSFontWeightRegular,Muted());Put(page,self.validation,24,568,712,40);self.checkValidation=self.validation;
-    NSButton *back=Button(@"返回文件",self,@selector(backToFiles:),0);back.enabled=self.changes.count>0;Put(page,back,24,624,104,32);NSButton *cancel=Button(@"取消",self,@selector(cancel:),2);cancel.keyEquivalent=@"\033";cancel.keyEquivalentModifierMask=0;Put(page,cancel,464,624,88,32);
+    NSButton *back=Button(self.checkOnly ? @"调整范围":@"返回文件",self,@selector(backToFiles:),0);back.enabled=self.changes.count>0;Put(page,back,24,624,104,32);NSButton *cancel=Button(@"取消",self,@selector(cancel:),2);cancel.keyEquivalent=@"\033";cancel.keyEquivalentModifierMask=0;Put(page,cancel,464,624,88,32);
     self.primary=Button(self.checkOnly ? @"完成":@"提交到个人仓库",self,@selector(save:),1);Put(page,self.primary,568,624,168,32);self.primary.keyEquivalent=@"\r";self.primary.keyEquivalentModifierMask=0;self.window.defaultButtonCell=self.primary.cell;
+    NSMutableDictionary *frames=NSMutableDictionary.dictionary;NSUInteger slot=0;for(NSView *view in page.subviews){view.identifier=[NSString stringWithFormat:@"report-slot-%lu",(unsigned long)slot++];frames[view.identifier]=[NSValue valueWithRect:view.frame];}self.reportFrames=frames;
+    page.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;__weak typeof(self) layoutOwner=self;page.onResize=^{[layoutOwner layoutReport];};[self layoutReport];
     __weak typeof(self) owner=self;self.resultTimer=[NSTimer scheduledTimerWithTimeInterval:3 repeats:YES block:^(NSTimer *timer){[owner pollReview:nil];}];
 }
-- (void)backToFiles:(id)sender {if(self.checking)return;self.checkPage.hidden=YES;self.validation=self.filesValidation;self.report=nil;self.snapshot=nil;self.finalValidation=NO;self.window.defaultButtonCell=self.filesPrimary.cell;}
+- (void)backToFiles:(id)sender {if(self.checking)return;if(self.checkOnly && self.backToScope){self.backToScope();return;}self.window.minSize=NSMakeSize(760,676);[self.window setContentSize:NSMakeSize(760,676)];self.checkPage.hidden=YES;self.validation=self.filesValidation;self.report=nil;self.snapshot=nil;self.finalValidation=NO;self.window.defaultButtonCell=self.filesPrimary.cell;}
 - (void)checkNow:(id)sender {
     if(self.checking || self.closed || !self.performCheck)return;
     self.checking=YES;self.primary.enabled=NO;self.assistantButton.enabled=NO;self.validation.textColor=Muted();self.validation.stringValue=self.finalValidation ? @"正在核对提交版本…":@"读取文件 → 检查结构、附件与未完成项…";
@@ -139,15 +163,15 @@
         dispatch_async(dispatch_get_main_queue(),^{SSSubmissionController *self=owner;if(!self || self.previewGeneration!=generation)return;self.checking=NO;self.primary.enabled=YES;self.assistantButton.enabled=YES;
             if(!bundle || [bundle[@"report"][@"cancelled"] boolValue]){self.report=nil;self.assistantButton.enabled=NO;self.validation.stringValue=error.localizedDescription ?: @"检查未完成，文件和输入已保留，可重试。";self.validation.textColor=NSColor.systemRedColor;return;}
             if(![extra isEqual:self.supplement.string]){self.report=nil;self.validation.stringValue=@"检查期间题目被修改，请重新检查。";return;}
-            BOOL same=[previous[@"version"] isEqual:bundle[@"report"][@"version"]];self.snapshot=bundle[@"snapshot"];self.requirements=bundle[@"requirements"];self.report=bundle[@"report"];
+            BOOL same=[previous[@"version"] isEqual:bundle[@"report"][@"version"]];self.reportStale=NO;self.snapshot=bundle[@"snapshot"];self.requirements=bundle[@"requirements"];self.report=bundle[@"report"];
             if(final && same && [extra isEqual:self.supplement.string]){NSDictionary *job=AMPreflightJobForReport(self.report[@"version"]);BOOL assistant=job[@"result"]!=nil;self.reviewSummary=@{@"date":NSDate.date,@"count":@(self.findings.count),@"acknowledged":@YES,@"coverage":assistant ? ([job[@"result"][@"partial"] boolValue] ? @"partial":@"assistant"):@"local"};NSString *message=[self.message.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];[self cancel:nil];if(self.submit)self.submit(paths,message);return;}
-            self.acknowledge.state=NSControlStateValueOff;self.assistantFingerprint=nil;[self refreshReport];self.validation.stringValue=final ? @"文件或题目已变化，已重新检查，请核对新报告后再提交。":@"检查完成；质量建议可确认后继续，不代表答案一定正确。";self.validation.textColor=final ? NSColor.systemOrangeColor:Muted();
+            self.acknowledge.state=NSControlStateValueOff;self.assistantFingerprint=nil;[self refreshReport];self.validation.stringValue=final ? @"文件或题目已变化，已重新检查，请核对新报告后再提交。":(self.checkOnly ? @"本机检查完成；可查看问题或交给助手复核，不代表答案正确。":@"检查完成；质量建议可确认后继续，不代表答案一定正确。");self.validation.textColor=final ? NSColor.systemOrangeColor:Muted();
         });
     });
 }
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)table {return self.findings.count;}
 - (NSView *)tableView:(NSTableView *)table viewForTableColumn:(NSTableColumn *)column row:(NSInteger)row {NSDictionary *issue=self.findings[row];NSString *symbol=[issue[@"severity"] isEqual:@"error"] ? @"⚠":([issue[@"severity"] isEqual:@"warning"] ? @"△":@"ⓘ");NSTextField *label=Text([NSString stringWithFormat:@"%@ %@\n%@:%@",symbol,issue[@"message"],issue[@"path"],issue[@"line"] ?: @1],12,NSFontWeightRegular,Ink());label.maximumNumberOfLines=2;label.toolTip=label.stringValue;return label;}
-- (void)tableViewSelectionDidChange:(NSNotification *)notification {NSInteger row=self.findingsTable.selectedRow;self.findingImage.image=nil;self.findingImage.region=nil;if(row<0 || row>=(NSInteger)self.findings.count){self.findingDetail.string=@"选择问题查看位置、依据与建议。";return;}NSDictionary *issue=self.findings[row];self.findingDetail.string=[NSString stringWithFormat:@"%@:%@ · %@\n%@\n\n依据：%@\n建议：%@",issue[@"path"],issue[@"line"] ?: @1,[issue[@"provider"] isEqual:@"assistant"] ? @"助手建议":@"本机检查",issue[@"message"],issue[@"reason"] ?: issue[@"evidence"] ?: @"",issue[@"suggestion"] ?: @""];NSDictionary *file=self.snapshot[@"files"][issue[@"path"]];if([file[@"text"] isKindOfClass:NSString.class]){NSArray *lines=[file[@"text"] componentsSeparatedByString:@"\n"];NSInteger line=[issue[@"line"] integerValue]-1;NSMutableString *context=NSMutableString.string;for(NSInteger i=MAX(0,line-2);i<MIN((NSInteger)lines.count,line+3);i++)[context appendFormat:@"%ld  %@\n",(long)i+1,lines[i]];self.findingDetail.string=[self.findingDetail.string stringByAppendingFormat:@"\n\n附近原文：\n%@",context];NSRange evidence=[self.findingDetail.string rangeOfString:issue[@"evidence"] ?: @"" options:NSBackwardsSearch];if(evidence.location!=NSNotFound && evidence.length)self.findingDetail.selectedRange=evidence;}if([file[@"image"] boolValue]){self.findingImage.image=[[NSImage alloc] initWithData:file[@"data"]];self.findingImage.region=issue[@"region"];}self.findingImage.needsDisplay=YES;}
+- (void)tableViewSelectionDidChange:(NSNotification *)notification {NSInteger row=self.findingsTable.selectedRow;self.findingImage.image=nil;self.findingImage.region=nil;if(row<0 || row>=(NSInteger)self.findings.count){self.findingDetail.string=@"选择问题查看位置、依据与建议。";return;}NSDictionary *issue=self.findings[row];self.findingDetail.string=[NSString stringWithFormat:@"%@:%@ · %@\n%@\n\n依据：%@\n建议：%@",issue[@"path"],issue[@"line"] ?: @1,[issue[@"provider"] isEqual:@"assistant"] ? @"助手建议":@"本机检查",issue[@"message"],issue[@"reason"] ?: issue[@"evidence"] ?: @"",issue[@"suggestion"] ?: @""];NSDictionary *file=self.snapshot[@"files"][issue[@"path"]];if([file[@"text"] isKindOfClass:NSString.class]){NSArray *lines=[file[@"text"] componentsSeparatedByString:@"\n"];NSInteger line=[issue[@"line"] integerValue]-1;NSMutableString *context=NSMutableString.string;for(NSInteger i=MAX(0,line-2);i<MIN((NSInteger)lines.count,line+3);i++)[context appendFormat:@"%ld  %@\n",(long)i+1,lines[i]];self.findingDetail.string=[self.findingDetail.string stringByAppendingFormat:@"\n\n附近原文：\n%@",context];NSRange evidence=[self.findingDetail.string rangeOfString:issue[@"evidence"] ?: @"" options:NSBackwardsSearch];if(evidence.location!=NSNotFound && evidence.length)self.findingDetail.selectedRange=evidence;}if([file[@"image"] boolValue]){self.findingImage.image=[[NSImage alloc] initWithData:file[@"data"]];self.findingImage.region=issue[@"region"];}self.findingImage.hidden=self.findingImage.image==nil;self.findingImage.needsDisplay=YES;[self layoutReport];}
 - (void)refreshReport {
     NSDictionary *job=AMPreflightJobForReport(self.report[@"version"]);NSMutableArray *issues=[self.report[@"issues"] mutableCopy] ?: NSMutableArray.array;if(job[@"result"])[issues addObjectsFromArray:job[@"result"][@"issues"]];self.findings=issues;
     NSMutableString *status=[NSMutableString stringWithFormat:@"本机：%lu 条建议。%@\n",(unsigned long)[self.report[@"issues"] count],job ? job[@"message"]:@"助手：未检查（可选）"];
@@ -155,11 +179,14 @@
     self.coverage.string=status;[self.findingsTable reloadData];if(issues.count)[self.findingsTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];else self.findingDetail.string=@"本机已检查范围未发现问题；语义、手写推导与答案正确性尚需核对。";
 }
 - (void)pollReview:(id)sender {
+    if(self.checkOnly && self.snapshot && !self.checking){for(NSString *path in self.snapshot[@"files"]){NSString *stamp=self.snapshot[@"files"][path][@"stamp"];if(stamp && ![stamp isEqual:AMPreflightFileStamp([NSURL fileURLWithPath:self.course[@"path"]],path)]){self.reportStale=YES;self.assistantButton.enabled=NO;self.validation.stringValue=@"文件已变化，当前报告仅供参考；请重新检查后再交给助手。";self.validation.textColor=NSColor.systemOrangeColor;self.acknowledge.state=NSControlStateValueOff;return;}}}
+
     if(self.checking || self.closed || !self.report)return;__weak typeof(self) owner=self;NSString *version=self.report[@"version"];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{AMPreflightPoll();NSDictionary *job=AMPreflightJobForReport(version);NSString *fingerprint=job[@"fingerprint"];dispatch_async(dispatch_get_main_queue(),^{if(owner && [owner.report[@"version"] isEqual:version] && fingerprint && ![owner.assistantFingerprint isEqual:fingerprint]){owner.assistantFingerprint=fingerprint;owner.acknowledge.state=NSControlStateValueOff;[owner refreshReport];owner.validation.stringValue=@"助手结果已接回，请核对建议；不会自动提交。";}});});
 }
 - (void)openFinding:(id)sender {NSInteger row=self.findingsTable.selectedRow;if(row<0 || row>=(NSInteger)self.findings.count)return;NSString *path=self.findings[row][@"path"],*root=[self.course[@"path"] stringByResolvingSymlinksInPath],*full=[root stringByAppendingPathComponent:path];if([full hasPrefix:[root stringByAppendingString:@"/"]] && [full isEqual:full.stringByResolvingSymlinksInPath] && !SSSensitivePath(path))[NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:full]]];}
 - (void)assistantReview:(id)sender {
+    [self pollReview:nil];if(self.reportStale)return;
     if(self.checking || self.closed || !self.report)return;
     NSAlert *alert=NSAlert.new;alert.messageText=@"预览交给助手的材料";alert.informativeText=@"只包含下列文本、题目与选中的图片副本。不会自动发送材料、执行作业或提交。图片可排除或调整顺序；请确认没有私人凭据。";[alert addButtonWithTitle:@"准备材料"];[alert addButtonWithTitle:@"取消"];
     Surface *view=Box(Canvas(),0);view.frame=NSMakeRect(0,0,660,440);NSTextView *text=PFText(view,NSMakeRect(0,0,660,180),NO);NSMutableString *scope=[NSMutableString stringWithFormat:@"题目依据：\n%@\n\n",self.requirements];for(NSString *path in self.snapshot[@"paths"]){NSString *value=self.snapshot[@"files"][path][@"text"];if(value)[scope appendFormat:@"%@\n%@\n\n",path,value];}text.string=scope;

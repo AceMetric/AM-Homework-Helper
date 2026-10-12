@@ -4,6 +4,78 @@
 #import <fcntl.h>
 #import <unistd.h>
 #import <sys/stat.h>
+#import <dirent.h>
+NSString *AMPreflightExcludedReason(NSString *path){
+    if(SSSensitivePath(path))return @"敏感文件已排除";
+    NSSet *generated=[NSSet setWithArray:@[@"node_modules",@"vendor",@"venv",@"__pycache__",@"build",@"build.noindex",@"dist",@"target",@"DerivedData"]];
+    for(NSString *part in path.pathComponents){if([part hasPrefix:@"."] && ![part isEqual:@"."] && ![part isEqual:@".."])return @"隐藏配置或元数据已排除";if([generated containsObject:part])return @"依赖、缓存或构建目录已排除";}
+    return nil;
+}
+NSString *AMPreflightFileStamp(NSURL *folder,NSString *path){
+    if(!path.length || [path hasPrefix:@"/"] || [path.pathComponents containsObject:@".."])return @"unsafe";
+    int fd=open(folder.path.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW);if(fd<0)return @"unsafe";
+    NSArray *parts=path.pathComponents;for(NSUInteger i=0;i+1<parts.count;i++){int next=openat(fd,[parts[i] fileSystemRepresentation],O_RDONLY|O_DIRECTORY|O_NOFOLLOW);close(fd);fd=next;if(fd<0)return @"unsafe";}
+    struct stat st;int result=fstatat(fd,[parts.lastObject fileSystemRepresentation],&st,AT_SYMLINK_NOFOLLOW);close(fd);if(result<0)return @"absent";if(!S_ISREG(st.st_mode))return @"unsafe";
+    return [NSString stringWithFormat:@"%llu:%llu:%lld:%lld:%ld:%lld:%ld",(unsigned long long)st.st_dev,(unsigned long long)st.st_ino,(long long)st.st_size,(long long)st.st_mtimespec.tv_sec,st.st_mtimespec.tv_nsec,(long long)st.st_ctimespec.tv_sec,st.st_ctimespec.tv_nsec];
+}
+NSArray *AMPreflightListSelectedFiles(NSURL *folder,NSArray *paths){
+    NSMutableArray *rows=NSMutableArray.array;
+    NSSet *images=[NSSet setWithArray:@[@"png",@"jpg",@"jpeg",@"heic",@"tiff",@"tif",@"gif",@"bmp",@"webp"]];
+    NSSet *text=[NSSet setWithArray:@[@"md",@"markdown",@"mdx",@"txt",@"text",@"rst",@"tex",@"csv",@"json",@"yaml",@"yml",@"ipynb",@"py",@"c",@"h",@"cpp",@"cc",@"hpp",@"java",@"js",@"ts",@"jsx",@"tsx",@"swift",@"m",@"mm",@"rs",@"go",@"r",@"jl",@"sql",@"sh"]];
+    for(NSString *path in [NSOrderedSet orderedSetWithArray:paths]){
+        NSString *stamp=AMPreflightFileStamp(folder,path),*ext=path.pathExtension.lowercaseString,*reason=nil;NSArray *fields=[stamp componentsSeparatedByString:@":"];unsigned long long bytes=fields.count==7 ? [fields[2] longLongValue]:0;
+        if(AMPreflightExcludedReason(path))reason=AMPreflightExcludedReason(path);else if(fields.count!=7)reason=@"文件无法读取或包含符号链接";else if(bytes>5*1024*1024)reason=@"超过每文件5 MB限制";else if(![images containsObject:ext] && ![text containsObject:ext])reason=@"不支持的文件类型，未检查";
+        [rows addObject:@{@"path":path,@"image":@([images containsObject:ext]),@"bytes":@(bytes),@"selectable":@(!reason),@"reason":reason ?: @""}];
+    }
+    return rows;
+}
+// Enumerate names and metadata only, using directory descriptors so a replaced
+// directory or symlink cannot redirect traversal outside the chosen root.
+NSDictionary *AMPreflightListFolder(NSURL *folder,BOOL(^cancelled)(void),void(^progress)(NSUInteger),NSError **error){
+    int root=open(folder.path.fileSystemRepresentation,O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
+    if(root<0){if(error)*error=RError(@"无法打开作业文件夹，请重新选择可读取的本机目录。");return nil;}
+    NSMutableArray *rows=NSMutableArray.array;__block NSUInteger count=0;__block NSString *failure=nil;
+    NSSet *generated=[NSSet setWithArray:@[@"node_modules",@"vendor",@"venv",@"__pycache__",@"build",@"build.noindex",@"dist",@"target",@"DerivedData"]];
+    NSSet *images=[NSSet setWithArray:@[@"png",@"jpg",@"jpeg",@"heic",@"tiff",@"tif",@"gif",@"bmp",@"webp"]];
+    NSSet *texts=[NSSet setWithArray:@[@"md",@"markdown",@"mdx",@"txt",@"text",@"rst",@"tex",@"csv",@"json",@"yaml",@"yml",@"ipynb",@"py",@"c",@"h",@"cpp",@"cc",@"hpp",@"java",@"js",@"ts",@"jsx",@"tsx",@"swift",@"m",@"mm",@"rs",@"go",@"r",@"jl",@"sql",@"sh"]];
+    __block void(^ __weak recurse)(int,NSString *,NSUInteger);
+    void(^walk)(int,NSString *,NSUInteger);
+    walk=^(int descriptor,NSString *prefix,NSUInteger depth){
+        DIR *dir=fdopendir(descriptor);if(!dir){close(descriptor);failure=@"文件夹无法完整读取，请检查权限。";return;}
+        struct dirent *item;
+        errno=0;
+        while(!failure && (item=readdir(dir))){
+            NSString *name=[NSFileManager.defaultManager stringWithFileSystemRepresentation:item->d_name length:strlen(item->d_name)];
+            if([name isEqual:@"."] || [name isEqual:@".."])continue;
+            if(cancelled && cancelled()){failure=@"整理已取消，未开始检查。";break;}
+            if(++count>10000){failure=@"目录超过10,000项，请选择更小的作业文件夹。";break;}
+            if(progress && count%32==0)progress(count);
+            NSString *path=prefix.length ? [prefix stringByAppendingPathComponent:name]:name,*reason=nil;
+            struct stat st;BOOL ok=fstatat(dirfd(dir),item->d_name,&st,AT_SYMLINK_NOFOLLOW)==0;
+            if(!ok)reason=@"无法读取文件信息";
+            else if(S_ISLNK(st.st_mode))reason=@"符号链接未读取";
+            else if([name hasPrefix:@"."] || SSSensitivePath(path))reason=@"隐藏配置、元数据或敏感文件已排除";
+            else if(S_ISDIR(st.st_mode) && [generated containsObject:name])reason=@"依赖、缓存或构建目录已排除";
+            else if(S_ISDIR(st.st_mode)){
+                if(depth>=64){failure=@"目录嵌套过深，请选择更小的作业文件夹。";break;}
+                int child=openat(dirfd(dir),item->d_name,O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
+                if(child<0)reason=@"目录无法读取或已变化";else{recurse(child,path,depth+1);errno=0;continue;}
+            }else if(!S_ISREG(st.st_mode))reason=@"非普通文件未读取";
+            else if(st.st_size>5*1024*1024)reason=@"超过每文件5 MB限制";
+            NSString *ext=path.pathExtension.lowercaseString;BOOL image=[images containsObject:ext];
+            if(!reason && !image && ![texts containsObject:ext])reason=@"不支持的文件类型，未检查";
+            [rows addObject:@{@"path":path,@"image":@(image),@"bytes":@(ok ? MAX(0,st.st_size):0),@"selectable":@(!reason),@"reason":reason ?: @""}];
+            errno=0;
+        }
+        if(errno && !failure)failure=@"目录读取中断，请重试；未使用不完整清单。";
+        closedir(dir);
+    };
+    recurse=walk;walk(root,@"",0);
+    if(failure){if(error)*error=RError(failure);return nil;}
+    if(progress)progress(count);
+    [rows sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"path"] localizedStandardCompare:b[@"path"]];}];
+    return @{@"files":rows,@"enumerated":@(count)};
+}
 NSString *AMPreflightHash(NSData *data){unsigned char d[CC_SHA256_DIGEST_LENGTH];CC_SHA256(data.bytes,(CC_LONG)data.length,d);NSMutableString *s=NSMutableString.string;for(NSUInteger i=0;i<sizeof(d);i++)[s appendFormat:@"%02x",d[i]];return s;}
 static NSArray *PFMatches(NSString *s,NSString *pattern){return [[NSRegularExpression regularExpressionWithPattern:pattern options:NSRegularExpressionCaseInsensitive error:NULL] matchesInString:s options:0 range:NSMakeRange(0,s.length)] ?: @[];}
 static NSString *PFGroup(NSString *s,NSTextCheckingResult *m,NSUInteger n){NSRange r=[m rangeAtIndex:n];return r.location==NSNotFound ? @"" : [s substringWithRange:r];}
@@ -90,8 +162,8 @@ NSDictionary *AMPreflightCheck(NSDictionary *snapshot,NSString *requirements,NSM
         NSString *text=entry[@"text"];
         if([@[@"md",@"markdown",@"mdx"] containsObject:path.pathExtension.lowercaseString])for(NSDictionary *ref in AMPreflightImageReferences(text ?: @"")){
             NSString *target=ref[@"reference"],*resolved=AMPreflightResolveImage(path,target);if(PFMatches(target,@"^(?:https?:)?//").count){[issues addObject:PFIssue(@"image",@"info",path,ref[@"line"],@"远程图片可用性未验证",target,@"请自行确认网络图片可用。")];continue;}
-            if(!resolved){[issues addObject:PFIssue(@"image",@"warning",path,ref[@"line"],@"图片引用为空、越界或不支持",target,@"改为仓库内的相对图片路径。")];continue;}
-            NSDictionary *asset=files[resolved];if(!asset || [asset[@"deleted"] boolValue] || asset[@"problem"]){[issues addObject:PFIssue(@"image",@"error",path,ref[@"line"],asset[@"problem"] ?: @"拟提交版本缺少图片；本机存在也不代表会上传",target,@"返回文件列表，检查是否需要选择这张图片。")];continue;}
+            if(!resolved){[issues addObject:PFIssue(@"image",@"warning",path,ref[@"line"],@"图片引用为空、越界或不支持",target,@"改为检查范围内的相对路径；需要上级图片时选择共同父目录。")];continue;}
+            NSDictionary *asset=files[resolved];if(!asset || [asset[@"deleted"] boolValue] || asset[@"problem"]){[issues addObject:PFIssue(@"image",@"error",path,ref[@"line"],asset[@"problem"] ?: ([snapshot[@"mode"] isEqual:@"working"] ? @"作业文件夹缺少引用图片":@"拟提交版本缺少图片；本机存在也不代表会上传"),target,([snapshot[@"mode"] isEqual:@"working"] ? @"补齐引用图片后复查；共享图片需要选择共同父目录。":@"返回文件列表，检查是否需要选择这张图片。"))];continue;}
             if(!PFImage(asset[@"data"])){[issues addObject:PFIssue(@"image",@"error",path,ref[@"line"],@"引用图片无法解码",target,@"重新导出图片并复查。")];continue;}
             [images addObject:@{@"path":resolved,@"document":path,@"line":ref[@"line"],@"version":asset[@"version"]}];
         }

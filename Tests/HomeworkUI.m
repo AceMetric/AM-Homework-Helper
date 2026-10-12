@@ -32,7 +32,6 @@ int main(void) { @autoreleasepool {
     NSMutableDictionary *other = [@{@"fork":@"student/math", @"upstream":@"teacher/math", @"branch":@"main", @"upstreamBranch":@"main", @"enabled":@YES, @"path":@"/synthetic/math"} mutableCopy];
     [courses.courses addObjectsFromArray:@[course, other]]; [courses selectCourseID:course[@"fork"]]; courses.connected = YES; [courses refreshCourses];
     Check([courses.setupButton.title isEqual:@"关联文件夹…"] && !courses.syncButton.enabled && !courses.scanButton.enabled, @"unlinked course provides folder setup and blocks Git actions");
-    NSArray *(^previousTasks)(void)=courses.tasksProvider;courses.tasksProvider=^NSArray *{return @[@{@"id":@"unlinked-task",@"courseRepository":@"student/physics"}];};[AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];[courses checkTask:@"unlinked-task"];Check(!courses.submission && [courses.statusLabel.stringValue containsString:@"关联"],@"task check for unlinked course explains next step without constructing a nil file URL");courses.tasksProvider=previousTasks;
     // Exercise the real task-detail button, not only the course controller method.
     NSArray *tasksBeforeCheck=app.snapshot;NSUInteger pageBeforeCheck=app.page;
     NSMutableDictionary *checkTask=[tasksBeforeCheck.firstObject mutableCopy];
@@ -42,8 +41,6 @@ int main(void) { @autoreleasepool {
     Check(checkButton && [checkButton.target respondsToSelector:checkButton.action],@"task detail check button has a callable action");
     courses.busy=YES;courses.operationPhase=@"正在推送个人仓库";Check([[courses taskCheckBlockReason] containsString:@"推送"],@"write lock identifies the actual operation");[AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];[checkButton performClick:nil];
     Check(app.page==2 && !courses.submission && AMQuietDialogChoices.count==0,@"busy task check gives explicit feedback without opening another operation");courses.busy=NO;
-    [AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];[checkButton performClick:nil];
-    Check(app.page==2 && [app.selectedTaskID isEqual:checkTask[@"id"]] && [courses.statusLabel.stringValue containsString:@"关联"] && AMQuietDialogChoices.count==0,@"unlinked task visibly explains folder setup without losing its page or selection");
     // File chooser adapter supplies only synthetic files; the production check service still runs.
     NSString *checkRoot=[NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"] stringByAppendingPathComponent:@"task-check-fixture"];
     [NSFileManager.defaultManager createDirectoryAtPath:checkRoot withIntermediateDirectories:YES attributes:nil error:NULL];
@@ -62,9 +59,11 @@ int main(void) { @autoreleasepool {
     // Reproduce a long automatic scan: its course queue remains occupied throughout the check.
     dispatch_suspend(courses.queue);courses.busy=YES;courses.git.readsCancellable=YES;courses.operationPhase=@"正在扫描老师文档";
     checkTask[@"completed"]=@YES;app.filter=3;[app render];
-    checkButton=(NSButton *)AMFindButton(app.taskDetails,@selector(checkSelectedTask:),0,checkTask[@"id"]);[checkButton performClick:nil];
+    checkButton=(NSButton *)AMFindButton(app.taskDetails,@selector(checkSelectedTask:),0,checkTask[@"id"]);[AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];[checkButton performClick:nil];
+    Await(^BOOL{return courses.checkScope && !courses.checkScope.preparing;});
+    [courses.checkScope requestCheck];Await(^BOOL{return courses.submission && courses.submission.window.sheetParent;});
     SSSubmissionController *taskCheckSheet=courses.submission;
-    Check(foldersPicked==1 && filesPicked==1 && taskCheckSheet.checkOnly && app.window.attachedSheet==taskCheckSheet.window && !taskCheckSheet.submit,@"task detail opens check-only file sheet with no submit callback");
+    Check(foldersPicked==1 && filesPicked==0 && taskCheckSheet.checkOnly && app.window.attachedSheet==taskCheckSheet.window && !taskCheckSheet.submit,@"task detail opens check-only file sheet with no submit callback");
     Await(^BOOL{return !taskCheckSheet.checking && taskCheckSheet.report!=nil;});
     Check(app.page==2 && [app.selectedTaskID isEqual:checkTask[@"id"]] && courses.busy && [checkTask[@"completed"] boolValue],@"completed task opens its report in place during an ongoing teacher scan");
     Check(taskCheckSheet.report && !taskCheckSheet.checkPage.hidden && taskCheckSheet.findings.count>0 && [taskCheckSheet.snapshot[@"paths"] isEqual:@[@"report.md"]],@"actual task button through file selection produces the real missing-image report");
@@ -73,7 +72,7 @@ int main(void) { @autoreleasepool {
     courses.submission=nil;dispatch_resume(courses.queue);courses.busy=NO;courses.git.readsCancellable=NO;
     courses.operationsPaused=YES;[AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];[checkButton performClick:nil];
     Check(!courses.submission && [[courses taskCheckBlockReason] containsString:@"更新"] && AMQuietDialogChoices.count==0,@"exit or update still prevents a new check and explains why");courses.operationsPaused=NO;
-    cancelPicker=YES;Route(app,2);app.selectedTaskID=checkTask[@"id"];[app render];
+    [AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];cancelPicker=YES;Route(app,2);app.selectedTaskID=checkTask[@"id"];[app render];
     checkButton=(NSButton *)AMFindButton(app.taskDetails,@selector(checkSelectedTask:),0,checkTask[@"id"]);[checkButton performClick:nil];
     Check(!courses.submission && !app.window.attachedSheet,@"cancelled task file selection opens no check or submission");
     AMQuietReplace(NSOpenPanel.class,@selector(runModal),modalBefore);AMQuietReplace(NSOpenPanel.class,@selector(URLs),urlsBefore);AMQuietReplace(NSOpenPanel.class,@selector(URL),urlBefore);

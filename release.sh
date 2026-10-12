@@ -31,6 +31,7 @@ AM_UI_TEST=PlanningUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=ReminderUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=PreflightUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=QuickUsage zsh verify-hybrid-ui.sh
+AM_UI_TEST=GuideUsage zsh verify-hybrid-ui.sh
 # Foreground tests are an explicit maintainer lane; do not activate windows in routine builds.
 if [[ "${AM_FOREGROUND_QA:-0}" == "1" ]]; then
   AM_UI_TEST=ForegroundUsage zsh verify-hybrid-ui.sh

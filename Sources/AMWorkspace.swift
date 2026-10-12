@@ -3,9 +3,13 @@ import SwiftUI
 
 // One semantic palette for SwiftUI and the existing AppKit drawing layer.
 @objc(AMAppearance) public final class AMAppearance:NSObject {
-    @objc public static var canvas:NSColor {.windowBackgroundColor}
-    @objc public static var surface:NSColor {.controlBackgroundColor}
-    @objc public static var sidebar:NSColor {.underPageBackgroundColor}
+    private static func layer(_ light:UInt32,_ dark:UInt32)->NSColor {NSColor(name:nil){appearance in
+        let value=appearance.bestMatch(from:[.aqua,.darkAqua]) == .darkAqua ? dark:light
+        return NSColor(srgbRed:CGFloat((value >> 16)&255)/255,green:CGFloat((value >> 8)&255)/255,blue:CGFloat(value&255)/255,alpha:1)
+    }}
+    @objc public static var canvas:NSColor {layer(0xf5f6f8,0x242528)}
+    @objc public static var surface:NSColor {layer(0xffffff,0x2e3034)}
+    @objc public static var sidebar:NSColor {layer(0xedefF3,0x202125)}
     @objc public static var separator:NSColor {.separatorColor}
     @objc public static var ink:NSColor {.labelColor}
     @objc public static var muted:NSColor {.secondaryLabelColor}
@@ -407,6 +411,7 @@ private struct ReviewWorkspace: View {
                 }.frame(minWidth:300)    }
     var body: some View {
         VStack(spacing:12) {
+            WorkspaceHint(key:"review",text:"选中后直接在侧边核对；完整条目可全选批量确认，保存成功即从列表移除。")
             HStack {
                 TextField("搜索名称、课程或文件",text:$state.query).textFieldStyle(.roundedBorder).focused($searchFocused)
                 Text("已选 \(state.checked.count) / \(state.visible.count) 项").foregroundStyle(.secondary)
@@ -677,7 +682,7 @@ private struct CourseWorkspace:View {
         }.frame(minWidth:260)
     }
     private var detailPane:some View {
-        VStack(spacing:0){ReviewFeedback(state:state.review).padding(.horizontal,12);details;if let record=state.current,!flag(record,"confirmed"),state.reviewRecord(record) != nil {Divider();ReviewSaveBar(state:state.review,advance:false).padding(12)}}
+        VStack(spacing:0){WorkspaceHint(key:"course-review",text:"核对侧边的名称、截止时间和备注后确认；保存成功即移出审核列表。").padding(.horizontal,12);ReviewFeedback(state:state.review).padding(.horizontal,12);details;if let record=state.current,!flag(record,"confirmed"),state.reviewRecord(record) != nil {Divider();ReviewSaveBar(state:state.review,advance:false).padding(12)}}
     }
     var body:some View {
         GeometryReader { geometry in
@@ -734,19 +739,19 @@ private struct SetupWorkspace:View {
                 }}.accessibilityLabel("第 \(state.step+1) 步，共四步")
                 Divider()
             }
-            Text(state.step < 4 ? steps[max(0,min(3,state.step))]:"开始使用 AM Helper").font(.title2.weight(.semibold))
+            WorkspaceHeading(title:state.step < 4 ? (state.step==0 && string(state.context,"code").isEmpty ? "欢迎使用 AM Helper":steps[max(0,min(3,state.step))]):"配置已完成",subtitle:state.step==0 ? "连接课程，或直接使用本机作业功能。":"每一步成功的配置都会保留。",symbol:state.step==0 ? "graduationcap":"checklist")
             content
-            if state.busy {HStack{ProgressView().controlSize(.small);Text(state.step==0 ? "正在等待登录，其他课程数据会保留。":"正在逐门处理，成功结果会保留。").foregroundStyle(.secondary)}}
+            if state.busy {HStack{ProgressView().controlSize(.small);Text(state.step==0 ? "正在等待登录，其他课程数据会保留。":"正在逐门处理；可以收起引导，成功结果会保留。").foregroundStyle(.secondary)}}
             Text(state.message).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
             Divider()
             footer
-        }.padding(24).frame(minWidth:620,minHeight:450).font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas))
+        }.padding(24).frame(minWidth:620,minHeight:450).font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent))
     }
     @ViewBuilder private var content:some View {
         if state.step==0 {
             ScrollView {VStack(alignment:.leading,spacing:16){
                 Label("用浏览器连接 GitHub，无需 SSH 或额外安装工具。",systemImage:"person.crop.circle.badge.checkmark")
-                Text(official ? "授权页面会显示 GitHub CLI，这是软件内置的 GitHub 官方登录工具。它申请 repo、read:org、gist 权限，范围比所选课程更宽；本应用仅处理你选择的课程，登录令牌只保存在这台 Mac 的钥匙串。":"你在高级设置中选择了旧兼容登录，不使用内置官方工具。旧 OAuth 可能受组织应用限制，旧 GitHub App 需单独安装授权及本机上游凭据。登录令牌只存本机。").foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
+                DisclosureGroup("登录权限与隐私说明"){Text(official ? "授权页面会显示 GitHub CLI，这是软件内置的 GitHub 官方登录工具。它申请 repo、read:org、gist 权限，范围比所选课程更宽；本应用仅处理你选择的课程，登录令牌只保存在这台 Mac 的钥匙串。":"你在高级设置中选择了旧兼容登录，不使用内置官方工具。旧 OAuth 可能受组织应用限制，旧 GitHub App 需单独安装授权及本机上游凭据。登录令牌只存本机。").foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}
                 Text(official ? "不需要申请批准本项目应用。GitHub 登录、双重验证及学校 SSO 仍由你本人完成，课程访问权限需要已具备。":"如需简化配置，可取消引导，在高级登录设置选择 GitHub 官方登录。").foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                 if !string(state.context,"code").isEmpty {
                     Text(string(state.context,"code")).font(.system(size:30,weight:.semibold,design:.monospaced)).textSelection(.enabled).accessibilityLabel("GitHub 验证码")
@@ -801,13 +806,13 @@ private struct SetupWorkspace:View {
     }
     private var footer:some View {
         HStack {
-            Button(state.busy && state.step==0 ? "取消登录":(state.step==4 ? "跳过提示":"下次继续")){state.send("close")}.keyboardShortcut(.cancelAction).disabled(state.busy && state.step != 0)
+            Button(state.busy && state.step==0 ? "取消登录":(state.step==4 ? "稍后查看":"下次继续")){state.send("close")}.keyboardShortcut(.cancelAction)
             if state.step>0 && state.step<4 {Button("返回"){state.send("back")}.disabled(state.busy)}
             Spacer()
-            if state.step==0 {Button("浏览器登录"){state.send("login")}.disabled(state.busy || !string(state.context,"code").isEmpty).keyboardShortcut(.defaultAction)}
+            if state.step==0 {if !state.busy && string(state.context,"code").isEmpty{Button("先使用本机作业功能"){state.send("local")}};Button("连接 GitHub 课程"){state.send("login")}.disabled(state.busy || !string(state.context,"code").isEmpty).keyboardShortcut(.defaultAction)}
             else if state.step==1 {Button("下一步：核验课程"){state.send("select")}.disabled(state.busy || state.selected.isEmpty).keyboardShortcut(.defaultAction)}
-            else if state.step==2 {Button("关联选定目录"){state.send("link")}.disabled(state.busy);Button("下一步：首次检查"){state.send("check")}.disabled(state.busy || !state.records.contains{flag($0,"ready")}).keyboardShortcut(.defaultAction)}
-            else if state.step==3 {Button("重新检查就绪课程"){state.send("check")}.disabled(state.busy);Button("完成并查看使用提示"){state.send("finish")}.disabled(state.busy).keyboardShortcut(.defaultAction)}
+            else if state.step==2 {Button("确认并开始检查"){state.send("link-check")}.disabled(state.busy || !state.records.contains{!flag($0,"invalid") && !(state.paths[string($0,"fork")] ?? string($0,"path")).isEmpty}).buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)}
+            else if state.step==3 {Button("重试未完成课程"){state.send("retry-check")}.disabled(state.busy);Button("完成配置"){state.send("finish")}.disabled(state.busy).keyboardShortcut(.defaultAction)}
             else {Button("重新运行配置引导"){state.send("restart")}.disabled(state.busy);Button("查看课程"){state.send("courses")}.keyboardShortcut(.defaultAction);Button("查看待审核"){state.send("review")}}
         }
     }
@@ -830,6 +835,7 @@ private struct SkillJobsWorkspace:View {
     @ObservedObject var state:SkillJobsState
     var body:some View {
         VStack(alignment:.leading,spacing:16){
+            WorkspaceHint(key:"skill",text:"准备材料 → 复制指令给助手 → 结果自动接回；不会自动发送材料。")
             HStack{Text("助手识别批次").font(.title2.bold());Spacer();Button("清理已完成材料"){state.action?("clean","")}.disabled(state.busy);Button("返回课程"){state.action?("close","")}}
             Text("等待助手期间可以继续使用。接回后仍需审核；重试只准备尚未成功的材料。").foregroundStyle(.secondary)
             if state.records.isEmpty {VStack(spacing:12){Image(systemName:"tray").font(.largeTitle);Text("暂无识别批次");Button("准备课程材料"){state.action?("prepare","")}}.frame(maxWidth:.infinity,maxHeight:.infinity)}
@@ -1044,3 +1050,94 @@ private struct QuickEntryView:View {
 }
 
 private func recordIdentifier(_ record:NSDictionary)->String {identifier(record)}
+
+// The same preview is used for folders and an explicit file selection. It never
+// changes submission selection, Git state or the associated task.
+private final class CheckScopeState:ObservableObject {
+    @Published var records:[NSDictionary]=[]
+    @Published var selected=Set<String>()
+    @Published var query=""
+    @Published var chosen=""
+    @Published var busy=true
+    @Published var notice="正在整理文件夹…"
+    var action:((NSDictionary)->Void)?
+    var visible:[NSDictionary]{records.filter{query.isEmpty || string($0,"path").localizedCaseInsensitiveContains(query)}}
+    var valid:[NSDictionary]{records.filter{flag($0,"selectable") && selected.contains(string($0,"path"))}}
+    var bytes:Int64{valid.reduce(0){$0 + (($1["bytes"] as? NSNumber)?.int64Value ?? 0)}}
+    var canStart:Bool{!busy && !valid.isEmpty && valid.count<=256 && bytes<=64*1024*1024}
+    var hint:String{valid.count>256 ? "最多256个文件，请减少选择或选择更小的文件夹。":(bytes>64*1024*1024 ? "超过64 MB，请减少选择后分批检查。":(valid.isEmpty ? "请选择至少一个文件。":"只读检查当前文件，不提交或推送。"))}
+    func send(_ action:String){self.action?(["action":action,"paths":valid.map{string($0,"path")}] as NSDictionary)}
+}
+private struct CheckScopeWorkspace:View {
+    @ObservedObject var state:CheckScopeState
+    private var selection:Binding<String?>{Binding(get:{state.chosen.isEmpty ? nil:state.chosen},set:{state.chosen=$0 ?? ""})}
+    var body:some View {
+        VStack(alignment:.leading,spacing:16){
+            WorkspaceHeading(title:"检查作业文件",subtitle:"1 文件范围  ›  2 检查报告",symbol:"doc.text.magnifyingglass")
+            HStack{TextField("搜索文件或目录",text:$state.query).textFieldStyle(.roundedBorder).accessibilityLabel("搜索检查文件");Button("全选当前结果"){for row in state.visible where flag(row,"selectable"){state.selected.insert(string(row,"path"))}}.keyboardShortcut("a",modifiers:.command);Button("取消选择"){state.selected.removeAll()}}.disabled(state.busy)
+            ViewThatFits(in:.horizontal){
+                HStack(alignment:.top,spacing:16){fileList.frame(minWidth:320);detail.frame(width:260)}
+                VStack(alignment:.leading,spacing:12){fileList;detail.frame(height:120)}
+            }
+            HStack{if state.busy{ProgressView().controlSize(.small)};Text(state.notice).foregroundStyle(.secondary).textSelection(.enabled)}
+            HStack{Text("文档 \(state.valid.filter{!flag($0,"image")}.count) · 已选 \(state.valid.count) · 图片 \(state.valid.filter{flag($0,"image")}.count) · 排除 \(state.records.filter{!flag($0,"selectable")}.count)").font(.caption).foregroundStyle(.secondary);Spacer();Text(ByteCountFormatter.string(fromByteCount:state.bytes,countStyle:.file)).font(.caption)}
+            Divider()
+            HStack{Button(state.busy ? "取消整理":"取消"){state.send("cancel")}.keyboardShortcut(.cancelAction);Text(state.hint).font(.caption).foregroundStyle(state.canStart ? Color.secondary:Color.orange);Spacer();Button("开始检查"){state.send("check")}.buttonStyle(.borderedProminent).disabled(!state.canStart).keyboardShortcut(.defaultAction)}
+        }.padding(24).font(.system(size:13)).frame(minWidth:580,minHeight:440).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent))
+    }
+    private var fileList:some View {
+        List(selection:selection){ForEach(state.visible,id:\.self){row in
+            let path=string(row,"path")
+            HStack(alignment:.top,spacing:8){
+                Toggle("包含 \(path)",isOn:Binding(get:{state.selected.contains(path)},set:{if $0{state.selected.insert(path)}else{state.selected.remove(path)}})).labelsHidden().toggleStyle(.checkbox).disabled(!flag(row,"selectable"))
+                Image(systemName:flag(row,"selectable") ? (flag(row,"image") ? "photo":"doc.text"):"minus.circle").foregroundStyle(.secondary)
+                VStack(alignment:.leading,spacing:3){Text((path as NSString).lastPathComponent).lineLimit(1);Text(string(row,"reason").isEmpty ? ((path as NSString).deletingLastPathComponent.isEmpty ? "作业文件夹":(path as NSString).deletingLastPathComponent):string(row,"reason")).font(.caption).foregroundStyle(.secondary).lineLimit(1)}
+            }.help(path).tag(path).padding(.vertical,3)
+        }}.listStyle(.inset).scrollContentBackground(.hidden).background(Color(nsColor:AMAppearance.surface)).clipShape(RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).stroke(Color(nsColor:AMAppearance.separator),lineWidth:0.5)).accessibilityLabel("检查范围文件清单")
+    }
+    private var detail:some View {
+        VStack(alignment:.leading,spacing:12){Text("范围说明").fontWeight(.semibold);ScrollView{VStack(alignment:.leading,spacing:12){if !state.chosen.isEmpty {Text(state.chosen).textSelection(.enabled);if let row=state.records.first(where:{string($0,"path")==state.chosen}),!string(row,"reason").isEmpty{Text(string(row,"reason")).foregroundStyle(.orange)}};Text("包含子文件夹。Markdown 引用的图片会自动关联、去重。检查边界为本次选择的文件夹；外部图片需要选择共同父目录。");Text("隐藏配置、依赖、缓存、构建目录和敏感文件已排除。排除文件及不支持类型不算检查通过。").foregroundStyle(.secondary)}}}.padding(16).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(Color(nsColor:AMAppearance.surface)).clipShape(RoundedRectangle(cornerRadius:10))
+    }
+}
+private struct WorkspaceHeading:View {
+    var title:String
+    var subtitle:String
+    var symbol:String
+    var body:some View {HStack(alignment:.center,spacing:12){Image(systemName:symbol).font(.title2).foregroundStyle(Color(nsColor:AMAppearance.accent)).frame(width:32);VStack(alignment:.leading,spacing:4){Text(title).font(.system(size:20,weight:.semibold));Text(subtitle).font(.system(size:12)).foregroundStyle(.secondary)}}}
+}
+@objc(AMCheckScopeController) @MainActor public final class AMCheckScopeController:NSViewController {
+    private let state=CheckScopeState()
+    @objc public var actionHandler:((NSDictionary)->Void)?{get{state.action}set{state.action=newValue}}
+    public override func loadView(){view=NSHostingView(rootView:CheckScopeWorkspace(state:state))}
+    @objc public func update(_ records:[NSDictionary],busy:Bool,notice:String){state.records=records;state.busy=busy;state.notice=notice;if !busy {state.selected=Set(records.filter{flag($0,"selectable")}.map{string($0,"path")})}}
+    @objc public func setProgress(_ notice:String){state.notice=notice}
+    @objc public var preparing:Bool{state.busy}
+    @objc public func requestCheck(){if state.canStart{state.send("check")}}
+}
+
+private struct HelpWorkspace:View {
+    var action:(String)->Void
+    var body:some View {
+        ScrollView{VStack(alignment:.leading,spacing:20){
+            WorkspaceHeading(title:"从这里开始",subtitle:"连接课程是可选的；本机录入和文件检查无需登录。",symbol:"sparkles")
+            WorkspaceSection("准备好开始了吗？"){HStack{Button("继续配置课程"){action("setup")}.buttonStyle(.borderedProminent);Button("快速录入作业"){action("quick")};Button("查看任务"){action("tasks")};Spacer()}}
+            ForEach(Array(zip(["检查新作业","审核作业","检查作业文件","助手识别 · Skill","同步课程文件","提交作业"],["老师有新内容时，在课程页检查；不会合并文件或推送。","核对截止时间和内容后保存；支持全选、批量确认，保存后从审核列表移除。","选中任务，在详情中选择作业文件夹或文件，核对范围后检查。答案和推导可以再交给助手。","准备材料，复制指令给助手；结果自动接回。不会自动发送原文或启动付费分析。","需要更新本机课程资料时使用；会合并老师更新并安全更新个人 fork。","逐项选择提交文件、填写说明，查看提交前检查，只推送个人仓库。"])),id:\.0){title,detail in
+                WorkspaceSection(title){VStack(alignment:.leading,spacing:10){Text(detail).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true);if title=="审核作业"{Button("打开待审核作业"){action("review")}}else if title=="检查作业文件"{Button("选择任务开始检查"){action("tasks")}}else if title=="助手识别 · Skill"{Button("查看识别批次"){action("skill")}}else{Button("打开课程"){action("courses")}}}}
+            }
+            Text("本机检查不证明答案正确。检查、同步和提交是不同操作；完成任务也不等于代码已推送。").font(.caption).foregroundStyle(.secondary)
+        }.padding(24).frame(maxWidth:900,alignment:.leading).frame(maxWidth:.infinity,alignment:.leading)}.font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent))
+    }
+}
+@objc(AMHelpController) @MainActor public final class AMHelpController:NSViewController {
+    @objc public var actionHandler:((String)->Void)?
+    public override func loadView(){view=NSHostingView(rootView:HelpWorkspace(action:{[weak self] in self?.actionHandler?($0)}))}
+}
+
+private final class WorkspaceHintState:ObservableObject {@Published var dismissed=false}
+private struct WorkspaceHint:View {
+    let key:String
+    let text:String
+    @StateObject private var hint=WorkspaceHintState()
+    private var stored:Bool{!ProcessInfo.processInfo.arguments.contains("--preview") && UserDefaults.standard.bool(forKey:"am.hint18."+key)}
+    var body:some View {if !hint.dismissed && !stored {HStack(alignment:.top,spacing:10){Image(systemName:"info.circle").foregroundStyle(Color(nsColor:AMAppearance.accent));Text(text).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true);Spacer(minLength:4);Button{hint.dismissed=true;if !ProcessInfo.processInfo.arguments.contains("--preview"){UserDefaults.standard.set(true,forKey:"am.hint18."+key)}}label:{Image(systemName:"xmark")}.buttonStyle(.plain).accessibilityLabel("关闭本条使用提示")}.padding(12).background(Color(nsColor:AMAppearance.surface)).clipShape(RoundedRectangle(cornerRadius:8))}}
+}

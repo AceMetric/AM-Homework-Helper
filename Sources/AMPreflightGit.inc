@@ -7,33 +7,36 @@
     NSMutableData *data=NSMutableData.data;char buffer[8192];ssize_t count;while((count=read(fd,buffer,sizeof(buffer)))>0){if(data.length+(NSUInteger)count>5*1024*1024){close(fd);return @{@"problem":@"文件在读取时增长，超过检查限制",@"version":@"oversized"};}[data appendBytes:buffer length:(NSUInteger)count];}close(fd);if(count<0)return @{@"problem":@"文件无法完整读取",@"version":@"unreadable"};return @{@"data":data,@"mode":(info.st_mode&0111) ? @"100755":@"100644"};
 }
 - (NSDictionary *)preflightSnapshotForCourse:(NSDictionary *)course paths:(NSArray *)paths error:(NSError **)error {
-    BOOL local=[course[@"preflightLocal"] boolValue];
-    if((!local && (![self validateCourse:course error:error] || ![self submissionBranch:course error:error])) || !paths.count || paths.count>256)return nil;
+    BOOL local=[course[@"preflightLocal"] boolValue] || [course[@"preflightMode"] isEqual:@"working"];
+    if(!local && (![self validateCourse:course error:error] || ![self submissionBranch:course error:error]))return nil;
+    if(!paths.count || paths.count>256){if(error)*error=GitError(@"请选择1至256个文件后再检查。其它文件未检查。");return nil;}
     SSGitResult *head=local ? nil:[self checked:@[@"rev-parse",@"HEAD"] in:course[@"path"] token:nil error:error];if(!local && !head)return nil;
     SSGitResult *tree=local ? nil:[self checked:@[@"ls-tree",@"-r",@"-z",Trim([self string:head])] in:course[@"path"] token:nil error:error];if(!local && !tree)return nil;
     NSMutableDictionary *entries=NSMutableDictionary.dictionary,*files=NSMutableDictionary.dictionary;NSMutableSet *selected=[NSMutableSet setWithArray:paths];
     for(NSString *line in NonemptyParts(local ? @"" : [self string:tree],@"\0")){NSRange tab=[line rangeOfString:@"\t"];if(tab.location==NSNotFound)continue;NSArray *fields=NonemptyParts([line substringToIndex:tab.location],@" ");if(fields.count==3)entries[[line substringFromIndex:tab.location+1]]=@{@"mode":fields[0],@"oid":fields[2]};}
-    NSString *root=[course[@"path"] stringByResolvingSymlinksInPath];
+    NSString *root=local ? [course[@"path"] stringByStandardizingPath]:[course[@"path"] stringByResolvingSymlinksInPath];
     NSDictionary *(^read)(NSString *,BOOL)=^NSDictionary *(NSString *file,BOOL working){
         if(![file isKindOfClass:NSString.class] || !file.length || [file hasPrefix:@"/"] || [[file pathComponents] containsObject:@".."] || SSSensitivePath(file))return @{@"path":file ?: @"",@"problem":@"敏感或不安全文件已排除",@"version":@"excluded"};
-        NSData *data=nil;NSString *mode=@"100644";
-        if(working){NSDictionary *read=[self preflightWorkingFile:file root:root];if(!read[@"data"]){NSMutableDictionary *problem=read.mutableCopy;problem[@"path"]=file;return problem;}data=read[@"data"];mode=read[@"mode"];
+        if(local && AMPreflightExcludedReason(file))return @{@"path":file,@"problem":AMPreflightExcludedReason(file),@"version":@"excluded"};
+        NSData *data=nil;NSString *mode=@"100644",*stamp=nil;
+        if(working){NSString *before=AMPreflightFileStamp([NSURL fileURLWithPath:root],file);NSDictionary *read=[self preflightWorkingFile:file root:root];stamp=AMPreflightFileStamp([NSURL fileURLWithPath:root],file);if(![before isEqual:stamp])return @{@"path":file,@"problem":@"文件在读取时发生变化，请等待保存完成后复查",@"version":@"changed",@"stamp":stamp};if(!read[@"data"]){NSMutableDictionary *problem=read.mutableCopy;problem[@"path"]=file;problem[@"stamp"]=stamp;return problem;}data=read[@"data"];mode=read[@"mode"];
         }else{NSDictionary *object=entries[file];if(!object)return nil;if(![@[@"100644",@"100755"] containsObject:object[@"mode"]])return @{@"path":file,@"problem":@"引用对象不是普通文件，未读取",@"version":object[@"oid"]};mode=object[@"mode"];
             SSGitResult *size=[self checked:@[@"cat-file",@"-s",object[@"oid"]] in:root token:nil error:NULL];if(!size || Trim([self string:size]).longLongValue>5*1024*1024)return @{@"path":file,@"problem":@"引用文件过大或无法读取",@"version":object[@"oid"]};
             SSGitResult *blob=[self checked:@[@"cat-file",@"blob",object[@"oid"]] in:root token:nil error:NULL];data=blob.data;
         }
         if(!data)return @{@"path":file,@"problem":@"文件无法读取",@"version":@"unreadable"};
         if(SSContainsSecret(data))return @{@"path":file,@"problem":@"文件含疑似凭据，禁止交给助手",@"version":@"secret"};
-        NSMutableDictionary *entry=[@{@"path":file,@"mode":mode,@"data":data,@"version":AMPreflightHash(data)} mutableCopy];NSString *ext=file.pathExtension.lowercaseString;
+        NSMutableDictionary *entry=[@{@"path":file,@"mode":mode,@"data":data,@"version":AMPreflightHash(data)} mutableCopy];if(stamp)entry[@"stamp"]=stamp;NSString *ext=file.pathExtension.lowercaseString;
         if([@[@"png",@"jpg",@"jpeg",@"heic",@"tiff",@"tif",@"gif",@"bmp",@"webp"] containsObject:ext])entry[@"image"]=@YES;
         else {NSString *text=[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];if(text)entry[@"text"]=text;}
         return entry;
     };
     NSUInteger total=0;
     for(NSString *path in paths){if(self.readsCancellable && self.cancelledReads){if(error)*error=GitError(@"检查已取消。");return nil;}NSDictionary *entry=read(path,YES);total+=[entry[@"data"] length];if(total>64*1024*1024){if(error)*error=GitError(@"检查材料超过64 MB，请减少选择后分批检查。");return nil;}files[path]=entry;}
-    for(NSString *path in paths)if([@[@"md",@"markdown",@"mdx"] containsObject:path.pathExtension.lowercaseString])for(NSDictionary *ref in AMPreflightImageReferences(files[path][@"text"] ?: @"")){NSString *asset=AMPreflightResolveImage(path,ref[@"reference"]);if(asset && !files[asset]){NSDictionary *entry=read(asset,local || [selected containsObject:asset]);if(entry){total+=[entry[@"data"] length];if(total>64*1024*1024){if(error)*error=GitError(@"引用图片使材料超过64 MB，请分批检查。");return nil;}files[asset]=entry;}}}
+    for(NSString *path in paths)if([@[@"md",@"markdown",@"mdx"] containsObject:path.pathExtension.lowercaseString])for(NSDictionary *ref in AMPreflightImageReferences(files[path][@"text"] ?: @"")){NSString *asset=AMPreflightResolveImage(path,ref[@"reference"]);if(asset && !files[asset]){if(files.count>=256){if(error)*error=GitError(@"包括引用图片在内超过256个文件，请分批检查。");return nil;}if(self.readsCancellable && self.cancelledReads){if(error)*error=GitError(@"检查已取消。");return nil;}NSDictionary *entry=[course[@"preflightExcluded"] containsObject:asset] ? @{@"path":asset,@"version":@"excluded",@"problem":@"图片已从检查范围排除，未检查"}:read(asset,local || [selected containsObject:asset]);if(entry){total+=[entry[@"data"] length];if(total>64*1024*1024){if(error)*error=GitError(@"引用图片使材料超过64 MB，请分批检查。");return nil;}files[asset]=entry;}}}
+    if(files.count>256){if(error)*error=GitError(@"包括引用图片在内超过256个文件，请分批检查。");return nil;}
     NSMutableString *stamp=[NSMutableString stringWithFormat:@"%@|%@|%@",course[@"fork"],course[@"branch"],(local ? @"local":Trim([self string:head]))];for(NSString *file in [files.allKeys sortedArrayUsingSelector:@selector(compare:)])[stamp appendFormat:@"|%@:%@:%@:%d",file,files[file][@"version"],files[file][@"mode"] ?: @"",[selected containsObject:file]];
-    return @{@"head":local ? @"local":Trim([self string:head]),@"repository":course[@"fork"] ?: @"",@"branch":course[@"branch"] ?: @"",@"paths":paths.copy,@"files":files,@"version":AMPreflightHash([stamp dataUsingEncoding:NSUTF8StringEncoding])};
+    return @{@"mode":local ? @"working":@"submission",@"head":local ? @"local":Trim([self string:head]),@"repository":course[@"fork"] ?: @"",@"branch":course[@"branch"] ?: @"",@"paths":paths.copy,@"files":files,@"version":AMPreflightHash([stamp dataUsingEncoding:NSUTF8StringEncoding])};
 }
 - (BOOL)validatePreflightIndex:(NSArray *)paths course:(NSDictionary *)course error:(NSError **)error {
     NSDictionary *snapshot=self.expectedSubmissionSnapshot;if(!snapshot)return YES;

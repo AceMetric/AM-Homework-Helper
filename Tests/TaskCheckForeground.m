@@ -21,6 +21,8 @@ int main(void){@autoreleasepool{
     NSMutableDictionary *task=[app.tasks.firstObject mutableCopy];task[@"id"]=@"native-completed-check";task[@"title"]=@"Synthetic completed report";task[@"completed"]=@YES;[task removeObjectForKey:@"sourceRepository"];[task removeObjectForKey:@"courseRepository"];
     [app.tasks addObject:task];NSButton *route=NSButton.new;route.tag=2;[app navigate:route];app.filter=3;app.selectedTaskID=task[@"id"];[app render];
     // Display the real native pickers. The test supplies synthetic choices after dismissing them.
+    IMP alertModal=class_getMethodImplementation(NSAlert.class,@selector(runModal));
+    Replace(NSAlert.class,@selector(runModal),imp_implementationWithBlock(^NSModalResponse(NSAlert *alert){return NSAlertFirstButtonReturn;}));
     IMP modal=class_getMethodImplementation(NSOpenPanel.class,@selector(runModal));
     IMP urls=class_getMethodImplementation(NSOpenPanel.class,@selector(URLs));
     IMP url=class_getMethodImplementation(NSOpenPanel.class,@selector(URL));
@@ -36,9 +38,19 @@ int main(void){@autoreleasepool{
     dispatch_suspend(courses.queue);courses.busy=YES;courses.git.readsCancellable=YES;courses.operationPhase=@"Synthetic teacher scan";
     NSButton *button=(NSButton *)AMFindButton(app.taskDetails,@selector(checkSelectedTask:),0,task[@"id"]);Check(button!=nil,@"real completed-task button present");[button performClick:nil];
     Replace(NSOpenPanel.class,@selector(runModal),modal);Replace(NSOpenPanel.class,@selector(URLs),urls);Replace(NSOpenPanel.class,@selector(URL),url);
+    Wait(^BOOL{return courses.checkScope && !courses.checkScope.preparing;});
+    for(NSString *name in @[@"light",@"dark",@"compact"]){
+        courses.checkScopeWindow.appearance=[NSAppearance appearanceNamed:[name isEqual:@"dark"] ? NSAppearanceNameDarkAqua:NSAppearanceNameAqua];
+        [courses.checkScopeWindow setContentSize:[name isEqual:@"compact"] ? NSMakeSize(600,480):NSMakeSize(820,600)];
+        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.15]];
+        NSView *v=courses.checkScopeWindow.contentView;[v layoutSubtreeIfNeeded];NSBitmapImageRep *bmp=[v bitmapImageRepForCachingDisplayInRect:v.bounds];[v cacheDisplayInRect:v.bounds toBitmapImageRep:bmp];
+        Check([[bmp representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[NSString stringWithFormat:@"build/qa/folder-scope-%@.png",name] atomically:YES],@"scope prototype screenshot");
+    }
+    [courses.checkScope requestCheck];Wait(^BOOL{return courses.submission!=nil && courses.submission.window.sheetParent!=nil;});
+    Replace(NSAlert.class,@selector(runModal),alertModal);
     SSSubmissionController *sheet=courses.submission;
     Wait(^BOOL{return sheet.report!=nil && !sheet.checking;});
-    Check(pickers==2 && app.page==2 && [app.selectedTaskID isEqual:task[@"id"]],@"native folder and file pickers preserve the task page and selection");
+    Check(pickers==1 && app.page==2 && [app.selectedTaskID isEqual:task[@"id"]],@"native folder picker and range confirmation preserve the task page and selection");
     Check(courses.busy && sheet.checkOnly && sheet.window.sheetParent==app.window && sheet.findings.count>0 && !sheet.submit,@"visible report completes while course queue stays suspended, without submit callback");
     for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]){
         sheet.window.appearance=[NSAppearance appearanceNamed:appearance];[sheet.window.contentView layoutSubtreeIfNeeded];
@@ -46,6 +58,11 @@ int main(void){@autoreleasepool{
         NSString *name=[appearance isEqual:NSAppearanceNameAqua] ? @"light":@"dark";
         Check([[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[NSString stringWithFormat:@"build/qa/task-check-active-scan-%@.png",name] atomically:YES],@"synthetic visible report screenshot saved");
     }
+    [sheet.window setContentSize:NSMakeSize(620,600)];[sheet layoutReport];
+    Check(NSMaxY(sheet.primary.frame)<=NSHeight(sheet.checkPage.bounds) && NSMinY(sheet.findingDetail.enclosingScrollView.frame)>=NSMaxY(sheet.findingsTable.enclosingScrollView.frame),@"compact report stacks list and detail with visible primary action");
+    [@"# Changed report\n" writeToURL:file atomically:YES encoding:NSUTF8StringEncoding error:NULL];[sheet pollReview:nil];Check(sheet.reportStale && !sheet.assistantButton.enabled,@"file modification marks old report stale before assistant export");
+    [text writeToURL:file atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    [sheet backToFiles:nil];Wait(^BOOL{return courses.checkScopeWindow.sheetParent!=nil;});Check(!courses.checkScope.preparing,@"adjust scope preserves completed enumeration and selection");[courses.checkScope requestCheck];Wait(^BOOL{return courses.submission!=nil && courses.submission!=sheet && courses.submission.report!=nil;});sheet=courses.submission;
     [sheet.primary performClick:nil];Wait(^BOOL{return !sheet.window.sheetParent;});
     dispatch_resume(courses.queue);courses.busy=NO;courses.git.readsCancellable=NO;
     Check([[NSString stringWithContentsOfURL:file encoding:NSUTF8StringEncoding error:NULL] isEqual:text] && [task[@"completed"] boolValue],@"file and completed status remain unchanged");

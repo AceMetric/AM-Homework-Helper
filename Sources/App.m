@@ -366,6 +366,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property SSUpdateController *updates;
 @property SSExitCoordinator *exitCoordinator;
 @property AMSettingsController *settingsController;
+@property AMHelpController *helpController;
 @property NSWindow *settingsWindow;
 @property NSArray<NSDictionary *> *automaticBatch;
 - (BOOL)replaceTasks:(NSArray *)tasks action:(NSString *)action error:(NSError **)error;
@@ -755,6 +756,13 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
         if (!ok) { weakSelf.notice = @"本机数据保存失败，已暂缓退出与更新。"; [weakSelf render]; }
         return ok;
     };
+    self.helpController=AMHelpController.new;[self.root addSubview:self.helpController.view];self.helpController.view.hidden=YES;
+    self.courseWindow.localStart=^{NSButton *route=NSButton.new;route.tag=0;[weakSelf navigate:route];};
+    self.helpController.actionHandler=^(NSString *action){
+        if([action isEqual:@"setup"]){[weakSelf.courseWindow setup:nil];return;}
+        if([action isEqual:@"quick"]){[weakSelf quickEntry:nil];return;}
+        NSButton *route=NSButton.new;route.tag=[action isEqual:@"tasks"] ? 2:([action isEqual:@"review"] ? 3:4);[weakSelf navigate:route];if([action isEqual:@"skill"])[weakSelf.courseWindow showSkillJobs:nil];
+    };
     self.courseWindow.onboardingNavigation=^(BOOL review){NSButton *route=NSButton.new;route.tag=review ? 3:4;[weakSelf navigate:route];};
     self.courseWindow.operationStateChanged = ^{ [weakSelf.exitCoordinator operationStateChanged]; };
     self.updates.statusChanged = ^(NSString *message) { weakSelf.notice = message; [weakSelf render]; };
@@ -861,7 +869,8 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     self.taskFilter.frame = NSMakeRect(x, 140, 160, 32); self.sortMenu.frame = NSMakeRect(x + 176, 140, 152, 32);
     self.calendarStatus.frame = NSMakeRect(x, 140, 240, 32);
     [self layoutTaskArea];
-    self.courseWindow.view.hidden = !coursePage;
+    self.courseWindow.view.hidden = !coursePage || self.page==5;
+    self.helpController.view.hidden=self.page!=5;self.helpController.view.frame=NSMakeRect(x,112,content,h-136);
     if (self.courseWindow) { self.courseWindow.view.frame = NSMakeRect(x, 112, content, h - 136); [self.courseWindow layoutContent]; }
     [self render];
 }
@@ -937,7 +946,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     CGFloat sy=100+textHeight+plannerHeight;Put(detailDocument,Text([@"提交：" stringByAppendingString:lastLabel],12,NSFontWeightRegular,Muted()),12,sy,w-48,24);
     ActionButton *history=Button(@"提交记录",self,@selector(taskSubmissionHistory:),0);history.identifier=task[@"id"];Put(detailDocument,history,12,sy+32,120,32);
     if([task[@"sourceRepository"] length] || [task[@"courseRepository"] length]){ActionButton *submit=Button(@"提交作业…",self,@selector(submitSelectedTask:),0);submit.identifier=task[@"id"];Put(detailDocument,submit,144,sy+32,120,32);}
-    ActionButton *check=Button(@"检查作业…",self,@selector(checkSelectedTask:),0);check.identifier=task[@"id"];Put(detailDocument,check,12,sy+76,120,32);
+    ActionButton *check=Button(@"检查作业文件…",self,@selector(checkSelectedTask:),0);check.identifier=task[@"id"];Put(detailDocument,check,12,sy+76,140,32);
     scroll.documentView=detailDocument;
     [scroll.contentView scrollToPoint:position];self.taskDetailsScroll=scroll;self.taskDetailsText=text;
     if(restoreFocus){[self.window makeFirstResponder:text];text.selectedRange=NSMakeRange(MIN(selection.location,text.string.length),MIN(selection.length,text.string.length-MIN(selection.location,text.string.length)));}
@@ -947,7 +956,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 }
 - (void)navigate:(id)sender {
     NSInteger destination = [sender tag];
-    if (destination < 0 || destination > 4) return;
+    if (destination < 0 || destination > 5) return;
     if (self.page != destination) {
         if(self.courseWindow.hasUnsavedReview && ![self.courseWindow resolveUnsavedReview])return;
         self.pageStates[@(self.page)] = @{@"query":self.query ?: @"", @"scroll":[NSValue valueWithPoint:self.scroll.contentView.bounds.origin], @"filter":@(self.filter),@"sort":@(self.sortMenu.indexOfSelectedItem),@"taskSelection":self.selectedTaskID ?: @""};
@@ -1019,7 +1028,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     [self.navigationScroll.contentView scrollToPoint:offset];
 
     ActionButton *account = Button(self.courseWindow.accountSummary ?: @"连接 GitHub", self, @selector(accountSettings:), 3); account.identifier=@"account";account.symbol = @"person.crop.circle";
-    ActionButton *gettingStarted=Button(@"开始使用",self,@selector(startUsing:),3);gettingStarted.identifier=@"getting-started";gettingStarted.symbol=@"questionmark.circle";Put(self.sidebar,gettingStarted,12,h-168,168,36);
+    ActionButton *gettingStarted=Button(@"开始使用",self,@selector(startUsing:),3);gettingStarted.identifier=@"getting-started";gettingStarted.selected=self.page==5;gettingStarted.symbol=@"questionmark.circle";Put(self.sidebar,gettingStarted,12,h-168,168,36);
     Put(self.sidebar, account, 12, h - 124, 168, 36);
     ActionButton *settings = Button(@"设置", self, @selector(showSettings:), 3); settings.identifier=@"settings";settings.symbol = @"gearshape"; Put(self.sidebar, settings, 12, h - 80, 168, 36);
     if(focusedID){NSView *replacement=AMFindButton(self.sidebar,focusedAction,focusedTag,focusedID);if(replacement)[self.window makeFirstResponder:replacement];}
@@ -1032,7 +1041,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     NSButton *route=NSButton.new;route.tag=4;[self navigate:route];
     if([self.courseWindow selectCourseID:identifier])[self render];
 }
-- (void)startUsing:(id)sender {[self.courseWindow startUsing:sender];}
+- (void)startUsing:(id)sender {NSButton *route=NSButton.new;route.tag=5;[self navigate:route];}
 - (void)accountSettings:(id)sender { [self.courseWindow accountSettings:sender]; }
 - (void)showSettings:(id)sender {
     [self showWindow]; if (self.window.attachedSheet) return;
@@ -1092,10 +1101,10 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 - (void)renderHeader {
     Clear(self.header); CGFloat w = NSWidth(self.header.bounds);
     if (self.calendarMode) { [self renderCalendarHeader]; return; }
-    NSString *title = @[@"今日与近期安排", @"日历", @"任务", @"待审核作业", @"课程"][self.page];
+    NSString *title = @[@"今日与近期安排", @"日历", @"任务", @"待审核作业", @"课程", @"开始使用"][self.page];
     if(self.page==0 && self.weeklyMode)title=@"每周安排";
     if(self.page==4)title=self.courseWindow.selectedCourseID.lastPathComponent ?: @"所有课程";
-    Put(self.header, Text(title, 25, NSFontWeightSemibold, Ink()), 0, 4, w - 152, 32);
+    Put(self.header, Text(title, 22, NSFontWeightSemibold, Ink()), 0, 4, w - 152, 32);
     NSString *subtitle = (self.notice.length && self.page < 3) ? self.notice : (self.page == 0 ? DDLFormatDate(NSDate.date, @"M月d日 EEEE") : (self.page == 3 ? @"核对老师原文后，将作业加入日历与提醒" : (self.page == 4 ? @"先检查新作业，需要时再同步课程文件" : @"按截止时间安排任务")));
     if(self.page<3)Put(self.header, Text(subtitle, 13, NSFontWeightRegular, Muted()), 0, 48, w, 24);
     if(self.page==0){NSSegmentedControl *mode=[NSSegmentedControl segmentedControlWithLabels:@[@"今日",@"本周"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(changeOverviewMode:)];mode.selectedSegment=self.weeklyMode ? 1:0;mode.accessibilityLabel=@"总览显示方式";Put(self.header,mode,w-300,0,144,32);}
