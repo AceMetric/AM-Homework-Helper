@@ -256,6 +256,7 @@ void AMPreflightPoll(void){@synchronized(NSSpellChecker.class){NSArray *old=PFJo
         NSDictionary *result=read && intact ? AMPreflightValidateResult(read[@"result"],context,&failure):nil;
         if(result){job[@"result"]=result;job[@"state"]=[result[@"partial"] boolValue] ? @"需处理":@"已接回";job[@"message"]=[NSString stringWithFormat:@"提交前复核：%lu 条建议%@；仅适用于导出版本",(unsigned long)[result[@"issues"] count],[result[@"partial"] boolValue] ? @"，部分未完成":@""];}
         else {job[@"state"]=@"需处理";job[@"message"]=failure.localizedDescription ?: @"复核材料版本变化，请重新准备材料。";}
+        if([job[@"provider"] isEqual:@"Gemini"])job[@"message"]=[@"Gemini · " stringByAppendingString:job[@"message"]];
         if(fingerprint)job[@"fingerprint"]=fingerprint;dirty=YES;
     }
     if(dirty)SSWritePlist(@"preflight-jobs.plist",next,NULL);

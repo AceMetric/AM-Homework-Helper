@@ -321,3 +321,5 @@ NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *pat
 #import "AMQuick.inc"
 
 #include "AMPreflight.inc"
+
+#include "AMOnlineReview.inc"

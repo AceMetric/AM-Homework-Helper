@@ -41,6 +41,11 @@ class AuditTests(unittest.TestCase):
         SCAN(png(b'IDAT', fake), 'preview.png')
         self.assertIn(('preview.png', 'github-token'), GLOBALS['findings'])
 
+    def test_google_key_is_detected_without_a_variable_name(self):
+        fake = b'AI' + b'za' + b'Z' * 35
+        SCAN(fake, 'fixture.txt')
+        self.assertIn(('fixture.txt', 'google-api-key'), GLOBALS['findings'])
+
     def test_binary_url_detection_stops_at_string_boundary(self):
         SCAN(b'http://localhost:11434' + b'\0public-string@', 'app-binary')
         self.assertNotIn(('app-binary', 'url-credentials'), GLOBALS['findings'])

@@ -5,6 +5,7 @@ static NSArray<NSString *> *SecretPatterns(void) {
              @"(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})",
              @"(?:AKIA|ASIA)[0-9A-Z]{16}",
              @"sk-(?:proj-)?[A-Za-z0-9_-]{24,}",
+             @"AIza[A-Za-z0-9_-]{35}",
              @"(?i)[\"']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|aws_secret_access_key)[\"']?\\s*[:=]\\s*[\"'][A-Za-z0-9_./+=-]{12,}[\"']"];
 }
 NSString *SSCanonicalRepository(NSString *url) {
