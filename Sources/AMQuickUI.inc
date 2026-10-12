@@ -40,6 +40,20 @@
 - (void)newTaskMenu:(id)sender {NSMenu *menu=NSMenu.new;NSMenuItem *item=[menu addItemWithTitle:@"快速录入作业…" action:@selector(quickEntry:) keyEquivalent:@""];item.target=self;item=[menu addItemWithTitle:@"完整新建任务…" action:@selector(addTask:) keyEquivalent:@""];item.target=self;[menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0,-4) inView:sender];}
 - (void)taskSubmissionHistory:(id)sender {NSButton *route=NSButton.new;route.tag=4;[self navigate:route];[self.courseWindow showSubmissionHistory:[self identifierForSender:sender]];}
 - (void)submitSelectedTask:(id)sender {NSButton *route=NSButton.new;route.tag=4;[self navigate:route];[self.courseWindow submitTask:[self identifierForSender:sender]];}
+- (void)checkSelectedTask:(id)sender {
+    // Capture the stable task identity before navigation rebuilds the detail view.
+    NSString *identifier=[[self identifierForSender:sender] copy];
+    NSDictionary *task=[self taskWithID:identifier];
+    if(!task){self.notice=@"这项任务已不存在，请重新选择任务。";[self render];return;}
+    if(self.courseWindow.operationBusy || self.courseWindow.operationsPaused || self.window.attachedSheet){
+        NSAlert *alert=NSAlert.new;alert.messageText=@"暂时无法检查作业";
+        alert.informativeText=@"请先完成当前课程操作或关闭正在编辑的窗口，再检查作业。";
+        [alert addButtonWithTitle:@"好"];[alert runModal];return;
+    }
+    NSButton *route=NSButton.new;route.tag=4;[self navigate:route];
+    if(self.page!=4)return; // Navigation may be cancelled to protect an unsaved draft.
+    [self.courseWindow checkTask:identifier];
+}
 - (NSURL *)quickFolder:(NSString *)batch {
     if(![[NSUUID alloc] initWithUUIDString:batch])return nil;NSURL *folder=[[SSDataDirectory().URLByResolvingSymlinksInPath URLByAppendingPathComponent:@"AssistantExchange"] URLByAppendingPathComponent:batch];return [folder.path isEqual:folder.URLByResolvingSymlinksInPath.path] ? folder:nil;
 }
