@@ -18,6 +18,7 @@
 | `Sources/SSUpdateController.m`、`SSExitCoordinator.m` | 原生更新窗口、偏好、退出等待与保存保护 |
 | `Sources/SSLocalData.m`、`SSSecurity.m` | 本机数据与钥匙串、敏感内容检查 |
 | `Sources/AMSubmission*.inc` | 提交检查点、本机记录、只读恢复与历史入口 |
+| `Sources/SSFolderCheck.inc`、`AMPreflight*.inc` | 本机文件夹整理、范围、版本快照与提交前报告 |
 | `Sources/AMQuick*.inc`、`AMBackup.inc` | 本机录入、材料证据、草稿与联合备份事务 |
 | `Tools/security-audit.py` | 源码、历史、图片、归档和发布产物的隐私检查 |
 
@@ -42,6 +43,7 @@ zsh verify-update.sh
 zsh verify-recognition.sh
 zsh verify-hybrid-ui.sh
 AM_UI_TEST=QuickUsage zsh verify-hybrid-ui.sh
+AM_UI_TEST=GuideUsage zsh verify-hybrid-ui.sh
 python3 Tests/SecurityAuditTests.py
 python3 Tools/security-audit.py --history --artifacts "build/AM's Homework Helper.app" --ocr build/tests/privacy-ocr
 ```
@@ -81,3 +83,5 @@ SwiftUI 通过 `Tools/prepare-swiftui.py` 编译为应用内 `libAMUI.dylib`，�
 质量回归：`AM_UI_TEST=QualityUsage zsh verify-hybrid-ui.sh` 使用2000项任务及20门模拟课程检查启动、列表虚拟化、搜索和选择耗时。任务恢复点仅在本机；诊断导出先预览，无遥测。通知送达、同学可用性及最低系统实机结果须单独记录。
 
 提交记录测试使用临时 Git 仓库与模拟个人远端，覆盖已提交未推送、重试不重复提交、异常退出及备份事务。快速录入测试不需要真实 GitHub：`verify-quick-entry.sh` 校验日期、时区与材料证据；`QuickUsage` 驱动真实控制器和保存入口，模拟磁盘写入失败。`AM_UI_TEST=QuickForeground zsh verify-hybrid-ui.sh` 是显式前台测试，只使用模拟通知和隔离目录，可检查原生输入、按钮、两种外观与窄窗口。测试截图不提交仓库。
+
+文件夹检查使用描述符限定递归边界，不跟随符号链接；单文件5 MB、总量64 MB、最多256个文件及10,000项目录枚举。`GuideUsage` 验证本机开始、一次关联检查及关闭引导后不重新弹出；显式前台 `TaskCheckForeground` 使用合成文件夹检查真实按钮、原生选择器、范围预览和报告。发布回归可用 `AM_FOREGROUND_QA=1 zsh release.sh`，均不使用真实课程或账户。
