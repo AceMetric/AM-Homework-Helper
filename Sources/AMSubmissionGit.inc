@@ -37,6 +37,7 @@
 - (NSDictionary *)performRecordedCourse:(NSDictionary *)course kind:(NSString *)kind taskIDs:(NSArray *)taskIDs paths:(NSArray *)paths message:(NSString *)message token:(NSString *)token login:(NSString *)login userID:(NSNumber *)userID error:(NSError **)error {
     if(![course[@"fork"] isKindOfClass:NSString.class] || ![course[@"branch"] isKindOfClass:NSString.class]){if(error)*error=GitError(@"课程目标不完整，请重新关联课程。");return nil;}
     NSMutableDictionary *record=[@{@"id":NSUUID.UUID.UUIDString,@"repository":course[@"fork"],@"branch":course[@"branch"],@"kind":kind,@"state":@"running",@"message":message ?: @"",@"date":NSDate.date,@"files":paths ?: @[],@"taskIDs":taskIDs ?: @[]} mutableCopy];
+    if([kind isEqual:@"submission"] && self.submissionReviewSummary)record[@"review"]=self.submissionReviewSummary;
     if(!AMStoreSubmission(record,error))return nil;
     self.submissionCheckpoint=^BOOL(NSDictionary *fields,NSError **failure){[record addEntriesFromDictionary:fields];return AMStoreSubmission(record,failure);};
     BOOL ok=NO;NSError *failure=nil;
@@ -44,7 +45,7 @@
         if([kind isEqual:@"submission"])ok=[self commitCourse:course paths:paths message:message login:login userID:userID token:token error:&failure];
         else if([kind isEqual:@"sync"]){NSDictionary *result=[self syncCourse:course token:token error:&failure];ok=[result[@"success"] boolValue];if(result[@"conflicts"]){record[@"issue"]=@"merge-conflict";record[@"conflicts"]=result[@"conflicts"];record[@"mergeHead"]=result[@"mergeHead"];}}
         else if([kind isEqual:@"merge"])ok=[self continueMergeForCourse:course token:token error:&failure];
-    }@finally{self.submissionCheckpoint=nil;}
+    }@finally{self.submissionCheckpoint=nil;self.expectedSubmissionSnapshot=nil;self.submissionReviewSummary=nil;}
     if(!ok){if([record[@"state"] isEqual:@"running"])record[@"state"]=record[@"commit"] ? @"local":@"failed";record[@"issue"]=record[@"issue"] ?: (failure.userInfo[@"SSIssue"] ?: @"operation-failed");NSError *saveError=nil;if(!AMStoreSubmission(record,&saveError))failure=saveError;if(error)*error=failure;return record;}
     NSDictionary *verified=[self verifySubmission:record course:course token:token retry:NO error:&failure];
     if(!verified){record[@"state"]=@"uncertain";record[@"issue"]=@"verification-pending";NSError *saveError=nil;if(!AMStoreSubmission(record,&saveError))failure=saveError;if(error)*error=failure;return record;}return verified;

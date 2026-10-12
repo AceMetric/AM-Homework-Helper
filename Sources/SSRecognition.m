@@ -104,7 +104,7 @@ NSDictionary *SSEnrichDiscovery(NSDictionary *record) {
     }
     if (!copy[@"summary"]) {NSArray *content=summary.count ? summary : fallback;copy[@"summary"] = [[content subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)5,content.count))] componentsJoinedByString:@"\n"];}
     if (!copy[@"submissionRequirements"]) copy[@"submissionRequirements"] = [requirements componentsJoinedByString:@"\n"];
-    if (!copy[@"recognizer"]) copy[@"recognizer"] = @"rules-v5";
+    if (!copy[@"recognizer"]) copy[@"recognizer"] = @"rules-v6";
     return copy;
 }
 static BOOL SameSource(NSDictionary *task, NSDictionary *record) {
@@ -291,7 +291,7 @@ NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repositor
 NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings, NSMutableDictionary *cache, NSError **error) {
     NSMutableDictionary *cacheSettings=settings.mutableCopy;for(NSString *field in @[@"forceRecognition",@"manualLocal",@"localAutomatic"])[cacheSettings removeObjectForKey:field];
     NSString *configuration=[[NSJSONSerialization dataWithJSONObject:cacheSettings options:NSJSONWritingSortedKeys error:NULL] base64EncodedStringWithOptions:0];
-    NSString *key=[NSString stringWithFormat:@"recognition-v5|%@|%@|%@|%@|%@",repository,path,blob,calendar.timeZone.name,RHash(configuration ?: @"")];
+    NSString *key=[NSString stringWithFormat:@"recognition-v6|%@|%@|%@|%@|%@",repository,path,blob,calendar.timeZone.name,RHash(configuration ?: @"")];
     if (![settings[@"forceRecognition"] boolValue] && [cache[key] isKindOfClass:NSArray.class]) return cache[key];
     NSMutableArray *found=NSMutableArray.array; for (NSDictionary *record in SSDiscoveriesFromDocument(text,repository,path,blob,NSDate.date,calendar)) [found addObject:SSEnrichDiscovery(record)];
     NSDictionary *template=settings[@"courseTemplate"];
@@ -319,3 +319,5 @@ NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *pat
 #import "SSSkill.inc"
 
 #import "AMQuick.inc"
+
+#include "AMPreflight.inc"

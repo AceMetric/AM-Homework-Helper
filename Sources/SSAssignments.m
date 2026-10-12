@@ -153,7 +153,7 @@ NSArray<NSDictionary *> *SSDiscoveriesFromDocument(NSString *text, NSString *rep
     if (!text.length || !repository.length || !path.length) return @[];
     NSArray *lines = [[text stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"] componentsSeparatedByString:@"\n"];
     NSMutableArray *result = NSMutableArray.array, *sections = NSMutableArray.array; NSMutableDictionary *counts = NSMutableDictionary.dictionary;
-    NSString *heading = @"", *previous = @"", *documentTitle = DocumentTitle(lines, path); BOOL fence = NO, actionable = NO; NSUInteger headingLine = 1;
+    NSString *heading = @"", *previous = @"", *documentTitle = DocumentTitle(lines, path); BOOL fence = NO, actionable = NO, substantive = NO; NSUInteger headingLine = 1;
     NSString *relativePattern = @"今天|今晚|明天|后天|(?:本|这|下)(?:周|星期|礼拜)(?:[一二三四五六日天末])?|(?:周|星期|礼拜)[一二三四五六日天末]|一周后|两周后|二周后|[0-9]{1,3}天后|[0-9]{1,2}周后";
     NSString *datePattern = [@"(?<![0-9])(?:20[0-9]{2}\\s*[-/年]\\s*[0-9]{1,2}\\s*[-/月]\\s*[0-9]{1,2}\\s*[日号]?|[0-9]{1,2}\\s*月\\s*[0-9]{1,2}\\s*[日号]?|[0-9]{1,2}/[0-9]{1,2})(?![0-9])|" stringByAppendingString:relativePattern];
     // Metadata and teaching examples do not create deadline records.
@@ -165,6 +165,7 @@ NSArray<NSDictionary *> *SSDiscoveriesFromDocument(NSString *text, NSString *rep
         if (fence || !line.length) continue;
         if ([line hasPrefix:@"#"] && !GenericTitle(CleanTitle(line))) { heading = CleanTitle(line); headingLine = index + 1; }
         if ([line hasPrefix:@"#"] && !GenericTitle(CleanTitle(line)) && Match(CleanTitle(line), @"考试|测验|课上|课堂|随堂|作业|homework|assignment|exam|quiz")) [sections addObject:@{@"line":@(index), @"heading":CleanTitle(line)}];
+        if(![line hasPrefix:@"#"] && !Match(line,@"^(?:[-*+]\\s*)?(?:发布|更新|published|updated|created|release)\\s*[:：]") && !Match(line,@"^[-*+]?\\s*\\[.*\\]\\(.*\\)\\s*$") && Match(line,@"[A-Za-z一-龥]{3,}"))substantive=YES;
         if (![line hasPrefix:@"#"] && !Match(line, @"^[-*+]?\\s*\\[.*\\]\\(.*\\)\\s*$") && Match(line, @"完成|提交|解答|实现|回答|必答|分析|solve|implement|submit|answer")) actionable = YES;
         NSString *context = [NSString stringWithFormat:@"%@\n%@\n%@\n%@", documentTitle, heading, previous, line];
         NSDictionary *classification = Classification(context, path);
@@ -209,7 +210,8 @@ NSArray<NSDictionary *> *SSDiscoveriesFromDocument(NSString *text, NSString *rep
     }
     if (!result.count) {
         NSDictionary *classification = Classification(documentTitle, path); NSString *kind = classification[@"kind"];
-        if ((actionable && (![kind isEqual:@"unknown"] || Match(documentTitle, @"任务|练习|题目|项目|exercise|project|task"))) || [kind isEqual:@"exam"] || [kind isEqual:@"classroom"]) {
+        BOOL explicitAssignment = [kind isEqual:@"assignment"] && Match(documentTitle, @"^(?:assignment|homework|problem[ _-]*set|worksheet|coursework|作业)(?:[ _:#-]*[0-9一二三四五六七八九十]+|\\s+[^\\s]+)");
+        if ((explicitAssignment && substantive) || (actionable && (![kind isEqual:@"unknown"] || Match(documentTitle, @"任务|练习|题目|项目|exercise|project|task"))) || [kind isEqual:@"exam"] || [kind isEqual:@"classroom"]) {
             NSMutableDictionary *candidate = [Candidate(documentTitle, repository, path, blobSHA, 1, Snippet(lines, 0, @""), nil, YES, YES, counts) mutableCopy];
             [candidate addEntriesFromDictionary:classification]; candidate[@"warnings"] = @[@"未说明截止时间"]; [result addObject:candidate];
         }
