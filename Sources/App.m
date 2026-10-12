@@ -2,6 +2,7 @@
 #import <UserNotifications/UserNotifications.h>
 #import "DDLCore.h"
 #import "DDLImport.h"
+#import "AMPreflight.h"
 #import "ThemeIcon.h"
 #import "SSLocalData.h"
 #import "SSCourseWindow.h"
@@ -675,6 +676,9 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 
 @implementation AppDelegate
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
+#ifndef DDL_TESTING
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{AMOnlineReviewCleanup();});
+#endif
     self.preview = [NSProcessInfo.processInfo.arguments containsObject:@"--preview"];
     // Leave appearance unset so macOS controls light/dark mode.
     self.page = 0; self.pageStates = NSMutableDictionary.dictionary;
@@ -1081,6 +1085,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
         if (![owner.settingsController resolveUnsavedChanges]) return;
         [owner.window endSheet:owner.settingsWindow]; [owner.settingsWindow orderOut:nil]; owner.settingsWindow=nil; owner.settingsController=nil;
         if ([action isEqual:@"account"]) [owner accountSettings:nil];
+        else if([action isEqual:@"online-review"])AMShowOnlineReviewSettings(owner.window);
         else if([action isEqual:@"diagnostics"])[owner showDiagnostics:nil];
         else if([action isEqual:@"recovery"])[owner recoverTasks:nil];
         else if([action isEqual:@"notification-help"])[owner notificationHelp:nil];

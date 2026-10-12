@@ -24,3 +24,24 @@ NSDictionary * _Nullable AMPreflightJobForReport(NSString *version);
 BOOL AMPreflightJobAction(NSString *action,NSString *batch);
 NSURL * _Nullable AMPreflightFolder(NSString *batch);
 NS_ASSUME_NONNULL_END
+
+NS_ASSUME_NONNULL_BEGIN
+NSDictionary *AMOnlineReviewSettings(void);
+BOOL AMOnlineReviewSaveSettings(BOOL enabled, NSString *key, NSError **error);
+void AMOnlineReviewCleanup(void);
+NSUInteger AMOnlineReviewPendingUploads(void);
+BOOL AMOnlineReviewRegister(NSDictionary *context,NSDictionary *report,NSString *courseID,NSError **error);
+void AMOnlineReviewFailed(NSString *batch);
+void AMShowOnlineReviewSettings(NSWindow * _Nullable parent);
+@interface AMOnlineReviewClient : NSObject <NSURLSessionTaskDelegate>
+@property(atomic) BOOL cancelled;
+@property BOOL forceCleanup;
+#ifdef DDL_TESTING
+@property(copy,nullable) NSString * _Nullable (^credentialProvider)(void);
+@property(copy,nullable) NSData * _Nullable (^transport)(NSURLRequest *, NSHTTPURLResponse * _Nullable * _Nullable, NSError * _Nullable * _Nullable);
+#endif
+- (BOOL)testConnectionWithKey:(NSString *)key error:(NSError **)error;
+- (NSUInteger)cleanupWithKey:(NSString *)key error:(NSError **)error;
+- (NSDictionary * _Nullable)reviewContext:(NSDictionary *)context folder:(NSURL *)folder focus:(NSDictionary * _Nullable)focus progress:(void (^ _Nullable)(NSString *))progress error:(NSError **)error;
+@end
+NS_ASSUME_NONNULL_END

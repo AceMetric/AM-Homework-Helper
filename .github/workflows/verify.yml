@@ -31,6 +31,7 @@ jobs:
         run: |
           zsh verify-submissions.sh
           zsh verify-preflight.sh
+          zsh verify-online-review.sh
           zsh verify-quick-entry.sh
       - name: Official login protection
         run: zsh verify-github-cli.sh
@@ -52,6 +53,7 @@ jobs:
           AM_UI_TEST=PlanningUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=ReminderUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=PreflightUsage zsh verify-hybrid-ui.sh
+          AM_UI_TEST=OnlineReviewUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=QuickUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=GuideUsage zsh verify-hybrid-ui.sh
       - name: Compile local image privacy scanner
