@@ -92,6 +92,10 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property NSArray<NSButton *> *actionButtons;
 @property NSDictionary *reports;
 @property SSSubmissionController *submission;
+@property NSWindow *checkScopeWindow;
+@property AMCheckScopeController *checkScope;
+@property NSArray *checkScopeRecords;
+@property NSUInteger checkScopeGeneration;
 @property BOOL allowingExitSubmission;
 @property BOOL exitSubmissionInFlight;
 @property AMReviewController *reviewWorkspace;
@@ -133,14 +137,15 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (BOOL)hasUnsavedReview { return self.reviewWorkspace.hasUnsavedChanges || self.courseWorkspace.hasUnsavedChanges || self.setupWindow.sheetParent != nil; }
 - (BOOL)resolveUnsavedReview { if(self.setupWindow.sheetParent){NSAlert *alert=NSAlert.new;alert.messageText=@"课程配置尚未关闭";alert.informativeText=@"已成功关联的课程已经保存；尚未关联的目录选择会被放弃。";[alert addButtonWithTitle:@"继续配置"];[alert addButtonWithTitle:@"放弃未关联选择并继续"];if([alert runModal]!=NSAlertSecondButtonReturn)return NO;[self closeCourseSetup];} self.resolvingReview=YES; self.reviewWorkspace.paused=NO; self.courseWorkspace.paused=NO; BOOL ok=[self.reviewWorkspace resolveUnsavedChanges] && [self.courseWorkspace resolveUnsavedChanges]; self.resolvingReview=NO; self.reviewWorkspace.paused=self.busy || self.operationsPaused; self.courseWorkspace.paused=self.busy || self.operationsPaused; return ok; }
 - (void)discardReview { [self.reviewWorkspace discardChanges];[self.courseWorkspace discardChanges];[self closeCourseSetup]; }
-- (BOOL)hasSubmissionSheet { return self.submission.window.sheetParent != nil; }
-- (BOOL)hasUnsavedSubmission { return self.hasSubmissionSheet && self.submission.hasUnsavedChanges; }
+- (BOOL)hasSubmissionSheet { return self.submission.window.sheetParent != nil || self.checkScopeWindow.sheetParent != nil; }
+- (BOOL)hasUnsavedSubmission { return self.checkScopeWindow.sheetParent != nil || (self.hasSubmissionSheet && self.submission.hasUnsavedChanges); }
 - (void)setOperationsPaused:(BOOL)paused { _operationsPaused = paused; [self refreshPresentation]; }
 - (void)cancelPendingLogin { [self cancelLogin:nil]; }
-- (void)discardSubmission { [self.submission cancel:nil]; self.submission = nil; }
+- (void)discardSubmission { [self closeCheckScope];[self.submission cancel:nil]; self.submission = nil; }
 - (void)acknowledgeSubmissionFailure { self.submissionFailedDuringExit = NO; }
 - (BOOL)persistForExit:(NSError **)error { return self.preview || SSWritePlist(@"courses.plist", self.courses, error); }
 - (BOOL)saveSubmissionForExit {
+    if(self.checkScopeWindow){[self.checkScope setProgress:@"请完成或取消文件范围选择，再退出。"];return NO;}
     self.allowingExitSubmission = YES; self.exitSubmissionInFlight = YES;
     BOOL saved = [self.submission saveForExit]; self.allowingExitSubmission = NO;
     if (!saved) self.exitSubmissionInFlight = NO;
@@ -271,7 +276,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     [self startSkillReception];
     NSDictionary *progress=SSReadPlist(@"onboarding.plist");
     if([progress[@"completed"] boolValue] && self.connected)[self scanAll:nil];
-    else dispatch_async(dispatch_get_main_queue(),^{[self setup:nil];});
+    else if(![progress[@"localOnly"] boolValue])dispatch_async(dispatch_get_main_queue(),^{[self setup:nil];});
     self.timer = [NSTimer scheduledTimerWithTimeInterval:6 * 3600 target:self selector:@selector(scanAll:) userInfo:nil repeats:YES];
 }
 - (void)dealloc { [self.timer invalidate];[self.skillTimer invalidate];for(dispatch_source_t source in self.skillWatchers)dispatch_source_cancel(source); }
@@ -306,10 +311,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     }
     self.setupStep=self.connected ? 1:0;[self presentCourseSetup];if(self.connected)[self addFork:nil];
 }
-- (void)startUsing:(id)sender {
-    if(self.busy || self.operationsPaused)return;NSAlert *alert=NSAlert.new;alert.messageText=@"开始使用";alert.informativeText=@"查看四个日常操作的说明，或继续配置课程。";[alert addButtonWithTitle:@"查看使用提示"];[alert addButtonWithTitle:@"重新运行配置引导"];[alert addButtonWithTitle:@"取消"];
-    NSInteger choice=[alert runModal];if(choice==NSAlertFirstButtonReturn){self.setupStep=4;[self presentCourseSetup];[self updateCourseSetup:@""];}else if(choice==NSAlertSecondButtonReturn){self.setupSelection=nil;self.setupStep=self.connected ? 1:0;[self presentCourseSetup];if(self.connected)[self addFork:nil];}
-}
+- (void)startUsing:(id)sender { [self setup:sender]; }
 - (void)chooseLocalFolder {
     NSAlert *alert = NSAlert.new; alert.messageText = @"关联课程文件夹"; alert.informativeText = @"已下载课程仓库时选择已有文件夹；还未下载时选择保存位置。";
     [alert addButtonWithTitle:@"选择已有文件夹"]; [alert addButtonWithTitle:@"下载课程仓库"]; [alert addButtonWithTitle:@"稍后"];
@@ -583,10 +585,11 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (void)signOut:(id)sender { if (self.busy || self.preview || self.operationsPaused) return; [self.github signOut]; self.connected = NO; [self refreshPresentation]; [self status:@"已退出登录；本地课程和 DDL 已保留。"] ; }
 - (void)addFork:(id)sender {
     if(!self.connected){[self setup:nil];return;}
+    if(!self.setupWindow)[self presentCourseSetup];NSWindow *requestedWindow=self.setupWindow;
     [self work:@"正在读取个人课程 fork…" forCourse:nil operation:^id(NSError **error){return [self.github accessibleForks:error];} completion:^(NSArray *forks,NSError *error){
         if(!forks){[self updateCourseSetup:error.localizedDescription];return;}self.availableForks=forks;self.setupStep=1;self.setupRecords=NSMutableArray.array;
         for(NSDictionary *repo in forks){NSMutableDictionary *row=[@{@"fork":repo[@"full_name"],@"existing":@([self courseExists:repo[@"full_name"]])} mutableCopy];[self.setupRecords addObject:row];}
-        [self presentCourseSetup];NSMutableArray *selected=NSMutableArray.array;for(NSDictionary *row in self.setupRecords)if(self.setupSelection ? [self.setupSelection containsObject:row[@"fork"]]:[row[@"existing"] boolValue])[selected addObject:row[@"fork"]];self.setupSelection=selected;[self.setupWorkspace updateContext:@{@"selected":selected}];[self updateCourseSetup:@"已添加课程默认选中；选择需要管理的其他个人 fork。"];
+        NSMutableArray *selected=NSMutableArray.array;for(NSDictionary *row in self.setupRecords)if(self.setupSelection ? [self.setupSelection containsObject:row[@"fork"]]:[row[@"existing"] boolValue])[selected addObject:row[@"fork"]];self.setupSelection=selected;if(self.setupWindow!=requestedWindow){[self updateCourseSetup:@"课程已读取，可从开始使用继续配置。"] ;return;}[self.setupWorkspace updateContext:@{@"selected":selected}];[self updateCourseSetup:@"已添加课程默认选中；选择需要管理的其他个人 fork。"];
     }];
 }
 - (BOOL)courseExists:(NSString *)fork { for (NSDictionary *course in self.courses) if ([course[@"fork"] caseInsensitiveCompare:fork] == NSOrderedSame) return YES; return NO; }
@@ -657,7 +660,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         for (NSDictionary *course in courses) {
             if(self.git.cancelledReads)break;
             if (![course[@"path"] length]){result[course[@"fork"]]=@{@"error":@"尚未关联目录，请先关联文件夹。"};continue;}
-            dispatch_async(dispatch_get_main_queue(),^{self.operationFork=course[@"fork"];self.statusFork=course[@"fork"];[self status:@"获取老师内容并进行规则识别…"];});
+            dispatch_async(dispatch_get_main_queue(),^{self.operationFork=course[@"fork"];self.statusFork=course[@"fork"];[self status:@"获取老师内容并进行规则识别…"];if(self.firstCheckRunning){for(NSMutableDictionary *row in self.setupRecords)if([row[@"fork"] isEqual:course[@"fork"]])row[@"status"]=@"正在获取老师内容并识别…";[self updateCourseSetup:@"正在逐门检查；可收起引导，后台继续。"];}});
             NSError *scanError = nil;
             NSDictionary *scan = [self.git scanCourse:course cache:cache error:&scanError];
             if(scan){NSDictionary *rules=scan;dispatch_async(dispatch_get_main_queue(),^{if(self.hasUnsavedReview || self.git.cancelledReads)return;self.candidates[course[@"fork"]]=[self retainingSkill:self.candidates[course[@"fork"]] current:rules[@"candidates"] documents:rules[@"documents"]];self.materials[course[@"fork"]]=[self retainingSkill:self.materials[course[@"fork"]] current:rules[@"materials"] documents:rules[@"documents"]];[self status:[SSCourseRecognitionSettings(recognitionSettings,course)[@"mode"] isEqual:@"rules"] ? @"规则结果已显示，正在整理结果…":@"规则结果已显示，正在补充模型分析…"];});
@@ -667,7 +670,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         SSWritePlist(@"scan-cache.plist", cache, NULL);
         return result;
     } completion:^(NSDictionary *result, NSError *error) {
-        if (!result) { [self showError:error]; return; }
+        if (!result) { [self finishSetupScan:nil error:error courses:courses];[self showError:error]; return; }
         NSMutableArray *messages = NSMutableArray.array;
         NSMutableDictionary *reports = [self.reports mutableCopy] ?: NSMutableDictionary.dictionary; [reports addEntriesFromDictionary:result]; self.reports = reports;
         for (NSMutableDictionary *course in self.courses) {
@@ -690,7 +693,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             if (items.count) {NSUInteger before=self.tasksProvider ? self.tasksProvider().count : 0;NSString *message=self.saveReviewItems(items,YES); if (message.length) [messages addObject:message]; else {NSString *notice=[NSString stringWithFormat:@"自动加入 %lu 项完整日期作业；可在“任务”菜单撤销本次加入。",(unsigned long)MAX((NSInteger)0,(NSInteger)(self.tasksProvider ? self.tasksProvider().count : 0)-(NSInteger)before)];[messages addObject:notice];for(NSDictionary *course in courses)self.statuses[course[@"fork"]]=[self.statuses[course[@"fork"]] stringByAppendingFormat:@" · %@",notice];} }
         }
         [self saveCourses]; [self refreshCourses];
-        if(self.firstCheckRunning){self.firstCheckRunning=NO;for(NSMutableDictionary *row in self.setupRecords){NSDictionary *scan=result[row[@"fork"]];if(!scan)continue;row[@"status"]=self.statuses[row[@"fork"]] ?: @"检查已完成";row[@"detail"]=scan[@"detail"] ?: @"";row[@"invalid"]=@([scan[@"error"] length]>0);}[self updateCourseSetup:@"首次检查结束。可重试失败课程，或完成并查看使用提示。"];}
+        [self finishSetupScan:result error:error courses:courses];
         if (courses.count > 1) self.statuses[@"all"] = messages.count ? [messages componentsJoinedByString:@"；"] : @"尚未关联可扫描的仓库。"; else if (!messages.count) [self status:@"请先关联本地课程文件夹，再检查作业。"];
     }];
 }
@@ -795,24 +798,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSAlert *alert=NSAlert.new;alert.messageText=@"暂时无法检查作业";alert.informativeText=message;
     [alert addButtonWithTitle:@"好"];[alert runModal];
 }
-- (void)checkTask:(NSString *)identifier {
-    NSString *blocked=[self taskCheckBlockReason];if(blocked){[self showTaskCheckProblem:blocked];return;}
-    NSDictionary *task=nil,*course=nil;for(NSDictionary *item in self.tasksProvider ? self.tasksProvider():@[])if([item[@"id"] isEqual:identifier])task=item;
-    for(NSDictionary *item in self.courses)if([task[@"courseRepository"] isEqual:item[@"fork"]] || [task[@"sourceRepository"] isEqual:item[@"upstream"]]){course=item.copy;break;}
-    if(!task){[self showTaskCheckProblem:@"这项任务已不存在，请重新选择任务。"];return;}
-    if(course && ![course[@"path"] length]){[self showTaskCheckProblem:[NSString stringWithFormat:@"%@ 尚未关联文件夹。请在侧栏打开这门课，选择“关联文件夹”，再检查作业。",course[@"fork"]]];return;}
-    if(!course){NSOpenPanel *root=NSOpenPanel.openPanel;root.message=@"选择本次作业文件所在文件夹；仅检查你接下来选择的文件和引用图片。";root.canChooseDirectories=YES;root.canChooseFiles=NO;if([root runModal]!=NSModalResponseOK)return;course=@{@"path":root.URL.path,@"preflightLocal":@YES};}
-    NSOpenPanel *picker=NSOpenPanel.openPanel;picker.message=@"选择要检查的作业文件（不会提交）";picker.allowsMultipleSelection=YES;picker.canChooseDirectories=NO;picker.directoryURL=[NSURL fileURLWithPath:course[@"path"]];if([picker runModal]!=NSModalResponseOK)return;
-    NSString *root=[[course[@"path"] stringByResolvingSymlinksInPath] stringByAppendingString:@"/"];NSMutableArray *changes=NSMutableArray.array;
-    for(NSURL *url in picker.URLs){NSString *full=url.path.stringByResolvingSymlinksInPath;if(![full hasPrefix:root]){[self showTaskCheckProblem:@"请选择作业文件夹内的文件。"];return;}NSString *path=[full substringFromIndex:root.length];[changes addObject:@{@"path":path,@"status":@"只读检查",@"sensitive":@(SSSensitivePath(path))}];}
-    blocked=[self taskCheckBlockReason];if(blocked){[self showTaskCheckProblem:blocked];return;}
-    self.submission=[[SSSubmissionController alloc] initWithCourse:course changes:changes];self.submission.checkOnly=YES;self.submission.window.title=@"检查作业（不提交）";self.submission.primary.title=@"下一步：检查";self.submission.message.hidden=YES;
-    [self.submission configureTasks:@[task] selected:@[identifier]];[self configurePreflight:self.submission course:course tasks:@[task]];
-    // The file picker is an explicit selection; no submission attachment is selected on behalf of the user.
-    for(NSButton *check in self.submission.checks)if(check.enabled)check.state=NSControlStateValueOn;
-    self.submission.readPreview=^(NSString *path,void(^ready)(NSString *)){ready(@"本入口只读检查文件，不创建提交或推送。");};[self.window beginSheet:self.submission.window completionHandler:nil];
-    [self.submission save:nil]; // File selection already confirmed the check-only scope.
-}
+#include "SSFolderCheck.inc"
 - (void)commit:(id)sender {
     NSDictionary *course = [[self course] copy]; if (!course) return;
     [self work:@"正在读取本地修改…" forCourse:course operation:^id(NSError **error) { return [self.git changesForCourse:course error:error]; } completion:^(NSArray *changes, NSError *error) {

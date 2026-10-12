@@ -47,6 +47,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setup:(nullable id)sender;
 - (void)startUsing:(nullable id)sender;
 @property (copy, nullable) void (^onboardingNavigation)(BOOL review);
+@property (copy, nullable) void (^localStart)(void);
 - (void)refreshPresentation;
 - (NSArray<NSDictionary *> *)pendingReviewCandidates;
 - (NSArray<NSDictionary *> *)allPendingReviewCandidates;

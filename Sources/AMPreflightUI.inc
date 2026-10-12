@@ -1,6 +1,6 @@
 // Native review UI; the report never starts Git operations by itself.
 static NSTextView *PFText(NSView *root,NSRect frame,BOOL editable){
-    NSScrollView *scroll=[[NSScrollView alloc] initWithFrame:frame];scroll.hasVerticalScroller=YES;scroll.autohidesScrollers=YES;
+    NSScrollView *scroll=[[NSScrollView alloc] initWithFrame:frame];scroll.hasVerticalScroller=YES;scroll.autohidesScrollers=YES;scroll.wantsLayer=YES;scroll.layer.cornerRadius=8;scroll.drawsBackground=YES;scroll.backgroundColor=Card();
     NSTextView *text=[[PastelNotesView alloc] initWithFrame:NSMakeRect(0,0,frame.size.width-16,frame.size.height)];text.editable=editable;text.richText=NO;text.font=[NSFont systemFontOfSize:13];text.textColor=Ink();text.backgroundColor=Card();text.textContainerInset=NSMakeSize(8,8);text.autoresizingMask=NSViewWidthSizable;text.textContainer.widthTracksTextView=YES;scroll.documentView=text;[root addSubview:scroll];return text;
 }
 @interface PFImageView:NSView

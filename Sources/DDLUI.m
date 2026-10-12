@@ -73,7 +73,7 @@ void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight weight, NS
     BOOL hoverFill = self.allowsHoverFill && (self.hovered || self.highlighted);
     if (self.tone == 3 && !self.selected && !hoverFill) fill = NSColor.clearColor;
     if (hoverFill) fill = [fill blendedColorWithFraction:0.10 ofColor:Accent()];
-    NSBezierPath *buttonPath = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 1, 1) xRadius:8 yRadius:8];
+    NSBezierPath *buttonPath = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 1, 1) xRadius:6 yRadius:6];
     [fill setFill]; [buttonPath fill];
     if(self.tone!=3 && self.tone!=1){[Line() setStroke];buttonPath.lineWidth=NSWorkspace.sharedWorkspace.accessibilityDisplayShouldIncreaseContrast ? 1.5:0.5;[buttonPath stroke];}
     NSColor *color = self.tone == 1 && self.enabled ? NSColor.whiteColor : (self.selected ? Accent() : Ink());
@@ -86,7 +86,7 @@ void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight weight, NS
         CGFloat imageX = iconOnly ? (self.bounds.size.width - imageSize) / 2 : 12;
         [image drawInRect:NSMakeRect(imageX, (self.bounds.size.height - imageSize) / 2, imageSize, imageSize) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:self.enabled ? 1 : 0.5 respectFlipped:YES hints:nil];
     }
-    if (!iconOnly) DrawText(self.title, NSMakeRect(tx, (self.bounds.size.height - 17) / 2, self.bounds.size.width - tx - 8, 18), self.font.pointSize, NSFontWeightMedium, color, self.symbol.length ? NSTextAlignmentLeft : NSTextAlignmentCenter);
+    if (!iconOnly) DrawText(self.title, NSMakeRect(tx, (self.bounds.size.height - 17) / 2, self.bounds.size.width - tx - 8, 18), self.font.pointSize, self.tone==1 || self.selected ? NSFontWeightSemibold:NSFontWeightRegular, color, self.symbol.length ? NSTextAlignmentLeft : NSTextAlignmentCenter);
     if (self.window.firstResponder == self) { [Accent() setStroke]; [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 2, 2) xRadius:7 yRadius:7] stroke]; }
 }
 - (void)viewDidChangeEffectiveAppearance { self.needsDisplay = YES; }
