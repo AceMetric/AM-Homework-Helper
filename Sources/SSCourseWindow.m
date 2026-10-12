@@ -773,30 +773,45 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 #include "AMSubmissionUI.inc"
 - (void)configurePreflight:(SSSubmissionController *)sheet course:(NSDictionary *)course tasks:(NSArray *)tasks {
     __weak typeof(self) owner=self;
+    // Check-only reads do not queue behind teacher scans or model analysis.
+    // Submission snapshots remain serialized with course Git operations.
+    dispatch_queue_t readQueue=sheet.checkOnly ? dispatch_queue_create("ddl.preflight-read",DISPATCH_QUEUE_SERIAL):self.queue;
     sheet.performCheck=^NSDictionary *(NSArray *paths,NSArray *ids,NSString *extra,NSMutableDictionary *cache,BOOL(^cancelled)(void),NSError **error){
         SSCourseController *self=owner;if(!self || cancelled())return nil;__block NSDictionary *snapshot=nil;__block NSString *requirements=nil;__block NSError *failure=nil;
-        dispatch_sync(self.queue,^{if(cancelled())return;SSGit *reader=SSGit.new;reader.readsCancellable=YES;dispatch_source_t cancellation=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_global_queue(QOS_CLASS_UTILITY,0));dispatch_source_set_timer(cancellation,dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),100*NSEC_PER_MSEC,10*NSEC_PER_MSEC);dispatch_source_set_event_handler(cancellation,^{if(cancelled())reader.cancelledReads=YES;});dispatch_resume(cancellation);NSMutableArray *selected=NSMutableArray.array;for(NSDictionary *task in tasks)if([ids containsObject:task[@"id"]])[selected addObject:task];snapshot=[reader preflightSnapshotForCourse:course paths:paths error:&failure];requirements=[reader preflightRequirementsForCourse:course tasks:selected];dispatch_source_cancel(cancellation);});
+        dispatch_sync(readQueue,^{if(cancelled())return;SSGit *reader=SSGit.new;reader.readsCancellable=YES;dispatch_source_t cancellation=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_global_queue(QOS_CLASS_UTILITY,0));dispatch_source_set_timer(cancellation,dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),100*NSEC_PER_MSEC,10*NSEC_PER_MSEC);dispatch_source_set_event_handler(cancellation,^{if(cancelled())reader.cancelledReads=YES;});dispatch_resume(cancellation);NSMutableArray *selected=NSMutableArray.array;for(NSDictionary *task in tasks)if([ids containsObject:task[@"id"]])[selected addObject:task];snapshot=[reader preflightSnapshotForCourse:course paths:paths error:&failure];requirements=[reader preflightRequirementsForCourse:course tasks:selected];dispatch_source_cancel(cancellation);});
         if(!snapshot || cancelled()){if(error)*error=failure;return nil;}
         if(extra.length)requirements=[NSString stringWithFormat:@"%@\n\n用户补充题目：\n%@",requirements ?: @"",extra];
         NSDictionary *report=AMPreflightCheck(snapshot,requirements ?: @"",cache,cancelled);return @{@"snapshot":snapshot,@"requirements":requirements ?: @"",@"report":report};
     };
 }
+- (NSString *)taskCheckBlockReason {
+    if(self.operationsPaused)return @"正在准备退出或安装更新。取消退出或稍后更新后，即可检查作业。";
+    if(self.window.attachedSheet)return [NSString stringWithFormat:@"“%@”窗口尚未关闭。请先完成或取消该窗口，再检查作业。",self.window.attachedSheet.title.length ? self.window.attachedSheet.title:@"当前编辑"];
+    if(self.busy && !self.git.readsCancellable)return [NSString stringWithFormat:@"%@%@。为避免文件在检查时被改写，请等待此操作结束。",self.operationFork.length ? [self.operationFork stringByAppendingString:@"："]:@"",SSRedactedText(self.operationPhase ?: self.operationKind ?: @"正在处理课程操作")];
+    return nil;
+}
+- (void)showTaskCheckProblem:(NSString *)message {
+    if(!self.busy)[self status:message];
+    NSAlert *alert=NSAlert.new;alert.messageText=@"暂时无法检查作业";alert.informativeText=message;
+    [alert addButtonWithTitle:@"好"];[alert runModal];
+}
 - (void)checkTask:(NSString *)identifier {
-    if(self.busy || self.operationsPaused || self.window.attachedSheet){[self status:@"请先完成当前操作，再检查作业。"];return;}
+    NSString *blocked=[self taskCheckBlockReason];if(blocked){[self showTaskCheckProblem:blocked];return;}
     NSDictionary *task=nil,*course=nil;for(NSDictionary *item in self.tasksProvider ? self.tasksProvider():@[])if([item[@"id"] isEqual:identifier])task=item;
     for(NSDictionary *item in self.courses)if([task[@"courseRepository"] isEqual:item[@"fork"]] || [task[@"sourceRepository"] isEqual:item[@"upstream"]]){course=item.copy;break;}
-    if(!task){[self status:@"这项任务已不存在，请重新选择任务。"];return;}
-    if(![self selectCourseID:course[@"fork"]])return;
-    if(course && ![course[@"path"] length]){[self status:@"请先关联这门课的本地文件夹，再检查作业。"];return;}
+    if(!task){[self showTaskCheckProblem:@"这项任务已不存在，请重新选择任务。"];return;}
+    if(course && ![course[@"path"] length]){[self showTaskCheckProblem:[NSString stringWithFormat:@"%@ 尚未关联文件夹。请在侧栏打开这门课，选择“关联文件夹”，再检查作业。",course[@"fork"]]];return;}
     if(!course){NSOpenPanel *root=NSOpenPanel.openPanel;root.message=@"选择本次作业文件所在文件夹；仅检查你接下来选择的文件和引用图片。";root.canChooseDirectories=YES;root.canChooseFiles=NO;if([root runModal]!=NSModalResponseOK)return;course=@{@"path":root.URL.path,@"preflightLocal":@YES};}
     NSOpenPanel *picker=NSOpenPanel.openPanel;picker.message=@"选择要检查的作业文件（不会提交）";picker.allowsMultipleSelection=YES;picker.canChooseDirectories=NO;picker.directoryURL=[NSURL fileURLWithPath:course[@"path"]];if([picker runModal]!=NSModalResponseOK)return;
     NSString *root=[[course[@"path"] stringByResolvingSymlinksInPath] stringByAppendingString:@"/"];NSMutableArray *changes=NSMutableArray.array;
-    for(NSURL *url in picker.URLs){NSString *full=url.path.stringByResolvingSymlinksInPath;if(![full hasPrefix:root]){[self status:@"请选择作业文件夹内的文件。"];return;}NSString *path=[full substringFromIndex:root.length];[changes addObject:@{@"path":path,@"status":@"只读检查",@"sensitive":@(SSSensitivePath(path))}];}
+    for(NSURL *url in picker.URLs){NSString *full=url.path.stringByResolvingSymlinksInPath;if(![full hasPrefix:root]){[self showTaskCheckProblem:@"请选择作业文件夹内的文件。"];return;}NSString *path=[full substringFromIndex:root.length];[changes addObject:@{@"path":path,@"status":@"只读检查",@"sensitive":@(SSSensitivePath(path))}];}
+    blocked=[self taskCheckBlockReason];if(blocked){[self showTaskCheckProblem:blocked];return;}
     self.submission=[[SSSubmissionController alloc] initWithCourse:course changes:changes];self.submission.checkOnly=YES;self.submission.window.title=@"检查作业（不提交）";self.submission.primary.title=@"下一步：检查";self.submission.message.hidden=YES;
     [self.submission configureTasks:@[task] selected:@[identifier]];[self configurePreflight:self.submission course:course tasks:@[task]];
     // The file picker is an explicit selection; no submission attachment is selected on behalf of the user.
     for(NSButton *check in self.submission.checks)if(check.enabled)check.state=NSControlStateValueOn;
     self.submission.readPreview=^(NSString *path,void(^ready)(NSString *)){ready(@"本入口只读检查文件，不创建提交或推送。");};[self.window beginSheet:self.submission.window completionHandler:nil];
+    [self.submission save:nil]; // File selection already confirmed the check-only scope.
 }
 - (void)commit:(id)sender {
     NSDictionary *course = [[self course] copy]; if (!course) return;
