@@ -785,7 +785,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if(self.busy || self.operationsPaused || self.window.attachedSheet){[self status:@"请先完成当前操作，再检查作业。"];return;}
     NSDictionary *task=nil,*course=nil;for(NSDictionary *item in self.tasksProvider ? self.tasksProvider():@[])if([item[@"id"] isEqual:identifier])task=item;
     for(NSDictionary *item in self.courses)if([task[@"courseRepository"] isEqual:item[@"fork"]] || [task[@"sourceRepository"] isEqual:item[@"upstream"]]){course=item.copy;break;}
-    if(!task)return;
+    if(!task){[self status:@"这项任务已不存在，请重新选择任务。"];return;}
+    if(![self selectCourseID:course[@"fork"]])return;
     if(course && ![course[@"path"] length]){[self status:@"请先关联这门课的本地文件夹，再检查作业。"];return;}
     if(!course){NSOpenPanel *root=NSOpenPanel.openPanel;root.message=@"选择本次作业文件所在文件夹；仅检查你接下来选择的文件和引用图片。";root.canChooseDirectories=YES;root.canChooseFiles=NO;if([root runModal]!=NSModalResponseOK)return;course=@{@"path":root.URL.path,@"preflightLocal":@YES};}
     NSOpenPanel *picker=NSOpenPanel.openPanel;picker.message=@"选择要检查的作业文件（不会提交）";picker.allowsMultipleSelection=YES;picker.canChooseDirectories=NO;picker.directoryURL=[NSURL fileURLWithPath:course[@"path"]];if([picker runModal]!=NSModalResponseOK)return;
