@@ -92,7 +92,9 @@ int main(int argc, const char *argv[]) {
         for (NSString *appearance in @[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]) {
             OverviewGrid *oldGrid = FirstGrid(app);
             NSApp.appearance = [NSAppearance appearanceNamed:appearance]; [app refreshAppearance];
-            CheckUI(FirstGrid(app) != oldGrid, @"appearance invalidates cached calendar colors");
+            CheckUI(FirstGrid(app)==oldGrid,@"appearance redraw preserves calendar controls instead of rebuilding");
+            CalendarDayCell *sample=nil;for(NSView *view in oldGrid.subviews)if([view isKindOfClass:CalendarDayCell.class] && ((CalendarDayCell *)view).weekend && ((CalendarDayCell *)view).inMonth && ![Cal() isDate:((CalendarDayCell *)view).date inSameDayAsDate:oldGrid.selection]){sample=(id)view;break;}
+            __block CGFloat brightness=0;[app.window.effectiveAppearance performAsCurrentDrawingAppearance:^{NSColor *color=[sample.fill colorUsingColorSpace:NSColorSpace.sRGBColorSpace];brightness=(color.redComponent+color.greenComponent+color.blueComponent)/3;}];CheckUI(sample && ([appearance isEqual:NSAppearanceNameAqua] ? brightness>.5:brightness<.5),@"cached weekend cell colors really follow light and dark appearance");
             CheckUI([app.selectedDay isEqual:selectedDay] && [app.month isEqual:month] && [app.tasks isEqual:tasksBeforeTheme], @"appearance preserves dates and tasks");
             CheckUI(NSEqualPoints(app.calendarScroll.contentView.bounds.origin, scrollBeforeTheme), @"appearance preserves calendar scroll");
             [app.window displayIfNeeded];

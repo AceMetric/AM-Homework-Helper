@@ -9,3 +9,5 @@
 此前维护者已确认取得改编、发布及整个项目采用 MIT 的许可。如今上游许可证提供公开授权依据，无需公开私人沟通记录；聊天截图、联系方式和账户凭据不纳入仓库或安装包。
 
 随应用分发的 Sparkle 框架遵循其自身许可证；构建时原样保留为应用资源中的 `Sparkle-LICENSE.txt`。本项目的 MIT 许可证不替代第三方组件的许可证。
+
+离线预览固定使用 markdown-it 15.0.2（MIT）、MathJax 4.1.3及其New Computer Modern SVG字形4.1.3（Apache-2.0），DOMPurify 3.4.17（Apache-2.0／MPL-2.0双许可）。构建校验官方npm归档的SHA-256，许可证原文随应用放在Resources/Renderer。字体包声明Apache-2.0，随包保留同一Apache许可文本。只执行随应用分发的可信代码，不加载网络渲染库。

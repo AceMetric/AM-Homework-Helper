@@ -1,0 +1,75 @@
+#import <WebKit/WebKit.h>
+#import <ImageIO/ImageIO.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import "AMRenderer.h"
+#import "AMPreflight.h"
+static NSDictionary *AMPreviewAsset(NSData *data){if(!data.length || data.length>5*1024*1024)return nil;CGImageSourceRef source=CGImageSourceCreateWithData((__bridge CFDataRef)data,(__bridge CFDictionaryRef)@{(__bridge NSString *)kCGImageSourceShouldCache:@NO});if(!source)return nil;NSDictionary *props=CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source,0,NULL));double w=[props[(__bridge NSString *)kCGImagePropertyPixelWidth] doubleValue],h=[props[(__bridge NSString *)kCGImagePropertyPixelHeight] doubleValue];NSString *type=(__bridge NSString *)CGImageSourceGetType(source);NSString *mime=type ? [UTType typeWithIdentifier:type].preferredMIMEType:nil;CFRelease(source);return w>0 && h>0 && w*h<=50000000 && [mime hasPrefix:@"image/"] ? @{@"data":data,@"mime":mime}:nil;}
+static NSURL *AMRendererAssets(void){NSURL *root=[NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"Renderer"];if([NSFileManager.defaultManager fileExistsAtPath:[root URLByAppendingPathComponent:@"am-renderer.js"].path])return root;
+#ifdef DDL_TESTING
+    return [NSURL fileURLWithPath:[NSFileManager.defaultManager.currentDirectoryPath stringByAppendingPathComponent:@"build/deps/renderer/public"]];
+#else
+    return nil;
+#endif
+}
+static NSString *AMRendererHTML(void){return @"<!doctype html><html><head><meta charset='utf-8'><meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; script-src am-preview: 'nonce-am-bootstrap'; style-src 'unsafe-inline'; img-src am-preview:; connect-src 'none'; font-src am-preview:; base-uri 'none'; form-action 'none'\"><style>:root{color-scheme:light dark;font:14px -apple-system;--paper:#fff;--ink:#202124;--line:#d5d7da}html[data-appearance=dark]{--paper:#1e1e1e;--ink:#eee;--line:#555}body{margin:0;padding:24px;background:var(--paper);color:var(--ink);line-height:1.6;overflow-wrap:anywhere}pre,code{font:12px ui-monospace,monospace}pre,table,.am-formula{overflow-x:auto;max-width:100%}pre{padding:12px;background:color-mix(in srgb,var(--ink) 7%,var(--paper));border-radius:6px}table{display:block;border-collapse:collapse}td,th{border:1px solid var(--line);padding:6px 10px}img{max-width:100%;height:auto}span.am-formula{display:inline-block;vertical-align:middle}#content>[data-active]{outline:2px solid #087dff}a{color:#087dff}</style><script nonce='am-bootstrap'>window.MathJax={loader:{paths:{mathjax:'am-preview://assets/mathjax'},load:['ui/safe']},tex:{packages:{'[-]':['noerrors','noundefined']},maxBuffer:32768,maxMacros:1000},svg:{fontPath:'am-preview://assets/font'},options:{enableMenu:false,enableEnrichment:false,enableSpeech:false,enableBraille:false,enableExplorer:false,menuOptions:{settings:{enrich:false,speech:false,braille:false,assistiveMml:true}},safeOptions:{allow:{URLs:'none',classes:'none',cssIDs:'none',styles:'none'}}},startup:{typeset:false}};</script><script src='am-preview://assets/markdown-it.js'></script><script src='am-preview://assets/dompurify.js'></script><script src='am-preview://assets/mathjax/tex-svg.js'></script><script src='am-preview://assets/am-renderer.js'></script></head><body><main id='content'></main></body></html>";}
+@interface AMPreviewScheme:NSObject<WKURLSchemeHandler>
+@property NSDictionary *images;
+@end
+@implementation AMPreviewScheme
+- (void)webView:(WKWebView *)webView startURLSchemeTask:(id<WKURLSchemeTask>)task{NSURL *url=task.request.URL;
+NSData *data=nil;NSString *mime=@"text/plain";
+    if([url.host isEqual:@"page"] && [url.path isEqual:@"/index.html"]){data=[AMRendererHTML() dataUsingEncoding:NSUTF8StringEncoding];mime=@"text/html";}
+    else if([url.host isEqual:@"image"]){NSDictionary *asset=self.images[url.lastPathComponent];data=asset[@"data"];mime=asset[@"mime"] ?: @"image/png";}
+    else if([url.host isEqual:@"assets"]){NSString *path=[url.path stringByRemovingPercentEncoding];if(path.length>1 && ![path containsString:@".."] && ![path containsString:@"\\"] && [path.pathExtension isEqual:@"js"]){NSURL *root=AMRendererAssets().URLByResolvingSymlinksInPath;NSURL *file=[root URLByAppendingPathComponent:[path substringFromIndex:1]].URLByResolvingSymlinksInPath;if([file.path hasPrefix:[root.path stringByAppendingString:@"/"]]){data=[NSData dataWithContentsOfURL:file];mime=@"text/javascript";}}}
+    if(!data || data.length>16*1024*1024){[task didFailWithError:[NSError errorWithDomain:@"AMPreview" code:1 userInfo:nil]];return;}NSHTTPURLResponse *response=[[NSHTTPURLResponse alloc] initWithURL:url statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:@{@"Content-Type":mime,@"X-Content-Type-Options":@"nosniff"}];[task didReceiveResponse:response];[task didReceiveData:data];[task didFinish];
+}
+- (void)webView:(WKWebView *)webView stopURLSchemeTask:(id<WKURLSchemeTask>)task{}
+@end
+@interface AMDocumentView ()<WKNavigationDelegate>
+@property WKWebView *web;
+@property AMPreviewScheme *scheme;
+@property NSScrollView *sourceScroll;
+@property NSTextView *sourceText;
+@property NSSegmentedControl *mode;
+@property NSDictionary *payload;
+@property BOOL ready;
+@property NSWindow *renderWindow;
+@property NSUInteger generation;
+@property NSUInteger pendingLine;
+@property(copy) void (^completion)(NSDictionary *);
+@end
+@implementation AMDocumentView
+- (instancetype)initWithFrame:(NSRect)frame{if((self=[super initWithFrame:frame])){
+    WKWebViewConfiguration *configuration=WKWebViewConfiguration.new;configuration.websiteDataStore=WKWebsiteDataStore.nonPersistentDataStore;configuration.preferences.javaScriptCanOpenWindowsAutomatically=NO;self.scheme=AMPreviewScheme.new;[configuration setURLSchemeHandler:self.scheme forURLScheme:@"am-preview"];
+    self.web=[[WKWebView alloc] initWithFrame:NSZeroRect configuration:configuration];self.web.navigationDelegate=self;self.web.underPageBackgroundColor=Card();[self addSubview:self.web];self.mode=[NSSegmentedControl segmentedControlWithLabels:@[@"GitHub风格预览",@"源码"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(changeMode:)];self.mode.selectedSegment=0;[self addSubview:self.mode];
+    NSButton *out=Button(@"−",self,@selector(zoomOut:),0),*in=Button(@"＋",self,@selector(zoomIn:),0);out.identifier=@"zoom-out";in.identifier=@"zoom-in";[self addSubview:out];[self addSubview:in];
+    self.sourceScroll=NSScrollView.new;self.sourceScroll.hasVerticalScroller=YES;self.sourceText=NSTextView.new;self.sourceText.editable=NO;self.sourceText.richText=NO;self.sourceText.font=[NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];self.sourceText.autoresizingMask=NSViewWidthSizable;self.sourceText.textContainer.widthTracksTextView=YES;self.sourceText.textContainerInset=NSMakeSize(12,12);self.sourceScroll.documentView=self.sourceText;self.sourceScroll.hidden=YES;[self addSubview:self.sourceScroll];
+    [self.web loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"am-preview://page/index.html"]]];
+}return self;}
+- (BOOL)isFlipped{return YES;}
+- (void)layout{[super layout];CGFloat w=NSWidth(self.bounds),h=NSHeight(self.bounds);self.mode.frame=NSMakeRect(8,6,MIN(250,w-100),28);for(NSView *view in self.subviews)if([view.identifier isEqual:@"zoom-out"])view.frame=NSMakeRect(w-84,6,34,28);else if([view.identifier isEqual:@"zoom-in"])view.frame=NSMakeRect(w-44,6,34,28);self.web.frame=self.sourceScroll.frame=NSMakeRect(0,40,w,MAX(0,h-40));}
+- (void)changeMode:(id)sender{[self showSource:self.mode.selectedSegment==1];}
+- (void)highlightRegion:(NSArray *)region{if(region.count!=4)return;NSMutableDictionary *payload=self.payload.mutableCopy;payload[@"region"]=region;self.payload=payload;self.generation++;if(self.ready)[self renderPayload];}
+- (void)showSource:(BOOL)source{self.mode.selectedSegment=source ? 1:0;self.web.hidden=source;self.sourceScroll.hidden=!source;}
+- (void)zoomIn:(id)sender{self.web.pageZoom=MIN(3,self.web.pageZoom+.25);}
+- (void)zoomOut:(id)sender{self.web.pageZoom=MAX(.5,self.web.pageZoom-.25);}
+- (void)loadSnapshot:(NSDictionary *)snapshot path:(NSString *)path{NSString *text=snapshot[@"files"][path][@"text"] ?: @"";self.sourceText.string=text;NSMutableDictionary *images=NSMutableDictionary.dictionary,*references=NSMutableDictionary.dictionary;NSUInteger index=0;
+    for(NSDictionary *reference in AMPreflightImageReferences(text)){NSString *raw=reference[@"reference"] ?: reference[@"target"] ?: reference[@"url"];if(!raw)continue;NSString *resolved=AMPreflightResolveImage(path,raw);NSDictionary *entry=resolved ? snapshot[@"files"][resolved]:nil;if(!entry[@"data"] || ![entry[@"image"] boolValue])continue;NSString *identity=[NSString stringWithFormat:@"image-%lu",(unsigned long)index++];NSDictionary *asset=AMPreviewAsset(entry[@"data"]);if(!asset)continue;images[identity]=asset;references[raw]=[@"am-preview://image/" stringByAppendingString:identity];}
+    NSDictionary *entry=snapshot[@"files"][path];NSString *direct=@"";if([entry[@"image"] boolValue] && entry[@"data"]){NSDictionary *asset=AMPreviewAsset(entry[@"data"]);if(asset){images[@"selected"]=asset;direct=@"am-preview://image/selected";}}[self showSource:!direct.length && ![@[@"md",@"markdown",@"mdx"] containsObject:path.pathExtension.lowercaseString]];self.scheme.images=images;BOOL dark=[[self.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]] isEqual:NSAppearanceNameDarkAqua];self.payload=@{@"text":text,@"image":direct,@"images":references,@"dark":@(dark)};self.generation++;if(self.ready)[self renderPayload];
+}
+- (void)renderPayload{if(!self.payload)return;NSUInteger generation=self.generation;__weak typeof(self) owner=self;[self.web callAsyncJavaScript:@"return await window.AMRender(input);" arguments:@{@"input":self.payload} inFrame:nil inContentWorld:WKContentWorld.pageWorld completionHandler:^(id result,NSError *error){if(!owner || owner.generation!=generation)return;
+[owner applyWebAppearance];if(error || ![result isKindOfClass:NSDictionary.class] || ![result[@"completed"] boolValue])[owner showSource:YES];if(owner.pendingLine)[owner locateLine:owner.pendingLine];void(^completion)(NSDictionary *)=owner.completion;owner.completion=nil;if(completion)completion([result isKindOfClass:NSDictionary.class] ? result:@{@"completed":@NO,@"issues":@[]});}];}
+- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation{self.ready=YES;[self renderPayload];}
+- (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error{if(self.completion){self.completion(@{@"completed":@NO,@"issues":@[]});self.completion=nil;}[self showSource:YES];}
+- (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)action decisionHandler:(void (^)(WKNavigationActionPolicy))handler{NSURL *url=action.request.URL;handler([url.scheme isEqual:@"am-preview"] && [url.host isEqual:@"page"] ? WKNavigationActionPolicyAllow:WKNavigationActionPolicyCancel);}
+- (void)applyWebAppearance{self.web.underPageBackgroundColor=Card();BOOL dark=[[self.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]] isEqual:NSAppearanceNameDarkAqua];[self.web evaluateJavaScript:dark ? @"document.documentElement.dataset.appearance='dark'":@"document.documentElement.dataset.appearance='light'" completionHandler:nil];}
+- (void)viewDidChangeEffectiveAppearance{[super viewDidChangeEffectiveAppearance];ThemeEditor(self.sourceText);self.sourceText.textColor=Ink();self.sourceText.backgroundColor=Card();[self applyWebAppearance];}
+- (void)locateLine:(NSUInteger)line{line=MAX(1,line);self.pendingLine=line;[self.web evaluateJavaScript:[NSString stringWithFormat:@"document.querySelector('[data-line=\"%lu\"]')?.scrollIntoView({block:'center'});",(unsigned long)line] completionHandler:nil];NSArray *lines=[self.sourceText.string componentsSeparatedByString:@"\n"];NSUInteger offset=0;for(NSUInteger i=0;i<MIN(line-1,lines.count);i++)offset+=[lines[i] length]+1;[self.sourceText scrollRangeToVisible:NSMakeRange(MIN(offset,self.sourceText.string.length),0)];}
+@end
+void AMInstallRenderer(void){AMPreflightSetRenderer(^NSDictionary *(NSString *text,NSString *path){
+    if(!AMRendererAssets())return @{@"completed":@NO,@"issues":@[]};__block NSDictionary *answer=nil;__block AMDocumentView *worker=nil;dispatch_semaphore_t signal=dispatch_semaphore_create(0);
+    void (^start)(void)=^{worker=[[AMDocumentView alloc] initWithFrame:NSMakeRect(0,0,1000,700)];worker.renderWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,1000,700) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];worker.renderWindow.releasedWhenClosed=NO;worker.renderWindow.contentView=worker;worker.completion=^(NSDictionary *result){answer=result;dispatch_semaphore_signal(signal);};
+    [worker loadSnapshot:@{@"files":@{path:@{@"text":text}}} path:path];};if(NSThread.isMainThread)start();else dispatch_async(dispatch_get_main_queue(),start);
+    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:12];BOOL complete=NO;while(deadline.timeIntervalSinceNow>0){if(dispatch_semaphore_wait(signal,dispatch_time(DISPATCH_TIME_NOW,10*NSEC_PER_MSEC))==0){complete=YES;break;}if(NSThread.isMainThread)[NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];}
+    dispatch_async(dispatch_get_main_queue(),^{worker.completion=nil;[worker.web stopLoading];worker.web.navigationDelegate=nil;worker.renderWindow.contentView=nil;worker.renderWindow=nil;worker=nil;});return complete && answer ? answer:@{@"completed":@NO,@"issues":@[]};
+});}

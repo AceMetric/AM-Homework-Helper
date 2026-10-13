@@ -8,15 +8,17 @@ CONTENTS="$APP_DIR/Contents"
 export CLANG_MODULE_CACHE_PATH="$SCRIPT_DIR/build/module-cache"
 
 SWIFTUI_DIR=$(python3 "$SCRIPT_DIR/Tools/prepare-swiftui.py")
+RENDERER_DIR=$(python3 "$SCRIPT_DIR/Tools/prepare-renderer.py")
 GITHUB_CLI_DIR=$(python3 "$SCRIPT_DIR/Tools/prepare-github-cli.py")
 SPARKLE_DIR=$(python3 "$SCRIPT_DIR/Tools/prepare-sparkle.py")
 mkdir -p "$CONTENTS/Frameworks"
 /usr/bin/ditto "$SPARKLE_DIR/Sparkle.framework" "$CONTENTS/Frameworks/Sparkle.framework"
 cp "$SWIFTUI_DIR/libAMUI.dylib" "$CONTENTS/Frameworks/libAMUI.dylib"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
+/usr/bin/ditto "$RENDERER_DIR" "$CONTENTS/Resources/Renderer"
 mkdir -p "$SCRIPT_DIR/build/DDL.iconset"
 
-clang -arch arm64 -fobjc-arc -mmacosx-version-min=13.0 -framework Cocoa "$SCRIPT_DIR/Tools/Icon.m" -o "$SCRIPT_DIR/build/render-icon"
+clang -arch arm64 -fobjc-arc -mmacosx-version-min=13.0 -framework Cocoa -framework WebKit "$SCRIPT_DIR/Tools/Icon.m" -o "$SCRIPT_DIR/build/render-icon"
 "$SCRIPT_DIR/build/render-icon" "$SCRIPT_DIR/build/DDL.iconset" "$CONTENTS/Resources/AppIcon.icns"
 
 clang \
@@ -27,7 +29,7 @@ clang \
   -mmacosx-version-min=13.0 \
   -I"$SWIFTUI_DIR" -L"$SWIFTUI_DIR" -lAMUI \
   -O2 \
-  -framework Cocoa \
+  -framework Cocoa -framework WebKit \
   -framework UserNotifications \
   -framework Vision \
   -framework UniformTypeIdentifiers \

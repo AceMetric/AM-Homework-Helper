@@ -1,4 +1,5 @@
 #import "SSUpdateController.h"
+#import "SSLocalData.h"
 #import <Sparkle/Sparkle.h>
 @interface SSUpdateController () <SPUUpdaterDelegate, NSMenuItemValidation, NSURLSessionTaskDelegate, NSWindowDelegate>
 @property SPUStandardUpdaterController *controller;
@@ -9,6 +10,7 @@
 @property NSURLSession *feedSession;
 @property NSURLSessionDataTask *feedTask;
 @property NSPanel *checkWindow;
+@property NSString *operationID;
 @end
 @implementation SSUpdateController
 - (instancetype)initWithPreview:(BOOL)preview {
@@ -36,7 +38,7 @@
     }
     NSURL *url = [self updateFeedURL];
     if (![SSUpdateController secureFeedURL:url]) { [self showCheckProblem:@{@"title":@"更新配置需要修复", @"message":@"更新地址配置不正确，请安装维护者提供的新版应用。", @"retry":@NO}]; return; }
-    self.checking = YES; NSUInteger generation = ++self.checkGeneration;
+    self.operationID=AMOperationBegin(@"检查更新",@"AM Helper",NO,nil);self.checking = YES; NSUInteger generation = ++self.checkGeneration;
     [self showCheckProgress];
     if (self.statusChanged) self.statusChanged(@"正在检查软件更新…");
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:12];
@@ -49,12 +51,13 @@
             [owner finishFeedCheck];
             NSDictionary *problem = [SSUpdateController checkProblemForResponse:response error:error];
             if (problem) {
+                AMOperationFinish(owner.operationID,@"failed",problem[@"message"]);
                 if (owner.statusChanged) owner.statusChanged(problem[@"message"]);
                 [owner showCheckProblem:problem];
             } else {
                 if (owner.statusChanged) owner.statusChanged(@"正在获取已签名的更新信息…");
                 // Reachability is not authentication. Sparkle still downloads and verifies the signed feed and ZIP.
-                [owner beginSparkleCheck];
+                AMOperationProgress(owner.operationID,@"获取并验证签名更新",0,0);[owner beginSparkleCheck];
             }
         });
     }];
@@ -95,7 +98,7 @@
 - (void)showCheckProgress {
     NSPanel *panel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 380, 140) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
     panel.title = @"软件更新"; panel.releasedWhenClosed = NO; panel.delegate = self;
-    NSProgressIndicator *spinner = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(24, 90, 20, 20)]; spinner.style = NSProgressIndicatorStyleSpinning; [spinner startAnimation:nil]; [panel.contentView addSubview:spinner];
+    NSProgressIndicator *spinner = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(24, 90, 20, 20)]; spinner.frame=NSMakeRect(24,116,332,6);spinner.style = NSProgressIndicatorStyleBar; [spinner startAnimation:nil]; [panel.contentView addSubview:spinner];
     NSTextField *label = [NSTextField labelWithString:@"正在连接更新服务…"]; label.frame = NSMakeRect(52, 88, 300, 24); [panel.contentView addSubview:label];
     NSTextField *detail = [NSTextField labelWithString:@"可继续使用任务和课程，也可取消检查。"]; detail.frame = NSMakeRect(24, 54, 332, 24); detail.textColor = NSColor.secondaryLabelColor; [panel.contentView addSubview:detail];
     NSButton *cancel = [NSButton buttonWithTitle:@"取消检查" target:self action:@selector(cancelFeedCheck:)]; cancel.bezelStyle = NSBezelStyleRounded; cancel.frame = NSMakeRect(254, 14, 102, 32); cancel.keyEquivalent = @"\033"; [panel.contentView addSubview:cancel];
@@ -107,7 +110,7 @@
 }
 - (void)cancelFeedCheck:(id)sender {
     if (!self.checking) return;
-    ++self.checkGeneration; [self.feedTask cancel]; [self.feedSession invalidateAndCancel]; [self finishFeedCheck];
+    AMOperationFinish(self.operationID,@"cancelled",@"更新检查已取消");++self.checkGeneration; [self.feedTask cancel]; [self.feedSession invalidateAndCancel]; [self finishFeedCheck];
     if (self.statusChanged) self.statusChanged(@"已取消更新检查。");
 }
 - (BOOL)windowShouldClose:(NSWindow *)sender { [self cancelFeedCheck:nil]; return YES; }
@@ -132,13 +135,14 @@
 - (BOOL)updater:(SPUUpdater *)updater shouldPostponeRelaunchForUpdate:(SUAppcastItem *)item untilInvokingBlock:(void (^)(void))installHandler { self.installing = YES; return NO; }
 - (void)terminationCancelled { self.installing = NO; }
 - (void)updater:(SPUUpdater *)updater didAbortWithError:(NSError *)error {
-    self.installing = NO;
+    BOOL noUpdate=[error.domain isEqual:SUSparkleErrorDomain] && error.code==SUNoUpdateError;AMOperationFinish(self.operationID,noUpdate ? @"success":@"failed",noUpdate ? @"未发现适用的新版本":@"更新未完成");self.installing = NO;
     if (!self.statusChanged || self.checking) return;
     if ([error.domain isEqual:SUSparkleErrorDomain] && error.code == SUNoUpdateError) self.statusChanged(@"本次检查没有发现适用的新版本。");
     else if ([error.domain isEqual:SUSparkleErrorDomain] && error.code == SUInstallationCanceledError) self.statusChanged(@"已取消安装更新，当前版本可继续使用。");
     else self.statusChanged(@"更新未完成，可从“检查更新…”重试。当前任务和课程数据已保留。");
 }
 - (void)updater:(SPUUpdater *)updater didFinishUpdateCycleForUpdateCheck:(SPUUpdateCheck)updateCheck error:(NSError *)error {
+    AMOperationFinish(self.operationID,error ? @"failed":@"success",error ? @"更新未完成":@"更新检查完成");
     if (!error && !self.installing && !self.checking && self.statusChanged) self.statusChanged(@"更新检查已完成。");
 }
 @end
