@@ -24,6 +24,26 @@ static BOOL ORProviderKeyError(NSData *data){
     if([details isKindOfClass:NSArray.class])for(id detail in details)if([detail isKindOfClass:NSDictionary.class] && [detail[@"reason"] isKindOfClass:NSString.class] && [@[@"API_KEY_INVALID",@"API_KEY_EXPIRED",@"API_KEY_SERVICE_BLOCKED"] containsObject:detail[@"reason"]])return YES;
     return NO;
 }
+static NSString *ORStage(NSURL *url,NSString *method){
+    if([url.path hasSuffix:@":generateContent"])return @"generation";
+    if([url.path hasSuffix:@":countTokens"])return @"capacity";
+    if([url.path hasPrefix:@"/upload/"])return @"upload";
+    if([method isEqual:@"DELETE"])return @"cleanup";
+    if([url.path hasPrefix:@"/v1beta/files/"])return @"file_check";
+    return @"connection";
+}
+static NSError *ORRequestFailure(NSString *stage,NSInteger http,NSInteger network,NSString *message,NSData *data){
+    NSDictionary *names=@{@"generation":@"生成复核报告",@"capacity":@"核对材料容量",@"upload":@"上传图片",@"cleanup":@"清理上传副本",@"file_check":@"核验上传图片",@"connection":@"连接测试"};
+    NSMutableDictionary *record=[@{@"date":NSDate.date,@"stage":stage,@"httpStatus":@(http),@"networkCode":@(network)} mutableCopy];
+    id envelope=data.length && data.length<=8*1024*1024 ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
+    id problem=[envelope isKindOfClass:NSDictionary.class] ? envelope[@"error"]:nil;id status=[problem isKindOfClass:NSDictionary.class] ? problem[@"status"]:nil;
+    if([status isKindOfClass:NSString.class] && [@[@"INVALID_ARGUMENT",@"FAILED_PRECONDITION",@"UNAUTHENTICATED",@"PERMISSION_DENIED",@"NOT_FOUND",@"RESOURCE_EXHAUSTED",@"INTERNAL",@"UNAVAILABLE",@"DEADLINE_EXCEEDED"] containsObject:status])record[@"apiStatus"]=status;
+    // Only fixed stages, numeric codes and allowlisted enums; no raw body, URL or material.
+    SSWritePlist([stage isEqual:@"cleanup"] ? @"online-review-cleanup-diagnostic.plist":@"online-review-diagnostic.plist",record,NULL);
+    NSString *code=http ? [NSString stringWithFormat:@"HTTP %ld",(long)http]:[NSString stringWithFormat:@"网络 %ld",(long)network];
+    NSMutableDictionary *info=record.mutableCopy;info[NSLocalizedDescriptionKey]=[NSString stringWithFormat:@"%@失败（%@）：%@",names[stage],code,message];
+    return [NSError errorWithDomain:@"AMOnlineReview" code:http ?: network userInfo:info];
+}
 static NSString *ORKeyHint(void){return @"密钥为空或含内部空白／不可见字符。请用 AI Studio 的复制按钮复制完整密钥；首尾空白会自动清理。";}
 NSDictionary *AMOnlineReviewSettings(void){id saved=SSReadPlist(@"online-review-settings.plist");return [saved isKindOfClass:NSDictionary.class] ? saved:@{@"enabled":@NO};}
 BOOL AMOnlineReviewSaveSettings(BOOL enabled,NSString *key,NSError **error){
@@ -79,8 +99,12 @@ NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
         if(!failure){data=bytes;reply=meta;failure=networkError;}
     }
     if(response)*response=reply;
-    if(failure || (self.cancelled && !finishing)){if(error)*error=ORError(self.cancelled ? @"在线复核已取消；已发送请求可能仍消耗额度。":@"网络连接未完成，已保留本机报告，可重试。",self.cancelled ? -999:-1001);return nil;}
-    NSInteger status=reply.statusCode;if(status<200 || status>=300){NSString *message=status==429 ? @"免费额度或速率受限，已停止请求；请按供应商额度恢复时间重试。":(status==401 || status==403 ? @"密钥、账户资格或访问权限无效，请检查 Gemini 项目。":(status==400 || status==413 ? @"材料或请求超出接口支持范围，本次未完整检查。":@"Gemini 请求失败，可重试；没有切换其他服务。"));if(ORProviderKeyError(data))message=@"Google 拒绝了此密钥，请从 AI Studio 重新复制完整密钥，并检查是否已撤销、过期或限制了接口。";else if(status==400 && [method isEqual:@"GET"] && [url.path hasPrefix:@"/v1beta/models/"])message=@"Google 拒绝密钥或模型访问请求（HTTP 400）。请核对 AI Studio 密钥及模型权限；不是作业材料错误。";NSString *retry=reply.allHeaderFields[@"Retry-After"] ?: reply.allHeaderFields[@"retry-after"];if(status==429 && [retry isKindOfClass:NSString.class] && RMatch(retry,@"^[0-9]{1,6}$"))message=[message stringByAppendingFormat:@" Retry-After：%@",retry];if(error)*error=ORError(message,status);return nil;}
+    if(failure || (self.cancelled && !finishing)){
+        NSInteger code=self.cancelled ? -999:([failure.domain isEqual:NSURLErrorDomain] || [failure.domain isEqual:@"AMOnlineReview"] ? failure.code:-1001);
+        NSString *message=code==-999 ? @"复核已取消；已发送请求可能仍消耗额度。":(code==-1009 ? @"网络已离线，请恢复连接后重试。":(code==-1001 ? @"请求超时，保留本机报告；可稍后重试。":(code==-1003 ? @"无法解析服务地址，请检查网络或DNS。":(code==-1200 || code==-1202 ? @"安全连接失败，请检查系统时间或网络；不会跳过证书验证。":@"连接中断，请检查网络后重试。"))));
+        if(error)*error=ORRequestFailure(ORStage(url,method),0,code,message,nil);return nil;
+    }
+    NSInteger status=reply.statusCode;if(status<200 || status>=300){NSString *message=status==429 ? @"免费额度或速率受限，已停止请求；请按供应商额度恢复时间重试。":(status==401 || status==403 ? @"密钥、账户资格或访问权限无效，请检查 Gemini 项目。":(status==400 || status==413 ? @"材料或请求超出接口支持范围，本次未完整检查。":@"Gemini 请求失败，可重试；没有切换其他服务。"));if(ORProviderKeyError(data))message=@"Google 拒绝了此密钥，请从 AI Studio 重新复制完整密钥，并检查是否已撤销、过期或限制了接口。";else if(status==400 && [method isEqual:@"GET"] && [url.path hasPrefix:@"/v1beta/models/"])message=@"Google 拒绝密钥或模型访问请求（HTTP 400）。请核对 AI Studio 密钥及模型权限；不是作业材料错误。";if(status==500)message=@"Google 服务内部错误，未得到复核结果；可稍后重试。";else if(status==502 || status==503)message=@"Google 服务暂时繁忙或不可用，可稍后重试。";else if(status==408 || status==504)message=@"Google 服务处理超时，未得到复核结果。";else if(status==404)message=@"指定模型或上传文件不可用，请核对模型访问权限，或重新准备材料。";else if(status>=300 && status<400)message=@"服务返回重定向，出于密钥保护已拒绝跟随。";NSString *retry=reply.allHeaderFields[@"Retry-After"] ?: reply.allHeaderFields[@"retry-after"];if(status==429 && [retry isKindOfClass:NSString.class] && RMatch(retry,@"^[0-9]{1,6}$"))message=[message stringByAppendingFormat:@" Retry-After：%@",retry];if(error)*error=ORRequestFailure(ORStage(url,method),status,0,message,data);return nil;}
     if(data.length>8*1024*1024){if(error)*error=ORError(@"响应超过安全限制，本次未完整检查。",1);return nil;}return data ?: NSData.data;
 }
 - (NSDictionary *)json:(NSString *)method path:(NSString *)path body:(NSDictionary *)body error:(NSError **)error {
@@ -127,10 +151,18 @@ NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
     if(![self hasBudget:error])return NO;
     @synchronized(AMOnlineReviewClient.class){NSString *day=DDLFormatDate(NSDate.date,@"yyyy-MM-dd");NSDictionary *old=SSReadPlist(@"online-review-usage.plist");NSUInteger count=[old[@"day"] isEqual:day] ? [old[@"count"] unsignedIntegerValue]:0;if(count>=20){if(error)*error=ORError(@"今日已达本机20次生成请求上限，已停止；供应商免费额度可能更低。",429);return NO;}return SSWritePlist(@"online-review-usage.plist",@{@"day":day,@"count":@(count+1)},error);}
 }
-- (NSDictionary *)generateParts:(NSArray *)parts context:(NSDictionary *)context instruction:(NSString *)instruction error:(NSError **)error {
-    if(![self consume:error])return nil;
+- (NSDictionary *)generateParts:(NSArray *)parts context:(NSDictionary *)context instruction:(NSString *)instruction progress:(void (^)(NSString *))progress error:(NSError **)error {
     NSDictionary *body=@{@"contents":@[@{@"role":@"user",@"parts":parts}],@"systemInstruction":@{@"parts":@[@{@"text":instruction}]},@"generationConfig":@{@"responseMimeType":@"application/json",@"maxOutputTokens":@16384,@"thinkingConfig":@{@"thinkingLevel":@"medium"}},@"store":@NO};
-    NSDictionary *envelope=[self json:@"POST" path:[NSString stringWithFormat:@"/v1beta/models/%@:generateContent",ORModel] body:body error:error];if(!envelope)return nil;
+    NSDictionary *envelope=nil;
+    for(NSUInteger attempt=0;attempt<2;attempt++){
+        if(self.cancelled){if(error)*error=ORError(@"在线复核已取消。",-999);return nil;}
+        if(![self consume:error])return nil;NSError *problem=nil;
+        envelope=[self json:@"POST" path:[NSString stringWithFormat:@"/v1beta/models/%@:generateContent",ORModel] body:body error:&problem];if(envelope)break;
+        if(attempt || ![@[@408,@500,@502,@503,@504] containsObject:@(problem.code)] || self.cancelled){if(error)*error=problem;return nil;}
+        if(progress)progress([NSString stringWithFormat:@"服务临时故障（HTTP %ld），2秒后重试一次；计入请求上限…",(long)problem.code]);
+        NSDate *resume=[NSDate dateWithTimeIntervalSinceNow:2];while(!self.cancelled && resume.timeIntervalSinceNow>0)[NSThread sleepForTimeInterval:.05];
+    }
+    if(!envelope)return nil;
     NSArray *candidates=[envelope[@"candidates"] isKindOfClass:NSArray.class] ? envelope[@"candidates"]:@[];NSDictionary *candidate=[candidates.firstObject isKindOfClass:NSDictionary.class] ? candidates.firstObject:nil;
     if(![candidate[@"finishReason"] isEqual:@"STOP"]){if(error)*error=ORError(@"模型输出被截断、阻止或未完成，不能视为检查通过，可重试。",1);return nil;}
     NSMutableString *output=NSMutableString.string;for(id p in ([candidate[@"content"] isKindOfClass:NSDictionary.class] && [candidate[@"content"][@"parts"] isKindOfClass:NSArray.class] ? candidate[@"content"][@"parts"]:@[]))if([p isKindOfClass:NSDictionary.class] && (!p[@"thought"] || ([p[@"thought"] isKindOfClass:NSNumber.class] && ![p[@"thought"] boolValue])) && [p[@"text"] isKindOfClass:NSString.class])[output appendString:p[@"text"]];
@@ -161,7 +193,7 @@ NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
         if(progress)progress(@"核对整份项目的接口容量…");NSDictionary *tokens=[self json:@"POST" path:[NSString stringWithFormat:@"/v1beta/models/%@:countTokens",ORModel] body:@{@"contents":@[contents]} error:error];if(!tokens){retryable=YES;return nil;}
         if(![tokens[@"totalTokens"] isKindOfClass:NSNumber.class]){if(error)*error=ORError(@"无法核对接口容量，本次未完整检查。",1);return nil;}
         NSDictionary *validated=nil;
-        if([tokens[@"totalTokens"] unsignedIntegerValue]<=900000){if(progress)progress(@"等待 Gemini 综合复核（不会运行代码）…");validated=[self generateParts:parts context:context instruction:instruction error:error];}
+        if([tokens[@"totalTokens"] unsignedIntegerValue]<=900000){if(progress)progress(@"等待 Gemini 综合复核（不会运行代码）…");validated=[self generateParts:parts context:context instruction:instruction progress:progress error:error];}
         else {
             if(progress)progress(@"整份项目超出容量，按文档／自然章节复核；跨文件结论将标为未验证…");
             NSMutableArray *groups=NSMutableArray.array,*allIssues=NSMutableArray.array,*allChecked=NSMutableArray.array,*unverified=NSMutableArray.array;NSMutableArray *overview=NSMutableArray.array;NSMutableSet *used=NSMutableSet.set;
@@ -183,7 +215,7 @@ NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
                 NSDictionary *count=[self json:@"POST" path:[NSString stringWithFormat:@"/v1beta/models/%@:countTokens",ORModel] body:@{@"contents":@[@{@"role":@"user",@"parts":sectionParts}]} error:error];
                 if(![count[@"totalTokens"] isKindOfClass:NSNumber.class] || [count[@"totalTokens"] unsignedIntegerValue]>900000){if(error && !*error)*error=ORError(@"单个文档／章节及关联图片仍超出容量；请缩小范围。本次没有完整报告。",413);return nil;}
                 NSMutableDictionary *validationContext=context.mutableCopy;NSMutableArray *sourceDocs=NSMutableArray.array;for(NSDictionary *sent in group[@"documents"])for(NSDictionary *original in context[@"documents"])if([sent[@"path"] isEqual:original[@"path"]])[sourceDocs addObject:original];validationContext[@"documents"]=sourceDocs;validationContext[@"images"]=group[@"images"];validationContext[@"unverifiedImages"]=@[];
-                NSDictionary *part=[self generateParts:sectionParts context:validationContext instruction:instruction error:error];if(!part){retryable=YES;return nil;}[allIssues addObjectsFromArray:part[@"issues"]];[allChecked addObjectsFromArray:part[@"checked"]];[unverified addObjectsFromArray:part[@"unverified"]];
+                NSDictionary *part=[self generateParts:sectionParts context:validationContext instruction:instruction progress:progress error:error];if(!part){retryable=YES;return nil;}[allIssues addObjectsFromArray:part[@"issues"]];[allChecked addObjectsFromArray:part[@"checked"]];[unverified addObjectsFromArray:part[@"unverified"]];
             }
             [unverified addObject:@"材料超出整体容量，已按文档／自然章节处理；跨组推导和项目整体一致性未能完整核对。"];
             validated=@{@"issues":allIssues,@"checked":[NSOrderedSet orderedSetWithArray:allChecked].array,@"unverified":[NSOrderedSet orderedSetWithArray:unverified].array,@"partial":@YES,@"reportVersion":context[@"reportVersion"]};

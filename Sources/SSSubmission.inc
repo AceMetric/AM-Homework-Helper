@@ -244,7 +244,7 @@ static NSDictionary *PFEffectiveReview(NSString *version){for(NSDictionary *job 
         dispatch_async(dispatch_get_main_queue(),^{if(!owner || owner.previewGeneration!=generation)return;owner.onlineClient=nil;owner.checking=NO;owner.primary.enabled=YES;owner.supplement.editable=YES;owner.onlineButton.title=@"在线复核…";owner.onlineButton.enabled=YES;owner.assistantButton.enabled=YES;owner.acknowledge.state=NSControlStateValueOff;owner.assistantFingerprint=AMPreflightJobForReport(owner.report[@"version"])[@"fingerprint"];[owner refreshReport];[owner pollReview:nil];if(owner.reportStale)return;
             owner.validation.stringValue=answer ? ([answer[@"cached"] boolValue] ? @"已复用相同材料的报告，请核对建议。":([answer[@"partial"] boolValue] ? @"在线复核返回部分结果，请查看未检查项；不会自动提交。":@"在线复核已完成，请核对建议；不会自动提交。")):(error.localizedDescription ?: @"复核已取消，保留本机报告。");
             if(answer)owner.validation.stringValue=[owner.validation.stringValue stringByAppendingFormat:@" 耗时 %.1f 秒。",-started.timeIntervalSinceNow];
-            if(pending)owner.validation.stringValue=[owner.validation.stringValue stringByAppendingFormat:@" %lu 个上传副本保留供重试或待清理，可到在线设置处理。",(unsigned long)pending];owner.validation.textColor=answer ? Muted():NSColor.systemOrangeColor;
+            if(pending)owner.validation.stringValue=[owner.validation.stringValue stringByAppendingFormat:@" %lu 个上传副本保留供重试或待清理，可到在线设置处理。",(unsigned long)pending];owner.validation.textColor=answer ? Muted():NSColor.systemOrangeColor;owner.validation.toolTip=owner.validation.stringValue;if(!answer && !owner.findings.count)owner.findingDetail.string=[@"在线复核未完成\n\n" stringByAppendingString:owner.validation.stringValue];
         });
     });
 }
