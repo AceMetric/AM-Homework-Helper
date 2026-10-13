@@ -23,7 +23,7 @@
 }
 - (void)adjustSkillCourses:(id)sender {if(self.preview || self.busy || self.operationsPaused)return;BOOL all=NO;[self chooseSkillCourses:&all];}
 - (NSArray *)retainingSkill:(NSArray *)previous current:(NSArray *)current documents:(NSArray *)documents {
-    NSMutableDictionary *byID=NSMutableDictionary.dictionary;for(NSDictionary *record in current)if(record[@"id"])byID[record[@"id"]]=record;
+    NSMutableDictionary *byID=NSMutableDictionary.dictionary;for(NSDictionary *record in SSReconcileDiscoveryIDs(previous,current))if(record[@"id"])byID[record[@"id"]]=record;
     for(NSDictionary *record in previous)if([record[@"recognizer"] isEqual:@"skill-v1"])for(NSDictionary *document in documents)if([record[@"path"] isEqual:document[@"path"]] && [record[@"repository"] isEqual:document[@"repository"]] && [record[@"blobSHA"] isEqual:document[@"blobSHA"]]){byID[record[@"id"]]=record;break;}
     return [byID.allValues sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"id"] compare:b[@"id"]];}];
 }

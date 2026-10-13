@@ -92,7 +92,7 @@ NSDictionary *SSEnrichDiscovery(NSDictionary *record) {
     NSMutableDictionary *copy = record.mutableCopy;
     copy[@"sourceTitle"] = record[@"sourceTitle"] ?: record[@"title"] ?: @"作业";
     copy[@"suggestedTitle"] = record[@"suggestedTitle"] ?: record[@"title"] ?: @"作业";
-    NSMutableArray *summary = NSMutableArray.array, *requirements = NSMutableArray.array, *fallback=NSMutableArray.array;
+    NSMutableOrderedSet *summary = NSMutableOrderedSet.orderedSet, *requirements = NSMutableOrderedSet.orderedSet, *fallback=NSMutableOrderedSet.orderedSet;
     BOOL fenced = NO;
     for (NSString *raw in [record[@"snippet"] componentsSeparatedByString:@"\n"]) {
         NSString *line = RTrim(raw);
@@ -100,11 +100,11 @@ NSDictionary *SSEnrichDiscovery(NSDictionary *record) {
         if (fenced || !line.length || [line hasPrefix:@"#"] || RMatch(line,@"截止|deadline|\\bdue\\b|^[-=_]{3,}$")) continue;
         if (![line isEqual:copy[@"sourceTitle"]] && !RMatch(line,@"^\\s*[-*+]?\\s*\\[.*\\]\\(.*\\)\\s*$")) [fallback addObject:line];
         if (RMatch(line,@"提交|命名|格式|附件|文件|submit|filename|format|attachment")) [requirements addObject:line];
-        if (RMatch(line,@"完成|解答|实现|分析|回答|证明|阅读|观看|练习|solve|implement|answer|read|write")) [summary addObject:line];
+        if (RMatch(line,@"完成|解答|实现|分析|回答|证明|阅读|观看|练习|solve|implement|answer|read|write|deliver|design|build|analyse|analyze|compare|evaluate|demonstrate|must|should|需要|不得|至少|必须")) [summary addObject:line];
     }
-    if (!copy[@"summary"]) {NSArray *content=summary.count ? summary : fallback;copy[@"summary"] = [[content subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)5,content.count))] componentsJoinedByString:@"\n"];}
-    if (!copy[@"submissionRequirements"]) copy[@"submissionRequirements"] = [requirements componentsJoinedByString:@"\n"];
-    if (!copy[@"recognizer"]) copy[@"recognizer"] = @"rules-v6";
+    if (!copy[@"summary"]) {NSArray *content=summary.count ? summary.array : fallback.array;copy[@"summary"] = [content componentsJoinedByString:@"\n"];}
+    if (!copy[@"submissionRequirements"]) copy[@"submissionRequirements"] = [requirements.array componentsJoinedByString:@"\n"];
+    if (!copy[@"recognizer"]) copy[@"recognizer"] = @"rules-v7";
     return copy;
 }
 static BOOL SameSource(NSDictionary *task, NSDictionary *record) {
@@ -113,6 +113,7 @@ static BOOL SameSource(NSDictionary *task, NSDictionary *record) {
     return NO;
 }
 BOOL SSCanAutomaticallyImport(NSDictionary *record, NSArray *tasks, NSDate *now) {
+    if([record[@"requiresReview"] boolValue])return NO;
     if (![record[@"kind"] isEqual:@"assignment"] || [record[@"relative"] boolValue] || [record[@"modelOnly"] boolValue] || [record[@"needsDate"] boolValue] || [record[@"needsTime"] boolValue] || [record[@"warnings"] count] || ![record[@"dateText"] length] || ![record[@"due"] isKindOfClass:NSDate.class] || [record[@"due"] compare:now] != NSOrderedDescending) return NO;
     // A user type override or uncertain identity requires a fresh review.
     if ([record[@"automaticDeferred"] boolValue] || [record[@"identityUncertain"] boolValue] || [record[@"kindReason"] isEqual:@"你已手动确认类型"]) return NO;
@@ -291,7 +292,7 @@ NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repositor
 NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings, NSMutableDictionary *cache, NSError **error) {
     NSMutableDictionary *cacheSettings=settings.mutableCopy;for(NSString *field in @[@"forceRecognition",@"manualLocal",@"localAutomatic"])[cacheSettings removeObjectForKey:field];
     NSString *configuration=[[NSJSONSerialization dataWithJSONObject:cacheSettings options:NSJSONWritingSortedKeys error:NULL] base64EncodedStringWithOptions:0];
-    NSString *key=[NSString stringWithFormat:@"recognition-v6|%@|%@|%@|%@|%@",repository,path,blob,calendar.timeZone.name,RHash(configuration ?: @"")];
+    NSString *key=[NSString stringWithFormat:@"recognition-v7|%@|%@|%@|%@|%@",repository,path,blob,calendar.timeZone.name,RHash(configuration ?: @"")];
     if (![settings[@"forceRecognition"] boolValue] && [cache[key] isKindOfClass:NSArray.class]) return cache[key];
     NSMutableArray *found=NSMutableArray.array; for (NSDictionary *record in SSDiscoveriesFromDocument(text,repository,path,blob,NSDate.date,calendar)) [found addObject:SSEnrichDiscovery(record)];
     NSDictionary *template=settings[@"courseTemplate"];

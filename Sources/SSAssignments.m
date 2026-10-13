@@ -1,6 +1,8 @@
 #import "SSAssignments.h"
 #import "DDLImport.h"
 #import "DDLCore.h"
+#import "AMDocumentRules.h"
+#import <CommonCrypto/CommonDigest.h>
 
 static NSRegularExpression *Regex(NSString *pattern) { return [NSRegularExpression regularExpressionWithPattern:pattern options:NSRegularExpressionCaseInsensitive error:NULL]; }
 static BOOL Match(NSString *text, NSString *pattern) { return [Regex(pattern) firstMatchInString:text options:0 range:NSMakeRange(0, text.length)] != nil; }
@@ -38,6 +40,7 @@ static NSString *DocumentTitle(NSArray *lines, NSString *path) {
     return folder.length && !GenericTitle(folder) ? folder : @"待确认作业";
 }
 static NSString *Title(NSString *line, NSString *heading, NSString *previous, NSString *documentTitle) {
+    if(AMDeadlineCue(line) && !Match(line,@"^\\s*(?:[-*+]\\s*)?(?:homework|assignment|problem[ _-]*set|作业)[ _:#-]*[0-9一二三四五六七八九十]"))return !GenericTitle(CleanTitle(heading)) ? CleanTitle(heading):documentTitle;
     NSString *inlineTitle = CleanTitle(line);
     if (inlineTitle.length > 2 && !GenericTitle(inlineTitle) && !Match(inlineTitle, @"^(?:请在|最晚|提交时间|before|by)\\s*$") && !Match(inlineTitle, @"^(?:今天|今晚|明天|后天|(?:本|这|下)?(?:周|星期|礼拜)|20\\d{2}[-/年]|\\d{1,2}月)") && !Match(line, @"^\\s*[-*+]?\\s*(?:\\*\\*)?(?:截止|deadline|due|ddl)")) return inlineTitle;
     NSString *title = CleanTitle(heading);
@@ -71,7 +74,8 @@ static NSDictionary *Classification(NSString *context, NSString *path) {
     NSString *evidence = [NSString stringWithFormat:@"%@\n%@", path, context];
     BOOL exam = Match(evidence, @"考试|测验|(?:^|[/_\\s-])(?:exam(?:ination)?|quiz)(?:[/_\\s.-]|$)");
     BOOL classroom = Match(evidence, @"课上(?:任务|练习|实验)|课堂(?:任务|练习|实验)|随堂|当堂|classroom|in[_ -]class");
-    NSString *kind = exam && classroom ? @"unknown" : exam ? @"exam" : classroom ? @"classroom" : Match(evidence, @"作业|课后|homework|assignment|(?:^|[/_\\s-])hw[0-9]|提交|截止|deadline|\\bdue\\b|\\bsubmit\\b") ? @"assignment" : @"unknown";
+    NSString *kind = exam && classroom ? @"unknown" : exam ? @"exam" : classroom ? @"classroom" : Match(evidence, @"作业|课后|homework|assignment|problem[ _-]*set|worksheet|coursework|(?:^|[/_\\s-])hw[0-9]|提交|截止|deadline|\\bdue\\b|\\bsubmit\\b") ? @"assignment" : @"unknown";
+    if([kind isEqual:@"unknown"] && Match(evidence,@"\\b(?:lab|project)\\b") && Match(context,@"submit|implement|deliver|complete|提交|实现|完成"))kind=@"assignment";
     return @{@"kind":kind, @"kindReason":exam && classroom ? @"考试与课堂任务线索冲突，请确认类型" : exam ? @"考试标题或所在目录" : classroom ? @"明确的课堂任务说明" : [kind isEqual:@"assignment"] ? @"作业名称或提交要求" : @"未找到明确活动类型，请确认"};
 }
 static NSString *GroupPath(NSString *path, NSString *kind) {
@@ -91,71 +95,14 @@ static NSString *Normalized(NSString *text) {
 static NSString *Group(NSString *text, NSTextCheckingResult *match, NSUInteger index) {
     NSRange range = [match rangeAtIndex:index]; return range.location == NSNotFound ? @"" : [text substringWithRange:range];
 }
-static NSString *Clock(NSString *text, BOOL *invalid) {
-    NSTextCheckingResult *clock = [Regex(@"(?<![0-9+-])([0-9]{1,2}):([0-9]{2})(?![0-9])") firstMatchInString:text options:0 range:NSMakeRange(0, text.length)];
-    NSInteger hour, minute;
-    if (clock) { hour = [Group(text, clock, 1) integerValue]; minute = [Group(text, clock, 2) integerValue]; }
-    else {
-        clock = [Regex(@"(凌晨|早上|上午|中午|下午|傍晚|晚上|今晚)?\\s*([0-9]{1,2})\\s*[点时](半|[0-9]{1,2}分?)?") firstMatchInString:text options:0 range:NSMakeRange(0, text.length)];
-        if (!clock) return nil;
-        NSString *period = Group(text, clock, 1), *minutes = Group(text, clock, 3);
-        hour = [Group(text, clock, 2) integerValue]; minute = [minutes isEqual:@"半"] ? 30 : minutes.integerValue;
-        if (Match(period, @"下午|傍晚|晚上|今晚") && hour < 12) hour += 12;
-        if (Match(period, @"凌晨|上午|早上") && hour == 12) hour = 0;
-        if ([period isEqual:@"中午"] && hour < 11) hour += 12;
-    }
-    if (hour > 23 || minute > 59) { *invalid = YES; return nil; }
-    return [NSString stringWithFormat:@"%02ld:%02ld", (long)hour, (long)minute];
-}
-static NSCalendar *DateCalendar(NSString *text, NSCalendar *calendar, BOOL *invalid) {
-    NSCalendar *result = calendar.copy;
-    if (Match(text, @"北京时间|中国标准时间")) result.timeZone = [NSTimeZone timeZoneForSecondsFromGMT:8 * 3600];
-    NSTextCheckingResult *zone = [Regex(@"(?:UTC|GMT)\\s*([+-])\\s*(\\d{1,2})(?::([0-9]{2}))?|(?<=[0-9])([+-])(\\d{2}):([0-9]{2})\\b") firstMatchInString:text options:0 range:NSMakeRange(0, text.length)];
-    if (zone) {
-        NSUInteger offset = [zone rangeAtIndex:1].location == NSNotFound ? 4 : 1;
-        NSInteger hours = [Group(text, zone, offset + 1) integerValue], minutes = [Group(text, zone, offset + 2) integerValue];
-        if (hours > 14 || minutes > 59 || (hours == 14 && minutes)) *invalid = YES;
-        else result.timeZone = [NSTimeZone timeZoneForSecondsFromGMT:([Group(text, zone, offset) isEqual:@"-"] ? -1 : 1) * (hours * 3600 + minutes * 60)];
-    } else if (Match(text, @"(?<=[0-9])Z\\b")) result.timeZone = [NSTimeZone timeZoneForSecondsFromGMT:0];
-    return result;
-}
-static NSDictionary *DateFields(NSString *dateText, NSString *token, NSCalendar *calendar) {
-    NSMutableDictionary *fields = NSMutableDictionary.dictionary;
-    BOOL invalid = NO; NSString *clock = Clock(dateText, &invalid);
-    NSCalendar *zone = DateCalendar(dateText, calendar, &invalid); fields[@"timeZone"] = zone.timeZone.name;
-    if (clock) fields[@"clock"] = clock;
-    fields[@"needsTime"] = @(!clock); fields[@"needsDate"] = @YES;
-    if (Match(token, @"今天|今晚|明天|后天|周|星期|礼拜|天后")) { fields[@"relative"] = @YES; fields[@"relativeToken"] = token; }
-    else {
-        NSString *compact = Replace(token, @"\\s+", @"");
-        NSTextCheckingResult *date = [Regex(@"^(?:(20[0-9]{2})[-/年])?([0-9]{1,2})[-/月]([0-9]{1,2})[日号]?$") firstMatchInString:compact options:0 range:NSMakeRange(0, compact.length)];
-        if (date) {
-            BOOL yearKnown = Group(compact, date, 1).length > 0;
-            NSInteger year = yearKnown ? [Group(compact, date, 1) integerValue] : 2000;
-            NSString *civil = [NSString stringWithFormat:@"%04ld-%02ld-%02ld", (long)year, (long)[Group(compact, date, 2) integerValue], (long)[Group(compact, date, 3) integerValue]];
-            NSDate *value = DDLParseDate([civil stringByAppendingFormat:@" %@", clock ?: @"00:00"], NSDate.date, zone);
-            if (!value) invalid = YES;
-            else if (yearKnown) {
-                fields[@"dateOnly"] = civil; fields[@"needsDate"] = @NO;
-                if (clock && !invalid) fields[@"due"] = value;
-                NSTextCheckingResult *weekday = [Regex(@"\\(\\s*(?:星期|周|礼拜)([一二三四五六日天])\\s*\\)") firstMatchInString:dateText options:0 range:NSMakeRange(0, dateText.length)];
-                if (weekday) {
-                    NSString *day = Group(dateText, weekday, 1); NSUInteger expected = [@[@"日", @"一", @"二", @"三", @"四", @"五", @"六"] indexOfObject:[day isEqual:@"天"] ? @"日" : day];
-                    if ([zone component:NSCalendarUnitWeekday fromDate:value] != (NSInteger)expected + 1) { fields[@"needsDate"] = @YES; fields[@"warnings"] = @[@"日期与括号中的星期不一致，请核对老师原文"]; }
-                }
-            }
-        } else invalid = YES;
-    }
-    if (invalid) { [fields removeObjectForKey:@"due"]; fields[@"needsDate"] = @YES; fields[@"warnings"] = @[@"日期、时间或时区无效，请核对并补全"]; }
-    return fields;
-}
-NSArray<NSDictionary *> *SSDiscoveriesFromDocument(NSString *text, NSString *repository, NSString *path, NSString *blobSHA, NSDate *now, NSCalendar *calendar) {
+static NSString *Clock(NSString *text,BOOL *invalid){return AMClock(text,invalid);}
+static NSDictionary *DateFields(NSString *text,NSString *token,NSCalendar *calendar){return AMDateFields(token,text,calendar);}
+static NSArray<NSDictionary *> *LegacyDiscoveries(NSString *text, NSString *repository, NSString *path, NSString *blobSHA, NSDate *now, NSCalendar *calendar) {
     if (!text.length || !repository.length || !path.length) return @[];
     NSArray *lines = [[text stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"] componentsSeparatedByString:@"\n"];
     NSMutableArray *result = NSMutableArray.array, *sections = NSMutableArray.array; NSMutableDictionary *counts = NSMutableDictionary.dictionary;
     NSString *heading = @"", *previous = @"", *documentTitle = DocumentTitle(lines, path); BOOL fence = NO, actionable = NO, substantive = NO; NSUInteger headingLine = 1;
-    NSString *relativePattern = @"今天|今晚|明天|后天|(?:本|这|下)(?:周|星期|礼拜)(?:[一二三四五六日天末])?|(?:周|星期|礼拜)[一二三四五六日天末]|一周后|两周后|二周后|[0-9]{1,3}天后|[0-9]{1,2}周后";
-    NSString *datePattern = [@"(?<![0-9])(?:20[0-9]{2}\\s*[-/年]\\s*[0-9]{1,2}\\s*[-/月]\\s*[0-9]{1,2}\\s*[日号]?|[0-9]{1,2}\\s*月\\s*[0-9]{1,2}\\s*[日号]?|[0-9]{1,2}/[0-9]{1,2})(?![0-9])|" stringByAppendingString:relativePattern];
+    NSString *datePattern = AMDatePattern();
     // Metadata and teaching examples do not create deadline records.
     if (Match(documentTitle, @"^(?:教材|示例|发布日志|更新日志|课程介绍|changelog|examples?|tutorial)\\b") || Match(path, @"(?:^|/)(?:examples?|reference|changelog)(?:/|\\.)")) return @[];
     for (NSUInteger index = 0; index < lines.count; index++) {
@@ -166,7 +113,7 @@ NSArray<NSDictionary *> *SSDiscoveriesFromDocument(NSString *text, NSString *rep
         if ([line hasPrefix:@"#"] && !GenericTitle(CleanTitle(line))) { heading = CleanTitle(line); headingLine = index + 1; }
         if ([line hasPrefix:@"#"] && !GenericTitle(CleanTitle(line)) && Match(CleanTitle(line), @"考试|测验|课上|课堂|随堂|作业|homework|assignment|exam|quiz")) [sections addObject:@{@"line":@(index), @"heading":CleanTitle(line)}];
         if(![line hasPrefix:@"#"] && !Match(line,@"^(?:[-*+]\\s*)?(?:发布|更新|published|updated|created|release)\\s*[:：]") && !Match(line,@"^[-*+]?\\s*\\[.*\\]\\(.*\\)\\s*$") && Match(line,@"[A-Za-z一-龥]{3,}"))substantive=YES;
-        if (![line hasPrefix:@"#"] && !Match(line, @"^[-*+]?\\s*\\[.*\\]\\(.*\\)\\s*$") && Match(line, @"完成|提交|解答|实现|回答|必答|分析|solve|implement|submit|answer")) actionable = YES;
+        if (![line hasPrefix:@"#"] && !Match(line, @"^[-*+]?\\s*\\[.*\\]\\(.*\\)\\s*$") && Match(line, @"完成|提交|解答|实现|回答|必答|分析|solve|implement|submit|answer|deliver|complete|design|build")) actionable = YES;
         NSString *context = [NSString stringWithFormat:@"%@\n%@\n%@\n%@", documentTitle, heading, previous, line];
         NSDictionary *classification = Classification(context, path);
         BOOL taskCue = ![classification[@"kind"] isEqual:@"unknown"] || Match(context, @"实验|报告|最晚|\\bddl\\b");
@@ -176,8 +123,8 @@ NSArray<NSDictionary *> *SSDiscoveriesFromDocument(NSString *text, NSString *rep
             BOOL annotation = NO; for (NSTextCheckingResult *note in annotations) if (NSLocationInRange(match.range.location, note.range)) annotation = YES;
             if (!annotation) [dates addObject:match];
         }
-        BOOL deadline = Match(line, @"截止|最晚|deadline|\\bdue\\b|\\bddl\\b");
-        BOOL dateCue = deadline || Match(previous, @"截止|最晚|deadline|\\bdue\\b|\\bddl\\b") || (Match(line, @"提交|交作业|交报告|完成|submit|hand in") && Match(line, @"前|之前|最晚|于|在|\\bby\\b|before"));
+        BOOL deadline = AMDeadlineCue(line);
+        BOOL dateCue = deadline || AMDeadlineCue(previous) || (Match(line, @"提交|交作业|交报告|完成|submit|hand in") && Match(line, @"前|之前|最晚|于|在|\\bby\\b|before"));
         if (!dates.count && taskCue && deadline && !Match(line, @"[:：]\\s*$")) {
             NSMutableDictionary *candidate = [Candidate(Title(line, heading, previous, documentTitle), repository, path, blobSHA, index + 1, Snippet(lines, index, heading), nil, YES, YES, counts) mutableCopy];
             [candidate addEntriesFromDictionary:classification]; candidate[@"dateText"] = line; candidate[@"warnings"] = @[@"未识别到完整截止日期，请补全"];
@@ -194,7 +141,7 @@ NSArray<NSDictionary *> *SSDiscoveriesFromDocument(NSString *text, NSString *rep
             // A clock on the following line is allowed only while still inside this deadline block.
             if (deadline && index + 1 < lines.count && !Match(dateText, @"[0-9]:[0-9]|点|时")) {
                 NSString *next = Normalized(lines[index + 1]);
-                if (Match(next, @"^\\s*(?:时间[:：]\\s*)?(?:凌晨|上午|中午|下午|晚上)?\\s*[0-9]{1,2}[:点时]")) dateText = [dateText stringByAppendingFormat:@" %@", next];
+                if (Match(next, @"^\\s*(?:时间[:：]\\s*)?(?:凌晨|上午|中午|下午|晚上)?\\s*[0-9]{1,2}(?:[:点时]|\\s*[ap]\\.?m)")) dateText = [dateText stringByAppendingFormat:@" %@", next];
             }
             NSMutableDictionary *candidate = [Candidate(Title(line, heading, previous, documentTitle), repository, path, blobSHA, index + 1, Snippet(lines, index, heading), nil, YES, YES, counts) mutableCopy];
             [candidate addEntriesFromDictionary:classification]; [candidate addEntriesFromDictionary:DateFields(dateText, [line substringWithRange:dateMatch.range], calendar)];
@@ -209,9 +156,9 @@ NSArray<NSDictionary *> *SSDiscoveriesFromDocument(NSString *text, NSString *rep
         if (!dates.count && ![line hasPrefix:@"#"]) previous = line;
     }
     if (!result.count) {
-        NSDictionary *classification = Classification(documentTitle, path); NSString *kind = classification[@"kind"];
-        BOOL explicitAssignment = [kind isEqual:@"assignment"] && Match(documentTitle, @"^(?:assignment|homework|problem[ _-]*set|worksheet|coursework|作业)(?:[ _:#-]*[0-9一二三四五六七八九十]+|\\s+[^\\s]+)");
-        if ((explicitAssignment && substantive) || (actionable && (![kind isEqual:@"unknown"] || Match(documentTitle, @"任务|练习|题目|项目|exercise|project|task"))) || [kind isEqual:@"exam"] || [kind isEqual:@"classroom"]) {
+        NSDictionary *classification = Classification(actionable && Match(documentTitle,@"\\b(?:lab|project)\\b") ? [documentTitle stringByAppendingString:@"\nsubmit"]:documentTitle, path); NSString *kind = classification[@"kind"];
+        BOOL explicitAssignment = [kind isEqual:@"assignment"] && Match(documentTitle, @"^(?:assignment|homework|problem[ _-]*set|worksheet|coursework|lab|project|作业)(?:[ _:#-]*[0-9一二三四五六七八九十]+|\\s+[^\\s]+)");
+        if ((explicitAssignment && substantive) || (actionable && (![kind isEqual:@"unknown"] || Match(documentTitle, @"任务|练习|题目|项目|exercise|project|lab|task"))) || [kind isEqual:@"exam"] || [kind isEqual:@"classroom"]) {
             NSMutableDictionary *candidate = [Candidate(documentTitle, repository, path, blobSHA, 1, Snippet(lines, 0, @""), nil, YES, YES, counts) mutableCopy];
             [candidate addEntriesFromDictionary:classification]; candidate[@"warnings"] = @[@"未说明截止时间"]; [result addObject:candidate];
         }
@@ -240,6 +187,7 @@ NSArray<NSDictionary *> *SSDiscoveriesFromDocument(NSString *text, NSString *rep
     }
     return merged;
 }
+#include "AMStructure.inc"
 NSArray<NSDictionary *> *SSAssignmentsFromDocument(NSString *text, NSString *repository, NSString *path, NSString *blobSHA, NSDate *now, NSCalendar *calendar) {
     return [SSDiscoveriesFromDocument(text, repository, path, blobSHA, now, calendar) filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *item, NSDictionary *bindings) { return [item[@"kind"] isEqual:@"assignment"]; }]];
 }
