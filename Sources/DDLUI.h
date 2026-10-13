@@ -52,3 +52,9 @@ ActionButton *Button(NSString *title, id target, SEL action, NSInteger tone);
 Surface *Box(NSColor *fill, CGFloat radius);
 Surface *GradientBox(NSColor *start, NSColor *end, CGFloat radius);
 ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL action);
+@interface AMOperationView : NSView
+@property(nonatomic,copy) NSString *operationID;
+- (void)refresh;
+@end
+void AMShowOperations(NSWindow *parent);
+void AMRefreshViewAppearance(NSView *root);
