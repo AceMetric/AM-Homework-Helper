@@ -10,15 +10,31 @@ static BOOL ORPrivatePath(id value){
     else if([value isKindOfClass:NSArray.class])for(id row in value)if(ORPrivatePath(row))return YES;
     return NO;
 }
-static BOOL ORKey(NSString *key){return [key isKindOfClass:NSString.class] && key.length>0 && key.length<=512 && RMatch(key,@"^[A-Za-z0-9_-]+$");}
+// Provider keys are opaque: validate header safety, not an assumed legacy alphabet.
+static NSString *ORNormalizedKey(id value){return [value isKindOfClass:NSString.class] ? [value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]:nil;}
+static BOOL ORKey(NSString *key){
+    if(![key isKindOfClass:NSString.class] || !key.length || key.length>4096)return NO;
+    for(NSUInteger i=0;i<key.length;i++){unichar c=[key characterAtIndex:i];if(c<33 || c>126)return NO;}
+    return YES;
+}
+static BOOL ORProviderKeyError(NSData *data){
+    id envelope=data.length && data.length<=8*1024*1024 ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]:nil;
+    id problem=[envelope isKindOfClass:NSDictionary.class] ? envelope[@"error"]:nil;
+    id details=[problem isKindOfClass:NSDictionary.class] ? problem[@"details"]:nil;
+    if([details isKindOfClass:NSArray.class])for(id detail in details)if([detail isKindOfClass:NSDictionary.class] && [detail[@"reason"] isKindOfClass:NSString.class] && [@[@"API_KEY_INVALID",@"API_KEY_EXPIRED",@"API_KEY_SERVICE_BLOCKED"] containsObject:detail[@"reason"]])return YES;
+    return NO;
+}
+static NSString *ORKeyHint(void){return @"密钥为空或含内部空白／不可见字符。请用 AI Studio 的复制按钮复制完整密钥；首尾空白会自动清理。";}
 NSDictionary *AMOnlineReviewSettings(void){id saved=SSReadPlist(@"online-review-settings.plist");return [saved isKindOfClass:NSDictionary.class] ? saved:@{@"enabled":@NO};}
 BOOL AMOnlineReviewSaveSettings(BOOL enabled,NSString *key,NSError **error){
+    key=ORNormalizedKey(key);
+    if(key.length && !ORKey(key)){if(error)*error=ORError(ORKeyHint(),1);return NO;}
     @synchronized(AMOnlineReviewClient.class){
         if(ORBusy){if(error)*error=ORError(@"请等待在线复核或文件清理结束，再修改设置。",1);return NO;}
         NSDictionary *old=SSReadSecret(@"preflight-gemini");
         if(enabled && !key.length && ![old[@"key"] length]){if(error)*error=ORError(@"请填写自己的 Gemini API 密钥。",1);return NO;}
         if(key.length && ![key isEqual:old[@"key"]] && [SSReadPlist(@"online-review-uploads.plist") count]){if(error)*error=ORError(@"仍有上传文件待清理。请先用原密钥重试清理，再更换密钥。",1);return NO;}
-        if(key.length && (!ORKey(key) || !SSWriteSecret(@"preflight-gemini",@{@"key":key}))){if(error)*error=ORError(@"密钥无效或无法存入钥匙串，设置未保存。",1);return NO;}
+        if(key.length && !SSWriteSecret(@"preflight-gemini",@{@"key":key})){if(error)*error=ORError(@"无法将密钥存入钥匙串，设置未保存。请检查系统钥匙串访问提示。",1);return NO;}
         return SSWritePlist(@"online-review-settings.plist",@{@"enabled":@(enabled),@"model":ORModel,@"policyVersion":@1},error);
     }
 }
@@ -41,9 +57,9 @@ NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
 @implementation AMOnlineReviewClient
 - (NSString *)credential {
 #ifdef DDL_TESTING
-    if(self.credentialProvider)return self.credentialProvider();
+    if(self.credentialProvider)return ORNormalizedKey(self.credentialProvider());
 #endif
-    return SSReadSecret(@"preflight-gemini")[@"key"];
+    return ORNormalizedKey(SSReadSecret(@"preflight-gemini")[@"key"]);
 }
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task willPerformHTTPRedirection:(NSHTTPURLResponse *)response newRequest:(NSURLRequest *)request completionHandler:(void (^)(NSURLRequest *))completionHandler {completionHandler(nil);}
 - (NSData *)request:(NSString *)method url:(NSURL *)url data:(NSData *)body headers:(NSDictionary *)headers response:(NSHTTPURLResponse **)response error:(NSError **)error {
@@ -64,7 +80,7 @@ NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
     }
     if(response)*response=reply;
     if(failure || (self.cancelled && !finishing)){if(error)*error=ORError(self.cancelled ? @"在线复核已取消；已发送请求可能仍消耗额度。":@"网络连接未完成，已保留本机报告，可重试。",self.cancelled ? -999:-1001);return nil;}
-    NSInteger status=reply.statusCode;if(status<200 || status>=300){NSString *message=status==429 ? @"免费额度或速率受限，已停止请求；请按供应商额度恢复时间重试。":(status==401 || status==403 ? @"密钥、账户资格或访问权限无效，请检查 Gemini 项目。":(status==400 || status==413 ? @"材料或请求超出接口支持范围，本次未完整检查。":@"Gemini 请求失败，可重试；没有切换其他服务。"));NSString *retry=reply.allHeaderFields[@"Retry-After"] ?: reply.allHeaderFields[@"retry-after"];if(status==429 && [retry isKindOfClass:NSString.class] && RMatch(retry,@"^[0-9]{1,6}$"))message=[message stringByAppendingFormat:@" Retry-After：%@",retry];if(error)*error=ORError(message,status);return nil;}
+    NSInteger status=reply.statusCode;if(status<200 || status>=300){NSString *message=status==429 ? @"免费额度或速率受限，已停止请求；请按供应商额度恢复时间重试。":(status==401 || status==403 ? @"密钥、账户资格或访问权限无效，请检查 Gemini 项目。":(status==400 || status==413 ? @"材料或请求超出接口支持范围，本次未完整检查。":@"Gemini 请求失败，可重试；没有切换其他服务。"));if(ORProviderKeyError(data))message=@"Google 拒绝了此密钥，请从 AI Studio 重新复制完整密钥，并检查是否已撤销、过期或限制了接口。";else if(status==400 && [method isEqual:@"GET"] && [url.path hasPrefix:@"/v1beta/models/"])message=@"Google 拒绝密钥或模型访问请求（HTTP 400）。请核对 AI Studio 密钥及模型权限；不是作业材料错误。";NSString *retry=reply.allHeaderFields[@"Retry-After"] ?: reply.allHeaderFields[@"retry-after"];if(status==429 && [retry isKindOfClass:NSString.class] && RMatch(retry,@"^[0-9]{1,6}$"))message=[message stringByAppendingFormat:@" Retry-After：%@",retry];if(error)*error=ORError(message,status);return nil;}
     if(data.length>8*1024*1024){if(error)*error=ORError(@"响应超过安全限制，本次未完整检查。",1);return nil;}return data ?: NSData.data;
 }
 - (NSDictionary *)json:(NSString *)method path:(NSString *)path body:(NSDictionary *)body error:(NSError **)error {
@@ -73,10 +89,10 @@ NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
     if(!data.length)return @{};id result=[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];if(![result isKindOfClass:NSDictionary.class]){if(error)*error=ORError(@"接口没有返回有效 JSON，已保留本机报告。",1);return nil;}return result;
 }
 - (BOOL)testConnectionWithKey:(NSString *)key error:(NSError **)error {
-    if(!ORClaim(error))return NO;self.cleaning=NO;@try{self.key=key.length ? key:[self credential];if(!ORKey(self.key)){if(error)*error=ORError(@"请填写有效的 Gemini API 密钥。",1);return NO;}NSDictionary *model=[self json:@"GET" path:[@"/v1beta/models/" stringByAppendingString:ORModel] body:nil error:error];BOOL available=[model[@"supportedGenerationMethods"] isKindOfClass:NSArray.class] && [model[@"supportedGenerationMethods"] containsObject:@"generateContent"];if(model && !available && error)*error=ORError(@"当前项目无法使用指定模型，请核对模型和账户资格。",1);return available;}@finally{[self.session invalidateAndCancel];self.session=nil;self.key=nil;ORRelease();}
+    if(!ORClaim(error))return NO;self.cleaning=NO;@try{key=ORNormalizedKey(key);self.key=key.length ? key:[self credential];if(!ORKey(self.key)){if(error)*error=ORError(ORKeyHint(),1);return NO;}NSDictionary *model=[self json:@"GET" path:[@"/v1beta/models/" stringByAppendingString:ORModel] body:nil error:error];BOOL available=[model[@"supportedGenerationMethods"] isKindOfClass:NSArray.class] && [model[@"supportedGenerationMethods"] containsObject:@"generateContent"];if(model && !available && error)*error=ORError(@"当前项目无法使用指定模型，请核对模型和账户资格。",1);return available;}@finally{[self.session invalidateAndCancel];self.session=nil;self.key=nil;ORRelease();}
 }
 - (NSUInteger)cleanupWithKey:(NSString *)key error:(NSError **)error {
-    if(!ORClaim(error))return ORUploads().count;self.cleaning=YES;@try{self.key=key.length ? key:[self credential];if(!ORKey(self.key)){if(error)*error=ORError(@"无法读取有效密钥，副本仍待清理。",1);return ORUploads().count;}
+    if(!ORClaim(error))return ORUploads().count;self.cleaning=YES;@try{key=ORNormalizedKey(key);self.key=key.length ? key:[self credential];if(!ORKey(self.key)){if(error)*error=ORError(@"无法读取有效密钥，副本仍待清理。",1);return ORUploads().count;}
         NSDate *cleanupDeadline=[NSDate dateWithTimeIntervalSinceNow:15];
         for(NSDictionary *record in ORUploads()){
             if(self.cancelled || cleanupDeadline.timeIntervalSinceNow<=0)break;if(!ORName(record[@"name"]))continue;
