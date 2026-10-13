@@ -14,7 +14,7 @@ int main(void) {
         parts.year = 2026; parts.month = 9; parts.day = 28; parts.hour = 12;
         NSDate *now = [calendar dateFromComponents:parts];
 
-        NSDictionary *message = DDLFieldsFromAnnouncement(@"张老师 2026年9月28日 20:30\n请于10月1日 23:59前提交数据结构实验报告", now, calendar);
+        NSDictionary *message = DDLFieldsFromAnnouncement(@"张老师 2026年9月28日 20:30\n请于2026年10月1日 23:59前提交数据结构实验报告", now, calendar);
         NSDateComponents *due = [calendar components:NSCalendarUnitYear | NSCalendarUnitMonth | NSCalendarUnitDay | NSCalendarUnitHour | NSCalendarUnitMinute fromDate:message[@"due"]];
         Check(due.year == 2026 && due.month == 10 && due.day == 1 && due.hour == 23 && due.minute == 59, @"应优先识别消息中的截止日期，而非聊天时间");
         Check([message[@"title"] containsString:@"数据结构实验报告"], @"应提取提交的任务名称");
@@ -26,6 +26,7 @@ int main(void) {
 
         message = DDLFieldsFromAnnouncement(@"截止：2026-10-15 18:00", now, calendar);
         Check(message[@"due"] != nil && message[@"title"] == nil, @"只有日期时不应编造任务名称");
+        Check(!DDLFieldsFromAnnouncement(@"截止 October 16, 9 PM",now,calendar)[@"due"],@"missing year must not be inferred");
         message = DDLFieldsFromAnnouncement(@"请按时交作业", now, calendar);
         Check(message[@"due"] == nil, @"无日期的通知需要人工确认");
         message = DDLFieldsFromAnnouncement(@"10月32日截止", now, calendar);

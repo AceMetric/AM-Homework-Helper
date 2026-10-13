@@ -278,7 +278,7 @@ static void GitTests(void) {
     NSString *oldKey = [NSString stringWithFormat:@"v2|teacher/course|README.md|%@|Asia/Shanghai", Git(f[@"seed"], @[@"rev-parse", @"HEAD:README.md"])];
     cache[oldKey] = @[];
     NSDictionary *scan = [service scanCourse:f cache:cache error:&error]; Check([scan[@"candidates"] count] == 1, @"scan teacher main");
-    BOOL newCache = NO; for (NSString *key in cache) if ([key hasPrefix:@"recognition-v6|"] && [cache[key] isKindOfClass:NSArray.class] && [cache[key] count] == 1) newCache = YES;
+    BOOL newCache = NO; for (NSString *key in cache) if ([key hasPrefix:@"recognition-v7|"] && [cache[key] isKindOfClass:NSArray.class] && [cache[key] count] == 1) newCache = YES;
     Check(newCache && [cache[oldKey] count] == 0, @"new parser does not reuse empty results cached by older parser");
     NSUInteger cacheCount = cache.count;
     Check([[service scanCourse:f cache:cache error:&error][@"candidates"] firstObject] != nil && cache.count == cacheCount, @"scan cache reuse");
@@ -347,7 +347,7 @@ static void GitTests(void) {
     NSMutableDictionary *oldCache = NSMutableDictionary.dictionary;
     oldCache[[NSString stringWithFormat:@"v2|teacher/course|assignment-04.md|%@|Asia/Shanghai", Git(seed, @[@"rev-parse", @"HEAD:assignment-04.md"])]] = @[];
     scan = [service scanCourse:f cache:oldCache error:&error];
-    Check([scan[@"branch"] isEqual:@"lesson"] && [scan[@"candidates"] count] == 2, @"current teacher default branch scanned and duplicates collapsed");
+    Check([scan[@"branch"] isEqual:@"lesson"] && [scan[@"candidates"] count] == 3, @"current teacher default branch retains separate sources even with identical titles and dates");
     NSDictionary *weeklyCandidate = nil;
     for (NSDictionary *item in scan[@"candidates"]) if ([item[@"path"] isEqual:@"assignment-04.md"]) weeklyCandidate = item;
     Check([weeklyCandidate[@"deadlineText"] isEqual:@"本周日 21:00"] && [weeklyCandidate[@"needsDate"] boolValue] && [weeklyCandidate[@"snippet"] containsString:@"牛顿定律"], @"Git blob scan discovers screenshot-style assignment despite old empty cache");

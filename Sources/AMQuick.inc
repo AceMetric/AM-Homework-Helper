@@ -5,17 +5,16 @@ NSDictionary *AMQuickMaterial(NSString *text,NSDate *reference,NSString *zone) {
 }
 NSArray *AMQuickParse(NSString *text,NSString *sourceID,NSDate *reference,NSCalendar *calendar) {
     if(![text isKindOfClass:NSString.class] || text.length>100000 || !RTrim(text).length)return @[];
-    NSMutableArray *blocks=NSMutableArray.array;NSMutableString *block=NSMutableString.string;
-    NSString *normalized=[text stringByReplacingOccurrencesOfString:@"；" withString:@"\n\n"];
-    for(NSString *line in [normalized componentsSeparatedByString:@"\n"]){BOOL heading=RMatch(line,@"^\\s*(?:#{1,6}\\s+|[0-9一二三四五六七八九十]+[、.)）]\\s*)");if(heading && RTrim(block).length){[blocks addObject:block.copy];[block setString:@""];}if(!RTrim(line).length && RMatch(block,@"截止|提交|完成|作业|报告|实验|论文")){[blocks addObject:block.copy];[block setString:@""];}else [block appendFormat:@"%@\n",line];}
-    if(RTrim(block).length)[blocks addObject:block.copy];if(!blocks.count)[blocks addObject:text];
-    NSMutableArray *entries=NSMutableArray.array;NSUInteger index=0;
-    for(NSString *part in blocks){
+    NSArray *blocks=SSActivityBlocks(text,@"material.md",YES);
+    NSMutableArray *entries=NSMutableArray.array;NSMutableDictionary *anchors=NSMutableDictionary.dictionary;
+    for(NSDictionary *block in blocks){NSString *part=block[@"raw"];
         NSDictionary *fields=DDLFieldsFromAnnouncement(part,reference,calendar);if(!fields[@"title"] && !fields[@"due"])continue;
         NSArray *rules=SSAssignmentsFromDocument([@"# 作业\n" stringByAppendingString:part],@"local/material",@"material.md",RHash(text),reference,calendar);NSDictionary *rule=rules.firstObject;
-        NSMutableDictionary *entry=[@{@"id":[NSString stringWithFormat:@"%@:%lu",sourceID,(unsigned long)index++],@"sourceID":sourceID,@"referenceDate":reference,@"version":RHash(text),@"title":fields[@"title"] ?: @"",@"subject":fields[@"subject"] ?: @"其他",@"notes":@"",@"evidence":RTrim(part),@"deadlineEvidence":rule[@"dateText"] ?: @"",@"timeZone":rule[@"timeZone"] ?: calendar.timeZone.name,@"dateText":@"",@"reminderOffsets":DDLDefaultReminderOffsets(),@"selected":@YES,@"edited":@NO} mutableCopy];
-        NSString *summary=RTrim(part);NSRegularExpression *deadline=[NSRegularExpression regularExpressionWithPattern:@"(?m)^.*(?:截止|deadline|ddl).*$" options:NSRegularExpressionCaseInsensitive error:NULL];summary=RTrim([deadline stringByReplacingMatchesInString:summary options:0 range:NSMakeRange(0,summary.length) withTemplate:@""]);entry[@"summary"]=summary.length>240 ? [[summary substringToIndex:240] stringByAppendingString:@"…"]:summary;entry[@"submissionRequirements"]=@"";
-        if(summary.length && ![summary isEqual:entry[@"title"]])entry[@"notes"]=[@"作业内容\n" stringByAppendingString:entry[@"summary"]];
+        NSDictionary *enriched=rule ? SSEnrichDiscovery(rule):@{};
+        NSString *anchor=SSActivityAnchor(block,blocks.count);NSUInteger ordinal=[anchors[anchor] unsignedIntegerValue]+1;anchors[anchor]=@(ordinal);
+        NSMutableDictionary *entry=[@{@"id":[NSString stringWithFormat:@"%@:%@:%lu",sourceID,anchor,(unsigned long)ordinal],@"sourceID":sourceID,@"referenceDate":reference,@"version":RHash(text),@"title":fields[@"title"] ?: @"",@"subject":fields[@"subject"] ?: @"其他",@"notes":@"",@"evidence":RTrim(part),@"deadlineEvidence":rule[@"dateText"] ?: @"",@"timeZone":rule[@"timeZone"] ?: calendar.timeZone.name,@"dateText":@"",@"reminderOffsets":DDLDefaultReminderOffsets(),@"selected":@YES,@"edited":@NO} mutableCopy];
+        if(![block[@"title"] isEqual:@"material"] && ![block[@"title"] isEqual:@"待确认作业"] && [block[@"title"] length])entry[@"title"]=block[@"title"];
+        entry[@"summary"]=enriched[@"summary"] ?: part;entry[@"submissionRequirements"]=enriched[@"submissionRequirements"] ?: @"";entry[@"notes"]=SSSuggestedNotes(entry);
         NSDate *due=rule[@"due"] ?: fields[@"due"];NSArray *warnings=rule[@"warnings"] ?: @[];
         if([rule[@"relative"] boolValue]){NSDictionary *suggestion=SSApplyDateReference(rule,reference,@"local-message",calendar);due=suggestion[@"suggestedDue"];entry[@"hint"]=@"相对日期按消息／录入日期推算，请核对。";}
         else if(warnings.count && ![warnings.firstObject containsString:@"未说明"]){due=nil;entry[@"hint"]=[warnings componentsJoinedByString:@"；"];}
