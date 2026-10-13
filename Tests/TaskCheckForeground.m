@@ -33,7 +33,7 @@ int main(void){@autoreleasepool{
         [NSRunLoop.mainRunLoop addTimer:dismiss forMode:NSModalPanelRunLoopMode];
         ((NSModalResponse(*)(id,SEL))modal)(panel,@selector(runModal));[dismiss invalidate];return NSModalResponseOK;
     }));
-    Replace(NSOpenPanel.class,@selector(URLs),imp_implementationWithBlock(^NSArray *(NSOpenPanel *panel){return @[file];}));
+    Replace(NSOpenPanel.class,@selector(URLs),imp_implementationWithBlock(^NSArray *(NSOpenPanel *panel){return @[[NSURL fileURLWithPath:root]];}));
     Replace(NSOpenPanel.class,@selector(URL),imp_implementationWithBlock(^NSURL *(NSOpenPanel *panel){return panel.canChooseDirectories ? [NSURL fileURLWithPath:root]:file;}));
     dispatch_suspend(courses.queue);courses.busy=YES;courses.git.readsCancellable=YES;courses.operationPhase=@"Synthetic teacher scan";
     NSButton *button=(NSButton *)AMFindButton(app.taskDetails,@selector(checkSelectedTask:),0,task[@"id"]);Check(button!=nil,@"real completed-task button present");[button performClick:nil];

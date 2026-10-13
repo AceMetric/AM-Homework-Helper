@@ -56,8 +56,13 @@ void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight weight, NS
 @end
 
 @implementation ActionButton
+@synthesize tone=_tone;
+@synthesize symbol=_symbol;
+- (void)setTone:(NSInteger)tone {_tone=tone;self.bordered=tone!=3;self.bezelColor=tone==1 ? Accent():nil;self.contentTintColor=tone==1 ? NSColor.whiteColor:nil;self.needsDisplay=YES;}
+- (void)setSymbol:(NSString *)symbol {_symbol=symbol.copy;if(self.tone!=3){self.image=symbol.length ? [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil]:nil;self.imagePosition=symbol.length ? (self.title.length ? NSImageLeft:NSImageOnly):NSNoImage;}self.needsDisplay=YES;}
+
 - (instancetype)initWithFrame:(NSRect)frame {
-    if ((self = [super initWithFrame:frame])) { self.bordered = NO; self.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium]; [self setButtonType:NSButtonTypeMomentaryPushIn]; self.focusRingType = NSFocusRingTypeNone; self.allowsHoverFill = YES; }
+    if ((self = [super initWithFrame:frame])) { self.bordered = YES; self.bezelStyle=NSBezelStyleRounded; self.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium]; [self setButtonType:NSButtonTypeMomentaryPushIn]; self.focusRingType = NSFocusRingTypeDefault; self.allowsHoverFill = YES; }
     return self;
 }
 - (BOOL)isFlipped { return YES; }
@@ -69,6 +74,7 @@ void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight weight, NS
 - (void)mouseEntered:(NSEvent *)event { self.hovered = YES; self.needsDisplay = YES; }
 - (void)mouseExited:(NSEvent *)event { self.hovered = NO; self.needsDisplay = YES; }
 - (void)drawRect:(NSRect)dirtyRect {
+    if(self.tone!=3){[super drawRect:dirtyRect];return;}
     NSColor *fill = self.tone == 1 && self.enabled ? Accent() : (self.selected ? Tint() : Card());
     BOOL hoverFill = self.allowsHoverFill && (self.hovered || self.highlighted);
     if (self.tone == 3 && !self.selected && !hoverFill) fill = NSColor.clearColor;
@@ -159,20 +165,12 @@ void ThemeEditor(NSTextView *editor) {
 @implementation PastelPopUpButton
 - (instancetype)initWithFrame:(NSRect)frame pullsDown:(BOOL)pullsDown {
     if ((self = [super initWithFrame:frame pullsDown:pullsDown])) {
-        self.bordered = NO; self.focusRingType = NSFocusRingTypeNone; self.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
+        self.bordered = YES; self.bezelStyle = NSBezelStyleRounded; self.focusRingType = NSFocusRingTypeDefault; self.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
         self.menu.delegate = self;
     }
     return self;
 }
-- (void)drawRect:(NSRect)rect {
-    DrawFieldChrome(self.bounds, self.window.firstResponder == self || self.highlighted, YES);
-    CGFloat x = 11, y = floor((NSHeight(self.bounds) - 18) / 2);
-    if (self.selectedItem.image) { [self.selectedItem.image drawInRect:NSMakeRect(x, y + 1, 14, 14) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil]; x += 21; }
-    DrawText(self.titleOfSelectedItem ?: @"", NSMakeRect(x, y, MAX(0, NSWidth(self.bounds) - x - 27), 18), self.font.pointSize, NSFontWeightMedium, self.enabled ? Ink() : Muted(), NSTextAlignmentLeft);
-    NSBezierPath *chevron = [NSBezierPath bezierPath]; CGFloat cx = NSWidth(self.bounds) - 16, cy = NSMidY(self.bounds);
-    [chevron moveToPoint:NSMakePoint(cx - 3, cy - 1.5)]; [chevron lineToPoint:NSMakePoint(cx, cy + 1.5)]; [chevron lineToPoint:NSMakePoint(cx + 3, cy - 1.5)];
-    [Muted() setStroke]; chevron.lineWidth = 1.4; [chevron stroke];
-}
+- (void)drawRect:(NSRect)rect { [super drawRect:rect]; }
 - (void)menuWillOpen:(NSMenu *)menu { for (NSMenuItem *item in menu.itemArray) item.view = nil; }
 - (BOOL)becomeFirstResponder { BOOL result = [super becomeFirstResponder]; self.needsDisplay = YES; return result; }
 - (BOOL)resignFirstResponder { BOOL result = [super resignFirstResponder]; self.needsDisplay = YES; return result; }
@@ -180,26 +178,13 @@ void ThemeEditor(NSTextView *editor) {
 
 
 @implementation ThemeSegmentedControl
-- (void)drawRect:(NSRect)dirtyRect {
-    NSRect bounds = NSInsetRect(self.bounds, 0.5, 0.5);
-    [Panel() setFill]; [[NSBezierPath bezierPathWithRoundedRect:bounds xRadius:9 yRadius:9] fill];
-    NSInteger count = self.segmentCount; if (!count) return;
-    CGFloat width = NSWidth(bounds) / count;
-    for (NSInteger index = 0; index < count; index++) {
-        NSRect segment = NSMakeRect(NSMinX(bounds) + index * width, NSMinY(bounds), width, NSHeight(bounds));
-        BOOL selected = index == self.selectedSegment;
-        if (selected) { [Emphasis() setFill]; [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(segment, 1, 1) xRadius:8 yRadius:8] fill]; }
-        else if (index > 0) { [Line() setStroke]; NSBezierPath *divider = [NSBezierPath bezierPath]; [divider moveToPoint:NSMakePoint(NSMinX(segment), NSMinY(segment) + 7)]; [divider lineToPoint:NSMakePoint(NSMinX(segment), NSMaxY(segment) - 7)]; [divider stroke]; }
-        DrawText([self labelForSegment:index], NSInsetRect(segment, 4, 5), 12, selected ? NSFontWeightSemibold : NSFontWeightMedium, selected ? Accent() : Ink(), NSTextAlignmentCenter);
-    }
-    if (self.window.firstResponder == self) { [Accent() setStroke]; [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(bounds, 1.5, 1.5) xRadius:8 yRadius:8] stroke]; }
-}
+- (void)drawRect:(NSRect)dirtyRect { [super drawRect:dirtyRect]; }
 - (void)mouseDown:(NSEvent *)event { [super mouseDown:event]; self.needsDisplay = YES; }
 - (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay = YES; }
 @end
 ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL action) {
     ThemeSegmentedControl *control = [[ThemeSegmentedControl alloc] initWithFrame:NSZeroRect]; control.segmentCount = labels.count;
     for (NSInteger index = 0; index < (NSInteger)labels.count; index++) [control setLabel:labels[index] forSegment:index];
-    control.focusRingType = NSFocusRingTypeNone; control.trackingMode = NSSegmentSwitchTrackingSelectOne; control.target = target; control.action = action; control.selectedSegment = 0;
+    control.segmentStyle=NSSegmentStyleRounded; control.focusRingType = NSFocusRingTypeDefault; control.trackingMode = NSSegmentSwitchTrackingSelectOne; control.target = target; control.action = action; control.selectedSegment = 0;
     return control;
 }

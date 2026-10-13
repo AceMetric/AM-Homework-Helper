@@ -60,6 +60,7 @@ import AppKit
         check(courseReview.review.notes=="未保存草稿" && courseReview.review.current?["blobSHA"] as? String=="v1","course background update preserves draft and source version")
         courseReview.update([],selected:"",information:"",empty:"没有匹配",paused:false)
         check(courseReview.current?["id"] as? String=="task-uuid" && courseReview.review.notes=="未保存草稿","search filtering cannot hide or destroy course draft")
+        check(courseReview.listSelection==nil,"filtered draft cannot leave a removed row selected in the native list")
         courseReview.review.save={_ in "写入失败"};check(!courseReview.review.saveCurrent(advance:false) && courseReview.review.dirty,"inline save failure retains notes")
         let removal=CourseState();removal.update([record as NSDictionary],selected:"source-1",information:"",empty:"",paused:false)
         removal.review.dirty=true

@@ -260,7 +260,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
         if ([fields[0] isEqual:@"120000"]) { [skipped addObject:[file stringByAppendingString:@"：符号链接，未读取外部文件"]]; continue; }
         NSUInteger size = [fields[3] integerValue];
         if (size > 1024 * 1024 || total + size > 30 * 1024 * 1024) { [skipped addObject:[file stringByAppendingString:@"：超出扫描大小限制"]]; continue; } total += size;
-        NSString *key = [NSString stringWithFormat:@"document-v6|%@|%@|%@", course[@"upstream"], file, fields[2]];
+        NSString *key = [NSString stringWithFormat:@"document-v7|%@|%@|%@", course[@"upstream"], file, fields[2]];
         NSString *text = [cache[key] isKindOfClass:NSString.class] ? cache[key] : nil;
         if (!text) {
             SSGitResult *blob = [self checked:@[@"cat-file", @"blob", fields[2]] in:path token:nil error:error]; if (!blob) return nil;

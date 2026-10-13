@@ -278,7 +278,7 @@ static void GitTests(void) {
     NSString *oldKey = [NSString stringWithFormat:@"v2|teacher/course|README.md|%@|Asia/Shanghai", Git(f[@"seed"], @[@"rev-parse", @"HEAD:README.md"])];
     cache[oldKey] = @[];
     NSDictionary *scan = [service scanCourse:f cache:cache error:&error]; Check([scan[@"candidates"] count] == 1, @"scan teacher main");
-    BOOL newCache = NO; for (NSString *key in cache) if ([key hasPrefix:@"recognition-v7|"] && [cache[key] isKindOfClass:NSArray.class] && [cache[key] count] == 1) newCache = YES;
+    BOOL newCache = NO; for (NSString *key in cache) if ([key hasPrefix:@"recognition-v8|"] && [cache[key] isKindOfClass:NSArray.class] && [cache[key] count] == 1) newCache = YES;
     Check(newCache && [cache[oldKey] count] == 0, @"new parser does not reuse empty results cached by older parser");
     NSUInteger cacheCount = cache.count;
     Check([[service scanCourse:f cache:cache error:&error][@"candidates"] firstObject] != nil && cache.count == cacheCount, @"scan cache reuse");
