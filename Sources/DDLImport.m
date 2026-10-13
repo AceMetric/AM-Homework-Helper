@@ -16,14 +16,14 @@ static NSString *ImportGroup(NSString *text, NSTextCheckingResult *match, NSUInt
 }
 
 static NSDate *ImportDueDate(NSString *text, NSDate *now, NSCalendar *calendar) {
-    NSString *normalized=AMReplace(AMReplace(text,@"[：]",@":"),@"[*_`]",@"");
+    NSString *normalized=AMReplace(AMReplace(AMReplace(AMReplace(text,@"[：]",@":"),@"[／]",@"/"),@"[－–]",@"-"),@"[*_`]",@"");
     NSArray *matches=[AMRule(AMDatePattern()) matchesInString:normalized options:0 range:NSMakeRange(0,normalized.length)];
     NSMutableArray *explicit=NSMutableArray.array,*fallback=NSMutableArray.array;BOOL unresolved=NO;
     for(NSUInteger i=0;i<matches.count;i++){NSTextCheckingResult *match=matches[i];NSRange row=[normalized lineRangeForRange:match.range];NSUInteger end=NSMaxRange(row);if(i+1<matches.count)end=MIN(end,[matches[i+1] range].location);
         NSString *line=[normalized substringWithRange:row],*tail=[normalized substringWithRange:NSMakeRange(match.range.location,end-match.range.location)];
         if(AMHas(line,@"^(?:发布|更新|published|updated|created|[^\\n]*老师[ :：])") && !AMDeadlineCue(line))continue;
         if(!AMHas(tail,@"[0-9](?:[:点时]|\\s*[ap]\\.?m)") && NSMaxRange(row)<normalized.length){NSRange next=[normalized lineRangeForRange:NSMakeRange(NSMaxRange(row),0)];NSString *clock=[normalized substringWithRange:next];if(AMHas(clock,@"^\\s*(?:时间[:：]\\s*)?[0-9]{1,2}(?:[:点时]|\\s*[ap]\\.?m)"))tail=[tail stringByAppendingString:clock];}
-        NSDictionary *fields=AMDateFields([normalized substringWithRange:match.range],tail,calendar);NSDate *date=fields[@"due"];
+        NSDictionary *fields=AMDateFields([normalized substringWithRange:match.range],[[line substringToIndex:match.range.location-row.location] stringByAppendingString:tail],calendar);NSDate *date=fields[@"due"];
         if([fields[@"relative"] boolValue] && fields[@"clock"] && ![fields[@"warnings"] count]){NSCalendar *zone=calendar.copy;zone.timeZone=[NSTimeZone timeZoneWithName:fields[@"timeZone"]];NSString *token=fields[@"relativeToken"];if(!AMHas(token,@"末|^(?:本|这|下)周$"))date=DDLParseDate([token stringByAppendingFormat:@" %@",fields[@"clock"]],now,zone);}
         if(!date && AMDeadlineCue(line))unresolved=YES;
         if(date)[(AMDeadlineCue(line) || AMHas(line,@"提交|完成|submit|before|by") ? explicit:fallback) addObject:date];

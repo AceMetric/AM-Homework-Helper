@@ -3,13 +3,16 @@ import SwiftUI
 
 // One semantic palette for SwiftUI and the existing AppKit drawing layer.
 @objc(AMAppearance) public final class AMAppearance:NSObject {
-    private static func layer(_ light:UInt32,_ dark:UInt32)->NSColor {NSColor(name:nil){appearance in
-        let value=appearance.bestMatch(from:[.aqua,.darkAqua]) == .darkAqua ? dark:light
-        return NSColor(srgbRed:CGFloat((value >> 16)&255)/255,green:CGFloat((value >> 8)&255)/255,blue:CGFloat(value&255)/255,alpha:1)
-    }}
-    @objc public static var canvas:NSColor {layer(0xf5f6f8,0x242528)}
-    @objc public static var surface:NSColor {layer(0xffffff,0x2e3034)}
-    @objc public static var sidebar:NSColor {layer(0xedefF3,0x202125)}
+    private static func controlLayer(_ fraction:CGFloat)->NSColor {
+        NSColor(name:nil){appearance in
+            var result=NSColor.windowBackgroundColor
+            appearance.performAsCurrentDrawingAppearance {result=NSColor.controlBackgroundColor.blended(withFraction:fraction,of:.labelColor) ?? .windowBackgroundColor}
+            return result
+        }
+    }
+    @objc public static var canvas:NSColor {controlLayer(0.04)}
+    @objc public static var surface:NSColor {.controlBackgroundColor}
+    @objc public static var sidebar:NSColor {controlLayer(0.065)}
     @objc public static var separator:NSColor {.separatorColor}
     @objc public static var ink:NSColor {.labelColor}
     @objc public static var muted:NSColor {.secondaryLabelColor}
@@ -22,11 +25,11 @@ private struct WorkspaceSection<Content:View>:View {
     let content:Content
     init(_ title:String,@ViewBuilder content:()->Content){self.title=title;self.content=content()}
     var body:some View {
-        VStack(alignment:.leading,spacing:12){Text(title).font(.system(size:13,weight:.semibold));content}
-            .padding(16).frame(maxWidth:.infinity,alignment:.leading)
+        VStack(alignment:.leading,spacing:8){Text(title).font(.system(size:13,weight:.semibold));content}
+            .padding(12).frame(maxWidth:.infinity,alignment:.leading)
             .background(Color(nsColor:AMAppearance.surface))
-            .overlay(RoundedRectangle(cornerRadius:10).stroke(Color(nsColor:contrast == .increased ? AMAppearance.muted:AMAppearance.separator).opacity(contrast == .increased ? 1:0.55),lineWidth:contrast == .increased ? 1.5:0.5))
-            .clipShape(RoundedRectangle(cornerRadius:10))
+            .overlay(RoundedRectangle(cornerRadius:6).stroke(Color(nsColor:contrast == .increased ? AMAppearance.muted:AMAppearance.separator).opacity(contrast == .increased ? 1:0.55),lineWidth:contrast == .increased ? 1.5:0.5))
+            .clipShape(RoundedRectangle(cornerRadius:6))
     }
 }
 private func string(_ record: NSDictionary, _ key: String) -> String { record[key] as? String ?? "" }
@@ -587,6 +590,8 @@ private struct SettingsWorkspace:View {
 }
 
 @MainActor final class CourseState: ObservableObject {
+    @Published var summaries:[NSDictionary]=[]
+    @Published var showSummary=false
     @Published var records:[NSDictionary]=[]
     @Published var selected:String?
     @Published var information=""
@@ -608,6 +613,7 @@ private struct SettingsWorkspace:View {
         }
     }
     var current:NSDictionary? {records.first{identifier($0)==selected} ?? (review.dirty ? draftRow:nil)}
+    var listSelection:String? {records.contains{identifier($0)==selected} ? selected:nil}
     func reviewRecord(_ record:NSDictionary)->NSDictionary? {
         if let source=record["reviewRecord"] as? NSDictionary {return source}
         if !flag(record,"confirmed") && (string(record,"kind").isEmpty || string(record,"kind")=="assignment") {return record}
@@ -615,6 +621,7 @@ private struct SettingsWorkspace:View {
     }
     @discardableResult func select(_ id:String)->Bool {
         guard let record=records.first(where:{identifier($0)==id}) else{return false}
+        if selected == id && draftRow != nil {return true}
         if selected != id && !review.resolve(){return false}
         selected=id;draftRow=record
         if let source=reviewRecord(record) {review.refresh([source])} else {review.refresh([])}
@@ -639,7 +646,7 @@ private struct CourseWorkspace:View {
     @ObservedObject var state:CourseState
     private func kind(_ record:NSDictionary)->String {flag(record,"confirmed") ? (flag(record,"completed") ? "已完成":"待完成") : string(record,"reviewStatus")=="有更新" ? "有更新，待审核" : ["assignment":"作业","exam":"考试","classroom":"课上任务","unknown":"待确认类型"][string(record,"kind")] ?? "作业"}
     private var entries:some View {
-        List(selection:Binding(get:{state.selected},set:{if let id=$0 {state.select(id)}})) {
+        List(selection:Binding(get:{state.listSelection},set:{if let id=$0, id != state.selected {DispatchQueue.main.async{if state.records.contains(where:{identifier($0)==id}){state.select(id)}}}})) {
             ForEach(workspaceRows(state.records)) { row in
                 let record=row.record
                 VStack(alignment:.leading,spacing:6) {
@@ -685,9 +692,15 @@ private struct CourseWorkspace:View {
     private var detailPane:some View {
         VStack(spacing:0){WorkspaceHint(key:"course-review",text:"核对侧边的名称、截止时间和备注后确认；保存成功即移出审核列表。").padding(.horizontal,12);ReviewFeedback(state:state.review).padding(.horizontal,12);details;if let record=state.current,!flag(record,"confirmed"),state.reviewRecord(record) != nil {Divider();ReviewSaveBar(state:state.review,advance:false).padding(12)}}
     }
+    private var summaries:some View {
+        List{ForEach(workspaceRows(state.summaries)){row in let r=row.record
+            HStack(spacing:12){VStack(alignment:.leading,spacing:6){Label(string(r,"name"),systemImage:"books.vertical").fontWeight(.medium);Text("新作业 \((r["newCount"] as? NSNumber)?.intValue ?? 0) · 更新建议 \((r["updateCount"] as? NSNumber)?.intValue ?? 0)").font(.caption);Text(string(r,"status")).font(.caption).foregroundStyle(flag(r,"failed") ? Color.orange:Color.secondary).fixedSize(horizontal:false,vertical:true)};Spacer();WorkspaceButton(title:"\((r["pending"] as? NSNumber)?.intValue ?? 0) 项待审核 · 查看结果",enabled:true,prominent:false,identity:"course-summary-"+identifier(r)){DispatchQueue.main.async{state.action?("course-result",identifier(r))}}.fixedSize()}.padding(.vertical,8)
+        }}.listStyle(.inset)
+    }
     var body:some View {
         GeometryReader { geometry in
-            if state.records.isEmpty {detailPane}
+            if state.showSummary {summaries}
+            else if state.records.isEmpty {detailPane}
             else if geometry.size.width<760 {VSplitView{entries.frame(minHeight:160,idealHeight:220);detailPane.frame(minHeight:180)}}
             else {HSplitView{entries.frame(idealWidth:300,maxWidth:360);detailPane}}
         }.font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent))
@@ -705,6 +718,7 @@ private struct CourseWorkspace:View {
     @objc public func discardChanges(){state.review.dirty=false;state.review.refresh(state.review.records)}
     @objc public func saveCurrent()->Bool {state.review.saveCurrent(advance:false)}
     @objc public func selectRecord(withID id:String)->Bool {state.select(id)}
+    @objc public func showCourseSummaries(_ records:[NSDictionary],visible:Bool){state.summaries=workspaceRecords(records);state.showSummary=visible}
     @objc public func updateRecords(_ records:[NSDictionary],selected:String,information:String,empty:String,paused:Bool){state.update(records,selected:selected,information:information,empty:empty,paused:paused)}
     private func scrollViews(_ view:NSView)->[NSScrollView] {var result:[NSScrollView]=[];if let scroll=view as? NSScrollView {result.append(scroll)};for child in view.subviews {result+=scrollViews(child)};return result}
     @objc public func scrollPositions()->[NSValue] {scrollViews(view).map{NSValue(point:$0.contentView.bounds.origin)}}
@@ -911,7 +925,7 @@ private struct WeeklyPlanningView:View {
         let parents=rows.filter{string($0,"subtaskID").isEmpty}.count
         return VStack(alignment:.leading,spacing:8){Text(string(section,"label")).font(.system(size:13,weight:.semibold));Text("\(parents) 项作业 · \(rows.count-parents) 个步骤").font(.caption2).foregroundStyle(.secondary)
             LazyVStack(spacing:8){ForEach(workspaceRows(rows)){row in item(row.record)};if rows.isEmpty{Text("暂无安排").font(.caption).foregroundStyle(.secondary).padding(.vertical,16).frame(maxWidth:.infinity)}}
-        }.padding(10).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(Color(nsColor:AMAppearance.sidebar).opacity(0.55)).clipShape(RoundedRectangle(cornerRadius:10))
+        }.padding(10).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(Color(nsColor:AMAppearance.sidebar).opacity(0.55)).clipShape(RoundedRectangle(cornerRadius:6))
         .onDrop(of:["public.utf8-plain-text"],isTargeted:nil){providers in
             guard let provider=providers.first,provider.canLoadObject(ofClass:NSString.self) else{return false}
             let sectionID=identifier(section);guard sectionID != "overdue" else{return false}
@@ -1003,6 +1017,11 @@ private struct CaptureTextEditor:NSViewRepresentable {
     @Published var selected:String?
     @Published var notice=""
     @Published var busy=false
+    @Published var showingOriginal=false
+    @Published var imageScale=1.0
+    @Published var ocrImage:NSImage?
+    @Published var ocrWarnings=""
+    @Published var parsedText=""
     @Published var explicitReference=false
     @Published var reference=Date()
     var courses:[NSDictionary]=[]
@@ -1032,21 +1051,23 @@ private struct QuickEntryView:View {
     var body:some View {GeometryReader{geo in VStack(alignment:.leading,spacing:12){
         HStack{Text("快速录入作业").font(.title2.bold());Spacer();Button("保存草稿并关闭"){state.send("close")}.keyboardShortcut(.cancelAction)}
         Text("粘贴通知、输入一句话或识别截图；核对后加入安排。").foregroundStyle(.secondary)
-        CaptureTextEditor(text:$state.text).frame(height:90).overlay(RoundedRectangle(cornerRadius:6).stroke(Color(nsColor:.separatorColor))).onChange(of:state.text){_ in state.send("draft")}
-        HStack{Button("粘贴"){state.send("paste")};Button("选择截图…"){state.send("image")};WorkspaceButton(title:"识别文字",enabled:!state.busy,prominent:true,identity:"quick-parse"){state.send("parse")}.fixedSize();Button("助手识别…"){state.send("skill")};Spacer();if state.busy{ProgressView().controlSize(.small)}}.disabled(state.busy)
+        HStack(alignment:.top,spacing:8){CaptureTextEditor(text:$state.text).frame(height:state.ocrImage == nil ? 90:150).overlay(RoundedRectangle(cornerRadius:6).stroke(Color(nsColor:.separatorColor)));if let image=state.ocrImage{VStack(alignment:.leading,spacing:4){Image(nsImage:image).resizable().scaledToFit().frame(maxHeight:100).accessibilityLabel("录入截图原图");ScrollView{Text(state.ocrWarnings).font(.caption).foregroundStyle(.orange).textSelection(.enabled)}.frame(height:40);HStack{Button("放大原图…"){state.showingOriginal=true};Button("关闭"){state.ocrImage=nil}.accessibilityLabel("关闭截图对照")}}.frame(width:min(260,geo.size.width * 0.36))}}.onChange(of:state.text){_ in state.send("draft")}.task(id:state.text){let value=state.text;try? await Task.sleep(nanoseconds:450_000_000);if !Task.isCancelled && !state.busy && !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && state.parsedText != value{state.send("source-changed")}}
+        HStack{Button("粘贴"){state.send("paste")};Button("选择截图…"){state.send("image")};WorkspaceButton(title:"重新识别",enabled:!state.busy,prominent:false,identity:"quick-parse"){state.send("parse")}.fixedSize();Button("助手识别…"){state.send("skill")};Spacer();if state.busy{ProgressView().controlSize(.small)}}.disabled(state.busy)
         HStack{Toggle("指定消息日期",isOn:$state.explicitReference).onChange(of:state.explicitReference){_ in state.send("draft")};if state.explicitReference{DatePicker("",selection:$state.reference).labelsHidden().onChange(of:state.reference){_ in state.send("draft")}};Spacer()}
         HStack{Button("全选"){for i in state.entries.indices{let copy=state.entries[i].mutableCopy() as! NSMutableDictionary;copy["selected"]=true;state.entries[i]=copy};state.send("draft")};Button("取消选择"){for i in state.entries.indices{let copy=state.entries[i].mutableCopy() as! NSMutableDictionary;copy["selected"]=false;state.entries[i]=copy};state.send("draft")};Text("已选 \(state.entries.filter{flag($0,"selected")}.count) / \(state.entries.count)").foregroundStyle(.secondary);Spacer()}
         if geo.size.width<760{VStack(spacing:0){rows.frame(height:150);Divider();details}}else{HStack(spacing:0){rows.frame(width:260);Divider();details}}
         Divider();Text(state.notice).font(.callout).foregroundStyle(Color(nsColor:.labelColor)).textSelection(.enabled).accessibilityIdentifier("quick-status")
-        HStack{Button("手动导入助手结果…"){state.send("import")};Spacer();WorkspaceButton(title:"确认选中作业…",enabled:!state.busy && state.entries.contains{flag($0,"selected")},prominent:true,identity:"quick-save",saveShortcut:true){state.send("save")}.fixedSize()}
-    }.padding(16).font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).accessibilityElement(children:.contain)}}
+        HStack{Button("手动导入助手结果…"){state.send("import")};Spacer();WorkspaceButton(title:"保存选中作业",enabled:!state.busy && state.entries.contains{flag($0,"selected")},prominent:true,identity:"quick-save",saveShortcut:true){state.send("save")}.fixedSize()}
+    }.padding(16).font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).accessibilityElement(children:.contain)
+    .sheet(isPresented:$state.showingOriginal){VStack(spacing:12){HStack{Text("截图原图").font(.headline);Spacer();Text("缩放");Slider(value:$state.imageScale,in:0.25...3).frame(width:140).accessibilityLabel("原图缩放");Button("完成"){state.showingOriginal=false}.keyboardShortcut(.cancelAction)};if let image=state.ocrImage{ScrollView([.horizontal,.vertical]){Image(nsImage:image).resizable().frame(width:image.size.width*state.imageScale,height:image.size.height*state.imageScale).accessibilityLabel("完整录入截图，可滚动查看")}}}.padding(16).frame(minWidth:620,idealWidth:800,minHeight:460,idealHeight:600)}}}
 }
 @objc(AMQuickEntryController) @MainActor public final class AMQuickEntryController:NSViewController {
     private let state=QuickEntryState()
     @objc public var actionHandler:((String,NSDictionary)->Void)? {didSet{state.action=actionHandler}}
     @objc public var snapshot:NSDictionary {state.snapshot}
-    @objc public func updateDraft(_ draft:NSDictionary,courses:[NSDictionary],notice:String,busy:Bool){state.text=string(draft,"text");state.entries=workspaceRecords(draft["entries"] as? [NSDictionary] ?? []);state.reference=draft["referenceDate"] as? Date ?? Date();state.explicitReference=flag(draft,"explicitReference");state.courses=workspaceRecords(courses);state.notice=notice;state.busy=busy;if !state.entries.contains(where:{recordIdentifier($0)==state.selected}){state.selected=state.entries.first.map{recordIdentifier($0)}}}
+    @objc public func updateDraft(_ draft:NSDictionary,courses:[NSDictionary],notice:String,busy:Bool){state.parsedText=(draft["material"] as? NSDictionary).map{string($0,"text")} ?? "";state.text=string(draft,"text");state.entries=workspaceRecords(draft["entries"] as? [NSDictionary] ?? []);state.reference=draft["referenceDate"] as? Date ?? Date();state.explicitReference=flag(draft,"explicitReference");state.courses=workspaceRecords(courses);state.notice=notice;state.busy=busy;if !state.entries.contains(where:{recordIdentifier($0)==state.selected}){state.selected=state.entries.first.map{recordIdentifier($0)}}}
     @objc public func setNotice(_ notice:String,busy:Bool){state.notice=notice;state.busy=busy}
+    @objc public func setOCRPreview(_ image:NSImage,warnings:String){state.ocrImage=image;state.ocrWarnings=warnings}
     public override func loadView(){view=NSHostingView(rootView:QuickEntryView(state:state))}
 }
 
@@ -1097,7 +1118,7 @@ private struct CheckScopeWorkspace:View {
         }}.listStyle(.inset).scrollContentBackground(.hidden).background(Color(nsColor:AMAppearance.surface)).clipShape(RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).stroke(Color(nsColor:AMAppearance.separator),lineWidth:0.5)).accessibilityLabel("检查范围文件清单")
     }
     private var detail:some View {
-        VStack(alignment:.leading,spacing:12){Text("范围说明").fontWeight(.semibold);ScrollView{VStack(alignment:.leading,spacing:12){if !state.chosen.isEmpty {Text(state.chosen).textSelection(.enabled);if let row=state.records.first(where:{string($0,"path")==state.chosen}),!string(row,"reason").isEmpty{Text(string(row,"reason")).foregroundStyle(.orange)}};Text("包含子文件夹。Markdown 引用的图片会自动关联、去重。检查边界为本次选择的文件夹；外部图片需要选择共同父目录。");Text("隐藏配置、依赖、缓存、构建目录和敏感文件已排除。排除文件及不支持类型不算检查通过。").foregroundStyle(.secondary)}}}.padding(16).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(Color(nsColor:AMAppearance.surface)).clipShape(RoundedRectangle(cornerRadius:10))
+        VStack(alignment:.leading,spacing:12){Text("范围说明").fontWeight(.semibold);ScrollView{VStack(alignment:.leading,spacing:12){if !state.chosen.isEmpty {Text(state.chosen).textSelection(.enabled);if let row=state.records.first(where:{string($0,"path")==state.chosen}),!string(row,"reason").isEmpty{Text(string(row,"reason")).foregroundStyle(.orange)}};Text("包含子文件夹。Markdown 引用的图片会自动关联、去重。检查边界为本次选择的文件夹；外部图片需要选择共同父目录。");Text("隐藏配置、依赖、缓存、构建目录和敏感文件已排除。排除文件及不支持类型不算检查通过。").foregroundStyle(.secondary)}}}.padding(16).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(Color(nsColor:AMAppearance.surface)).clipShape(RoundedRectangle(cornerRadius:6))
     }
 }
 private struct WorkspaceHeading:View {

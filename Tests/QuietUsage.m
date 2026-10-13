@@ -24,7 +24,7 @@ static id Element(NSView *root,NSString *identity){
         if([object isKindOfClass:NSView.class])[pending addObjectsFromArray:[object subviews]];
     }return nil;
 }
-static void Press(NSView *root,NSString *identity){[root layoutSubtreeIfNeeded];NSBitmapImageRep *bitmap=[root bitmapImageRepForCachingDisplayInRect:root.bounds];[root cacheDisplayInRect:root.bounds toBitmapImageRep:bitmap];Drain();id button=Element(root,identity);Check([button isKindOfClass:NSButton.class] && [button isEnabled],@"real review button is enabled offscreen");[button performClick:nil];Drain();}
+static void Press(NSView *root,NSString *identity){[root layoutSubtreeIfNeeded];Drain();id button=Element(root,identity);Check([button isKindOfClass:NSButton.class] && [button isEnabled],[NSString stringWithFormat:@"real button enabled: %@ (%@)",identity,NSStringFromClass([button class])]);[button performClick:nil];Drain();}
 int main(int argc,const char *argv[]){@autoreleasepool{
     if(!NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"] || ![NSProcessInfo.processInfo.arguments containsObject:@"--preview"])return 2;
     [NSApplication sharedApplication];
@@ -81,6 +81,10 @@ int main(int argc,const char *argv[]){@autoreleasepool{
     Press(courses.reviewWorkspace.view,@"review-preview-batch");
     Press(courses.reviewWorkspace.view,@"review-confirm-batch");Check(app.tasks.count>0 && !app.window.attachedSheet,@"batch button saves valid current results without sheet");
     Check([SSReadPlist(@"tasks.plist") isEqual:app.snapshot],@"batch results reload exactly");
+    route.tag=4;[app navigate:route];[courses selectCourseID:nil];[courses refreshPresentation];Drain();
+    NSString *summaryCourse=[courses.courses.firstObject objectForKey:@"fork"];Check(summaryCourse.length>0,@"course summary has explicit target");Press(courses.courseWorkspace.view,[@"course-summary-" stringByAppendingString:summaryCourse]);Check([courses.selectedCourseID isEqual:summaryCourse] && courses.sections.selectedSegment==0,@"all-course summary button opens explicit course result");
+    route.tag=3;[app navigate:route];[courses selectCourseID:nil];[courses refreshPresentation];
+
     // The same button must preserve the form when atomic storage fails.
     app.tasks=NSMutableArray.array;[courses refreshPresentation];
     NSDictionary *ready=nil;for(NSDictionary *record in courses.allPendingReviewCandidates)if(record[@"due"] && ![record[@"needsDate"] boolValue] && ![record[@"needsTime"] boolValue]){ready=record;break;}

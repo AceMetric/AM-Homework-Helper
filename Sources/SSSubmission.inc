@@ -35,6 +35,12 @@ static NSDictionary *PFEffectiveReview(NSString *version){for(NSDictionary *job 
 @property NSButton *onlineButton;
 @property AMOnlineReviewClient *onlineClient;
 @property NSDictionary *onlineFocus;
+@property NSDictionary *confirmedOnlineSnapshot;
+@property NSArray *confirmedOnlineImages;
+@property NSDictionary *confirmedOnlineSettings;
+@property NSString *confirmedOnlineVersion;
+@property NSString *confirmedOnlineRequirements;
+@property NSPopUpButton *reportMenu;
 #ifdef DDL_TESTING
 @property(copy) AMOnlineReviewClient *(^onlineClientFactory)(void);
 #endif
@@ -57,6 +63,8 @@ static NSDictionary *PFEffectiveReview(NSString *version){for(NSDictionary *job 
 - (void)backToFiles:(id)sender;
 - (void)refreshReport;
 - (void)onlineReview:(id)sender;
+- (void)reviewOptions:(id)sender;
+- (void)showReportStatus:(id)sender;
 - (void)onlineSettings:(id)sender;
 - (void)reviewDoubt:(id)sender;
 - (void)importAssistantResult:(id)sender;
@@ -70,7 +78,7 @@ static NSDictionary *PFEffectiveReview(NSString *version){for(NSDictionary *job 
     if(!self.reportFrames)return;CGFloat w=NSWidth(self.checkPage.bounds),h=NSHeight(self.checkPage.bounds),width=w-48;BOOL narrow=w<740;CGFloat bottom=h-188,body=MAX(120,bottom-264),left=floor((width-16)*.46);
     for(NSView *view in self.checkPage.subviews){NSRect f=[self.reportFrames[view.identifier] rectValue];
         if(f.origin.y>=536){f.origin.y+=h-676;if(f.origin.x==568)f.origin.x=w-192;else if(f.origin.x==464)f.origin.x=w-296;if(f.size.width==712)f.size.width=width;if([view isKindOfClass:NSButton.class] && [(NSButton *)view action]==@selector(showCoverage:))f.origin.x=w-160;if(view==self.acknowledge)f.size.width=MAX(200,width-312);if([view isKindOfClass:NSButton.class] && [(NSButton *)view action]==@selector(reviewDoubt:))f.origin.x=w-312;}
-        else if(f.origin.y==488){f.origin.y=bottom;NSUInteger index=(NSUInteger)round((f.origin.x-24)/144);CGFloat cell=(width-32)/5;f.origin.x=24+index*(cell+8);f.size.width=cell;}
+        else if(f.origin.y==488){f.origin.y=bottom;NSUInteger index=(NSUInteger)round((f.origin.x-24)/144);CGFloat cell=MIN(180,(width-16)/3);f.origin.x=24+index*(cell+8);f.size.width=cell;}
         else if(f.origin.y==20 && f.origin.x==600){f.origin.x=w-160;}
         else if(f.origin.y==20 && f.origin.x==24 && f.size.width==540){f.size.width=width-152;}
         else if(f.origin.y>=252 && f.origin.y<=384){
@@ -160,13 +168,13 @@ static NSDictionary *PFEffectiveReview(NSString *version){for(NSDictionary *job 
     NSScrollView *list=[[NSScrollView alloc] initWithFrame:NSMakeRect(24,252,328,224)];list.hasVerticalScroller=YES;self.findingsTable=NSTableView.new;NSTableColumn *column=[[NSTableColumn alloc] initWithIdentifier:@"finding"];column.width=306;[self.findingsTable addTableColumn:column];self.findingsTable.headerView=nil;self.findingsTable.rowHeight=48;self.findingsTable.dataSource=self;self.findingsTable.delegate=self;self.findingsTable.accessibilityLabel=@"检查问题";list.documentView=self.findingsTable;[page addSubview:list];
     self.findingDetail=PFText(page,NSMakeRect(368,252,368,128),NO);self.findingImage=[[PFImageView alloc] initWithFrame:NSMakeRect(368,384,368,92)];self.findingImage.hidden=YES;[page addSubview:self.findingImage];
     self.onlineButton=Button(@"在线复核…",self,@selector(onlineReview:),1);Put(page,self.onlineButton,24,488,136,32);
-    self.assistantButton=Button(@"Skill 复核…",self,@selector(assistantReview:),0);Put(page,self.assistantButton,168,488,136,32);
-    NSButton *recheck=Button(@"重新检查",self,@selector(checkNow:),0);recheck.enabled=self.performCheck!=nil;Put(page,recheck,312,488,136,32);
-    Put(page,Button(@"导入结果…",self,@selector(importAssistantResult:),0),456,488,136,32);
-    Put(page,Button(@"显示文件…",self,@selector(openFinding:),0),600,488,136,32);
-    Put(page,Button(@"复核这个疑点",self,@selector(reviewDoubt:),0),448,536,140,28);
-    self.acknowledge=[NSButton checkboxWithTitle:@"已核对问题与未检查项，继续提交" target:nil action:nil];self.acknowledge.font=[NSFont systemFontOfSize:12];self.acknowledge.hidden=self.checkOnly;Put(page,self.acknowledge,24,536,564,24);NSButton *coverageButton=Button(@"查看覆盖范围…",self,@selector(showCoverage:),0);Put(page,coverageButton,600,536,136,28);
-    self.validation=Text(@"正在读取拟提交版本…",12,NSFontWeightRegular,Muted());Put(page,self.validation,24,568,712,40);self.checkValidation=self.validation;
+    self.assistantButton=Button(@"Skill 复核…",self,@selector(assistantReview:),0);self.assistantButton.hidden=YES;
+    NSButton *recheck=Button(@"重新检查",self,@selector(checkNow:),0);recheck.enabled=self.performCheck!=nil;Put(page,recheck,168,488,136,32);
+    self.reportMenu=[[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:YES];self.reportMenu.bezelStyle=NSBezelStyleRounded;self.reportMenu.font=[NSFont systemFontOfSize:13];[self.reportMenu addItemWithTitle:@"更多检查操作"];self.reportMenu.accessibilityLabel=@"更多检查操作";
+    NSArray *options=@[@[@"Skill 复核…",NSStringFromSelector(@selector(assistantReview:))],@[@"导入助手结果…",NSStringFromSelector(@selector(importAssistantResult:))],@[@"复核选中疑点",NSStringFromSelector(@selector(reviewDoubt:))],@[@"查看覆盖范围…",NSStringFromSelector(@selector(showCoverage:))],@[@"显示选中文件…",NSStringFromSelector(@selector(openFinding:))],@[@"重新确认在线发送范围…",NSStringFromSelector(@selector(reviewOptions:))],@[@"查看当前状态…",NSStringFromSelector(@selector(showReportStatus:))]];
+    for(NSArray *option in options){NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:option[0] action:NSSelectorFromString(option[1]) keyEquivalent:@""];item.target=self;[self.reportMenu.menu addItem:item];}Put(page,self.reportMenu,312,488,200,32);
+    self.acknowledge=[NSButton checkboxWithTitle:@"已核对问题与未检查项，继续提交" target:nil action:nil];self.acknowledge.font=[NSFont systemFontOfSize:12];self.acknowledge.hidden=self.checkOnly;Put(page,self.acknowledge,24,536,712,24);
+    self.validation=Text(@"正在读取拟提交版本…",12,NSFontWeightRegular,Muted());Put(page,self.validation,24,568,712,40);self.checkValidation=self.validation;self.validation.lineBreakMode=NSLineBreakByWordWrapping;self.validation.maximumNumberOfLines=0;self.validation.selectable=YES;
     NSButton *back=Button(self.checkOnly ? @"调整范围":@"返回文件",self,@selector(backToFiles:),0);back.enabled=self.changes.count>0;Put(page,back,24,624,104,32);NSButton *cancel=Button(@"取消",self,@selector(cancel:),2);cancel.keyEquivalent=@"\033";cancel.keyEquivalentModifierMask=0;Put(page,cancel,464,624,88,32);
     self.primary=Button(self.checkOnly ? @"完成":@"提交到个人仓库",self,@selector(save:),1);Put(page,self.primary,568,624,168,32);self.primary.keyEquivalent=@"\r";self.primary.keyEquivalentModifierMask=0;self.window.defaultButtonCell=self.primary.cell;
     NSMutableDictionary *frames=NSMutableDictionary.dictionary;NSUInteger slot=0;for(NSView *view in page.subviews){view.identifier=[NSString stringWithFormat:@"report-slot-%lu",(unsigned long)slot++];frames[view.identifier]=[NSValue valueWithRect:view.frame];}self.reportFrames=frames;
@@ -228,11 +236,14 @@ static NSDictionary *PFEffectiveReview(NSString *version){for(NSDictionary *job 
     if(self.onlineClient){self.onlineClient.cancelled=YES;self.onlineButton.enabled=NO;self.validation.stringValue=@"正在取消并清理上传副本；已发出的请求可能消耗额度…";return;}
     [self pollReview:nil];if(self.reportStale || self.checking || self.closed || !self.report)return;
     if(![AMOnlineReviewSettings()[@"enabled"] boolValue]){AMShowOnlineReviewSettings(self.window);if(![AMOnlineReviewSettings()[@"enabled"] boolValue])return;}
-    PFMaterials *materials=[[PFMaterials alloc] initWithSnapshot:self.snapshot report:self.report requirements:self.requirements];materials.window.title=@"预览发送给 Gemini 的材料";materials.destination.hidden=YES;
-    for(NSView *view in materials.window.contentView.subviews){if([view.identifier isEqual:@"handoff-hint"] && [view isKindOfClass:NSTextField.class])[(NSTextField *)view setStringValue:@"只发送所选材料给 Gemini；免费服务可能使用材料改进产品。不会执行代码或提交。"];
-        if([view.identifier isEqual:@"material-prepare"] && [view isKindOfClass:NSButton.class])[(NSButton *)view setTitle:@"开始在线复核"];}
-    [materials.window center];NSModalResponse response=[NSApp runModalForWindow:materials.window];[materials.window orderOut:nil];if(response!=NSModalResponseOK)return;[self pollReview:nil];if(self.reportStale)return;
-    NSArray *images=[materials selectedImages];NSDictionary *snapshot=[materials selectedSnapshot],*report=self.report,*focus=self.onlineFocus;NSString *requirements=self.requirements,*courseID=self.course[@"fork"] ?: @"";
+    NSDictionary *settings=AMOnlineReviewSettings();BOOL reuse=self.confirmedOnlineSnapshot && [self.confirmedOnlineVersion isEqual:self.report[@"version"]] && [self.confirmedOnlineRequirements isEqual:self.requirements] && [self.confirmedOnlineSettings isEqual:settings];
+    if(!reuse){PFMaterials *materials=[[PFMaterials alloc] initWithSnapshot:self.snapshot report:self.report requirements:self.requirements];materials.window.title=@"预览发送给 Gemini 的材料";materials.destination.hidden=YES;
+        for(NSView *view in materials.window.contentView.subviews){if([view.identifier isEqual:@"handoff-hint"] && [view isKindOfClass:NSTextField.class])[(NSTextField *)view setStringValue:@"只发送所选材料给 Gemini；免费服务可能使用材料改进产品。不会执行代码或提交。"];
+            if([view.identifier isEqual:@"material-prepare"] && [view isKindOfClass:NSButton.class])[(NSButton *)view setTitle:@"开始在线复核"];}
+        [materials.window center];NSModalResponse response=[NSApp runModalForWindow:materials.window];[materials.window orderOut:nil];if(response!=NSModalResponseOK)return;[self pollReview:nil];if(self.reportStale)return;
+        self.confirmedOnlineImages=[materials selectedImages];self.confirmedOnlineSnapshot=[materials selectedSnapshot];self.confirmedOnlineVersion=self.report[@"version"];self.confirmedOnlineRequirements=self.requirements;self.confirmedOnlineSettings=settings;
+    }
+    NSArray *images=self.confirmedOnlineImages;NSDictionary *snapshot=self.confirmedOnlineSnapshot,*report=self.report,*focus=self.onlineFocus;NSString *requirements=self.requirements,*courseID=self.course[@"fork"] ?: @"";
     self.checking=YES;self.primary.enabled=NO;self.assistantButton.enabled=NO;self.supplement.editable=NO;self.onlineButton.title=@"取消在线复核";self.validation.stringValue=@"准备所选材料，检查隐私与图片…";self.validation.textColor=Muted();AMOnlineReviewClient *client=AMOnlineReviewClient.new;
 #ifdef DDL_TESTING
     if(self.onlineClientFactory)client=self.onlineClientFactory();
@@ -244,10 +255,12 @@ static NSDictionary *PFEffectiveReview(NSString *version){for(NSDictionary *job 
         dispatch_async(dispatch_get_main_queue(),^{if(!owner || owner.previewGeneration!=generation)return;owner.onlineClient=nil;owner.checking=NO;owner.primary.enabled=YES;owner.supplement.editable=YES;owner.onlineButton.title=@"在线复核…";owner.onlineButton.enabled=YES;owner.assistantButton.enabled=YES;owner.acknowledge.state=NSControlStateValueOff;owner.assistantFingerprint=AMPreflightJobForReport(owner.report[@"version"])[@"fingerprint"];[owner refreshReport];[owner pollReview:nil];if(owner.reportStale)return;
             owner.validation.stringValue=answer ? ([answer[@"cached"] boolValue] ? @"已复用相同材料的报告，请核对建议。":([answer[@"partial"] boolValue] ? @"在线复核返回部分结果，请查看未检查项；不会自动提交。":@"在线复核已完成，请核对建议；不会自动提交。")):(error.localizedDescription ?: @"复核已取消，保留本机报告。");
             if(answer)owner.validation.stringValue=[owner.validation.stringValue stringByAppendingFormat:@" 耗时 %.1f 秒。",-started.timeIntervalSinceNow];
-            if(pending)owner.validation.stringValue=[owner.validation.stringValue stringByAppendingFormat:@" %lu 个上传副本保留供重试或待清理，可到在线设置处理。",(unsigned long)pending];owner.validation.textColor=answer ? Muted():NSColor.systemOrangeColor;owner.validation.toolTip=owner.validation.stringValue;if(!answer && !owner.findings.count)owner.findingDetail.string=[@"在线复核未完成\n\n" stringByAppendingString:owner.validation.stringValue];
+            if(pending)owner.validation.stringValue=[owner.validation.stringValue stringByAppendingFormat:@" %lu 个上传副本保留供重试或待清理，可到在线设置处理。",(unsigned long)pending];owner.validation.textColor=answer ? Muted():NSColor.systemOrangeColor;owner.validation.toolTip=owner.validation.stringValue;if(!answer)owner.findingDetail.string=[@"在线复核未完成\n\n" stringByAppendingString:owner.validation.stringValue];
         });
     });
 }
+- (void)reviewOptions:(id)sender {self.confirmedOnlineSnapshot=nil;[self onlineReview:sender];}
+- (void)showReportStatus:(id)sender {NSAlert *alert=NSAlert.new;alert.messageText=@"当前检查状态";alert.informativeText=self.validation.stringValue ?: @"尚未开始检查。";[alert addButtonWithTitle:@"好"];[alert runModal];}
 - (void)assistantReview:(id)sender {
     [self pollReview:nil];if(self.reportStale || self.checking || self.closed || !self.report)return;
     PFMaterials *materials=[[PFMaterials alloc] initWithSnapshot:self.snapshot report:self.report requirements:self.requirements];[materials.window center];NSModalResponse response=[NSApp runModalForWindow:materials.window];[materials.window orderOut:nil];if(response!=NSModalResponseOK)return;

@@ -26,11 +26,11 @@ void ThemeEditor(NSTextView *editor);
 @end
 
 @interface ActionButton : NSButton
-@property NSInteger tone;
+@property(nonatomic) NSInteger tone;
 @property BOOL selected;
 @property BOOL hovered;
 @property BOOL allowsHoverFill;
-@property NSString *symbol;
+@property(nonatomic,copy) NSString *symbol;
 @property NSTrackingArea *hoverArea;
 @end
 

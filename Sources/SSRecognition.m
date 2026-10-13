@@ -104,7 +104,7 @@ NSDictionary *SSEnrichDiscovery(NSDictionary *record) {
     }
     if (!copy[@"summary"]) {NSArray *content=summary.count ? summary.array : fallback.array;copy[@"summary"] = [content componentsJoinedByString:@"\n"];}
     if (!copy[@"submissionRequirements"]) copy[@"submissionRequirements"] = [requirements.array componentsJoinedByString:@"\n"];
-    if (!copy[@"recognizer"]) copy[@"recognizer"] = @"rules-v7";
+    if (!copy[@"recognizer"]) copy[@"recognizer"] = @"rules-v8";
     return copy;
 }
 static BOOL SameSource(NSDictionary *task, NSDictionary *record) {
@@ -292,7 +292,7 @@ NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repositor
 NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings, NSMutableDictionary *cache, NSError **error) {
     NSMutableDictionary *cacheSettings=settings.mutableCopy;for(NSString *field in @[@"forceRecognition",@"manualLocal",@"localAutomatic"])[cacheSettings removeObjectForKey:field];
     NSString *configuration=[[NSJSONSerialization dataWithJSONObject:cacheSettings options:NSJSONWritingSortedKeys error:NULL] base64EncodedStringWithOptions:0];
-    NSString *key=[NSString stringWithFormat:@"recognition-v7|%@|%@|%@|%@|%@",repository,path,blob,calendar.timeZone.name,RHash(configuration ?: @"")];
+    NSString *key=[NSString stringWithFormat:@"recognition-v8|%@|%@|%@|%@|%@",repository,path,blob,calendar.timeZone.name,RHash(configuration ?: @"")];
     if (![settings[@"forceRecognition"] boolValue] && [cache[key] isKindOfClass:NSArray.class]) return cache[key];
     NSMutableArray *found=NSMutableArray.array; for (NSDictionary *record in SSDiscoveriesFromDocument(text,repository,path,blob,NSDate.date,calendar)) [found addObject:SSEnrichDiscovery(record)];
     NSDictionary *template=settings[@"courseTemplate"];

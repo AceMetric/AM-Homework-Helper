@@ -72,7 +72,7 @@ NSString *SSActivityKindLabel(NSString *kind) {
 }
 static NSDictionary *Classification(NSString *context, NSString *path) {
     NSString *evidence = [NSString stringWithFormat:@"%@\n%@", path, context];
-    BOOL exam = Match(evidence, @"考试|测验|(?:^|[/_\\s-])(?:exam(?:ination)?|quiz)(?:[/_\\s.-]|$)");
+    BOOL exam = Match(evidence, @"考试|测验|(?:^|[/_\\s-])(?:exam(?:ination)?|quiz)(?:[/_\\s.:-]|$)");
     BOOL classroom = Match(evidence, @"课上(?:任务|练习|实验)|课堂(?:任务|练习|实验)|随堂|当堂|classroom|in[_ -]class");
     NSString *kind = exam && classroom ? @"unknown" : exam ? @"exam" : classroom ? @"classroom" : Match(evidence, @"作业|课后|homework|assignment|problem[ _-]*set|worksheet|coursework|(?:^|[/_\\s-])hw[0-9]|提交|截止|deadline|\\bdue\\b|\\bsubmit\\b") ? @"assignment" : @"unknown";
     if([kind isEqual:@"unknown"] && Match(evidence,@"\\b(?:lab|project)\\b") && Match(context,@"submit|implement|deliver|complete|提交|实现|完成"))kind=@"assignment";
@@ -104,7 +104,7 @@ static NSArray<NSDictionary *> *LegacyDiscoveries(NSString *text, NSString *repo
     NSString *heading = @"", *previous = @"", *documentTitle = DocumentTitle(lines, path); BOOL fence = NO, actionable = NO, substantive = NO; NSUInteger headingLine = 1;
     NSString *datePattern = AMDatePattern();
     // Metadata and teaching examples do not create deadline records.
-    if (Match(documentTitle, @"^(?:教材|示例|发布日志|更新日志|课程介绍|changelog|examples?|tutorial)\\b") || Match(path, @"(?:^|/)(?:examples?|reference|changelog)(?:/|\\.)")) return @[];
+    if (Match(documentTitle, @"^(?:教材|示例|发布日志|更新日志|课程介绍|changelog|examples?|tutorial|release notes|lecture notes|textbook|syllabus|sample assignment)(?:\\b|$)") || Match(path, @"(?:^|/)(?:examples?|reference|changelog)(?:/|\\.)")) return @[];
     for (NSUInteger index = 0; index < lines.count; index++) {
         NSString *raw = [lines[index] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
         if ([raw hasPrefix:@"~~~"] || [raw hasPrefix:@"```"]) { fence = !fence; continue; }
@@ -144,7 +144,7 @@ static NSArray<NSDictionary *> *LegacyDiscoveries(NSString *text, NSString *repo
                 if (Match(next, @"^\\s*(?:时间[:：]\\s*)?(?:凌晨|上午|中午|下午|晚上)?\\s*[0-9]{1,2}(?:[:点时]|\\s*[ap]\\.?m)")) dateText = [dateText stringByAppendingFormat:@" %@", next];
             }
             NSMutableDictionary *candidate = [Candidate(Title(line, heading, previous, documentTitle), repository, path, blobSHA, index + 1, Snippet(lines, index, heading), nil, YES, YES, counts) mutableCopy];
-            [candidate addEntriesFromDictionary:classification]; [candidate addEntriesFromDictionary:DateFields(dateText, [line substringWithRange:dateMatch.range], calendar)];
+            [candidate addEntriesFromDictionary:classification]; [candidate addEntriesFromDictionary:DateFields([prefix stringByAppendingString:dateText], [line substringWithRange:dateMatch.range], calendar)];
             candidate[@"sectionLine"] = @(headingLine);
             candidate[@"dateText"] = [dateText stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
             if ([candidate[@"relative"] boolValue]) candidate[@"deadlineText"] = candidate[@"dateText"];
@@ -163,7 +163,7 @@ static NSArray<NSDictionary *> *LegacyDiscoveries(NSString *text, NSString *repo
             [candidate addEntriesFromDictionary:classification]; candidate[@"warnings"] = @[@"未说明截止时间"]; [result addObject:candidate];
         }
     }
-    for (NSUInteger i = 0; i < sections.count; i++) {
+    for (NSUInteger i = 0; !Match(documentTitle,@"\\bproject\\b|课程项目|项目作业") && i < sections.count; i++) {
         NSUInteger start = [sections[i][@"line"] unsignedIntegerValue], end = i + 1 < sections.count ? [sections[i + 1][@"line"] unsignedIntegerValue] : lines.count;
         BOOL present = NO; for (NSDictionary *record in result) if ([record[@"line"] unsignedIntegerValue] >= start + 1 && [record[@"line"] unsignedIntegerValue] <= end) present = YES;
         NSString *body = [[lines subarrayWithRange:NSMakeRange(start, end - start)] componentsJoinedByString:@"\n"];

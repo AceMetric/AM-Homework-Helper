@@ -206,6 +206,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.courseWorkspace.saveHandler=self.reviewWorkspace.saveHandler;
     self.courseWorkspace.sourceHandler=self.reviewWorkspace.sourceHandler;
     self.courseWorkspace.actionHandler=^(NSString *action,NSString *identifier){
+        if([action isEqual:@"course-result"]){if([owner selectCourseID:identifier]){owner.sections.selectedSegment=0;[owner.typeFilter selectItemAtIndex:0];owner.query=@"";owner.search.stringValue=@"";[owner refreshPresentation];}return;}
         if([action isEqual:@"restore-notes"]){if(owner.restoreTaskNotes)owner.restoreTaskNotes(identifier);return;}
         if([action isEqual:@"edit-task"]){if(owner.editTask)owner.editTask(identifier);return;}
         if([action isEqual:@"select"]){dispatch_async(dispatch_get_main_queue(),^{
@@ -442,11 +443,11 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (NSString *)selectedCourseID {return self.selectedFork;}
 - (NSArray *)courseSnapshots {
     NSMutableArray *result=NSMutableArray.array;
-    for(NSDictionary *course in self.courses){NSUInteger pending=0;for(NSDictionary *record in [self discoveriesForFork:course[@"fork"]])if([record[@"kind"] isEqual:@"assignment"] && ![[self stateForCandidate:record] isEqual:@"已导入"])pending++;
+    for(NSDictionary *course in self.courses){NSUInteger pending=0,updates=0;for(NSDictionary *record in [self discoveriesForFork:course[@"fork"]])if([record[@"kind"] isEqual:@"assignment"] && ![[self stateForCandidate:record] isEqual:@"已导入"]){pending++;if([[self stateForCandidate:record] isEqual:@"有更新"])updates++;}
         NSString *symbol=[course[@"path"] length] ? @"book.closed":@"folder.badge.questionmark";
         if([course[@"pendingMergeTip"] length] || [course[@"pushFailed"] boolValue] || self.reports[course[@"fork"]][@"error"])symbol=@"exclamationmark.triangle";
         if(self.busy && [self.operationFork isEqual:course[@"fork"]])symbol=@"arrow.triangle.2.circlepath";
-        [result addObject:@{@"id":course[@"fork"],@"name":[course[@"fork"] lastPathComponent],@"pending":@(pending),@"symbol":symbol,@"linked":@([course[@"path"] length]>0),@"status":self.statuses[course[@"fork"]] ?: ([course[@"path"] length] ? @"已关联":@"待关联目录")}];
+        [result addObject:@{@"id":course[@"fork"],@"name":[course[@"fork"] lastPathComponent],@"pending":@(pending),@"newCount":@(pending-updates),@"updateCount":@(updates),@"symbol":symbol,@"linked":@([course[@"path"] length]>0),@"status":self.statuses[course[@"fork"]] ?: ([course[@"path"] length] ? @"已关联":@"待关联目录")}];
     }return result;
 }
 - (BOOL)selectCourseID:(NSString *)identifier {
@@ -518,7 +519,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         [content addObject:copy];
     }
     NSString *information=info ? self.detail.string : @"";
-    if(!course && !self.inbox){NSMutableArray *summary=NSMutableArray.array;for(NSDictionary *snapshot in self.courseSnapshots)[summary addObject:self.reports[snapshot[@"id"]][@"error"] ? [NSString stringWithFormat:@"%@ · %@ · 保留上次成功检查结果",snapshot[@"name"],snapshot[@"status"]] : [NSString stringWithFormat:@"%@ · %@ · %lu 项待审核",snapshot[@"name"],snapshot[@"status"],(unsigned long)[snapshot[@"pending"] unsignedIntegerValue]]];information=[summary componentsJoinedByString:@"\n\n"];[content removeAllObjects];}
+    NSMutableArray *summaries=NSMutableArray.array;if(!course && !self.inbox){for(NSDictionary *snapshot in self.courseSnapshots){NSMutableDictionary *row=snapshot.mutableCopy;row[@"failed"]=@([self.reports[snapshot[@"id"]][@"error"] length]>0);if([row[@"failed"] boolValue])row[@"status"]=[NSString stringWithFormat:@"未完成检查：%@ · 保留上次成功结果",self.reports[snapshot[@"id"]][@"error"]];[summaries addObject:row];}[content removeAllObjects];information=@"";}[self.courseWorkspace showCourseSummaries:summaries visible:!course && !self.inbox];
     [self.courseWorkspace updateRecords:content selected:self.selectedCandidateID ?: @"" information:information empty:self.emptyLabel.stringValue paused:self.busy || self.operationsPaused];
     self.presentedSection=self.sections.selectedSegment;self.presentedType=self.typeFilter.indexOfSelectedItem;self.presentedReviewFilter=self.reviewFilter.indexOfSelectedItem;
     NSError *historyError=nil;NSArray *storedHistory=AMSubmissionRecords(&historyError);if(historyError && !self.inbox && self.sections.selectedSegment==3)self.statusLabel.stringValue=historyError.localizedDescription;

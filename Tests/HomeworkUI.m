@@ -59,7 +59,7 @@ int main(void) { @autoreleasepool {
     // Reproduce a long automatic scan: its course queue remains occupied throughout the check.
     dispatch_suspend(courses.queue);courses.busy=YES;courses.git.readsCancellable=YES;courses.operationPhase=@"正在扫描老师文档";
     checkTask[@"completed"]=@YES;app.filter=3;[app render];
-    checkButton=(NSButton *)AMFindButton(app.taskDetails,@selector(checkSelectedTask:),0,checkTask[@"id"]);[AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];[checkButton performClick:nil];
+    checkButton=(NSButton *)AMFindButton(app.taskDetails,@selector(checkSelectedTask:),0,checkTask[@"id"]);[checkButton performClick:nil];
     Await(^BOOL{return courses.checkScope && !courses.checkScope.preparing;});
     [courses.checkScope requestCheck];Await(^BOOL{return courses.submission && courses.submission.window.sheetParent;});
     SSSubmissionController *taskCheckSheet=courses.submission;
@@ -70,9 +70,10 @@ int main(void) { @autoreleasepool {
     [taskCheckSheet.primary performClick:nil];Check(!app.window.attachedSheet && taskCheckSheet.closed,@"check-only completion closes without committing or pushing");
     Check([[NSString stringWithContentsOfURL:reportURL encoding:NSUTF8StringEncoding error:NULL] isEqual:reportText],@"task check leaves the selected file unchanged");
     courses.submission=nil;dispatch_resume(courses.queue);courses.busy=NO;courses.git.readsCancellable=NO;
-    courses.operationsPaused=YES;[AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];[checkButton performClick:nil];
+    courses.operationsPaused=YES;
+    checkButton=(NSButton *)AMFindButton(app.taskDetails,@selector(checkSelectedTask:),0,checkTask[@"id"]);Check(checkButton!=nil,@"task check remains available for an actionable pause explanation");[AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];[checkButton performClick:nil];
     Check(!courses.submission && [[courses taskCheckBlockReason] containsString:@"更新"] && AMQuietDialogChoices.count==0,@"exit or update still prevents a new check and explains why");courses.operationsPaused=NO;
-    [AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];cancelPicker=YES;Route(app,2);app.selectedTaskID=checkTask[@"id"];[app render];
+    cancelPicker=YES;Route(app,2);app.selectedTaskID=checkTask[@"id"];[app render];
     checkButton=(NSButton *)AMFindButton(app.taskDetails,@selector(checkSelectedTask:),0,checkTask[@"id"]);[checkButton performClick:nil];
     Check(!courses.submission && !app.window.attachedSheet,@"cancelled task file selection opens no check or submission");
     AMQuietReplace(NSOpenPanel.class,@selector(runModal),modalBefore);AMQuietReplace(NSOpenPanel.class,@selector(URLs),urlsBefore);AMQuietReplace(NSOpenPanel.class,@selector(URL),urlBefore);

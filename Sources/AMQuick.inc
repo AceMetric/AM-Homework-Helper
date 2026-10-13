@@ -7,9 +7,9 @@ NSArray *AMQuickParse(NSString *text,NSString *sourceID,NSDate *reference,NSCale
     if(![text isKindOfClass:NSString.class] || text.length>100000 || !RTrim(text).length)return @[];
     NSArray *blocks=SSActivityBlocks(text,@"material.md",YES);
     NSMutableArray *entries=NSMutableArray.array;NSMutableDictionary *anchors=NSMutableDictionary.dictionary;
-    for(NSDictionary *block in blocks){NSString *part=block[@"raw"];
-        NSDictionary *fields=DDLFieldsFromAnnouncement(part,reference,calendar);if(!fields[@"title"] && !fields[@"due"])continue;
-        NSArray *rules=SSAssignmentsFromDocument([@"# 作业\n" stringByAppendingString:part],@"local/material",@"material.md",RHash(text),reference,calendar);NSDictionary *rule=rules.firstObject;
+    for(NSDictionary *block in blocks){NSString *part=block[@"raw"],*structured=block[@"text"];
+        NSDictionary *fields=DDLFieldsFromAnnouncement(structured,reference,calendar);if(!fields[@"title"] && !fields[@"due"])continue;
+        NSArray *rules=SSAssignmentsFromDocument([@"# 作业\n" stringByAppendingString:structured],@"local/material",@"material.md",RHash(text),reference,calendar);NSDictionary *rule=rules.firstObject;
         NSDictionary *enriched=rule ? SSEnrichDiscovery(rule):@{};
         NSString *anchor=SSActivityAnchor(block,blocks.count);NSUInteger ordinal=[anchors[anchor] unsignedIntegerValue]+1;anchors[anchor]=@(ordinal);
         NSMutableDictionary *entry=[@{@"id":[NSString stringWithFormat:@"%@:%@:%lu",sourceID,anchor,(unsigned long)ordinal],@"sourceID":sourceID,@"referenceDate":reference,@"version":RHash(text),@"title":fields[@"title"] ?: @"",@"subject":fields[@"subject"] ?: @"其他",@"notes":@"",@"evidence":RTrim(part),@"deadlineEvidence":rule[@"dateText"] ?: @"",@"timeZone":rule[@"timeZone"] ?: calendar.timeZone.name,@"dateText":@"",@"reminderOffsets":DDLDefaultReminderOffsets(),@"selected":@YES,@"edited":@NO} mutableCopy];
