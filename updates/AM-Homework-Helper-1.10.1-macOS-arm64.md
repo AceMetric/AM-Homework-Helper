@@ -1,0 +1,16 @@
+<!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires updating signatures in appcasts that reference this file! This will involve re-running generate_appcast or sign_update.
+-->
+# AM Helper 1.10.1
+
+版本1.10.1／构建27，macOS13+、Apple芯片，未经Apple公证。
+
+- 在线设置区分模型访问与实际生成，新增主动合成文本／图片生成测试。测试只发送合成样例，每次计入每日20次生成请求上限。
+- 可获取同一Google账户的兼容Gemini模型，由用户明确选择；不自动切换模型或供应商，不承诺免费项目一定有额度。
+- 临时服务错误最多两次退避重试，显示等待并支持取消；失败、额度耗尽、认证与不确定网络错误不表示检查通过。
+- 相同图片可在同一凭据下复用，减少模型／题目变化时重复上传；上传副本区分可复用、待清理与到期。
+- 增加后台任务入口及报告进度条，已知总量显示文件／图片数量，等待生成显示阶段和耗时。
+
+本机模拟回归及真实合成文本、图片生成测试通过。真实测试只证明测试时账户能生成，不代表用户原503故障不会重现，也不代表数学复核准确率。大份真实作业、macOS13实机及正式下载安装仍由使用者验证。
+
+文件检查独立窗口、公式渲染及完整外观改造将在后续版本交付。
