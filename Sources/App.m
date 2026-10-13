@@ -312,7 +312,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)deferReview:(id)sender;
 @end
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSSearchFieldDelegate, UNUserNotificationCenterDelegate>
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate, NSToolbarDelegate, NSSearchFieldDelegate, UNUserNotificationCenterDelegate>
 @property NSWindow *window;
 @property Surface *root;
 @property Surface *sidebar;
@@ -681,6 +681,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 #endif
     self.preview = [NSProcessInfo.processInfo.arguments containsObject:@"--preview"];
     // Leave appearance unset so macOS controls light/dark mode.
+    NSApp.appearance=nil;
     self.page = 0; self.pageStates = NSMutableDictionary.dictionary;
     NSApp.applicationIconImage = ThemeIcon();
     if (!self.preview) {
@@ -709,7 +710,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     self.window.minSize = NSMakeSize(960, 640); self.window.releasedWhenClosed = NO; self.window.delegate = self; self.window.movableByWindowBackground = YES;
     if (self.preview && [NSProcessInfo.processInfo.arguments containsObject:@"--compact"]) [self.window setContentSize:NSMakeSize(960, 640)];
     self.window.backgroundColor = Canvas();
-    self.root = GradientBox(Canvas(), Panel(), 0); self.root.frame = NSMakeRect(0, 0, 1280, 840); self.window.contentView = self.root;
+    self.root = GradientBox(Canvas(), Panel(), 0); self.root.frame = NSMakeRect(0, 0, 1280, 840); self.window.contentView = self.root;NSToolbar *toolbar=[[NSToolbar alloc] initWithIdentifier:@"AMMainToolbar"];toolbar.delegate=self;toolbar.displayMode=NSToolbarDisplayModeIconAndLabel;self.window.toolbar=toolbar;self.window.toolbarStyle=NSWindowToolbarStyleUnifiedCompact;
     self.taskDetails = Box(Card(), 10); self.taskDetails.stroke = Line(); self.taskDetails.hidden=YES; [self.root addSubview:self.taskDetails];
     self.sidebar = GradientBox(Panel(), Canvas(), 0); [self.root addSubview:self.sidebar];
     self.header = GradientBox(Canvas(), Panel(), 0); [self.root addSubview:self.header];
@@ -1397,6 +1398,10 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 }
 - (void)focusSearch:(id)sender { [self showWindow]; if (self.page >= 3) [self.courseWindow focusSearch]; else [self.window makeFirstResponder:self.search]; }
 - (void)showWindow { [self.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES]; }
+- (NSArray *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar{return @[@"AMOperations",NSToolbarFlexibleSpaceItemIdentifier];}
+- (NSArray *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar{return @[NSToolbarFlexibleSpaceItemIdentifier,@"AMOperations"];}
+- (NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSString *)identifier willBeInsertedIntoToolbar:(BOOL)flag{NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"后台任务";item.image=[NSImage imageWithSystemSymbolName:@"clock.arrow.circlepath" accessibilityDescription:@"后台任务与进度"];item.target=self;item.action=@selector(showOperations:);return item;}
+- (void)showOperations:(id)sender{AMShowOperations(self.window);}
 - (void)showMain:(id)sender { [self showWindow]; }
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag { [self showWindow]; return YES; }
 - (BOOL)resolveEditsForExit:(BOOL)updating {

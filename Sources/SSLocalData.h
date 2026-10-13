@@ -26,3 +26,4 @@ void SSDiagnostic(NSString *stage, NSString *outcome, NSTimeInterval seconds);
 NSArray<NSDictionary *> *SSDiagnostics(void);
 
 NS_ASSUME_NONNULL_END
+#import "AMOperation.h"

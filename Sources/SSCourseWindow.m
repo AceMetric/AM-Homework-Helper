@@ -69,6 +69,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property NSString *operationFork;
 @property NSString *operationKind;
 @property NSString *operationPhase;
+@property NSString *operationID;
 @property NSString *statusFork;
 @property BOOL connected;
 @property BOOL preview;
@@ -167,7 +168,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.reviewFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.reviewFilter addItemsWithTitles:@[@"全部待审核", @"新作业", @"更新建议"]]; self.reviewFilter.target = self; self.reviewFilter.action = @selector(sectionChanged:); [root addSubview:self.reviewFilter];
     self.search = [[NSSearchField alloc] initWithFrame:NSZeroRect]; self.search.placeholderString = @"搜索作业或来源文件"; self.search.delegate = self; self.search.sendsSearchStringImmediately = YES; [root addSubview:self.search];
     self.statusLabel = Text(@"", 12, NSFontWeightRegular, Muted()); [root addSubview:self.statusLabel];
-    self.progress = [[NSProgressIndicator alloc] initWithFrame:NSZeroRect]; self.progress.style = NSProgressIndicatorStyleSpinning; self.progress.displayedWhenStopped = NO; [root addSubview:self.progress];
+    self.progress = [[NSProgressIndicator alloc] initWithFrame:NSZeroRect]; self.progress.style = NSProgressIndicatorStyleBar; self.progress.displayedWhenStopped = NO; [root addSubview:self.progress];
     self.setupButton = SSButton(@"添加课程", self, @selector(setup:), NSZeroRect); [root addSubview:self.setupButton];
     self.recoveryButton = SSButton(@"", self, @selector(recover:), NSZeroRect); [root addSubview:self.recoveryButton];
     self.emptyLabel = Text(@"", 14, NSFontWeightMedium, Muted()); self.emptyLabel.alignment = NSTextAlignmentCenter; [root addSubview:self.emptyLabel];
@@ -241,7 +242,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     CGFloat searchX=self.sections.selectedSegment==0 ? segmentWidth+128:segmentWidth+8;
     self.search.frame = NSMakeRect(searchX,80,MAX(104,w-searchX),28);
     if (self.inbox) self.search.frame = NSMakeRect(w - 272, 80, 272, 28);
-    self.statusLabel.frame = NSMakeRect(24, 116, w - 180, 24); self.progress.frame = NSMakeRect(0, 120, 16, 16); self.recoveryButton.frame = NSMakeRect(w - 144, 112, 144, 28);
+    self.statusLabel.frame = NSMakeRect(24, 116, w - 180, 24); self.progress.frame = NSMakeRect(24, 142, MAX(120,w-48), 6); self.recoveryButton.frame = NSMakeRect(w - 144, 112, 144, 28);
     self.table.enclosingScrollView.frame = NSMakeRect(0, 184, w, MAX(112, h - 348));
     self.detail.enclosingScrollView.frame = NSMakeRect(0, h - 152, w, 104); self.reviewButton.frame = NSMakeRect(w - 152, h - 40, 152, 36);
     self.typeButton.frame = NSMakeRect(0, h - 40, 136, 36);
@@ -528,7 +529,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if (self.stateChanged) self.stateChanged();
 }
 - (void)cancelReadOperation:(id)sender {if(self.busy && self.git.readsCancellable){self.git.cancelledReads=YES;self.cancelReadButton.enabled=NO;[self status:@"正在取消检查；等待当前安全读取结束…"];} }
-- (void)status:(NSString *)message { if(self.busy)self.operationPhase=message; self.statuses[self.statusFork ?: self.selectedFork ?: @"all"] = message ?: @""; [self refreshPresentation]; }
+- (void)status:(NSString *)message { if(self.busy){self.operationPhase=message;AMOperationProgress(self.operationID,message,0,0);} self.statuses[self.statusFork ?: self.selectedFork ?: @"all"] = message ?: @""; [self refreshPresentation]; }
 - (void)showError:(NSError *)error { if (error) {self.errorDetails[self.statusFork ?: self.selectedFork ?: @"all"]=SSRedactedText(error.userInfo[@"SSDetail"] ?: error.localizedDescription);[self status:[@"⚠ " stringByAppendingString:error.localizedDescription]];} }
 - (void)work:(NSString *)message operation:(id (^)(NSError **))operation completion:(void (^)(id, NSError *))completion {
     [self work:message forCourse:[self course] operation:operation completion:completion];
@@ -537,12 +538,13 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if (self.preview) { [self status:@"模拟预览不会操作真实账户或仓库"]; return; }
     if (self.busy || (self.operationsPaused && !self.allowingExitSubmission)) return;
     NSDate *started=NSDate.date;self.git.cancelledReads=NO;self.git.readsCancellable=[message containsString:@"扫描"] || [message containsString:@"准备中"] || [message containsString:@"核验中"] || [message containsString:@"读取个人"] || [message containsString:@"读取冲突"] || [message containsString:@"读取本地"];self.cancelReadButton.enabled=YES;SSDiagnostic(@"operation",@"started",0);
+    __weak typeof(self) operationOwner=self;self.operationID=AMOperationBegin(message,course[@"fork"] ?: @"所有课程",self.git.readsCancellable,^{[operationOwner cancelReadOperation:nil];});
     self.busy = YES;self.operationKind=message;self.operationPhase=message; self.workGeneration++; NSUInteger generation = self.workGeneration; NSString *target = course[@"fork"]; self.operationFork = target; self.statusFork = target; [self.progress startAnimation:nil]; [self status:message];
     dispatch_async(self.queue, ^{
         NSError *error = nil; id value = operation(&error);
         dispatch_async(dispatch_get_main_queue(), ^{
             BOOL cancelled=self.git.cancelledReads;self.git.readsCancellable=NO;self.git.cancelledReads=NO;SSDiagnostic(@"operation",cancelled ? @"cancelled":(error ? @"failed":@"success"),-started.timeIntervalSinceNow);
-            self.busy = NO; [self.progress stopAnimation:nil]; self.statusFork = target;
+            AMOperationFinish(self.operationID,cancelled ? @"cancelled":(error ? @"failed":@"success"),cancelled ? @"已取消":(error.localizedDescription ?: @"操作完成"));self.operationID=nil;self.busy = NO; [self.progress stopAnimation:nil]; self.statusFork = target;
             NSError *completionError=cancelled ? [NSError errorWithDomain:@"AMOperation" code:NSUserCancelledError userInfo:@{NSLocalizedDescriptionKey:@"已取消读取；已完成的结果保留，可稍后重新检查。"}]:error;
             completion(cancelled ? nil:value, completionError); if (self.workGeneration == generation) { self.statusFork = nil; self.operationFork = nil; } [self refreshPresentation];
             if (self.operationStateChanged) self.operationStateChanged();
@@ -780,12 +782,13 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     // Check-only reads do not queue behind teacher scans or model analysis.
     // Submission snapshots remain serialized with course Git operations.
     dispatch_queue_t readQueue=sheet.checkOnly ? dispatch_queue_create("ddl.preflight-read",DISPATCH_QUEUE_SERIAL):self.queue;
+    __weak SSSubmissionController *weakSheet=sheet;
     sheet.performCheck=^NSDictionary *(NSArray *paths,NSArray *ids,NSString *extra,NSMutableDictionary *cache,BOOL(^cancelled)(void),NSError **error){
         SSCourseController *self=owner;if(!self || cancelled())return nil;__block NSDictionary *snapshot=nil;__block NSString *requirements=nil;__block NSError *failure=nil;
         dispatch_sync(readQueue,^{if(cancelled())return;SSGit *reader=SSGit.new;reader.readsCancellable=YES;dispatch_source_t cancellation=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_global_queue(QOS_CLASS_UTILITY,0));dispatch_source_set_timer(cancellation,dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),100*NSEC_PER_MSEC,10*NSEC_PER_MSEC);dispatch_source_set_event_handler(cancellation,^{if(cancelled())reader.cancelledReads=YES;});dispatch_resume(cancellation);NSMutableArray *selected=NSMutableArray.array;for(NSDictionary *task in tasks)if([ids containsObject:task[@"id"]])[selected addObject:task];snapshot=[reader preflightSnapshotForCourse:course paths:paths error:&failure];requirements=[reader preflightRequirementsForCourse:course tasks:selected];dispatch_source_cancel(cancellation);});
         if(!snapshot || cancelled()){if(error)*error=failure;return nil;}
         if(extra.length)requirements=[NSString stringWithFormat:@"%@\n\n用户补充题目：\n%@",requirements ?: @"",extra];
-        NSDictionary *report=AMPreflightCheck(snapshot,requirements ?: @"",cache,cancelled);return @{@"snapshot":snapshot,@"requirements":requirements ?: @"",@"report":report};
+        NSDictionary *report=AMPreflightCheckWithProgress(snapshot,requirements ?: @"",cache,cancelled,^(NSUInteger done,NSUInteger total){AMOperationProgress(weakSheet.operationID,@"检查文件结构、公式和附件",done,total);});return @{@"snapshot":snapshot,@"requirements":requirements ?: @"",@"report":report};
     };
 }
 - (NSString *)taskCheckBlockReason {

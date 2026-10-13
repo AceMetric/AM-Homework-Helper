@@ -153,9 +153,11 @@ static NSDictionary *PFPython(NSString *source){
     if(task.terminationStatus!=0 || ![result isKindOfClass:NSDictionary.class])return @{@"status":@"未检查：Python 语法解析未完成"};
     return @{@"status":@"已检查：Python 语法（未执行代码）",@"syntax":result};
 }
-NSDictionary *AMPreflightCheck(NSDictionary *snapshot,NSString *requirements,NSMutableDictionary *cache,BOOL (^cancelled)(void)){
+NSDictionary *AMPreflightCheck(NSDictionary *snapshot,NSString *requirements,NSMutableDictionary *cache,BOOL (^cancelled)(void)){return AMPreflightCheckWithProgress(snapshot,requirements,cache,cancelled,nil);}
+NSDictionary *AMPreflightCheckWithProgress(NSDictionary *snapshot,NSString *requirements,NSMutableDictionary *cache,BOOL (^cancelled)(void),void (^progress)(NSUInteger,NSUInteger)){
+    NSUInteger processed=0,total=[snapshot[@"paths"] count];
     NSMutableArray *issues=NSMutableArray.array,*coverage=NSMutableArray.array,*images=NSMutableArray.array;NSDictionary *files=snapshot[@"files"];
-    for(NSString *path in snapshot[@"paths"]){if(cancelled && cancelled())return @{@"cancelled":@YES};NSDictionary *entry=files[path];if([entry[@"deleted"] boolValue])continue;
+    for(NSString *path in snapshot[@"paths"]){if(progress)progress(processed++,total);if(cancelled && cancelled())return @{@"cancelled":@YES};NSDictionary *entry=files[path];if([entry[@"deleted"] boolValue])continue;
         NSString *key=[NSString stringWithFormat:@"preflight-v2|%@|%@",path,entry[@"version"] ?: @""];NSDictionary *cached=cache[key];
         if(!cached){NSMutableArray *found=NSMutableArray.array;NSString *text=entry[@"text"],*ext=path.pathExtension.lowercaseString,*status=@"未检查：不支持的文件类型";
             if(entry[@"problem"])[found addObject:PFIssue(@"format",@"error",path,@1,entry[@"problem"],@"",@"检查文件格式与大小后重新检查。")];

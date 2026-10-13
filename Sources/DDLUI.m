@@ -188,3 +188,4 @@ ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL acti
     control.segmentStyle=NSSegmentStyleRounded; control.focusRingType = NSFocusRingTypeDefault; control.trackingMode = NSSegmentSwitchTrackingSelectOne; control.target = target; control.action = action; control.selectedSegment = 0;
     return control;
 }
+#import "AMProgressUI.inc"
