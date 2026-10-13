@@ -58,3 +58,11 @@ ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL acti
 @end
 void AMShowOperations(NSWindow *parent);
 void AMRefreshViewAppearance(NSView *root);
+
+@interface AMCheckWindow : DDLFormPanel @end
+
+NSView *AMNavigationMaterial(NSView *content);
+
+NSView *AMToolbarProgress(id target, SEL action);
+
+NSWindow *AMMakeCheckWorkspace(NSWindow *parent);

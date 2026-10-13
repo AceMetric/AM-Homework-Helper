@@ -61,9 +61,9 @@ int main(void) { @autoreleasepool {
     checkTask[@"completed"]=@YES;app.filter=3;[app render];
     checkButton=(NSButton *)AMFindButton(app.taskDetails,@selector(checkSelectedTask:),0,checkTask[@"id"]);[checkButton performClick:nil];
     Await(^BOOL{return courses.checkScope && !courses.checkScope.preparing;});
-    [courses.checkScope requestCheck];Await(^BOOL{return courses.submission && courses.submission.window.sheetParent;});
+    [courses.checkScope requestCheck];Await(^BOOL{return courses.submission && courses.submission.window==courses.checkScopeWindow && !courses.submission.window.sheetParent;});
     SSSubmissionController *taskCheckSheet=courses.submission;
-    Check(foldersPicked==1 && filesPicked==0 && taskCheckSheet.checkOnly && app.window.attachedSheet==taskCheckSheet.window && !taskCheckSheet.submit,@"task detail opens check-only file sheet with no submit callback");
+    Check(foldersPicked==1 && filesPicked==0 && taskCheckSheet.checkOnly && !app.window.attachedSheet && courses.checkScopeWindow==taskCheckSheet.window && !taskCheckSheet.submit,@"task detail opens independent check-only workspace with no submit callback");
     Await(^BOOL{return !taskCheckSheet.checking && taskCheckSheet.report!=nil;});
     Check(app.page==2 && [app.selectedTaskID isEqual:checkTask[@"id"]] && courses.busy && [checkTask[@"completed"] boolValue],@"completed task opens its report in place during an ongoing teacher scan");
     Check(taskCheckSheet.report && !taskCheckSheet.checkPage.hidden && taskCheckSheet.findings.count>0 && [taskCheckSheet.snapshot[@"paths"] isEqual:@[@"report.md"]],@"actual task button through file selection produces the real missing-image report");

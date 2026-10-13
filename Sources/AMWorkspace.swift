@@ -373,7 +373,7 @@ private struct ReviewSaveBar:View {
     let advance:Bool
     var body:some View {
         HStack {
-            if state.saving {ProgressView().controlSize(.small)}
+            if state.saving {ProgressView().progressViewStyle(.linear).frame(width:160)}
             Text(state.disabledReason.isEmpty ? (state.dirty ? "有未保存修改" : "核对后保存至任务") : state.disabledReason).font(.caption).foregroundStyle(.secondary)
             Spacer()
             WorkspaceButton(title:advance ? "保存并下一项" : (state.current?["existingTask"] == nil ? "确认作业":"保存修改"),enabled:state.disabledReason.isEmpty,prominent:true,identity:"review-save",saveShortcut:true){state.saveCurrent(advance:advance)}.fixedSize().help(state.disabledReason)
@@ -756,7 +756,7 @@ private struct SetupWorkspace:View {
             }
             WorkspaceHeading(title:state.step < 4 ? (state.step==0 && string(state.context,"code").isEmpty ? "欢迎使用 AM Helper":steps[max(0,min(3,state.step))]):"配置已完成",subtitle:state.step==0 ? "连接课程，或直接使用本机作业功能。":"每一步成功的配置都会保留。",symbol:state.step==0 ? "graduationcap":"checklist")
             content
-            if state.busy {HStack{ProgressView().controlSize(.small);Text(state.step==0 ? "正在等待登录，其他课程数据会保留。":"正在逐门处理；可以收起引导，成功结果会保留。").foregroundStyle(.secondary)}}
+            if state.busy {HStack{ProgressView().progressViewStyle(.linear).frame(width:160);Text(state.step==0 ? "正在等待登录，其他课程数据会保留。":"正在逐门处理；可以收起引导，成功结果会保留。").foregroundStyle(.secondary)}}
             Text(state.message).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
             Divider()
             footer
@@ -1052,7 +1052,7 @@ private struct QuickEntryView:View {
         HStack{Text("快速录入作业").font(.title2.bold());Spacer();Button("保存草稿并关闭"){state.send("close")}.keyboardShortcut(.cancelAction)}
         Text("粘贴通知、输入一句话或识别截图；核对后加入安排。").foregroundStyle(.secondary)
         HStack(alignment:.top,spacing:8){CaptureTextEditor(text:$state.text).frame(height:state.ocrImage == nil ? 90:150).overlay(RoundedRectangle(cornerRadius:6).stroke(Color(nsColor:.separatorColor)));if let image=state.ocrImage{VStack(alignment:.leading,spacing:4){Image(nsImage:image).resizable().scaledToFit().frame(maxHeight:100).accessibilityLabel("录入截图原图");ScrollView{Text(state.ocrWarnings).font(.caption).foregroundStyle(.orange).textSelection(.enabled)}.frame(height:40);HStack{Button("放大原图…"){state.showingOriginal=true};Button("关闭"){state.ocrImage=nil}.accessibilityLabel("关闭截图对照")}}.frame(width:min(260,geo.size.width * 0.36))}}.onChange(of:state.text){_ in state.send("draft")}.task(id:state.text){let value=state.text;try? await Task.sleep(nanoseconds:450_000_000);if !Task.isCancelled && !state.busy && !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && state.parsedText != value{state.send("source-changed")}}
-        HStack{Button("粘贴"){state.send("paste")};Button("选择截图…"){state.send("image")};WorkspaceButton(title:"重新识别",enabled:!state.busy,prominent:false,identity:"quick-parse"){state.send("parse")}.fixedSize();Button("助手识别…"){state.send("skill")};Spacer();if state.busy{ProgressView().controlSize(.small)}}.disabled(state.busy)
+        HStack{Button("粘贴"){state.send("paste")};Button("选择截图…"){state.send("image")};WorkspaceButton(title:"重新识别",enabled:!state.busy,prominent:false,identity:"quick-parse"){state.send("parse")}.fixedSize();Button("助手识别…"){state.send("skill")};Spacer();if state.busy{ProgressView().progressViewStyle(.linear).frame(width:160)}}.disabled(state.busy)
         HStack{Toggle("指定消息日期",isOn:$state.explicitReference).onChange(of:state.explicitReference){_ in state.send("draft")};if state.explicitReference{DatePicker("",selection:$state.reference).labelsHidden().onChange(of:state.reference){_ in state.send("draft")}};Spacer()}
         HStack{Button("全选"){for i in state.entries.indices{let copy=state.entries[i].mutableCopy() as! NSMutableDictionary;copy["selected"]=true;state.entries[i]=copy};state.send("draft")};Button("取消选择"){for i in state.entries.indices{let copy=state.entries[i].mutableCopy() as! NSMutableDictionary;copy["selected"]=false;state.entries[i]=copy};state.send("draft")};Text("已选 \(state.entries.filter{flag($0,"selected")}.count) / \(state.entries.count)").foregroundStyle(.secondary);Spacer()}
         if geo.size.width<760{VStack(spacing:0){rows.frame(height:150);Divider();details}}else{HStack(spacing:0){rows.frame(width:260);Divider();details}}
@@ -1082,43 +1082,73 @@ private final class CheckScopeState:ObservableObject {
     @Published var chosen=""
     @Published var busy=true
     @Published var notice="正在整理文件夹…"
+    @Published var preview:NSView?
+    var initialized=false
     var action:((NSDictionary)->Void)?
     var visible:[NSDictionary]{records.filter{query.isEmpty || string($0,"path").localizedCaseInsensitiveContains(query)}}
     var valid:[NSDictionary]{records.filter{flag($0,"selectable") && selected.contains(string($0,"path"))}}
     var bytes:Int64{valid.reduce(0){$0 + (($1["bytes"] as? NSNumber)?.int64Value ?? 0)}}
     var canStart:Bool{!busy && !valid.isEmpty && valid.count<=256 && bytes<=64*1024*1024}
-    var hint:String{valid.count>256 ? "最多256个文件，请减少选择或选择更小的文件夹。":(bytes>64*1024*1024 ? "超过64 MB，请减少选择后分批检查。":(valid.isEmpty ? "请选择至少一个文件。":"只读检查当前文件，不提交或推送。"))}
-    func send(_ action:String){self.action?(["action":action,"paths":valid.map{string($0,"path")}] as NSDictionary)}
+    var hint:String{valid.count>256 ? "最多256个文件，请减少选择。":(bytes>64*1024*1024 ? "超过64 MB，请缩小范围。":(valid.isEmpty ? "请选择至少一个文件。":"只读检查当前文件，不提交或推送。"))}
+    func send(_ action:String){self.action?(["action":action,"paths":valid.map{string($0,"path")},"selected":chosen] as NSDictionary)}
+}
+private final class CheckFileNode:Identifiable {
+    let id:String
+    var record:NSDictionary?
+    var children:[CheckFileNode]?
+    init(_ id:String,record:NSDictionary?=nil){self.id=id;self.record=record}
+}
+private func checkFileTree(_ records:[NSDictionary],flat:Bool)->[CheckFileNode]{
+    if flat{return records.map{CheckFileNode(string($0,"path"),record:$0)}}
+    let root=CheckFileNode("");root.children=[]
+    for row in records.sorted(by:{string($0,"path").localizedStandardCompare(string($1,"path")) == .orderedAscending}) {
+        var parent=root;var path=""
+        let components=string(row,"path").split(separator:"/").map(String.init)
+        for (index,part) in components.enumerated(){path=path.isEmpty ? part:path+"/"+part
+            if let child=parent.children?.first(where:{$0.id==path}){parent=child;continue}
+            let child=CheckFileNode(path,record:index==components.count-1 ? row:nil)
+            if child.record==nil{child.children=[]};if parent.children==nil{parent.children=[]};parent.children?.append(child);parent=child
+        }
+    };return root.children ?? []
+}
+private struct CheckPreviewHost:NSViewRepresentable {
+    let preview:NSView?
+    func makeNSView(context:Context)->NSView{NSView()}
+    func updateNSView(_ view:NSView,context:Context){guard let preview=preview else{return};if preview.superview !== view{view.subviews.forEach{$0.removeFromSuperview()};preview.frame=view.bounds;preview.autoresizingMask=[.width,.height];view.addSubview(preview)}}
+}
+private final class CheckSplitAnchorView:NSView {
+    override func viewDidMoveToWindow(){super.viewDidMoveToWindow();DispatchQueue.main.async{[weak self] in var parent=self?.superview;while let view=parent{if let split=view as? NSSplitView{split.autosaveName="AMFileCheckScopeSplit";break};parent=view.superview}}}
+}
+private struct CheckSplitAnchor:NSViewRepresentable {
+    func makeNSView(context:Context)->NSView{CheckSplitAnchorView()}
+    func updateNSView(_ view:NSView,context:Context){}
 }
 private struct CheckScopeWorkspace:View {
     @ObservedObject var state:CheckScopeState
     private var selection:Binding<String?>{Binding(get:{state.chosen.isEmpty ? nil:state.chosen},set:{state.chosen=$0 ?? ""})}
     var body:some View {
-        VStack(alignment:.leading,spacing:16){
+        VStack(alignment:.leading,spacing:12){
             WorkspaceHeading(title:"检查作业文件",subtitle:"1 文件范围  ›  2 检查报告",symbol:"doc.text.magnifyingglass")
             HStack{TextField("搜索文件或目录",text:$state.query).textFieldStyle(.roundedBorder).accessibilityLabel("搜索检查文件");Button("全选当前结果"){for row in state.visible where flag(row,"selectable"){state.selected.insert(string(row,"path"))}}.keyboardShortcut("a",modifiers:.command);Button("取消选择"){state.selected.removeAll()}}.disabled(state.busy)
-            ViewThatFits(in:.horizontal){
-                HStack(alignment:.top,spacing:16){fileList.frame(minWidth:320);detail.frame(width:260)}
-                VStack(alignment:.leading,spacing:12){fileList;detail.frame(height:120)}
-            }
-            HStack{if state.busy{ProgressView().controlSize(.small)};Text(state.notice).foregroundStyle(.secondary).textSelection(.enabled)}
+            HSplitView {
+                List(selection:selection){
+                    OutlineGroup(checkFileTree(state.visible.filter{flag($0,"selectable")},flat:!state.query.isEmpty),children:\.children){node in fileRow(node)}
+                    if state.visible.contains(where:{!flag($0,"selectable")}){DisclosureGroup("已排除 · \(state.visible.filter{!flag($0,"selectable")}.count)"){ForEach(checkFileTree(state.visible.filter{!flag($0,"selectable")},flat:true)){node in fileRow(node)}}}
+                }.listStyle(.inset).scrollContentBackground(.hidden).frame(minWidth:280,idealWidth:360,maxWidth:520,maxHeight:.infinity).accessibilityLabel("检查范围文件树").background(CheckSplitAnchor())
+                VStack(alignment:.leading,spacing:8){Text(state.chosen.isEmpty ? "选择文件预览":state.chosen).font(.caption).foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled);CheckPreviewHost(preview:state.preview).frame(maxWidth:.infinity,maxHeight:.infinity)}.padding(8).frame(minWidth:360,maxWidth:.infinity,maxHeight:.infinity).background(Color(nsColor:AMAppearance.surface))
+            }.frame(maxWidth:.infinity,maxHeight:.infinity)
+            DisclosureGroup("范围与安全说明"){Text("包含子文件夹；Markdown 图片自动关联并去重。只读取所选范围，越界图片需要选择共同父目录。隐藏配置、依赖、缓存、构建目录和敏感文件已排除；未检查不算通过。").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}
+            if state.busy{ProgressView().progressViewStyle(.linear)}
+            Text(state.notice).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).lineLimit(2)
             HStack{Text("文档 \(state.valid.filter{!flag($0,"image")}.count) · 已选 \(state.valid.count) · 图片 \(state.valid.filter{flag($0,"image")}.count) · 排除 \(state.records.filter{!flag($0,"selectable")}.count)").font(.caption).foregroundStyle(.secondary);Spacer();Text(ByteCountFormatter.string(fromByteCount:state.bytes,countStyle:.file)).font(.caption)}
             Divider()
             HStack{Button(state.busy ? "取消整理":"取消"){state.send("cancel")}.keyboardShortcut(.cancelAction);Text(state.hint).font(.caption).foregroundStyle(state.canStart ? Color.secondary:Color.orange);Spacer();Button("开始检查"){state.send("check")}.buttonStyle(.borderedProminent).disabled(!state.canStart).keyboardShortcut(.defaultAction)}
-        }.padding(24).font(.system(size:13)).frame(minWidth:580,minHeight:440).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent))
+        }.padding(20).font(.system(size:13)).frame(minWidth:860,minHeight:560).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).onChange(of:state.chosen){_ in state.send("preview")}
     }
-    private var fileList:some View {
-        List(selection:selection){ForEach(state.visible,id:\.self){row in
-            let path=string(row,"path")
-            HStack(alignment:.top,spacing:8){
-                Toggle("包含 \(path)",isOn:Binding(get:{state.selected.contains(path)},set:{if $0{state.selected.insert(path)}else{state.selected.remove(path)}})).labelsHidden().toggleStyle(.checkbox).disabled(!flag(row,"selectable"))
-                Image(systemName:flag(row,"selectable") ? (flag(row,"image") ? "photo":"doc.text"):"minus.circle").foregroundStyle(.secondary)
-                VStack(alignment:.leading,spacing:3){Text((path as NSString).lastPathComponent).lineLimit(1);Text(string(row,"reason").isEmpty ? ((path as NSString).deletingLastPathComponent.isEmpty ? "作业文件夹":(path as NSString).deletingLastPathComponent):string(row,"reason")).font(.caption).foregroundStyle(.secondary).lineLimit(1)}
-            }.help(path).tag(path).padding(.vertical,3)
-        }}.listStyle(.inset).scrollContentBackground(.hidden).background(Color(nsColor:AMAppearance.surface)).clipShape(RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).stroke(Color(nsColor:AMAppearance.separator),lineWidth:0.5)).accessibilityLabel("检查范围文件清单")
-    }
-    private var detail:some View {
-        VStack(alignment:.leading,spacing:12){Text("范围说明").fontWeight(.semibold);ScrollView{VStack(alignment:.leading,spacing:12){if !state.chosen.isEmpty {Text(state.chosen).textSelection(.enabled);if let row=state.records.first(where:{string($0,"path")==state.chosen}),!string(row,"reason").isEmpty{Text(string(row,"reason")).foregroundStyle(.orange)}};Text("包含子文件夹。Markdown 引用的图片会自动关联、去重。检查边界为本次选择的文件夹；外部图片需要选择共同父目录。");Text("隐藏配置、依赖、缓存、构建目录和敏感文件已排除。排除文件及不支持类型不算检查通过。").foregroundStyle(.secondary)}}}.padding(16).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(Color(nsColor:AMAppearance.surface)).clipShape(RoundedRectangle(cornerRadius:6))
+    private func fileRow(_ node:CheckFileNode)->some View {
+        HStack(spacing:6){if let row=node.record {Toggle("包含 \(node.id)",isOn:Binding(get:{state.selected.contains(node.id)},set:{if $0{state.selected.insert(node.id)}else{state.selected.remove(node.id)}})).labelsHidden().toggleStyle(.checkbox).disabled(!flag(row,"selectable"));Image(systemName:flag(row,"selectable") ? (flag(row,"image") ? "photo":"doc.text"):"minus.circle").foregroundStyle(.secondary)}else{Image(systemName:"folder").foregroundStyle(.secondary)}
+            VStack(alignment:.leading,spacing:2){Text((node.id as NSString).lastPathComponent).lineLimit(1);if let row=node.record,!string(row,"reason").isEmpty{Text(string(row,"reason")).font(.caption2).foregroundStyle(.secondary).lineLimit(1)}}
+        }.tag(node.id).help(node.id).padding(.vertical,2)
     }
 }
 private struct WorkspaceHeading:View {
@@ -1131,8 +1161,10 @@ private struct WorkspaceHeading:View {
     private let state=CheckScopeState()
     @objc public var actionHandler:((NSDictionary)->Void)?{get{state.action}set{state.action=newValue}}
     public override func loadView(){view=NSHostingView(rootView:CheckScopeWorkspace(state:state))}
-    @objc public func update(_ records:[NSDictionary],busy:Bool,notice:String){state.records=records;state.busy=busy;state.notice=notice;if !busy {state.selected=Set(records.filter{flag($0,"selectable")}.map{string($0,"path")})}}
+    @objc public func update(_ records:[NSDictionary],busy:Bool,notice:String){state.records=records;state.busy=busy;state.notice=notice;if !busy && !state.initialized {state.initialized=true;state.selected=Set(records.filter{flag($0,"selectable")}.map{string($0,"path")});state.chosen=records.first(where:{flag($0,"selectable") && !flag($0,"image")}).map{string($0,"path")} ?? "";state.send("preview")}}
     @objc public func setProgress(_ notice:String){state.notice=notice}
+    @objc public func setPreview(_ preview:NSView){state.preview=preview}
+    @objc public var previewView:NSView?{state.preview}
     @objc public var preparing:Bool{state.busy}
     @objc public func requestCheck(){if state.canStart{state.send("check")}}
 }

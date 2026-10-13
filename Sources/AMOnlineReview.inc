@@ -123,7 +123,7 @@ NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
 }
 - (NSArray *)modelsWithKey:(NSString *)key error:(NSError **)error {
     if(!ORClaim(error))return nil;self.cleaning=NO;@try{key=ORNormalizedKey(key);self.key=key.length ? key:[self credential];if(!ORKey(self.key)){if(error)*error=ORError(ORKeyHint(),1);return nil;}NSMutableArray *models=NSMutableArray.array;NSString *page=@"";
-        for(NSUInteger n=0;n<10;n++){NSString *path=[@"/v1beta/models?pageSize=1000" stringByAppendingString:page.length ? [@"&pageToken=" stringByAppendingString:[page stringByAddingPercentEncodingWithAllowedCharacters:NSCharacterSet.alphanumericCharacterSet]]:@""];NSDictionary *reply=[self json:@"GET" path:path body:nil error:error];if(!reply)return nil;for(id row in reply[@"models"])if([row isKindOfClass:NSDictionary.class] && [row[@"name"] isKindOfClass:NSString.class] && [row[@"supportedGenerationMethods"] isKindOfClass:NSArray.class] && [row[@"supportedGenerationMethods"] containsObject:@"generateContent"]){NSString *name=[row[@"name"] hasPrefix:@"models/"] ? [row[@"name"] substringFromIndex:7]:row[@"name"];if(ORCompatibleModel(name))[models addObject:@{@"id":name,@"title":name}];}page=[reply[@"nextPageToken"] isKindOfClass:NSString.class] ? reply[@"nextPageToken"]:@"";if(!page.length)break;}
+        for(NSUInteger n=0;n<10;n++){NSString *path=[@"/v1beta/models?pageSize=1000" stringByAppendingString:page.length ? [@"&pageToken=" stringByAppendingString:[page stringByAddingPercentEncodingWithAllowedCharacters:NSCharacterSet.alphanumericCharacterSet]]:@""];NSDictionary *reply=[self json:@"GET" path:path body:nil error:error];if(!reply)return nil;if(![reply[@"models"] isKindOfClass:NSArray.class]){if(error)*error=ORError(@"模型列表格式无效，可重试。",1);return nil;}for(id row in reply[@"models"])if([row isKindOfClass:NSDictionary.class] && [row[@"name"] isKindOfClass:NSString.class] && [row[@"supportedGenerationMethods"] isKindOfClass:NSArray.class] && [row[@"supportedGenerationMethods"] containsObject:@"generateContent"]){NSString *name=[row[@"name"] hasPrefix:@"models/"] ? [row[@"name"] substringFromIndex:7]:row[@"name"];if(ORCompatibleModel(name))[models addObject:@{@"id":name,@"title":name}];}page=[reply[@"nextPageToken"] isKindOfClass:NSString.class] ? reply[@"nextPageToken"]:@"";if(!page.length)break;}
         return models;
     }@finally{[self.session invalidateAndCancel];self.session=nil;self.key=nil;ORRelease();}
 }
@@ -131,7 +131,7 @@ NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
     if(!ORClaim(error))return NO;self.cleaning=NO;self.model=self.model ?: AMOnlineReviewCurrentModel();@try{key=ORNormalizedKey(key);self.key=key.length ? key:[self credential];if(!ORKey(self.key)){if(error)*error=ORError(ORKeyHint(),1);return NO;}if(![self consume:error])return NO;
         NSMutableArray *parts=[NSMutableArray arrayWithObject:@{@"text":@"Synthetic connectivity test, no coursework. Return JSON only: {\"status\":\"ok\"}."}];if(image){NSBitmapImageRep *bitmap=[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:32 pixelsHigh:32 bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace bytesPerRow:0 bitsPerPixel:0];memset(bitmap.bitmapData,255,bitmap.bytesPerRow*32);NSData *png=[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];[parts addObject:@{@"inlineData":@{@"mimeType":@"image/png",@"data":[png base64EncodedStringWithOptions:0]}}];}
         NSDictionary *reply=[self json:@"POST" path:[NSString stringWithFormat:@"/v1beta/models/%@:generateContent",self.model] body:@{@"contents":@[@{@"role":@"user",@"parts":parts}],@"generationConfig":@{@"responseMimeType":@"application/json",@"maxOutputTokens":@256},@"store":@NO} error:error];if(!reply)return NO;
-        id candidate=[reply[@"candidates"] isKindOfClass:NSArray.class] ? [reply[@"candidates"] firstObject]:nil;NSMutableString *text=NSMutableString.string;if([candidate isKindOfClass:NSDictionary.class])for(id part in candidate[@"content"][@"parts"])if([part isKindOfClass:NSDictionary.class] && [part[@"text"] isKindOfClass:NSString.class])[text appendString:part[@"text"]];id result=[NSJSONSerialization JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];BOOL ok=[result isKindOfClass:NSDictionary.class] && [result[@"status"] isEqual:@"ok"] && [candidate[@"finishReason"] isEqual:@"STOP"];if(!ok && error)*error=ORError(@"模型可访问，但合成生成未返回完整有效结果。",1);return ok;
+        id candidate=[reply[@"candidates"] isKindOfClass:NSArray.class] ? [reply[@"candidates"] firstObject]:nil;NSMutableString *text=NSMutableString.string;if([candidate isKindOfClass:NSDictionary.class] && [candidate[@"content"] isKindOfClass:NSDictionary.class] && [candidate[@"content"][@"parts"] isKindOfClass:NSArray.class])for(id part in candidate[@"content"][@"parts"])if([part isKindOfClass:NSDictionary.class] && [part[@"text"] isKindOfClass:NSString.class])[text appendString:part[@"text"]];id result=[NSJSONSerialization JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];BOOL ok=[result isKindOfClass:NSDictionary.class] && [result[@"status"] isEqual:@"ok"] && [candidate[@"finishReason"] isEqual:@"STOP"];if(!ok && error)*error=ORError(@"模型可访问，但合成生成未返回完整有效结果。",1);return ok;
     }@finally{[self.session invalidateAndCancel];self.session=nil;self.key=nil;ORRelease();}
 }
 - (BOOL)testConnectionWithKey:(NSString *)key error:(NSError **)error {
@@ -140,13 +140,13 @@ NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
 - (NSUInteger)cleanupWithKey:(NSString *)key error:(NSError **)error {
     if(!ORClaim(error))return ORUploads().count;self.cleaning=YES;@try{key=ORNormalizedKey(key);self.key=key.length ? key:[self credential];if(!ORKey(self.key)){if(error)*error=ORError(@"无法读取有效密钥，副本仍待清理。",1);return ORUploads().count;}
         NSDate *cleanupDeadline=[NSDate dateWithTimeIntervalSinceNow:15];
-        for(NSDictionary *record in ORUploads()){
-            if(self.cancelled || cleanupDeadline.timeIntervalSinceNow<=0)break;if(!ORName(record[@"name"]))continue;
+        NSArray *records=ORUploads();NSUInteger processed=0;for(NSDictionary *record in records){
+            AMOperationProgress(self.operationID,@"核对与清理上传副本",processed++,records.count);if(self.cancelled || cleanupDeadline.timeIntervalSinceNow<=0)break;if(!ORName(record[@"name"]))continue;
             // Expired service copies need no delete; pending retries expire after one hour.
             NSDate *date=record[@"date"],*keep=record[@"keepUntil"];if(!self.forceCleanup && [keep isKindOfClass:NSDate.class] && keep.timeIntervalSinceNow>0)continue;
             NSError *problem=nil;BOOL expired=[date isKindOfClass:NSDate.class] && date.timeIntervalSinceNow < -48*3600;
             if(expired || [self json:@"DELETE" path:[@"/v1beta/" stringByAppendingString:record[@"name"]] body:nil error:&problem] || problem.code==404)ORStoreUpload(record,YES,error);else {if(error)*error=problem;break;}
-        }return ORUploads().count;
+        }AMOperationProgress(self.operationID,@"上传副本处理结束",processed,records.count);return ORUploads().count;
     }@finally{[self.session invalidateAndCancel];self.session=nil;self.key=nil;ORRelease();}
 }
 - (NSDictionary *)upload:(NSDictionary *)asset folder:(NSURL *)folder fingerprint:(NSString *)fingerprint error:(NSError **)error {
@@ -269,4 +269,4 @@ NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
     }
 }
 @end
-void AMOnlineReviewCleanup(void){if(ORUploads().count)[AMOnlineReviewClient.new cleanupWithKey:@"" error:NULL];}
+void AMOnlineReviewCleanup(void){if(!ORUploads().count)return;AMOnlineReviewClient *client=AMOnlineReviewClient.new;client.operationID=AMOperationBegin(@"清理上传副本",@"Gemini",NO,nil);NSError *error=nil;NSUInteger remaining=[client cleanupWithKey:@"" error:&error];AMOperationFinish(client.operationID,error ? @"failed":@"success",error ? @"副本清理未完成，可在在线设置重试":[NSString stringWithFormat:@"副本核对完成，%lu 个仍保留供重试",(unsigned long)remaining]);}

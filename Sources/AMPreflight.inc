@@ -1,3 +1,5 @@
+static NSDictionary *(^PFRenderer)(NSString *,NSString *);
+void AMPreflightSetRenderer(NSDictionary *(^renderer)(NSString *,NSString *)){PFRenderer=[renderer copy];}
 #import "AMPreflight.h"
 #import <ImageIO/ImageIO.h>
 #include <math.h>
@@ -158,14 +160,16 @@ NSDictionary *AMPreflightCheckWithProgress(NSDictionary *snapshot,NSString *requ
     NSUInteger processed=0,total=[snapshot[@"paths"] count];
     NSMutableArray *issues=NSMutableArray.array,*coverage=NSMutableArray.array,*images=NSMutableArray.array;NSDictionary *files=snapshot[@"files"];
     for(NSString *path in snapshot[@"paths"]){if(progress)progress(processed++,total);if(cancelled && cancelled())return @{@"cancelled":@YES};NSDictionary *entry=files[path];if([entry[@"deleted"] boolValue])continue;
-        NSString *key=[NSString stringWithFormat:@"preflight-v2|%@|%@",path,entry[@"version"] ?: @""];NSDictionary *cached=cache[key];
-        if(!cached){NSMutableArray *found=NSMutableArray.array;NSString *text=entry[@"text"],*ext=path.pathExtension.lowercaseString,*status=@"未检查：不支持的文件类型";
+        NSString *key=[NSString stringWithFormat:@"preflight-v3-renderer4|%@|%@",path,entry[@"version"] ?: @""];NSDictionary *cached=cache[key];
+        if(!cached){NSMutableArray *found=NSMutableArray.array;NSDictionary *math=nil;NSString *text=entry[@"text"],*ext=path.pathExtension.lowercaseString,*status=@"未检查：不支持的文件类型";
             if(entry[@"problem"])[found addObject:PFIssue(@"format",@"error",path,@1,entry[@"problem"],@"",@"检查文件格式与大小后重新检查。")];
             else if(text){status=@"已检查：文本结构与明显未完成项";NSArray *lines=[text componentsSeparatedByString:@"\n"];BOOL markdown=[@[@"md",@"markdown",@"mdx"] containsObject:ext];NSString *visible=markdown ? PFVisible(text):text;NSArray *viewLines=[visible componentsSeparatedByString:@"\n"];
                 if(!RTrim(text).length)[found addObject:PFIssue(@"incomplete",@"warning",path,@1,@"文件为空",@"",@"确认是否遗漏作答。")];
                 for(NSUInteger i=0;i<lines.count;i++){NSString *line=lines[i],*v=viewLines[i];if(PFMatches(line,@"^(?:<{7} |={7}$|>{7} )").count)[found addObject:PFIssue(@"format",@"error",path,@(i+1),@"发现合并冲突标记",line,@"先解决合并冲突。")];
                     if(PFMatches(markdown ? v:line,@"(?i)\\b(?:TODO|FIXME|TBD)\\b|待完成|此处填写|(?m)^\\s*[-*+]\\s+\\[ \\]").count)[found addObject:PFIssue(@"incomplete",@"warning",path,@(i+1),@"疑似未完成内容",line,@"核对这部分是否需要作答。")];}
                 if(markdown){NSUInteger fences=0;NSString *mark=nil;NSUInteger length=0;for(NSString *line in lines){NSArray *m=PFMatches(RTrim(line),@"^(`{3,}|~{3,})");if(!m.count)continue;NSString *token=PFGroup(RTrim(line),m[0],1);if(!mark){mark=[token substringToIndex:1];length=token.length;fences++;}else if([token hasPrefix:mark] && token.length>=length && !RTrim([RTrim(line) substringFromIndex:token.length]).length){mark=nil;fences--;}}if(fences)[found addObject:PFIssue(@"format",@"warning",path,@1,@"代码围栏可能未闭合",@"",@"核对 Markdown 预览；这是结构提示。")];
+                    math=PFRenderer ? PFRenderer(text,path):@{@"completed":@NO,@"issues":@[]};
+                    for(NSDictionary *issue in math[@"issues"]){NSUInteger line=MAX(1,[issue[@"line"] unsignedIntegerValue]);[found addObject:PFIssue(@"format",issue[@"severity"] ?: @"warning",path,@(line),issue[@"message"] ?: @"公式兼容性提示",issue[@"evidence"] ?: @"",issue[@"suggestion"] ?: @"核对源码与渲染结果。")];}
                     // Check natural language only. Formulae, code and URLs are excluded.
                     NSMutableString *prose=AMPreflightSpellingProse(text).mutableCopy;
                     if(prose.length>100000)prose=[[prose substringToIndex:100000] mutableCopy];
@@ -175,9 +179,9 @@ NSDictionary *AMPreflightCheckWithProgress(NSDictionary *snapshot,NSString *requ
                 if([ext isEqual:@"ipynb"]){id notebook=[NSJSONSerialization JSONObjectWithData:entry[@"data"] options:0 error:NULL];BOOL ok=[notebook isKindOfClass:NSDictionary.class] && [notebook[@"cells"] isKindOfClass:NSArray.class] && [notebook[@"nbformat"] isKindOfClass:NSNumber.class];if(ok)for(id cell in notebook[@"cells"])if(![cell isKindOfClass:NSDictionary.class] || ![@[@"code",@"markdown",@"raw"] containsObject:cell[@"cell_type"]] || !([cell[@"source"] isKindOfClass:NSString.class] || [cell[@"source"] isKindOfClass:NSArray.class])){ok=NO;break;}if(!ok)[found addObject:PFIssue(@"format",@"error",path,@1,@"Notebook JSON 或单元结构无效",@"",@"用 Notebook 编辑器检查文件；未执行任何单元。")];}
             }else if([entry[@"image"] boolValue]){status=@"已检查：图片可解码";if(!PFImage(entry[@"data"]))[found addObject:PFIssue(@"format",@"error",path,@1,@"图片损坏或超过安全解码尺寸",@"",@"重新导出图片并复查。")];}
             if(cancelled && cancelled())return @{@"cancelled":@YES};
-            cached=@{@"issues":found,@"status":status};cache[key]=cached;
+            cached=@{@"issues":found,@"status":status,@"math":math ?: @{}};if(!math || [math[@"completed"] boolValue])cache[key]=cached;
         }
-        [issues addObjectsFromArray:cached[@"issues"]];[coverage addObject:@{@"path":path,@"status":cached[@"status"]}];
+        [issues addObjectsFromArray:cached[@"issues"]];[coverage addObject:@{@"path":path,@"status":cached[@"status"]}];if([cached[@"math"] count])[coverage addObject:@{@"path":path,@"kind":@"math",@"status":[cached[@"math"][@"completed"] boolValue] ? [NSString stringWithFormat:@"已渲染：%lu 个公式（GitHub风格）",(unsigned long)[cached[@"math"][@"formulaCount"] unsignedIntegerValue]]:@"未完成：公式渲染超时、内容超限或渲染器不可用"}];
         if([entry[@"image"] boolValue] && !entry[@"problem"] && PFImage(entry[@"data"]))[images addObject:@{@"path":path,@"document":path,@"line":@1,@"version":entry[@"version"]}];
         NSString *text=entry[@"text"];
         if([@[@"md",@"markdown",@"mdx"] containsObject:path.pathExtension.lowercaseString])for(NSDictionary *ref in AMPreflightImageReferences(text ?: @"")){
@@ -188,11 +192,12 @@ NSDictionary *AMPreflightCheckWithProgress(NSDictionary *snapshot,NSString *requ
             [images addObject:@{@"path":resolved,@"document":path,@"line":ref[@"line"],@"version":asset[@"version"]}];
         }
     }
+    if(progress)progress(total,total);
     if(!RTrim(requirements).length)[issues addObject:PFIssue(@"requirements",@"info",@"",@1,@"未提供题目，无法判断是否完成全部要求",@"",@"关联作业或补充老师原文。")];
     [coverage addObject:@{@"path":@"",@"status":@"未检查：答案、推导、中文语义及程序运行；可交给助手复核"}];
     NSArray *sorted=[issues sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){NSArray *levels=@[@"error",@"warning",@"info"];NSUInteger x=[levels indexOfObject:a[@"severity"]],y=[levels indexOfObject:b[@"severity"]];return x<y ? NSOrderedAscending : x>y ? NSOrderedDescending:NSOrderedSame;}];
     NSMutableArray *uniqueImages=NSMutableArray.array;NSMutableSet *imagePaths=NSMutableSet.set;for(NSDictionary *image in images)if(![imagePaths containsObject:image[@"path"]]){[imagePaths addObject:image[@"path"]];[uniqueImages addObject:image];}
-    return @{@"version":AMPreflightHash([[NSString stringWithFormat:@"preflight-v2|%@|%@",snapshot[@"version"],requirements] dataUsingEncoding:NSUTF8StringEncoding]),@"snapshotVersion":snapshot[@"version"],@"issues":sorted,@"coverage":coverage,@"images":uniqueImages,@"date":NSDate.date,@"assistant":@"未检查"};
+    return @{@"version":AMPreflightHash([[NSString stringWithFormat:@"preflight-v3-renderer4|%@|%@",snapshot[@"version"],requirements] dataUsingEncoding:NSUTF8StringEncoding]),@"snapshotVersion":snapshot[@"version"],@"issues":sorted,@"coverage":coverage,@"images":uniqueImages,@"date":NSDate.date,@"assistant":@"未检查"};
 }
 static BOOL PFWrite(NSData *data,NSURL *url,NSError **error){
     if(![url.path isEqual:url.URLByResolvingSymlinksInPath.path]){if(error)*error=RError(@"交换目录不安全。");return NO;}
@@ -249,9 +254,10 @@ static NSArray *PFJobsRead(void){id saved=SSReadPlist(@"preflight-jobs.plist");i
 NSArray *AMPreflightJobs(void){@synchronized(NSSpellChecker.class){return PFJobsRead() ?: @[];}}
 BOOL AMPreflightRegister(NSDictionary *context,NSDictionary *report,NSString *courseID,NSError **error){@synchronized(NSSpellChecker.class){NSArray *old=PFJobsRead();if(!old || old.count>=1000){if(error)*error=RError(@"复核批次记录无法读取或已满，原记录已保留。");return NO;}NSData *data=PFRead([AMPreflightFolder(context[@"batchID"]) URLByAppendingPathComponent:@"context.local.json"],32*1024*1024);if(!data)return NO;NSMutableArray *next=old.mutableCopy;[next addObject:@{@"id":context[@"batchID"],@"date":NSDate.date,@"state":@"等待助手",@"message":@"提交前复核；结果供核对，不会自动提交",@"count":@([context[@"documents"] count]),@"courses":courseID.length ? @[courseID]:@[],@"contextHash":AMPreflightHash(data),@"report":report,@"reportVersion":report[@"version"]}];return SSWritePlist(@"preflight-jobs.plist",next,error);}}
 NSDictionary *AMPreflightJobForReport(NSString *version){for(NSDictionary *job in [AMPreflightJobs() reverseObjectEnumerator])if([job[@"reportVersion"] isEqual:version])return job;return nil;}
-void AMPreflightPoll(void){@synchronized(NSSpellChecker.class){NSArray *old=PFJobsRead();if(!old)return;NSMutableArray *next=NSMutableArray.array;BOOL dirty=NO;
+void AMPreflightPoll(void){@synchronized(NSSpellChecker.class){NSArray *old=PFJobsRead();if(!old)return;NSMutableArray *next=NSMutableArray.array,*operations=NSMutableArray.array;BOOL dirty=NO;
     for(NSDictionary *value in old){NSMutableDictionary *job=value.mutableCopy;[next addObject:job];if([job[@"state"] isEqual:@"已接回"] && ![job[@"cleaned"] boolValue] && [job[@"date"] timeIntervalSinceNow]<-30*86400){NSURL *folder=AMPreflightFolder(job[@"id"]);if(folder)[NSFileManager.defaultManager removeItemAtURL:folder error:NULL];job[@"cleaned"]=@YES;job[@"report"]=@{};[job removeObjectForKey:@"result"];dirty=YES;}
         if([job[@"state"] isEqual:@"已接回"] || [job[@"cleaned"] boolValue])continue;NSURL *folder=AMPreflightFolder(job[@"id"]);NSURL *url=[folder URLByAppendingPathComponent:@"results.local.json"];if(![NSFileManager.defaultManager fileExistsAtPath:url.path])continue;NSError *failure=nil;NSDictionary *read=SSSkillReadResult(url,&failure);NSString *fingerprint=read[@"fingerprint"];if(fingerprint && [job[@"fingerprint"] isEqual:fingerprint])continue;
+        NSString *operation=AMOperationBegin(@"核验并接回复核结果",[job[@"provider"] isEqual:@"Gemini"] ? @"Gemini":@"Skill",NO,nil);
         NSURL *contextURL=[folder URLByAppendingPathComponent:@"context.local.json"];NSData *data=PFRead(contextURL,32*1024*1024);NSDictionary *context=data.length<=32*1024*1024 ? [NSJSONSerialization JSONObjectWithData:data ?: NSData.data options:0 error:NULL]:nil;
         BOOL intact=[AMPreflightHash(data ?: NSData.data) isEqual:job[@"contextHash"]];
         if(intact)for(NSDictionary *image in context[@"images"]){NSString *resource=image[@"resource"];if(![resource isEqual:resource.lastPathComponent] || ![AMPreflightHash(PFRead([folder URLByAppendingPathComponent:resource],64*1024*1024) ?: NSData.data) isEqual:image[@"resourceHash"]]){intact=NO;break;}}
@@ -259,9 +265,9 @@ void AMPreflightPoll(void){@synchronized(NSSpellChecker.class){NSArray *old=PFJo
         if(result){job[@"result"]=result;job[@"state"]=[result[@"partial"] boolValue] ? @"需处理":@"已接回";job[@"message"]=[NSString stringWithFormat:@"提交前复核：%lu 条建议%@；仅适用于导出版本",(unsigned long)[result[@"issues"] count],[result[@"partial"] boolValue] ? @"，部分未完成":@""];}
         else {job[@"state"]=@"需处理";job[@"message"]=failure.localizedDescription ?: @"复核材料版本变化，请重新准备材料。";}
         if([job[@"provider"] isEqual:@"Gemini"])job[@"message"]=[@"Gemini · " stringByAppendingString:job[@"message"]];
-        if(fingerprint)job[@"fingerprint"]=fingerprint;dirty=YES;
+        if(fingerprint)job[@"fingerprint"]=fingerprint;dirty=YES;[operations addObject:@{@"id":operation,@"state":result ? @"success":@"failed",@"message":job[@"message"]}];
     }
-    if(dirty)SSWritePlist(@"preflight-jobs.plist",next,NULL);
+    BOOL saved=!dirty || SSWritePlist(@"preflight-jobs.plist",next,NULL);for(NSDictionary *operation in operations)AMOperationFinish(operation[@"id"],saved ? operation[@"state"]:@"failed",saved ? operation[@"message"]:@"接回保存失败，可重试");
 }}
 BOOL AMPreflightJobAction(NSString *action,NSString *batch){@synchronized(NSSpellChecker.class){NSArray *old=PFJobsRead();if(!old)return NO;BOOL clean=[action isEqual:@"clean"],matched=NO;NSMutableArray *next=NSMutableArray.array;
     for(NSDictionary *value in old){NSMutableDictionary *job=value.mutableCopy;[next addObject:job];BOOL target=clean ? [job[@"state"] isEqual:@"已接回"]:[job[@"id"] isEqual:batch];if(!target)continue;matched=YES;NSURL *folder=AMPreflightFolder(job[@"id"]);

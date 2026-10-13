@@ -3,6 +3,7 @@
 #import "DDLCore.h"
 #import "DDLImport.h"
 #import "AMPreflight.h"
+#import "AMRenderer.h"
 #import "ThemeIcon.h"
 #import "SSLocalData.h"
 #import "SSCourseWindow.h"
@@ -211,10 +212,12 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSDictionary<NSDate *, NSArray<NSDictionary *> *> *tasksByDay;
 - (void)updateSelection:(NSDate *)selection;
 - (void)refreshHoverAtWindowPoint:(NSPoint)point;
+- (void)refreshColors;
 @property(copy) void (^onSelect)(NSDate *date, NSString *taskID);
 - (void)reload;
 @end
 @implementation OverviewGrid
+- (void)refreshColors{for(NSView *view in self.subviews)if([view isKindOfClass:CalendarDayCell.class]){CalendarDayCell *cell=(id)view;ConfigureCalendarCell(cell,[Cal() isDate:cell.date inSameDayAsDate:self.selection]);}}
 - (void)refreshHoverAtWindowPoint:(NSPoint)point {
     for (NSView *view in self.subviews) if ([view isKindOfClass:CalendarDayCell.class]) [(CalendarDayCell *)view syncHoverAtWindowPoint:point];
 }
@@ -316,6 +319,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSWindow *window;
 @property Surface *root;
 @property Surface *sidebar;
+@property NSView *sidebarMaterial;
 @property NSScrollView *navigationScroll;
 @property BOOL coursesCollapsed;
 @property NSString *selectedTaskID;
@@ -387,6 +391,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property BOOL preview;
 @property BOOL loading;
 @property BOOL taskStoreBlocked;
+@property NSUInteger backgroundSaveCount;
 @property BOOL renderBusy;
 @property BOOL taskScrollRendering;
 @property NSInteger taskScrollBucket;
@@ -682,6 +687,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     self.preview = [NSProcessInfo.processInfo.arguments containsObject:@"--preview"];
     // Leave appearance unset so macOS controls light/dark mode.
     NSApp.appearance=nil;
+    AMInstallRenderer();
     self.page = 0; self.pageStates = NSMutableDictionary.dictionary;
     NSApp.applicationIconImage = ThemeIcon();
     if (!self.preview) {
@@ -712,7 +718,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     self.window.backgroundColor = Canvas();
     self.root = GradientBox(Canvas(), Panel(), 0); self.root.frame = NSMakeRect(0, 0, 1280, 840); self.window.contentView = self.root;NSToolbar *toolbar=[[NSToolbar alloc] initWithIdentifier:@"AMMainToolbar"];toolbar.delegate=self;toolbar.displayMode=NSToolbarDisplayModeIconAndLabel;self.window.toolbar=toolbar;self.window.toolbarStyle=NSWindowToolbarStyleUnifiedCompact;
     self.taskDetails = Box(Card(), 10); self.taskDetails.stroke = Line(); self.taskDetails.hidden=YES; [self.root addSubview:self.taskDetails];
-    self.sidebar = GradientBox(Panel(), Canvas(), 0); [self.root addSubview:self.sidebar];
+    self.sidebar = Box(NSColor.clearColor, 0); self.sidebarMaterial=AMNavigationMaterial(self.sidebar);[self.root addSubview:self.sidebarMaterial];
     self.header = GradientBox(Canvas(), Panel(), 0); [self.root addSubview:self.header];
     self.search = [[NSSearchField alloc] initWithFrame:NSZeroRect]; self.search.placeholderString = @"搜索任务、学科、备注"; self.search.delegate = self; self.search.sendsSearchStringImmediately = YES; self.search.font = [NSFont systemFontOfSize:12]; [self.root addSubview:self.search];
     self.calendarStatus = Segments(@[@"全部", @"待完成", @"已完成"], self, @selector(changeCalendarStatus:)); [self.root addSubview:self.calendarStatus];
@@ -751,7 +757,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     self.courseWindow.editTask = ^(NSString *identifier) { NSMenuItem *item = NSMenuItem.new; item.representedObject = identifier; [weakSelf editTask:item]; };
     self.courseWindow.stateChanged = ^{ [weakSelf renderSidebar]; if(weakSelf.page==4)[weakSelf renderHeader]; if (weakSelf.page == 0) [weakSelf renderTaskContent]; };
     self.exitCoordinator = SSExitCoordinator.new;
-    self.exitCoordinator.operationBusy = ^BOOL { return weakSelf.courseWindow.operationBusy; };
+    self.exitCoordinator.operationBusy = ^BOOL { return weakSelf.courseWindow.operationBusy || weakSelf.backgroundSaveCount>0; };
     self.exitCoordinator.pauseOperations = ^(BOOL paused) { weakSelf.courseWindow.operationsPaused = paused; };
     self.exitCoordinator.cancelLogin = ^{ [weakSelf.courseWindow cancelPendingLogin]; };
     self.exitCoordinator.resolveEdits = ^BOOL(BOOL updating) { return [weakSelf resolveEditsForExit:updating]; };
@@ -779,14 +785,8 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 - (SSCourseController *)makeCourseController {return [[SSCourseController alloc] initWithPreview:self.preview];}
 - (void)accessibilityChanged:(NSNotification *)notification {[self refreshAppearance];}
 - (void)refreshAppearance {
-    if (!self.window || self.renderBusy) return;
-    NSResponder *focus = self.window.firstResponder; NSInteger calendarFocus = focus == self.yearPicker ? 1 : (focus == self.monthPicker ? 2 : 0);
-    ActionButton *button = [focus isKindOfClass:ActionButton.class] ? (ActionButton *)focus : nil; NSView *scope = [button isDescendantOf:self.sidebar] ? self.sidebar : ([button isDescendantOf:self.header] ? self.header : nil); SEL action = button.action; NSInteger tag = button.tag;NSString *focusIdentifier=button.identifier;
-    self.overviewSnapshot = nil; self.window.backgroundColor = Canvas();
-    [self render]; [self.courseWindow refreshPresentation];
-    if (calendarFocus) [self.window makeFirstResponder:calendarFocus == 1 ? self.yearPicker : self.monthPicker];
-    else if(scope){NSView *replacement=AMFindButton(scope,action,tag,focusIdentifier);if(replacement)[self.window makeFirstResponder:replacement];}
-    if (self.editor) { ThemeEditor(self.editor.notesField); if (self.editor.window.firstResponder && [self.editor.window.firstResponder isKindOfClass:NSTextView.class]) ThemeEditor((NSTextView *)self.editor.window.firstResponder); }
+    // Restyle existing controls: never recreate editors, lists or first responders.
+    for(NSWindow *window in NSApp.windows){window.backgroundColor=Canvas();[window.effectiveAppearance performAsCurrentDrawingAppearance:^{AMRefreshViewAppearance(window.contentView);if(window==self.window)for(NSView *view in self.calendarDocument.subviews)if([view isKindOfClass:OverviewGrid.class])[(OverviewGrid *)view refreshColors];}];}
 }
 - (void)loadPreview {
     NSArray *samples = @[
@@ -861,7 +861,7 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 - (void)layout {
     if (!self.scroll) return;
     CGFloat w = NSWidth(self.root.bounds), h = NSHeight(self.root.bounds), x = 216, content = w - x - 24;
-    self.sidebar.hidden = NO; self.sidebar.frame = NSMakeRect(0, 0, 192, h);
+    self.sidebar.hidden = NO; self.sidebarMaterial.frame = NSMakeRect(0, 0, 192, h);
     self.header.frame = NSMakeRect(x, 48, content, self.page>=3 ? 64:88);
     BOOL coursePage = self.page >= 3;
     self.scroll.hidden = coursePage || self.calendarMode;
@@ -1398,9 +1398,10 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
 }
 - (void)focusSearch:(id)sender { [self showWindow]; if (self.page >= 3) [self.courseWindow focusSearch]; else [self.window makeFirstResponder:self.search]; }
 - (void)showWindow { [self.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES]; }
-- (NSArray *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar{return @[@"AMOperations",NSToolbarFlexibleSpaceItemIdentifier];}
-- (NSArray *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar{return @[NSToolbarFlexibleSpaceItemIdentifier,@"AMOperations"];}
-- (NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSString *)identifier willBeInsertedIntoToolbar:(BOOL)flag{NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"后台任务";item.image=[NSImage imageWithSystemSymbolName:@"clock.arrow.circlepath" accessibilityDescription:@"后台任务与进度"];item.target=self;item.action=@selector(showOperations:);return item;}
+- (NSArray *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar{return @[@"AMCheckWorkspace",@"AMOperations",NSToolbarFlexibleSpaceItemIdentifier];}
+- (NSArray *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar{return @[NSToolbarFlexibleSpaceItemIdentifier,@"AMCheckWorkspace",@"AMOperations"];}
+- (NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSString *)identifier willBeInsertedIntoToolbar:(BOOL)flag{NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];if([identifier isEqual:@"AMCheckWorkspace"]){item.label=@"作业检查";item.image=[NSImage imageWithSystemSymbolName:@"doc.text.magnifyingglass" accessibilityDescription:@"恢复检查工作区"];item.target=self;item.action=@selector(showCheckWorkspace:);return item;}item.label=@"后台任务";item.view=AMToolbarProgress(self,@selector(showOperations:));item.image=[NSImage imageWithSystemSymbolName:@"clock.arrow.circlepath" accessibilityDescription:@"后台任务与进度"];item.target=self;item.action=@selector(showOperations:);return item;}
+- (void)showCheckWorkspace:(id)sender{[self.courseWindow showCheckWorkspace];}
 - (void)showOperations:(id)sender{AMShowOperations(self.window);}
 - (void)showMain:(id)sender { [self showWindow]; }
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag { [self showWindow]; return YES; }
@@ -1649,9 +1650,8 @@ static NSView *AMFindButton(NSView *root, SEL action, NSInteger tag, NSString *i
     NSSavePanel *panel = [NSSavePanel savePanel]; panel.nameFieldStringValue = [NSString stringWithFormat:@"AM-Helper-备份-%@.plist", DDLFormatDate(NSDate.date, @"yyyyMMdd-HHmmss")]; panel.title = @"导出全部任务备份";
     [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
         if (response != NSModalResponseOK) return;
-        NSError *error = nil;NSDictionary *envelope=AMBackupEnvelope(self.tasks,&error);NSData *data = envelope ? [NSPropertyListSerialization dataWithPropertyList:envelope format:NSPropertyListXMLFormat_v1_0 options:0 error:&error]:nil;
-        BOOL ok = data && [data writeToURL:panel.URL options:NSDataWritingAtomic error:&error];
-        self.notice = ok ? @"任务备份已导出。" : [NSString stringWithFormat:@"导出失败：%@", error.localizedDescription]; [self render];
+        self.backgroundSaveCount++;NSArray *tasks=[self snapshot];NSURL *destination=panel.URL;NSString *operation=AMOperationBegin(@"导出任务备份",@"本机备份",NO,nil);
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{NSError *error=nil;NSDictionary *envelope=AMBackupEnvelope(tasks,&error);NSData *data=envelope ? [NSPropertyListSerialization dataWithPropertyList:envelope format:NSPropertyListXMLFormat_v1_0 options:0 error:&error]:nil;BOOL ok=data && [data writeToURL:destination options:NSDataWritingAtomic error:&error];AMOperationFinish(operation,ok ? @"success":@"failed",ok ? @"任务备份已导出":@"备份导出失败");dispatch_async(dispatch_get_main_queue(),^{self.backgroundSaveCount--;[self.exitCoordinator operationStateChanged];self.notice=ok ? @"任务备份已导出。" : [NSString stringWithFormat:@"导出失败：%@",error.localizedDescription];[self render];});});
     }];
 }
 - (BOOL)restoreBackupTasks:(NSArray *)tasks records:(NSArray *)records {

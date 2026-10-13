@@ -10,6 +10,7 @@
 #import "SSRecognition.h"
 #import "SSSecurity.h"
 #import "AMUI-Swift.h"
+#import "AMRenderer.h"
 
 #import "SSSubmission.inc"
 
@@ -97,6 +98,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property AMCheckScopeController *checkScope;
 @property NSArray *checkScopeRecords;
 @property NSUInteger checkScopeGeneration;
+@property NSString *checkScopeOperation;
+@property NSUInteger checkPreviewGeneration;
 @property BOOL allowingExitSubmission;
 @property BOOL exitSubmissionInFlight;
 @property AMReviewController *reviewWorkspace;
@@ -138,8 +141,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (BOOL)hasUnsavedReview { return self.reviewWorkspace.hasUnsavedChanges || self.courseWorkspace.hasUnsavedChanges || self.setupWindow.sheetParent != nil; }
 - (BOOL)resolveUnsavedReview { if(self.setupWindow.sheetParent){NSAlert *alert=NSAlert.new;alert.messageText=@"课程配置尚未关闭";alert.informativeText=@"已成功关联的课程已经保存；尚未关联的目录选择会被放弃。";[alert addButtonWithTitle:@"继续配置"];[alert addButtonWithTitle:@"放弃未关联选择并继续"];if([alert runModal]!=NSAlertSecondButtonReturn)return NO;[self closeCourseSetup];} self.resolvingReview=YES; self.reviewWorkspace.paused=NO; self.courseWorkspace.paused=NO; BOOL ok=[self.reviewWorkspace resolveUnsavedChanges] && [self.courseWorkspace resolveUnsavedChanges]; self.resolvingReview=NO; self.reviewWorkspace.paused=self.busy || self.operationsPaused; self.courseWorkspace.paused=self.busy || self.operationsPaused; return ok; }
 - (void)discardReview { [self.reviewWorkspace discardChanges];[self.courseWorkspace discardChanges];[self closeCourseSetup]; }
-- (BOOL)hasSubmissionSheet { return self.submission.window.sheetParent != nil || self.checkScopeWindow.sheetParent != nil; }
-- (BOOL)hasUnsavedSubmission { return self.checkScopeWindow.sheetParent != nil || (self.hasSubmissionSheet && self.submission.hasUnsavedChanges); }
+- (BOOL)hasSubmissionSheet { return self.submission.window.sheetParent != nil || self.checkScopeWindow != nil; }
+- (BOOL)hasUnsavedSubmission { return self.checkScopeWindow != nil || (self.hasSubmissionSheet && self.submission.hasUnsavedChanges); }
 - (void)setOperationsPaused:(BOOL)paused { _operationsPaused = paused; [self refreshPresentation]; }
 - (void)cancelPendingLogin { [self cancelLogin:nil]; }
 - (void)discardSubmission { [self closeCheckScope];[self.submission cancel:nil]; self.submission = nil; }
@@ -155,7 +158,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (NSString *)accountSummary { if (self.loginActive) return @"取消 GitHub 登录"; if (self.busy && !self.connected) return @"正在连接 GitHub…"; return self.connected ? @"GitHub 已连接" : @"连接 GitHub"; }
 - (void)buildUI {
     Surface *root = Box(Canvas(), 0); root.frame = NSMakeRect(0, 0, 960, 600); self.view = root;
-    __weak typeof(self) weakSelf = self; root.onResize = ^{ [weakSelf layoutContent]; }; root.onAppearanceChange = ^{ [weakSelf refreshPresentation]; };
+    __weak typeof(self) weakSelf = self; root.onResize = ^{ [weakSelf layoutContent]; }; root.onAppearanceChange = ^{ AMRefreshViewAppearance(weakSelf.view); };
     self.accountLabel = Text(@"", 13, NSFontWeightRegular, Muted()); [root addSubview:self.accountLabel];
     self.scanButton = SSButton(@"检查新作业", self, @selector(scan:), NSZeroRect);((ActionButton *)self.scanButton).tone=1; [root addSubview:self.scanButton];
     self.syncButton = SSButton(@"同步课程文件", self, @selector(sync:), NSZeroRect); [root addSubview:self.syncButton];
@@ -778,6 +781,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 #include "AMSubmissionUI.inc"
 - (void)configurePreflight:(SSSubmissionController *)sheet course:(NSDictionary *)course tasks:(NSArray *)tasks {
+    course=course.copy;
     __weak typeof(self) owner=self;
     // Check-only reads do not queue behind teacher scans or model analysis.
     // Submission snapshots remain serialized with course Git operations.
@@ -804,6 +808,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 #include "SSFolderCheck.inc"
 - (void)commit:(id)sender {
+    if(self.checkScopeWindow){[self showCheckWorkspace];[self status:@"请先完成或取消当前文件检查，再打开提交界面。"];return;}
     NSDictionary *course = [[self course] copy]; if (!course) return;
     [self work:@"正在读取本地修改…" forCourse:course operation:^id(NSError **error) { return [self.git changesForCourse:course error:error]; } completion:^(NSArray *changes, NSError *error) {
         if (!changes) { [self showError:error]; return; }

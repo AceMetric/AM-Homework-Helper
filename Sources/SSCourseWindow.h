@@ -23,6 +23,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readonly, nullable) NSString *selectedCourseID;
 - (BOOL)selectCourseID:(nullable NSString *)identifier;
 - (void)recoverSubmissionRecords;
+- (void)showCheckWorkspace;
 - (void)checkTask:(NSString *)identifier;
 - (void)submitTask:(NSString *)identifier;
 - (void)showSubmissionHistory:(nullable NSString *)identifier;

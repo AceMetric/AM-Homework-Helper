@@ -189,3 +189,24 @@ ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL acti
     return control;
 }
 #import "AMProgressUI.inc"
+
+#import "AMRenderer.inc"
+
+@implementation AMCheckWindow
+- (void)performClose:(id)sender{[self orderOut:sender];}
+@end
+
+// Public macOS 26 API, weakly discovered so the older SDK CI lane still builds.
+@protocol AMNativeGlass <NSObject>
+- (void)setContentView:(NSView *)view;
+- (void)setStyle:(NSInteger)style;
+- (void)setCornerRadius:(CGFloat)radius;
+@end
+NSView *AMNavigationMaterial(NSView *content){
+    NSView *material=nil;
+    if(@available(macOS 26.0,*)){Class cls=NSClassFromString(@"NSGlassEffectView");if(cls){material=[[cls alloc] initWithFrame:content.frame];[(id<AMNativeGlass>)material setStyle:0];[(id<AMNativeGlass>)material setCornerRadius:0];[(id<AMNativeGlass>)material setContentView:content];}}
+    if(!material){NSVisualEffectView *effect=[[NSVisualEffectView alloc] initWithFrame:content.frame];effect.material=NSVisualEffectMaterialSidebar;effect.blendingMode=NSVisualEffectBlendingModeBehindWindow;effect.state=NSVisualEffectStateFollowsWindowActiveState;[effect addSubview:content];material=effect;}
+    content.frame=material.bounds;content.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;return material;
+}
+
+NSWindow *AMMakeCheckWorkspace(NSWindow *parent){AMCheckWindow *window=[[AMCheckWindow alloc] initWithContentRect:NSMakeRect(0,0,1120,760) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];window.releasedWhenClosed=NO;window.contentMinSize=NSMakeSize(900,620);if(![window setFrameUsingName:@"AMFileCheckWorkspace"])[window center];[window setFrameAutosaveName:@"AMFileCheckWorkspace"];NSRect available=(parent.screen ?: NSScreen.mainScreen).visibleFrame;NSRect frame=window.frame;frame.size.width=MIN(frame.size.width,available.size.width);frame.size.height=MIN(frame.size.height,available.size.height);frame.origin.x=MAX(NSMinX(available),MIN(frame.origin.x,NSMaxX(available)-frame.size.width));frame.origin.y=MAX(NSMinY(available),MIN(frame.origin.y,NSMaxY(available)-frame.size.height));[window setFrame:frame display:NO];return window;}
