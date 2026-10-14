@@ -424,6 +424,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)openCourses:(id)sender;
 - (void)navigate:(id)sender;
 - (void)refreshAppearance;
+- (void)layoutContent;
 - (void)renderDashboard;
 - (void)reviewGitHubCandidate:(NSDictionary *)candidate;
 - (void)continueReviewQueue:(NSArray<NSString *> *)queue after:(NSString *)identifier;
@@ -755,7 +756,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.mainProgress=AMOperationView.new;NSButton *details=[NSButton buttonWithTitle:@"查看进度" target:self action:@selector(showOperations:)];NSBox *separator=NSBox.new;separator.boxType=NSBoxSeparator;
     for(NSView *child in @[self.mainProgress,details,separator]){child.translatesAutoresizingMaskIntoConstraints=NO;[self.operationStrip addSubview:child];}
     [NSLayoutConstraint activateConstraints:@[[separator.topAnchor constraintEqualToAnchor:self.operationStrip.topAnchor],[separator.leadingAnchor constraintEqualToAnchor:self.operationStrip.leadingAnchor],[separator.trailingAnchor constraintEqualToAnchor:self.operationStrip.trailingAnchor],[self.mainProgress.leadingAnchor constraintEqualToAnchor:self.operationStrip.leadingAnchor],[self.mainProgress.topAnchor constraintEqualToAnchor:separator.bottomAnchor constant:8],[self.mainProgress.bottomAnchor constraintEqualToAnchor:self.operationStrip.bottomAnchor],[self.mainProgress.trailingAnchor constraintEqualToAnchor:details.leadingAnchor constant:-16],[details.trailingAnchor constraintEqualToAnchor:self.operationStrip.trailingAnchor],[details.topAnchor constraintEqualToAnchor:self.mainProgress.topAnchor]]];
-    self.root.onResize = ^{ [weakSelf layout]; };
+    self.root.onResize = ^{ [weakSelf layoutContent]; };
     self.searchFocusMonitor=[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown handler:^NSEvent *(NSEvent *event){if(event.window==weakSelf.window)[weakSelf dismissSearchAtWindowPoint:event.locationInWindow];return event;}];
     self.statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
     self.statusItem.button.image = [NSImage imageWithSystemSymbolName:@"checklist" accessibilityDescription:@"AM's Homework Helper"];
@@ -894,6 +895,12 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     // Split-view sizing may be deferred until layout on older AppKit versions.
     // Resolve the containing panes before computing content frames.
     [self.mainSplit.view layoutSubtreeIfNeeded];
+    self.layingOutMain=NO;
+    [self layoutContent];
+}
+- (void)layoutContent {
+    if(!self.scroll || self.layingOutMain)return;
+    self.layingOutMain=YES;
     CGFloat w = NSWidth(self.root.bounds), fullHeight=NSHeight(self.root.bounds),h=fullHeight-(self.operationStrip.hidden ? 0:88), x = 24, content = w - x - 24;
     self.operationStrip.frame=NSMakeRect(x,fullHeight-84,content,72);
     self.sidebar.hidden = NO;
