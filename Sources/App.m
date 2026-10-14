@@ -1084,6 +1084,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (BOOL)dismissSettingsForMouseEvent:(NSEvent *)event {
     NSWindow *settings=self.settingsWindow;
+    if((NSApp.modalWindow && NSApp.modalWindow!=settings) || settings.attachedSheet)return NO;
     if(!settings || self.window.attachedSheet!=settings || !event.window || event.window==settings || event.window.sheetParent==settings)return NO;
     [self dismissSettings];return YES;
 }
