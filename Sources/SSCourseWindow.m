@@ -280,7 +280,11 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     [self startSkillReception];
     NSDictionary *progress=SSReadPlist(@"onboarding.plist");
     if([progress[@"completed"] boolValue] && self.connected)[self scanAll:nil];
-    else if(![progress[@"localOnly"] boolValue])dispatch_async(dispatch_get_main_queue(),^{[self setup:nil];});
+    else if(!progress && !self.courses.count && !(self.tasksProvider ? self.tasksProvider().count:0)){
+        // Show the welcome sheet once for a fresh installation, never on an upgrade
+        // or merely because a previous configuration was left unfinished.
+        if(SSWritePlist(@"onboarding.plist",@{@"welcomeShown":@YES},NULL))dispatch_async(dispatch_get_main_queue(),^{[self setup:nil];});
+    }
     self.timer = [NSTimer scheduledTimerWithTimeInterval:6 * 3600 target:self selector:@selector(scanAll:) userInfo:nil repeats:YES];
 }
 - (void)dealloc { [self.timer invalidate];[self.skillTimer invalidate];for(dispatch_source_t source in self.skillWatchers)dispatch_source_cancel(source); }

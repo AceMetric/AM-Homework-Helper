@@ -527,9 +527,11 @@ private struct SettingsWorkspace:View {
     @ObservedObject var state:SettingsState
     private func binding<T>(_ key:ReferenceWritableKeyPath<SettingsState,T>)->Binding<T>{Binding(get:{state[keyPath:key]},set:{state[keyPath:key]=$0;state.dirty=true})}
     var body:some View {
+        VStack(spacing:0) {
+            HStack {Text("设置").font(.title2.bold());Spacer();Button("完成"){state.action?("close")}.keyboardShortcut(.cancelAction).accessibilityIdentifier("settings-close")}.padding(24)
+            Divider()
         ScrollView {
             VStack(alignment:.leading,spacing:20) {
-                Text("设置").font(.title2.bold())
                 WorkspaceSection("作业识别") {
                     VStack(alignment:.leading,spacing:12) {
                         Label("规则检查免费可用；复杂文档可交给助手识别。",systemImage:"checkmark.shield").foregroundStyle(.secondary)
@@ -572,9 +574,8 @@ private struct SettingsWorkspace:View {
                 WorkspaceSection("软件更新") {HStack{Button("检查更新…"){state.action?("check-update")};Button("自动检查设置…"){state.action?("updates")};Spacer()}.padding(8)}
                 WorkspaceSection("数据与反馈"){HStack{Button("恢复任务…"){state.action?("recovery")};Button("诊断与反馈…"){state.action?("diagnostics")};Spacer()}}
                 DisclosureGroup("高级设置") {Button("GitHub 登录与兼容设置…"){state.action?("advanced")}.padding(.top,8)}
-                HStack{Spacer();Button("完成"){state.action?("close")}.keyboardShortcut(.cancelAction)}
             }.padding(24)
-        }.onChange(of:state.mode){state.changeMode($0)}.font(.system(size:13)).frame(minWidth:540,minHeight:520).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions()
+        }}.onChange(of:state.mode){state.changeMode($0)}.font(.system(size:13)).frame(minWidth:540,minHeight:520).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions()
     }
 }
 @objc(AMSettingsController)

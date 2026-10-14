@@ -23,6 +23,13 @@ static void Capture(NSView *view,NSString *name){(void)name;[view layoutSubtreeI
 - (void)work:(NSString *)message forCourse:(NSDictionary *)course operation:(id(^)(NSError **))op completion:(void(^)(id,NSError *))done {self.busy=YES;dispatch_async(self.queue,^{NSError *error=nil;id value=op(&error);dispatch_async(dispatch_get_main_queue(),^{self.busy=NO;done(value,error);});});}
 - (void)scanCourses:(NSArray *)courses {self.scans++;self.scanned=courses;self.firstCheckRunning=NO;[self updateCourseSetup:@"模拟检查完成，未发现新作业。"];}
 @end
+@interface LaunchGuideController:SSCourseController
+@property NSUInteger welcomes;
+@end
+@implementation LaunchGuideController
+- (void)startSkillReception {}
+- (void)setup:(id)sender {self.welcomes++;}
+@end
 int main(void){@autoreleasepool{
     Check([NSProcessInfo.processInfo.arguments containsObject:@"--preview"],@"preview only");[NSApplication sharedApplication];
     AppDelegate *app=AppDelegate.new;NSApp.delegate=app;[app applicationDidFinishLaunching:[NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification object:NSApp]];
@@ -37,5 +44,16 @@ int main(void){@autoreleasepool{
     guide.setupRecords[0][@"checkFailed"]=@YES;[guide handleSetupAction:@{@"action":@"retry-check"}];Check(guide.scans==2 && guide.scanned.count==1,@"retry targets failed ready course");guide.setupRecords[0][@"checkFailed"]=@NO;[guide handleSetupAction:@{@"action":@"retry-check"}];Check(guide.scans==2,@"successful courses not rescanned by failure retry");
     guide.firstCheckRunning=YES;[guide finishSetupScan:nil error:[NSError errorWithDomain:@"Test" code:NSUserCancelledError userInfo:@{NSLocalizedDescriptionKey:@"检查取消"}] courses:guide.scanned];Check(!guide.firstCheckRunning && [guide.setupRecords[0][@"checkFailed"] boolValue] && [guide.setupRecords[0][@"status"] containsString:@"取消"],@"cancelled first check is recoverable and never presented as zero homework");
     guide.busy=YES;[guide handleSetupAction:@{@"action":@"close"}];Check(!guide.setupWindow && guide.busy,@"guide can close while background operation continues");guide.busy=NO;guide.preview=NO;SSWritePlist(@"onboarding.plist",@{@"completed":@YES,@"localOnly":@YES},NULL);[guide presentCourseSetup];Check(![SSReadPlist(@"onboarding.plist")[@"completed"] boolValue],@"reopening configuration after local-only use permits resumable progress");guide.preview=YES;[guide closeCourseSetup];guide.github=GuideHub.new;[guide presentCourseSetup];[guide addFork:nil];[guide handleSetupAction:@{@"action":@"close"}];Wait(^BOOL{return !guide.busy && guide.availableForks.count==1;});Check(!guide.setupWindow,@"background course-list completion does not reopen a dismissed guide");
+    NSDictionary *savedOnboarding=SSReadPlist(@"onboarding.plist");
+    for(NSUInteger scenario=0;scenario<4;scenario++){
+        [NSFileManager.defaultManager removeItemAtURL:[SSDataDirectory() URLByAppendingPathComponent:@"onboarding.plist"] error:NULL];
+        LaunchGuideController *launch=[[LaunchGuideController alloc] initWithPreview:YES];[launch.courses removeAllObjects];launch.tasksProvider=^NSArray *{return scenario==2 ? @[@{@"id":@"existing-task"}]:@[];};
+        if(scenario==0)[launch.courses addObject:[@{@"fork":@"student/course"} mutableCopy]];
+        if(scenario==1)SSWritePlist(@"onboarding.plist",@{@"step":@2,@"completed":@NO},NULL);
+        launch.preview=NO;[launch startAutomaticChecks];[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.1]];
+        Check(launch.welcomes==(scenario==3 ? 1:0),@"existing courses, tasks and incomplete setup never reopen welcome on launch; fresh install welcomes once");[launch.timer invalidate];
+        if(scenario==1 || scenario==3){LaunchGuideController *relaunch=[[LaunchGuideController alloc] initWithPreview:YES];[relaunch.courses removeAllObjects];relaunch.preview=NO;[relaunch startAutomaticChecks];[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.1]];Check(relaunch.welcomes==0,@"persisted welcome marker and incomplete progress prevent another automatic sheet on the next launch");[relaunch.timer invalidate];}
+    }
+    if(savedOnboarding)SSWritePlist(@"onboarding.plist",savedOnboarding,NULL);
     [host orderOut:nil];[app.window orderOut:nil];printf("PASS: %lu guide, local-start and embedded-help assertions\n",(unsigned long)count);
 }return 0;}

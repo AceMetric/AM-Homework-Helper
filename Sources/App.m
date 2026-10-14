@@ -323,8 +323,6 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSSplitViewItem *navigationItem;
 @property AMNativeSidebar *navigationController;
 @property AMNativeTaskList *nativeTasks;
-@property Surface *operationStrip;
-@property AMOperationView *mainProgress;
 @property id searchFocusMonitor;
 @property NSScrollView *navigationScroll;
 @property BOOL coursesCollapsed;
@@ -425,6 +423,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)navigate:(id)sender;
 - (void)refreshAppearance;
 - (void)layoutContent;
+- (BOOL)dismissSettings;
+- (BOOL)dismissSettingsForMouseEvent:(NSEvent *)event;
 - (void)renderDashboard;
 - (void)reviewGitHubCandidate:(NSDictionary *)candidate;
 - (void)continueReviewQueue:(NSArray<NSString *> *)queue after:(NSString *)identifier;
@@ -729,7 +729,6 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     [self.mainSplit addSplitViewItem:self.navigationItem];[self.mainSplit addSplitViewItem:[NSSplitViewItem splitViewItemWithViewController:content]];
     self.window.contentViewController=self.mainSplit;
     NSToolbar *toolbar=[[NSToolbar alloc] initWithIdentifier:@"AMMainToolbar"];toolbar.delegate=self;toolbar.displayMode=NSToolbarDisplayModeIconOnly;self.window.toolbar=toolbar;self.window.toolbarStyle=NSWindowToolbarStyleUnifiedCompact;
-    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refreshToolbarOperations) name:AMOperationsChanged object:nil];
     self.taskDetails = Box(Card(), 10); self.taskDetails.stroke = Line(); self.taskDetails.hidden=YES; [self.root addSubview:self.taskDetails];
     self.header = GradientBox(Canvas(), Panel(), 0); [self.root addSubview:self.header];
     self.search = [[NSSearchField alloc] initWithFrame:NSZeroRect]; self.search.placeholderString = @"搜索任务、学科、备注"; self.search.delegate = self; self.search.sendsSearchStringImmediately = YES; self.search.font = [NSFont systemFontOfSize:12];
@@ -752,12 +751,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.nativeTasks=AMNativeTaskList.new;[self.root addSubview:self.nativeTasks.view];self.nativeTasks.view.hidden=YES;
     self.nativeTasks.actionHandler=^(NSString *action,NSString *identifier){NSButton *sender=NSButton.new;sender.identifier=identifier;if([action isEqual:@"select"])[weakSelf selectTask:sender];else if([action isEqual:@"toggle"])[weakSelf toggleTask:sender];else if([action isEqual:@"edit"])[weakSelf editTask:sender];else if([action isEqual:@"close"])[weakSelf closeTaskDetails:nil];};
     self.nativeTasks.menuProvider=^NSMenu *(NSString *identifier){return [weakSelf menuForTaskID:identifier];};
-    self.operationStrip=Box(nil,0);self.operationStrip.hidden=YES;[self.root addSubview:self.operationStrip];
-    self.mainProgress=AMOperationView.new;NSButton *details=[NSButton buttonWithTitle:@"查看进度" target:self action:@selector(showOperations:)];NSBox *separator=NSBox.new;separator.boxType=NSBoxSeparator;
-    for(NSView *child in @[self.mainProgress,details,separator]){child.translatesAutoresizingMaskIntoConstraints=NO;[self.operationStrip addSubview:child];}
-    [NSLayoutConstraint activateConstraints:@[[separator.topAnchor constraintEqualToAnchor:self.operationStrip.topAnchor],[separator.leadingAnchor constraintEqualToAnchor:self.operationStrip.leadingAnchor],[separator.trailingAnchor constraintEqualToAnchor:self.operationStrip.trailingAnchor],[self.mainProgress.leadingAnchor constraintEqualToAnchor:self.operationStrip.leadingAnchor],[self.mainProgress.topAnchor constraintEqualToAnchor:separator.bottomAnchor constant:8],[self.mainProgress.bottomAnchor constraintEqualToAnchor:self.operationStrip.bottomAnchor],[self.mainProgress.trailingAnchor constraintEqualToAnchor:details.leadingAnchor constant:-16],[details.trailingAnchor constraintEqualToAnchor:self.operationStrip.trailingAnchor],[details.topAnchor constraintEqualToAnchor:self.mainProgress.topAnchor]]];
     self.root.onResize = ^{ [weakSelf layoutContent]; };
-    self.searchFocusMonitor=[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown handler:^NSEvent *(NSEvent *event){if(event.window==weakSelf.window)[weakSelf dismissSearchAtWindowPoint:event.locationInWindow];return event;}];
+    self.searchFocusMonitor=[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown handler:^NSEvent *(NSEvent *event){if([weakSelf dismissSettingsForMouseEvent:event])return nil;if(event.window==weakSelf.window)[weakSelf dismissSearchAtWindowPoint:event.locationInWindow];return event;}];
     self.statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
     self.statusItem.button.image = [NSImage imageWithSystemSymbolName:@"checklist" accessibilityDescription:@"AM's Homework Helper"];
     self.statusItem.button.imagePosition = NSImageLeft; self.statusItem.button.target = self; self.statusItem.button.action = @selector(statusClick:); [self.statusItem.button sendActionOn:NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp];
@@ -802,7 +797,6 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.root.onAppearanceChange = ^{ [weakSelf refreshAppearance]; };
     if (!self.preview) [self.courseWindow startAutomaticChecks];
     [self layout];
-    [self refreshToolbarOperations];
 }
 - (SSCourseController *)makeCourseController {return [[SSCourseController alloc] initWithPreview:self.preview];}
 - (void)accessibilityChanged:(NSNotification *)notification {[self refreshAppearance];}
@@ -878,7 +872,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (NSUndoManager *)windowWillReturnUndoManager:(NSWindow *)window { return self.taskUndo; }
 - (BOOL)windowShouldClose:(NSWindow *)window {
     if(window==self.quickWindow){NSError *error=nil;if(![self persistQuick:&error]){[self.quickController setNotice:@"草稿未保存，请重试。" busy:NO];return NO;}[self closeQuick];return NO;}
-    if (window==self.settingsWindow) { if (![self.settingsController resolveUnsavedChanges]) return NO; [self.window endSheet:window]; [window orderOut:nil]; self.settingsWindow=nil; self.settingsController=nil; return NO; }
+    if (window==self.settingsWindow) { [self dismissSettings]; return NO; }
     return YES;
 }
 - (void)undo:(id)sender { [self.taskUndo undo]; }
@@ -901,8 +895,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)layoutContent {
     if(!self.scroll || self.layingOutMain)return;
     self.layingOutMain=YES;
-    CGFloat w = NSWidth(self.root.bounds), fullHeight=NSHeight(self.root.bounds),h=fullHeight-(self.operationStrip.hidden ? 0:88), x = 24, content = w - x - 24;
-    self.operationStrip.frame=NSMakeRect(x,fullHeight-84,content,72);
+    CGFloat w = NSWidth(self.root.bounds), fullHeight=NSHeight(self.root.bounds),h=fullHeight, x = 24, content = w - x - 24;
     self.sidebar.hidden = NO;
     self.header.frame = NSMakeRect(x, 48, content, self.page>=3 ? 64:88);
     BOOL coursePage = self.page >= 3;
@@ -921,7 +914,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)layoutTaskArea {
     BOOL weekly=self.page==0 && self.weeklyMode;self.weeklyController.view.hidden=!weekly;self.scroll.hidden=self.page>=2 || self.calendarMode || weekly || self.page==2;self.nativeTasks.view.hidden=!(self.page==2 || (self.page==0 && !weekly));self.scroll.hidden=YES;
-    CGFloat w=NSWidth(self.root.bounds),h=NSHeight(self.root.bounds)-(self.operationStrip.hidden ? 0:88),x=24,content=w-x-24;
+    CGFloat w=NSWidth(self.root.bounds),h=NSHeight(self.root.bounds),x=24,content=w-x-24;
     self.taskDetails.hidden=self.page>=3 || self.calendarMode || !self.selectedTaskID;
     if(self.calendarMode){
         if(w>=988){self.calendarScroll.frame=NSMakeRect(x,188,content-304,h-212);self.agenda.frame=NSMakeRect(w-304,188,280,h-212);}
@@ -1084,6 +1077,16 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)startUsing:(id)sender {NSButton *route=NSButton.new;route.tag=5;[self navigate:route];}
 - (void)accountSettings:(id)sender { [self.courseWindow accountSettings:sender]; }
+- (BOOL)dismissSettings {
+    if(!self.settingsWindow)return YES;
+    if(![self.settingsController resolveUnsavedChanges])return NO;
+    NSWindow *window=self.settingsWindow;[self.window endSheet:window];[window orderOut:nil];self.settingsWindow=nil;self.settingsController=nil;return YES;
+}
+- (BOOL)dismissSettingsForMouseEvent:(NSEvent *)event {
+    NSWindow *settings=self.settingsWindow;
+    if(!settings || self.window.attachedSheet!=settings || !event.window || event.window==settings || event.window.sheetParent==settings)return NO;
+    [self dismissSettings];return YES;
+}
 - (void)showSettings:(id)sender {
     [self showWindow]; if (self.window.attachedSheet) return;
     self.settingsController = AMSettingsController.new;
@@ -1119,8 +1122,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     };
     self.settingsController.actionHandler = ^(NSString *action) {
 
-        if (![owner.settingsController resolveUnsavedChanges]) return;
-        [owner.window endSheet:owner.settingsWindow]; [owner.settingsWindow orderOut:nil]; owner.settingsWindow=nil; owner.settingsController=nil;
+        if (![owner dismissSettings]) return;
         if ([action isEqual:@"account"]) [owner accountSettings:nil];
         else if([action isEqual:@"online-review"])AMShowOnlineReviewSettings(owner.window);
         else if([action isEqual:@"diagnostics"])[owner showDiagnostics:nil];
@@ -1213,7 +1215,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     ActionButton *add=Button(@"新建任务",self,@selector(addTask:),1);add.symbol=@"plus";
     self.yearPicker=[[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];for(NSInteger year=1900;year<=2200;year++)[self.yearPicker addItemWithTitle:[NSString stringWithFormat:@"%ld 年",(long)year]];self.yearPicker.target=self;self.yearPicker.action=@selector(jumpCalendar:);
     self.monthPicker=[[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];for(NSInteger month=1;month<=12;month++)[self.monthPicker addItemWithTitle:[NSString stringWithFormat:@"%ld 月",(long)month]];self.monthPicker.target=self;self.monthPicker.action=@selector(jumpCalendar:);
-    ActionButton *prev=Button(@"",self,@selector(navigateCalendar:),0);prev.tag=-1;prev.symbol=@"chevron.up";prev.accessibilityLabel=@"上个月";ActionButton *today=Button(@"今天",self,@selector(navigateCalendar:),0);ActionButton *next=Button(@"",self,@selector(navigateCalendar:),0);next.tag=1;next.symbol=@"chevron.down";next.accessibilityLabel=@"下个月";
+    ActionButton *prev=Button(@"",self,@selector(navigateCalendar:),0);prev.tag=-1;prev.symbol=@"chevron.up";prev.accessibilityLabel=@"上个月";ActionButton *today=Button(@"今天",self,@selector(navigateCalendar:),0);today.tag=0;today.accessibilityIdentifier=@"calendar-today";ActionButton *next=Button(@"",self,@selector(navigateCalendar:),0);next.tag=1;next.symbol=@"chevron.down";next.accessibilityLabel=@"下个月";
     self.calendarProgressText=Text(@"",12,NSFontWeightRegular,Muted());self.calendarProgressText.alignment=NSTextAlignmentRight;[self.calendarProgressText setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
     for(NSArray *controls in @[@[self.calendarMonthTitle,add],@[self.yearPicker,self.monthPicker,prev,today,next,self.calendarProgressText]]){NSStackView *row=[NSStackView stackViewWithViews:controls];row.spacing=8;row.alignment=NSLayoutAttributeCenterY;[self.calendarHeader addArrangedSubview:row];[row.widthAnchor constraintEqualToAnchor:self.calendarHeader.widthAnchor].active=YES;}
     [self updateCalendarHeaderState];
@@ -1425,10 +1427,6 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     for(NSInteger index=(NSInteger)toolbar.items.count-1;index>=0;index--)if(![desired containsObject:toolbar.items[index].itemIdentifier])[toolbar removeItemAtIndex:index];
     for(NSUInteger index=0;index<desired.count;index++){if(index<toolbar.items.count && [toolbar.items[index].itemIdentifier isEqual:desired[index]])continue;[toolbar insertItemWithItemIdentifier:desired[index] atIndex:index];}
     for(NSToolbarItem *item in toolbar.items)if([item.itemIdentifier isEqual:@"AMOverviewMode"] && [item.view isKindOfClass:NSSegmentedControl.class])[(NSSegmentedControl *)item.view setSelectedSegment:self.weeklyMode ? 1:0];
-}
-- (void)refreshToolbarOperations {
-    if(!self.operationStrip)return;NSDictionary *active=nil;for(NSDictionary *row in AMOperations())if([row[@"state"] isEqual:@"running"]){active=row;break;}
-    BOOL changed=self.operationStrip.hidden!=(active==nil);self.operationStrip.hidden=active==nil;self.mainProgress.operationID=active[@"id"];if(changed)[self layout];
 }
 - (void)showCheckWorkspace:(id)sender{[self.courseWindow showCheckWorkspace];}
 - (void)showOperations:(id)sender{AMShowOperations(self.window);}
