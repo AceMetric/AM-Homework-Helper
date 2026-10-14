@@ -24,7 +24,7 @@
     self.deadlineField=[[PastelTextField alloc] initWithFrame:NSZeroRect];self.deadlineField.delegate=self;self.deadlineField.stringValue=self.candidate && !task[@"due"] ? (self.candidate[@"dateOnly"] ?: @""):[self formatTeacherDate:self.selectedDate];
     self.timePicker=[[PastelTextField alloc] initWithFrame:NSZeroRect];self.timePicker.delegate=self;self.timePicker.stringValue=[self timeString:self.selectedDate];
     self.nativeDeadlinePicker=NSDatePicker.new;self.nativeDeadlinePicker.datePickerStyle=NSDatePickerStyleTextFieldAndStepper;self.nativeDeadlinePicker.datePickerElements=NSDatePickerElementFlagYearMonthDay|NSDatePickerElementFlagHourMinute;self.nativeDeadlinePicker.calendar=self.teacherCalendar;self.nativeDeadlinePicker.timeZone=self.teacherCalendar.timeZone;self.nativeDeadlinePicker.dateValue=self.selectedDate;self.nativeDeadlinePicker.target=self;self.nativeDeadlinePicker.action=@selector(nativeDeadlineChanged:);self.nativeDeadlinePicker.accessibilityLabel=@"截止日期和时间";
-    add(field(@"截止日期和时间",self.nativeDeadlinePicker));
+    add(field(@"截止日期和时间",self.nativeDeadlinePicker));self.calendarHint=Text(@"",12,NSFontWeightRegular,Muted());self.calendarHint.maximumNumberOfLines=0;add(self.calendarHint);NSDictionary *dayInfo=DDLChinaDayInfo(self.selectedDate,self.teacherCalendar,self.appDelegate.preview ? @{}:SSCalendarOverrides());self.calendarHint.stringValue=[NSString stringWithFormat:@"%@ · %@",dayInfo[@"name"],dayInfo[@"source"]];
     if(self.candidate){
         NSTextField *hint=Text(self.candidate[@"deadlineText"] ?: @"请核对老师原文，确认截止日期和时间。",12,NSFontWeightRegular,Muted());hint.maximumNumberOfLines=0;hint.selectable=YES;add(hint);
         if(!task[@"due"]){self.deadlineField.placeholderString=@"请填写完整日期及时间，或使用上方日期控件确认";add(field(@"待确认的原文日期",self.deadlineField));}
@@ -48,7 +48,9 @@
     [root addSubview:scroll];[root addSubview:footer];scroll.translatesAutoresizingMaskIntoConstraints=NO;body.translatesAutoresizingMaskIntoConstraints=NO;footer.translatesAutoresizingMaskIntoConstraints=NO;
     [NSLayoutConstraint activateConstraints:@[[scroll.topAnchor constraintEqualToAnchor:root.topAnchor],[scroll.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[scroll.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[scroll.bottomAnchor constraintEqualToAnchor:footer.topAnchor],[footer.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[footer.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[footer.bottomAnchor constraintEqualToAnchor:root.bottomAnchor],[body.widthAnchor constraintEqualToAnchor:scroll.contentView.widthAnchor],[body.topAnchor constraintEqualToAnchor:scroll.contentView.topAnchor],[body.leadingAnchor constraintEqualToAnchor:scroll.contentView.leadingAnchor]]];
     self.titleField.accessibilityLabel=@"任务名称";self.subjectField.accessibilityLabel=@"课程或分类";self.reminderField.accessibilityLabel=@"提醒时间";self.notesField.accessibilityLabel=@"我的备注";panel.initialFirstResponder=self.titleField;panel.defaultButtonCell=self.nextReviewButton ? self.nextReviewButton.cell:self.saveButton.cell;panel.autorecalculatesKeyViewLoop=YES;
-    [self validateReminders];[self validateDate];self.initialValues=[self formValues];return self;
+    [self configureRecurrence];[self validateReminders];[self validateDate];self.initialValues=[self formValues];return self;
 }
-- (void)nativeDeadlineChanged:(NSDatePicker *)sender {[self updateDate:sender.dateValue];}
+- (void)nativeDeadlineChanged:(NSDatePicker *)sender {[self updateDate:sender.dateValue];[self recurrenceChanged:nil];}
 - (void)toggleTeacherSource:(NSButton *)sender {self.sourceScroll.hidden=!self.sourceScroll.hidden;sender.title=self.sourceScroll.hidden ? @"显示老师原文":@"收起老师原文";}
+
+#include "AMRecurrenceEditor.inc"

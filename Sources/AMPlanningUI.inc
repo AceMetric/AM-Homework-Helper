@@ -2,7 +2,7 @@
 - (void)renderWeekly {
     if(!self.weeklyController){self.weeklyController=AMWeeklyPlanningController.new;__weak typeof(self) owner=self;self.weeklyController.actionHandler=^(NSString *action,NSString *task,NSString *sub,NSString *date){[owner planningAction:action task:task subtask:sub value:date];};[self.root addSubview:self.weeklyController.view];}
     self.weeklyController.view.frame=self.scroll.frame;self.weeklyController.view.hidden=NO;
-    [self.weeklyController updateSections:DDLWeekSections(self.tasks,NSDate.date,self.weekOffset,Cal(),self.query ?: @"") notice:@""];
+    NSMutableArray *sections=NSMutableArray.array;for(NSDictionary *section in DDLWeekSections(self.tasks,NSDate.date,self.weekOffset,Cal(),self.query ?: @"")){NSMutableDictionary *copy=section.mutableCopy;if(section[@"date"])copy[@"dayInfo"]=DDLChinaDayInfo(section[@"date"],Cal(),self.preview ? @{}:SSCalendarOverrides());[sections addObject:copy];}[self.weeklyController updateSections:sections notice:@""];
 }
 - (BOOL)confirmLatePlan:(NSString *)key task:(NSDictionary *)task {
     if([key compare:DDLPlanKey(task[@"due"],Cal())]!=NSOrderedDescending)return YES;

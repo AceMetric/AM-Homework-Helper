@@ -572,6 +572,7 @@ private struct SettingsWorkspace:View {
                 WorkspaceSection("作业文件在线复核") {VStack(alignment:.leading,spacing:10){Text("Gemini 综合检查整份项目、代码与图片。使用自己的免费项目，仅主动复核时发送所选材料。").foregroundStyle(.secondary);Button("配置在线复核…"){state.action?("online-review")};Text("与老师作业识别分开；本机检查和 Skill 仍然可用。").font(.caption).foregroundStyle(.secondary)}}
                 WorkspaceSection("账户与提醒") {HStack{Button("GitHub 账户…"){state.action?("account")};Button("提醒设置与测试…"){state.action?("notifications")};Button("排查提醒…"){state.action?("notification-help")};Spacer()}.padding(8)}
                 WorkspaceSection("软件更新") {HStack{Button("检查更新…"){state.action?("check-update")};Button("自动检查设置…"){state.action?("updates")};Spacer()}.padding(8)}
+                WorkspaceSection("日历与假期") {Button("设置本机休息日／工作日…"){state.action?("calendar-overrides")};Text("默认标记中国大陆周末、法定假期和调休；不会修改老师截止时间。").font(.caption).foregroundStyle(.secondary)}
                 WorkspaceSection("数据与反馈"){HStack{Button("恢复任务…"){state.action?("recovery")};Button("诊断与反馈…"){state.action?("diagnostics")};Spacer()}}
                 DisclosureGroup("高级设置") {Button("GitHub 登录与兼容设置…"){state.action?("advanced")}.padding(.top,8)}
             }.padding(24)
@@ -927,7 +928,8 @@ private struct WeeklyPlanningView:View {
     private func section(_ section:NSDictionary)->some View {
         let rows=section["items"] as? [NSDictionary] ?? []
         let parents=rows.filter{string($0,"subtaskID").isEmpty}.count
-        return VStack(alignment:.leading,spacing:8){Text(string(section,"label")).font(.system(size:13,weight:.semibold));Text("\(parents) 项作业 · \(rows.count-parents) 个步骤").font(.caption2).foregroundStyle(.secondary)
+        let day=section["dayInfo"] as? NSDictionary
+        return VStack(alignment:.leading,spacing:8){Text(string(section,"label")).font(.system(size:13,weight:.semibold));if let day{Text(string(day,"name")+(flag(day,"known") ? "":" · 假期未收录")).font(.caption2).foregroundStyle(.secondary).help(string(day,"source"))};Text("\(parents) 项作业 · \(rows.count-parents) 个步骤").font(.caption2).foregroundStyle(.secondary)
             LazyVStack(spacing:8){ForEach(workspaceRows(rows)){row in item(row.record)};if rows.isEmpty{Text("暂无安排").font(.caption).foregroundStyle(.secondary).padding(.vertical,16).frame(maxWidth:.infinity)}}
         }.padding(10).frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).background(Color(nsColor:AMAppearance.sidebar).opacity(0.55)).clipShape(RoundedRectangle(cornerRadius:6))
         .onDrop(of:["public.utf8-plain-text"],isTargeted:nil){providers in
@@ -974,19 +976,20 @@ private struct SubmissionHistoryView:View {
         ScrollView{VStack(alignment:.leading,spacing:16){
             Text(string(r,"label")).font(.headline)
             Text("\(string(r,"repository")) · \(string(r,"branch"))").foregroundStyle(.secondary)
-            Text(string(r,"kind")=="submission" || string(r,"kind")=="existing" ? "作业提交":"课程同步／合并").font(.caption)
+            Text(string(r,"origin")=="external" ? (string(r,"kind")=="merge" ? "外部 Git 合并":"外部 Git 提交 · 作业关联待确认"):(string(r,"kind")=="submission" || string(r,"kind")=="existing" ? "作业提交":"课程同步／合并")).font(.caption)
+            if string(r,"origin")=="external" && !flag(r,"teacherHistoryKnown"){Text("上游历史尚未完整核对；此记录暂未判断是否为作业。").font(.caption).foregroundStyle(.secondary)}
             Text(string(r,"message")).textSelection(.enabled)
             if !string(r,"commit").isEmpty{WorkspaceSection("提交版本"){Text(string(r,"commit")).font(.system(.caption,design:.monospaced)).textSelection(.enabled);Button("在 GitHub 查看"){state.action?("open",identifier(r))}}}
             WorkspaceSection("操作与核验"){Text("本机操作：\((r["date"] as? Date ?? Date()).formatted())");if let checked=r["checkedAt"] as? Date{Text("最近核验：\(checked.formatted())")};if let confirmed=r["confirmedAt"] as? Date{Text("曾确认推送：\(confirmed.formatted())")};Text("提交记录与作业完成状态分别管理。").foregroundStyle(.secondary)}
             if let review=r["review"] as? NSDictionary {WorkspaceSection("提交前检查"){Text("\((review["date"] as? Date ?? Date()).formatted()) · \((review["count"] as? NSNumber)?.intValue ?? 0) 条建议");Text(string(review,"coverage")=="local" ? "本机检查，用户确认继续":(string(review,"coverage")=="partial" ? "含助手复核；部分未完成，用户确认继续":"含助手复核，用户确认继续")).foregroundStyle(.secondary)}}
             WorkspaceSection("实际文件"){ForEach(r["files"] as? [String] ?? [],id:\.self){Text($0).font(.caption).textSelection(.enabled)}}
-            HStack{Button("重新核验"){state.action?("verify",identifier(r))};if string(r,"state") != "confirmed" && !string(r,"commit").isEmpty{Button("核验并重试推送"){state.action?("retry",identifier(r))}}}.disabled(state.busy)
+            HStack{Button("关联作业…"){state.action?("associate",identifier(r))};Button("重新核验"){state.action?("verify",identifier(r))};if string(r,"origin") != "external" && string(r,"state") != "confirmed" && !string(r,"commit").isEmpty{Button("核验并重试推送"){state.action?("retry",identifier(r))}}}.disabled(state.busy)
         }.padding(16).frame(maxWidth:.infinity,alignment:.leading)}
     }
     var body:some View {GeometryReader{geo in
         let list=List(selection:Binding(get:{state.selected},set:{state.selected=$0})){ForEach(workspaceRows(state.records)){row in let r=row.record;VStack(alignment:.leading,spacing:5){Text(string(r,"message").isEmpty ? "课程操作":string(r,"message")).lineLimit(2);Text(string(r,"label")).font(.caption).foregroundStyle(string(r,"state")=="confirmed" ? Color.secondary:Color.orange);Text(String(string(r,"commit").prefix(12))).font(.caption2.monospaced())}.padding(.vertical,4).tag(identifier(r))}}.listStyle(.inset)
-        VStack(alignment:.leading,spacing:8){HStack{Text("提交记录").font(.headline);Spacer();Button("关联已有提交…"){state.action?("existing","")}.disabled(state.busy)}.padding(.horizontal,12)
-            if state.records.isEmpty{VStack(spacing:12){Image(systemName:"clock.arrow.circlepath").font(.largeTitle);Text("暂无提交记录").font(.headline);Text("通过应用提交后，可在这里确认推送状态并回查版本。").foregroundStyle(.secondary)}.frame(maxWidth:.infinity,maxHeight:.infinity)}
+        VStack(alignment:.leading,spacing:8){HStack{Text("提交记录").font(.headline);Spacer();Button("刷新终端提交"){state.action?("refresh-external","")}.disabled(state.busy);Button("更早记录"){state.action?("more-external","")}.disabled(state.busy);Button("关联已有提交…"){state.action?("existing","")}.disabled(state.busy)}.padding(.horizontal,12)
+            if state.records.isEmpty{VStack(spacing:12){Image(systemName:"clock.arrow.circlepath").font(.largeTitle);Text("暂无提交记录").font(.headline);Text("应用或终端产生的提交会显示在这里；本地提交与已推送分别核验。").foregroundStyle(.secondary)}.frame(maxWidth:.infinity,maxHeight:.infinity)}
             else if geo.size.width<760{VStack(spacing:0){list.frame(height:max(150,geo.size.height*0.4));Divider();if let r=current{details(r)}else{Text("选择一条记录查看详情").foregroundStyle(.secondary).padding()}}}
             else{HStack(spacing:0){list.frame(width:280);Divider();if let r=current{details(r)}else{Text("选择提交记录，查看文件、提交号与推送状态。").foregroundStyle(.secondary).frame(maxWidth:.infinity,maxHeight:.infinity)}}}
         }.background(Color(nsColor:AMAppearance.canvas))

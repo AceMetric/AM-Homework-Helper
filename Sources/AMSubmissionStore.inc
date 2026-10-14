@@ -10,12 +10,14 @@ static BOOL AMValidSubmission(id value) {
     if(r[@"review"]){NSDictionary *v=r[@"review"];if(![v isKindOfClass:NSDictionary.class] || ![v[@"date"] isKindOfClass:NSDate.class] || ![v[@"count"] isKindOfClass:NSNumber.class] || [v[@"count"] integerValue]<0 || [v[@"count"] integerValue]>10000 || ![v[@"acknowledged"] isKindOfClass:NSNumber.class] || ![@[@"local",@"assistant",@"partial"] containsObject:v[@"coverage"]] || v.count!=4)return NO;}
     if([r[@"message"] length]>10000 || [r[@"files"] count]>10000 || [r[@"taskIDs"] count]>10000)return NO;
     if(r[@"issue"] && (![r[@"issue"] isKindOfClass:NSString.class] || [r[@"issue"] rangeOfString:@"^[a-z-]{1,64}$" options:NSRegularExpressionSearch].location==NSNotFound))return NO;
+    if(r[@"origin"] && ![@[@"app",@"external"] containsObject:r[@"origin"]])return NO;
+    for(NSString *key in @[@"teacherHistoryKnown",@"teacherHistoryExcluded"])if(r[key] && ![r[key] isKindOfClass:NSNumber.class])return NO;
     if([r[@"message"] rangeOfString:@"/(Users|private|Volumes|var|home)/" options:NSRegularExpressionSearch].location!=NSNotFound)return NO;
     NSMutableArray *strings=[NSMutableArray arrayWithArray:r[@"files"]];[strings addObjectsFromArray:r[@"taskIDs"]];[strings addObjectsFromArray:@[r[@"repository"],r[@"branch"],r[@"message"]]];if(SSContainsSecret([[strings componentsJoinedByString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding]))return NO;
     if(SSContainsSecret([r[@"message"] dataUsingEncoding:NSUTF8StringEncoding]))return NO;
     return YES;
 }
-static NSDictionary *AMSubmissionPublicFields(NSDictionary *record){NSMutableDictionary *out=NSMutableDictionary.dictionary;for(NSString *key in @[@"id",@"repository",@"branch",@"kind",@"state",@"message",@"date",@"taskIDs",@"files",@"commit",@"before",@"remoteCommit",@"checkedAt",@"confirmedAt",@"issue",@"review"])if(record[key])out[key]=record[key];return out;}
+static NSDictionary *AMSubmissionPublicFields(NSDictionary *record){NSMutableDictionary *out=NSMutableDictionary.dictionary;for(NSString *key in @[@"id",@"repository",@"branch",@"kind",@"state",@"message",@"date",@"taskIDs",@"files",@"commit",@"before",@"remoteCommit",@"checkedAt",@"confirmedAt",@"issue",@"review",@"origin",@"teacherHistoryKnown",@"teacherHistoryExcluded"])if(record[key])out[key]=record[key];return out;}
 NSArray *AMSubmissionRecords(NSError **error) {
     if(!AMRecoverBackup(error))return nil;
     NSURL *url=[SSDataDirectory().URLByResolvingSymlinksInPath URLByAppendingPathComponent:@"submission-records.plist"];
@@ -29,4 +31,4 @@ BOOL AMStoreSubmission(NSDictionary *record,NSError **error) {
     if(!AMValidSubmission(record)){if(error)*error=[NSError errorWithDomain:@"AMSubmissionStore" code:2 userInfo:@{NSLocalizedDescriptionKey:@"提交记录字段无效，操作已停止。"}];return NO;}
     @synchronized(NSFileManager.defaultManager){NSArray *old=AMSubmissionRecords(error);if(!old)return NO;NSMutableArray *next=old.mutableCopy;NSUInteger i=[next indexOfObjectPassingTest:^BOOL(NSDictionary *r,NSUInteger idx,BOOL *stop){(void)idx;(void)stop;return [r[@"id"] isEqual:record[@"id"]];}];NSDictionary *copy=AMSubmissionPublicFields(record);if(i==NSNotFound)[next addObject:copy];else next[i]=copy;return SSWritePlist(@"submission-records.plist",next,error);}
 }
-NSString *AMSubmissionStateLabel(NSDictionary *record){return @{@"running":@"正在提交",@"local":@"已本地提交，待推送",@"uncertain":@"推送结果待核验",@"confirmed":@"已确认推送",@"failed":@"提交失败"}[record[@"state"]] ?: @"待核验";}
+NSString *AMSubmissionStateLabel(NSDictionary *record){if(record[@"confirmedAt"] && [record[@"state"] isEqual:@"local"])return @"远端历史已变化，需核对";if([record[@"origin"] isEqual:@"external"] && [record[@"state"] isEqual:@"uncertain"])return @"远端状态待核验";return @{@"running":@"正在提交",@"local":@"已本地提交，待推送",@"uncertain":@"推送结果待核验",@"confirmed":@"已确认推送",@"failed":@"提交失败"}[record[@"state"]] ?: @"待核验";}

@@ -9,8 +9,10 @@
     self.inbox=NO;self.sections.selectedSegment=3;[self refreshPresentation];
 }
 - (void)submissionAction:(NSString *)action identifier:(NSString *)identifier {
+    if([action isEqual:@"refresh-external"] || [action isEqual:@"more-external"]){self.lastExternalDiscovery=nil;[self discoverExternalSubmissions:[action isEqual:@"more-external"]];return;}
     NSDictionary *record=nil;for(NSDictionary *row in AMSubmissionRecords(NULL) ?: @[])if([row[@"id"] isEqual:identifier])record=row;
     NSDictionary *course=record ? [self savedCourse:@{@"fork":record[@"repository"]}].copy:[self course].copy;
+    if([action isEqual:@"associate"] && record){[self associateExternalRecord:record];return;}
     if([action isEqual:@"open"]){NSString *commit=record[@"commit"];if(commit.length==40 || commit.length==64)[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:[NSString stringWithFormat:@"https://github.com/%@/commit/%@",record[@"repository"],commit]]];return;}
     if(!course){[self status:@"请先选择并关联对应课程。记录仍保留在本机。"];return;}
     if([action isEqual:@"existing"]){
@@ -25,7 +27,7 @@
         }];return;
     }
     if(!record)return;
-    [self work:@"正在核验个人仓库提交…" forCourse:course operation:^id(NSError **error){NSString *token=[self.github accessToken:error];if(!token)return nil;return [self.git verifySubmission:record course:course token:token retry:[action isEqual:@"retry"] error:error];} completion:^(NSDictionary *result,NSError *error){if(error)[self showError:error];else [self status:AMSubmissionStateLabel(result)];}];
+    [self work:@"正在核验个人仓库提交…" forCourse:course operation:^id(NSError **error){NSString *token=[self.github accessToken:error];if(!token)return nil;if([record[@"origin"] isEqual:@"external"]){NSArray *checked=[self.git verifyExternalRecords:@[record] course:course token:token error:error];if(checked.count && AMStoreSubmission(checked[0],error))return checked[0];return nil;}return [self.git verifySubmission:record course:course token:token retry:[action isEqual:@"retry"] error:error];} completion:^(NSDictionary *result,NSError *error){if(error)[self showError:error];else [self status:AMSubmissionStateLabel(result)];}];
 }
 
 - (void)recoverSubmissionRecords {

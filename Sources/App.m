@@ -92,7 +92,8 @@ static NSCalendar *Cal(void) { NSCalendar *c = [[NSCalendar alloc] initWithCalen
         b.chosen = [calendar isDate:date inSameDayAsDate:self.selection]; b.today = [calendar isDateInToday:date]; b.compact = self.compact;
         b.tasks = tasksByDay[[calendar startOfDayForDate:date]] ?: @[];
         b.target = self; b.action = @selector(selectDay:);
-        b.toolTip = [NSString stringWithFormat:@"%@ · %lu 项", DDLFormatDate(date, @"yyyy年M月d日 EEEE"), b.tasks.count]; b.accessibilityLabel = b.toolTip;
+        NSDictionary *dayInfo=DDLChinaDayInfo(date,calendar,SSCalendarOverrides());
+        b.toolTip = [NSString stringWithFormat:@"%@ · %@ · %@ · %lu 项", DDLFormatDate(date, @"yyyy年M月d日 EEEE"),dayInfo[@"name"],dayInfo[@"source"], b.tasks.count]; b.accessibilityLabel = b.toolTip;
         Put(self, b, 8 + (i % 7) * cellW, top + (i / 7) * cellH, cellW, cellH);
     }
 }
@@ -251,11 +252,13 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         BOOL selected = [calendar isDate:date inSameDayAsDate:self.selection];
         BOOL today = [calendar isDateInToday:date];
         NSArray *tasks = inMonth ? (self.tasksByDay[[calendar startOfDayForDate:date]] ?: @[]) : @[];
-        CalendarDayCell *cell = [CalendarDayCell new]; cell.date = date; cell.inMonth = inMonth; cell.weekend = (i % 7) >= 5; cell.radius = 9;
+        CalendarDayCell *cell = [CalendarDayCell new]; cell.date = date; cell.inMonth = inMonth; cell.weekend = [DDLChinaDayInfo(date,calendar,SSCalendarOverrides())[@"rest"] boolValue]; cell.radius = 9;
         ConfigureCalendarCell(cell, selected);
         Put(self, cell, 8 + (i % 7) * cellW + 2, 36 + (i / 7) * cellH + 2, cellW - 4, cellH - 4);
         CallbackButton *hit = [[CallbackButton alloc] initWithFrame:cell.bounds]; hit.title = @""; hit.tone = 3; hit.allowsHoverFill = NO; hit.accessibilityLabel = [NSString stringWithFormat:@"%@，%lu 项任务", DDLFormatDate(date, @"yyyy年M月d日 EEEE"), tasks.count]; hit.onClick = ^{ if (weakSelf.onSelect) weakSelf.onSelect(date, nil); }; [cell addSubview:hit];
         CallbackButton *number = [[CallbackButton alloc] initWithFrame:NSZeroRect]; number.title = DDLFormatDate(date, @"d"); number.tone = today ? 1 : 3; number.allowsHoverFill = NO; number.font = [NSFont systemFontOfSize:12]; number.onClick = hit.onClick; number.accessibilityLabel = hit.accessibilityLabel;
+        NSDictionary *info=DDLChinaDayInfo(date,calendar,SSCalendarOverrides());hit.toolTip=[NSString stringWithFormat:@"%@ · %@",info[@"name"],info[@"source"]];hit.accessibilityLabel=[hit.accessibilityLabel stringByAppendingFormat:@"，%@",info[@"name"]];
+        if(![info[@"kind"] isEqual:@"workday"]){NSTextField *holiday=Text(info[@"name"],9,NSFontWeightRegular,Muted());holiday.toolTip=hit.toolTip;Put(cell,holiday,48,8,MAX(20,cellW-90),18);}
         Put(cell, number, 6, 4, 40, 27); if (!inMonth) number.alphaValue = 0.45;
         if (tasks.count) {
             NSInteger done = 0; for (NSDictionary *t in tasks) if ([t[@"completed"] boolValue]) done++;
@@ -306,8 +309,14 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSTextField *reminderValidation;
 @property NSDate *selectedDate;
 @property NSDatePicker *nativeDeadlinePicker;
+@property NSTextField *calendarHint;
 @property NSStackView *editorBody;
 @property NSStackView *recurrenceSection;
+@property NSPopUpButton *repeatMode,*repeatUnit,*holidayPolicy,*repeatEnd,*seriesScope;
+@property NSTextField *repeatInterval,*repeatCount,*repeatPreview;
+@property NSDatePicker *repeatUntil;
+@property NSArray<NSButton *> *repeatWeekdays;
+@property NSArray *allowedUnknownYears;
 @property NSArray *initialValues;
 - (BOOL)hasUnsavedChanges;
 - (BOOL)saveForExit;
@@ -371,6 +380,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSPopUpButton *taskFilter;
 @property NSInteger page;
 @property NSMutableDictionary *pageStates;
+@property NSArray *recurrenceSeries;
+@property NSArray *undoSeriesOverride;
+@property NSString *recurrenceDay;
+@property BOOL generatingRecurrences;
 @property NSMutableArray<NSMutableDictionary *> *tasks;
 @property NSUndoManager *taskUndo;
 @property NSStatusItem *statusItem;
@@ -434,6 +447,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)showWindow;
 - (void)refreshReminders;
 - (void)refreshPermission;
+- (void)generateRecurrencesThrough:(NSDate *)end;
+- (BOOL)applyRecurrenceToTask:(NSMutableDictionary *)task tasks:(NSMutableArray *)tasks error:(NSError **)error;
 - (void)updateCalendarHeaderState;
 - (void)scrollCalendarToMonth:(NSDate *)targetMonth animated:(BOOL)animated;
 @end
@@ -441,7 +456,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @implementation EditorController
 #include "AMTaskEditor.inc"
 - (NSArray *)formValues {
-    return [[NSArray alloc] initWithArray:@[self.titleField.stringValue ?: @"", self.subjectField.stringValue ?: @"", self.deadlineField.stringValue ?: @"", self.timePicker.stringValue ?: @"", self.notesField.string ?: @"", self.reminderField.stringValue ?: @"", @(self.priority.indexOfSelectedItem)] copyItems:YES];
+    return [[NSArray alloc] initWithArray:@[self.titleField.stringValue ?: @"", self.subjectField.stringValue ?: @"", self.deadlineField.stringValue ?: @"", self.timePicker.stringValue ?: @"", self.notesField.string ?: @"", self.reminderField.stringValue ?: @"", @(self.priority.indexOfSelectedItem),[self recurrenceRule] ?: @{},@(self.seriesScope.indexOfSelectedItem)] copyItems:YES];
 }
 - (BOOL)hasUnsavedChanges { [self.window makeFirstResponder:nil]; return ![self.initialValues isEqual:[self formValues]]; }
 - (BOOL)saveForExit { [self save:nil]; return self.appDelegate.editor != self; }
@@ -472,6 +487,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     return YES;
 }
 - (void)controlTextDidChange:(NSNotification *)notification {
+    if(notification.object==self.repeatInterval || notification.object==self.repeatCount){[self recurrenceChanged:nil];return;}
     if (notification.object == self.timePicker) { [self timeChanged:self.timePicker]; return; }
     if (notification.object == self.reminderField) { [self validateReminders]; return; }
     NSDate *date = DDLParseDate(self.deadlineField.stringValue, NSDate.date, self.teacherCalendar);
@@ -496,7 +512,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     else { self.validation.stringValue = [NSString stringWithFormat:@"%@ · %@", DDLFormatDate(date, @"M月d日 EEEE HH:mm"), DDLRemaining(date, NSDate.date, NO)]; self.validation.textColor = Accent(); }
 }
 - (void)updateDate:(NSDate *)date {
-    if (!date) return; self.nativeDeadlinePicker.dateValue=date; self.selectedDate = date; self.deadlineField.stringValue = [self formatTeacherDate:date]; self.calendar.selection = date; self.calendar.month = date; self.timePicker.stringValue = [self timeString:date]; [self.calendar reload]; [self validateDate];
+    if (!date) return; self.nativeDeadlinePicker.dateValue=date; NSDictionary *dayInfo=DDLChinaDayInfo(date,self.teacherCalendar,self.appDelegate.preview ? @{}:SSCalendarOverrides());self.calendarHint.stringValue=[NSString stringWithFormat:@"%@ · %@",dayInfo[@"name"],dayInfo[@"source"]]; self.selectedDate = date; self.deadlineField.stringValue = [self formatTeacherDate:date]; self.calendar.selection = date; self.calendar.month = date; self.timePicker.stringValue = [self timeString:date]; [self.calendar reload]; [self validateDate];
 }
 - (void)chooseDate:(NSDate *)date {
     NSDateComponents *time = [self.teacherCalendar components:NSCalendarUnitHour | NSCalendarUnitMinute fromDate:self.selectedDate];
@@ -591,6 +607,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)cancel:(id)sender { [self.appDelegate closeEditor]; }
 - (void)focusInput:(NSView *)field { [field scrollRectToVisible:field.bounds]; [self.window makeFirstResponder:field]; }
 - (void)save:(id)sender {
+    if(![self.window makeFirstResponder:nil])return;
     NSString *title = [self.titleField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!title.length) { self.validation.stringValue = @"先写一个任务名称。"; self.validation.textColor = NSColor.systemRedColor; [self focusInput:self.titleField]; return; }
     if (![self validateAssignmentDate]) { [self focusInput:self.deadlineField]; return; }
@@ -600,9 +617,13 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSArray<NSNumber *> *reminderOffsets = DDLParseReminderOffsets(self.reminderField.stringValue);
     if (!reminderOffsets) { [self validateReminders]; [self focusInput:self.reminderField]; return; }
     NSMutableDictionary *task = self.task ? [self.task mutableCopy] : [@{@"id":NSUUID.UUID.UUIDString, @"completed":@NO, @"archived":@NO} mutableCopy];
+    if(!task[@"id"])task[@"id"]=NSUUID.UUID.UUIDString;
     NSString *subject = [self.subjectField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     NSInteger legacyMode = reminderOffsets.count == 0 ? 4 : ([reminderOffsets isEqual:@[@0]] ? 0 : ([reminderOffsets isEqual:@[@60, @0]] ? 1 : ([reminderOffsets isEqual:@[@1440, @60, @0]] ? 2 : ([reminderOffsets isEqual:@[@4320, @1440, @60, @0]] ? 3 : 2))));
     task[@"title"] = title; task[@"subject"] = subject.length ? subject : @"其他"; task[@"due"] = date; task[@"notes"] = self.notesField.string;if(![self.task[@"notes"] isEqual:task[@"notes"]]){task[@"notesOrigin"]=@"user";task[@"notesUserEdited"]=@YES;} task[@"priority"] = @(self.priority.indexOfSelectedItem); task[@"reminder"] = @(legacyMode); task[@"reminderOffsets"] = reminderOffsets;
+    NSDictionary *repeat=[self recurrenceRule];
+    if(repeat)task[@"_recurrenceRule"]=repeat;else task[@"_stopRecurrence"]=@YES;
+    task[@"_seriesScope"]=@(self.seriesScope.indexOfSelectedItem==1);
     [task removeObjectForKey:@"_reviewCandidate"]; [task removeObjectForKey:@"_existing"];
     if (self.candidate[@"dateBasis"]) task[@"sourceDateBasis"] = self.candidate[@"dateBasis"];
     if (self.candidate) {
@@ -615,6 +636,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @end
 
 @implementation AppDelegate
+#include "AMRecurrenceUI.inc"
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
 #ifndef DDL_TESTING
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{AMOnlineReviewCleanup();});
@@ -644,6 +666,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         else self.notice=error.localizedDescription;
         SSDiagnostic(@"load",stored ? @"success":@"failed",0);
     }
+    self.recurrenceSeries=self.preview ? @[]:SSRecurrenceSeries(NULL);
     self.updates = [[SSUpdateController alloc] initWithPreview:self.preview];
     [self installMenu];
     self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1280, 840) styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView) backing:NSBackingStoreBuffered defer:NO];
@@ -725,6 +748,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.updates.statusChanged = ^(NSString *message) { weakSelf.notice = message; [weakSelf render]; };
     [self.root addSubview:self.courseWindow.view]; self.courseWindow.view.hidden = YES;
     self.root.onAppearanceChange = ^{ [weakSelf refreshAppearance]; };
+    [self generateRecurrencesThrough:nil];
     if (!self.preview) [self.courseWindow startAutomaticChecks];
     [self layout];
 }
@@ -782,6 +806,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSMenuItem *inbox = [file addItemWithTitle:@"待审核作业" action:@selector(navigate:) keyEquivalent:@"4"]; inbox.target = self; inbox.tag = 3;
     NSMenuItem *export = [file addItemWithTitle:@"导出任务备份…" action:@selector(exportTasks:) keyEquivalent:@""]; export.target = self;
     NSMenuItem *recovery=[file addItemWithTitle:@"恢复任务…" action:@selector(recoverTasks:) keyEquivalent:@""];recovery.target=self;
+    NSMenuItem *calendarSetting=[file addItemWithTitle:@"休息日／工作日设置…" action:@selector(calendarOverrides:) keyEquivalent:@""];calendarSetting.target=self;
+    NSMenuItem *catchup=[file addItemWithTitle:@"补建漏过的周期任务…" action:@selector(catchUpRecurrences:) keyEquivalent:@""];catchup.target=self;
     NSMenuItem *diagnostics=[file addItemWithTitle:@"诊断与反馈…" action:@selector(showDiagnostics:) keyEquivalent:@""];diagnostics.target=self;
     NSMenuItem *restore = [file addItemWithTitle:@"导入任务备份…" action:@selector(importTasks:) keyEquivalent:@""]; restore.target = self;
     NSMenuItem *batch = [file addItemWithTitle:@"完成当前任务列表…" action:@selector(completeVisibleTasks:) keyEquivalent:@""]; batch.target = self;
@@ -1056,6 +1082,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         if (![owner dismissSettings]) return;
         if ([action isEqual:@"account"]) [owner accountSettings:nil];
         else if([action isEqual:@"online-review"])AMShowOnlineReviewSettings(owner.window);
+        else if([action isEqual:@"calendar-overrides"])[owner calendarOverrides:nil];
         else if([action isEqual:@"diagnostics"])[owner showDiagnostics:nil];
         else if([action isEqual:@"recovery"])[owner recoverTasks:nil];
         else if([action isEqual:@"notification-help"])[owner notificationHelp:nil];
@@ -1119,7 +1146,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (NSMenu *)menuForTaskID:(NSString *)identifier {
     NSDictionary *task = [self taskWithID:identifier]; if (!task) return nil;
     NSMenu *menu = NSMenu.new;
-    NSArray *entries=[task[@"deleted"] boolValue] ? @[@[@"恢复任务",NSStringFromSelector(@selector(restoreTask:))],@[@"彻底删除…",NSStringFromSelector(@selector(purgeTask:))]]:@[@[@"编辑任务…",NSStringFromSelector(@selector(editTask:))],@[@"安排到…",NSStringFromSelector(@selector(planTask:))], @[@"复制任务内容", NSStringFromSelector(@selector(copyTask:))], @[[task[@"archived"] boolValue] ? @"恢复到任务" : @"归档", NSStringFromSelector(@selector(archiveTask:))], @[@"移到最近删除", NSStringFromSelector(@selector(deleteTask:))]];
+    NSArray *entries=[task[@"deleted"] boolValue] ? @[@[@"恢复任务",NSStringFromSelector(@selector(restoreTask:))],@[@"彻底删除…",NSStringFromSelector(@selector(purgeTask:))]]:@[@[@"编辑任务…",NSStringFromSelector(@selector(editTask:))],@[@"安排到…",NSStringFromSelector(@selector(planTask:))], @[@"另建周期安排…",NSStringFromSelector(@selector(copyAsRecurringTask:))], @[@"复制任务内容", NSStringFromSelector(@selector(copyTask:))], @[[task[@"archived"] boolValue] ? @"恢复到任务" : @"归档", NSStringFromSelector(@selector(archiveTask:))], @[@"移到最近删除", NSStringFromSelector(@selector(deleteTask:))]];
     for (NSArray *entry in entries) {
         NSMenuItem *item = [menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""]; item.target = self; item.representedObject = task[@"id"];
     }
@@ -1158,7 +1185,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     [self.monthPicker selectItemWithTitle:DDLFormatDate(self.month, @"M 月")];
     NSDictionary *summary = DDLMonthSummary(self.tasks, self.month, NSDate.date, Cal());
     double ratio = [summary[@"total"] doubleValue] > 0 ? [summary[@"completed"] doubleValue] / [summary[@"total"] doubleValue] : 0;
-    self.calendarProgressText.stringValue = [summary[@"total"] integerValue] ? [NSString stringWithFormat:@"本月完成度  %.0f%%", ratio * 100] : @"本月暂无任务";
+    self.calendarProgressText.stringValue = [summary[@"total"] integerValue] ? [NSString stringWithFormat:@"本月完成度  %.0f%%", ratio * 100] : @"本月暂无任务";if([Cal() component:NSCalendarUnitYear fromDate:self.month]!=2026)self.calendarProgressText.stringValue=[self.calendarProgressText.stringValue stringByAppendingString:@" · 节假日安排未收录"];
 }
 - (Surface *)agendaRow:(NSDictionary *)task width:(CGFloat)w {
     BOOL done = [task[@"completed"] boolValue];
@@ -1254,6 +1281,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     [self scrollCalendarToMonth:targetMonth animated:YES];
 }
 - (void)scrollCalendarToMonth:(NSDate *)targetMonth animated:(BOOL)animated {
+    [self generateRecurrencesThrough:[Cal() dateByAddingUnit:NSCalendarUnitMonth value:2 toDate:targetMonth options:0]];
     if (!targetMonth || self.calendarSectionHeight <= 0 || !self.calendarBaseMonth) return;
     NSDate *baseStart = nil, *targetStart = nil;
     [Cal() rangeOfUnit:NSCalendarUnitMonth startDate:&baseStart interval:NULL forDate:self.calendarBaseMonth];
@@ -1410,8 +1438,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     return NSTerminateLater;
 }
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return NO; }
-- (void)applicationDidBecomeActive:(NSNotification *)notification { if (!self.preview && self.window) [self refreshPermission]; }
-- (void)tick:(NSTimer *)timer { [self render]; if (!self.preview) {[self refreshReminders];[self.courseWindow recoverSubmissionRecords];} }
+- (void)applicationDidBecomeActive:(NSNotification *)notification { if (!self.preview && self.window) {[self refreshPermission];[self generateRecurrencesThrough:nil];[self.courseWindow discoverExternalSubmissions:NO];} }
+- (void)tick:(NSTimer *)timer {if(![self.recurrenceDay isEqual:DDLPlanKey(NSDate.date,Cal())])[self generateRecurrencesThrough:nil]; [self render]; if (!self.preview) {[self refreshReminders];[self.courseWindow recoverSubmissionRecords];[self.courseWindow discoverExternalSubmissions:NO];} }
 - (void)woke:(NSNotification *)notification { [self render]; if (!self.preview) { [self refreshPermission]; [self refreshReminders]; } }
 - (void)statusClick:(id)sender {
     if (NSApp.currentEvent.type == NSEventTypeRightMouseUp) {
@@ -1510,10 +1538,11 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)closeEditor { [self.window endSheet:self.editor.window]; [self.editor.window orderOut:nil]; self.editor = nil; }
 - (NSArray *)snapshot {NSMutableArray *result=NSMutableArray.array;for(NSDictionary *task in self.tasks){NSMutableDictionary *copy=task.mutableCopy;if(task[@"subtasks"])copy[@"subtasks"]=[[NSArray alloc] initWithArray:task[@"subtasks"] copyItems:YES];[result addObject:copy.copy];}return result.copy;}
 - (BOOL)replaceTasks:(NSArray *)tasks action:(NSString *)action error:(NSError **)error {
-    NSArray *normalized=DDLNormalizeTasks(tasks); if (normalized.count!=tasks.count) {if(error)*error=[NSError errorWithDomain:@"AMReview" code:1 userInfo:@{NSLocalizedDescriptionKey:@"部分任务格式无效，未写入任何修改。请核对名称和截止时间后重试。"}];return NO;}
+    NSArray *expanded=self.recurrenceSeries ? DDLMaterializeRecurringTasks(tasks,self.recurrenceSeries,[Cal() startOfDayForDate:NSDate.date],[Cal() dateByAddingUnit:NSCalendarUnitDay value:90 toDate:NSDate.date options:0],self.preview ? @{}:SSCalendarOverrides(),error):tasks;if(!expanded)return NO;
+    NSArray *normalized=DDLNormalizeTasks(expanded); if (normalized.count!=expanded.count) {if(error)*error=[NSError errorWithDomain:@"AMReview" code:1 userInfo:@{NSLocalizedDescriptionKey:@"部分任务格式无效，未写入任何修改。请核对名称和截止时间后重试。"}];return NO;}
     if (!self.preview) {
         if(self.taskStoreBlocked){if(error)*error=[NSError errorWithDomain:@"AMTaskStore" code:2 userInfo:@{NSLocalizedDescriptionKey:@"原任务文件损坏。请先预览恢复点，恢复后再保存任务。"}];return NO;}
-        NSDate *start=NSDate.date;BOOL saved=SSSaveTasks([self snapshot],normalized,error);SSDiagnostic(@"save",saved ? @"success":@"failed",-start.timeIntervalSinceNow);if(!saved)return NO;
+        NSDate *start=NSDate.date;BOOL saved=(self.recurrenceSeries ? SSSaveScheduledTasks([self snapshot],normalized,self.recurrenceSeries,SSCalendarOverrides(),error):SSSaveTasks([self snapshot],normalized,error));SSDiagnostic(@"save",saved ? @"success":@"failed",-start.timeIntervalSinceNow);if(!saved)return NO;
     }
     [self prepareUndo:action]; self.tasks=[normalized mutableCopy];
     if (!self.preview) [self refreshReminders];
@@ -1574,12 +1603,23 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSMutableArray *next=[[self snapshot] mutableCopy];for(NSUInteger i=0;i<next.count;i++)if([ids containsObject:next[i][@"id"]]){NSMutableDictionary *copy=[next[i] mutableCopy];next[i]=DDLTaskCompletion(copy,YES);}
     NSError *error=nil;self.notice=[self replaceTasks:next action:@"批量完成" error:&error] ? @"已批量完成，可按 ⌘Z 撤销。" : (error.localizedDescription ?: @"保存失败。");[self render];
 }
-- (void)prepareUndo:(NSString *)name { NSArray *snapshot = [self snapshot]; [self.taskUndo registerUndoWithTarget:self handler:^(AppDelegate *target) { [target restoreSnapshot:snapshot]; }]; [self.taskUndo setActionName:name]; }
-- (void)restoreSnapshot:(NSArray *)snapshot { NSError *error=nil; self.notice=[self replaceTasks:snapshot action:@"任务修改" error:&error] ? @"已恢复上一步操作。" : (error.localizedDescription ?: @"撤销未能保存，原任务保留。"); [self render]; }
+- (void)prepareUndo:(NSString *)name {
+    NSArray *snapshot=[self snapshot],*series=self.undoSeriesOverride ?: self.recurrenceSeries;self.undoSeriesOverride=nil;
+    [self.taskUndo registerUndoWithTarget:self handler:^(AppDelegate *target){[target restoreTaskSnapshot:snapshot series:series];}];[self.taskUndo setActionName:name];
+}
+- (void)restoreTaskSnapshot:(NSArray *)snapshot series:(NSArray *)series {
+    NSMutableArray *next=snapshot.mutableCopy;NSMutableSet *ids=NSMutableSet.set,*seriesIDs=NSMutableSet.set;for(NSDictionary *t in snapshot)[ids addObject:t[@"id"]];for(NSDictionary *s in series)[seriesIDs addObject:s[@"id"]];
+    // Undoing completion keeps a successor which has already been generated.
+    for(NSDictionary *t in self.tasks)if([seriesIDs containsObject:t[@"seriesID"] ?: @""] && [t[@"occurrenceKey"] hasPrefix:@"after:"] && ![ids containsObject:t[@"id"]])[next addObject:t];
+    NSArray *old=self.recurrenceSeries;self.undoSeriesOverride=old;self.recurrenceSeries=series;NSError *error=nil;BOOL saved=[self replaceTasks:next action:@"任务修改" error:&error];if(!saved){self.recurrenceSeries=old;self.undoSeriesOverride=nil;}self.notice=saved ? @"已恢复上一步操作；已生成的后续周期项保留。":error.localizedDescription;[self render];
+}
+- (void)restoreSnapshot:(NSArray *)snapshot {[self restoreTaskSnapshot:snapshot series:self.recurrenceSeries];}
 - (BOOL)commitTask:(NSDictionary *)task originalID:(NSString *)identifier {
     NSMutableArray *next=[[self snapshot] mutableCopy]; NSUInteger index=[next indexOfObjectPassingTest:^BOOL(NSDictionary *item,NSUInteger idx,BOOL *stop){return [item[@"id"] isEqual:identifier];}];
-    if(index==NSNotFound)[next addObject:task];else next[index]=task;
-    NSError *error=nil; if(![self replaceTasks:next action:identifier ? @"编辑任务" : @"添加任务" error:&error]) {self.editor.validation.stringValue=@"任务未能保存，请检查本机存储后重试。";self.editor.validation.textColor=NSColor.systemRedColor;return NO;}
+    NSArray *oldSeries=self.recurrenceSeries;self.undoSeriesOverride=oldSeries;
+    NSMutableDictionary *edited=task.mutableCopy;if(![self applyRecurrenceToTask:edited tasks:next error:NULL]){self.undoSeriesOverride=nil;return NO;}
+    task=edited;if(index==NSNotFound)[next addObject:task];else next[index]=task;
+    NSError *error=nil; if(![self replaceTasks:next action:identifier ? @"编辑任务" : @"添加任务" error:&error]) {self.recurrenceSeries=oldSeries;self.undoSeriesOverride=nil;self.editor.validation.stringValue=error.localizedDescription ?: @"任务未能保存，请检查本机存储后重试。";self.editor.validation.textColor=NSColor.systemRedColor;return NO;}
     if(!identifier){self.filter=0;self.query=@"";self.search.stringValue=@"";if(self.calendarMode)self.calendarStatus.selectedSegment=0;}
     if(self.calendarMode){self.selectedDay=task[@"due"];self.month=task[@"due"];self.calendarBaseMonth=self.month;self.calendarNeedsCenter=YES;self.focusedTaskID=task[@"id"];}
     self.notice=identifier ? @"任务已更新，提醒时间也已同步。" : @"新任务已加入清单。";
@@ -1598,7 +1638,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)archiveTask:(id)sender { [self changeTask:[self identifierForSender:sender] action:@"归档任务" change:^BOOL(NSMutableDictionary *task){task[@"archived"]=@(![task[@"archived"] boolValue]);return YES;}]; }
 - (void)deleteTask:(id)sender { [self changeTask:[self identifierForSender:sender] action:@"移入最近删除" change:^BOOL(NSMutableDictionary *task){task[@"deleted"]=@YES;task[@"deletedAt"]=NSDate.date;return YES;}]; }
 - (void)restoreTask:(id)sender { [self changeTask:[self identifierForSender:sender] action:@"恢复任务" change:^BOOL(NSMutableDictionary *task){task[@"deleted"]=@NO;[task removeObjectForKey:@"deletedAt"];return YES;}]; }
-- (void)purgeTask:(id)sender { [self changeTask:[self identifierForSender:sender] action:@"彻底删除" change:^BOOL(NSMutableDictionary *task){return NO;}]; }
+- (void)purgeTask:(id)sender {NSDictionary *removed=[self taskWithID:[self identifierForSender:sender]];if(removed[@"seriesID"] && removed[@"occurrenceKey"]){NSMutableArray *series=self.recurrenceSeries.mutableCopy;for(NSUInteger i=0;i<series.count;i++)if([series[i][@"id"] isEqual:removed[@"seriesID"]]){NSMutableDictionary *s=[series[i] mutableCopy];NSMutableSet *keys=[NSMutableSet setWithArray:s[@"skippedKeys"] ?: @[]];[keys addObject:removed[@"occurrenceKey"]];s[@"skippedKeys"]=keys.allObjects;series[i]=s;}self.recurrenceSeries=series;} [self changeTask:[self identifierForSender:sender] action:@"彻底删除" change:^BOOL(NSMutableDictionary *task){return NO;}]; }
 - (void)copyTask:(NSMenuItem *)sender {
     NSDictionary *task = [self taskWithID:sender.representedObject]; if (!task) return;
     NSString *text = [NSString stringWithFormat:@"[%@] %@\n截止：%@\n%@", task[@"subject"], task[@"title"], DDLFormatDate(task[@"due"], @"yyyy-MM-dd HH:mm"), task[@"notes"]];
@@ -1612,11 +1652,12 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{NSError *error=nil;NSDictionary *envelope=AMBackupEnvelope(tasks,&error);NSData *data=envelope ? [NSPropertyListSerialization dataWithPropertyList:envelope format:NSPropertyListXMLFormat_v1_0 options:0 error:&error]:nil;BOOL ok=data && [data writeToURL:destination options:NSDataWritingAtomic error:&error];AMOperationFinish(operation,ok ? @"success":@"failed",ok ? @"任务备份已导出":@"备份导出失败");dispatch_async(dispatch_get_main_queue(),^{self.backgroundSaveCount--;[self.exitCoordinator operationStateChanged];self.notice=ok ? @"任务备份已导出。" : [NSString stringWithFormat:@"导出失败：%@",error.localizedDescription];[self render];});});
     }];
 }
-- (BOOL)restoreBackupTasks:(NSArray *)tasks records:(NSArray *)records {
-    NSArray *previous=[self snapshot],*oldRecords=AMSubmissionRecords(NULL);NSError *error=nil;
-    if(!oldRecords || !AMRestoreBackup(previous,tasks,records,&error)){self.notice=error.localizedDescription ?: @"恢复失败，现有数据保留。";[self render];return NO;}
-    [self.taskUndo registerUndoWithTarget:self handler:^(AppDelegate *target){[target restoreBackupTasks:previous records:oldRecords];}];[self.taskUndo setActionName:@"导入备份"];self.taskStoreBlocked=NO;self.tasks=[DDLNormalizeTasks(tasks) mutableCopy];self.overviewSnapshot=nil;[self refreshReminders];[self.courseWindow refreshPresentation];[self render];return YES;
+- (BOOL)restoreBackupState:(NSDictionary *)state {
+    NSDictionary *previous=@{@"tasks":[self snapshot],@"submissions":AMSubmissionRecords(NULL) ?: @[],@"series":self.recurrenceSeries ?: @[],@"calendarOverrides":SSCalendarOverrides()};NSError *error=nil;
+    if(!AMRestoreScheduledBackup(previous[@"tasks"],state,&error)){self.notice=error.localizedDescription ?: @"恢复失败，现有数据保留。";[self render];return NO;}
+    [self.taskUndo registerUndoWithTarget:self handler:^(AppDelegate *target){[target restoreBackupState:previous];}];[self.taskUndo setActionName:@"导入备份"];self.taskStoreBlocked=NO;self.recurrenceSeries=state[@"series"] ?: @[];self.tasks=[DDLNormalizeTasks(state[@"tasks"]) mutableCopy];self.overviewSnapshot=nil;[self refreshReminders];[self.courseWindow refreshPresentation];[self render];return YES;
 }
+- (BOOL)restoreBackupTasks:(NSArray *)tasks records:(NSArray *)records {return [self restoreBackupState:@{@"tasks":tasks,@"submissions":records,@"series":self.recurrenceSeries ?: @[],@"calendarOverrides":SSCalendarOverrides()}];}
 - (void)importTasks:(id)sender {
     NSOpenPanel *panel = [NSOpenPanel openPanel]; panel.canChooseDirectories = NO; panel.allowsMultipleSelection = NO; panel.title = @"导入任务备份"; panel.message = @"导入会合并任务，相同内容会跳过。现有任务会保留，也可以按 ⌘Z 撤销导入。";
     [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
@@ -1638,7 +1679,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         for(NSDictionary *item in valid){NSMutableDictionary *content=item.mutableCopy;[content removeObjectForKey:@"id"];for(NSDictionary *target in merged){NSMutableDictionary *other=target.mutableCopy;[other removeObjectForKey:@"id"];if([other isEqual:content]){mapping[item[@"id"]]=target[@"id"];break;}}}
         for(NSDictionary *record in envelope[@"submissions"]){NSMutableDictionary *copy=record.mutableCopy;NSMutableArray *links=NSMutableArray.array;for(NSString *oldID in record[@"taskIDs"])if(mapping[oldID])[links addObject:mapping[oldID]];copy[@"taskIDs"]=links;
             if([records containsObject:copy])continue;for(NSDictionary *old in records)if([old[@"id"] isEqual:copy[@"id"]]){copy[@"id"]=NSUUID.UUID.UUIDString;break;}[records addObject:copy];}
-        if(![self restoreBackupTasks:merged records:records])return;
+        NSMutableArray *series=[self.recurrenceSeries mutableCopy] ?: NSMutableArray.array;
+        for(NSDictionary *incoming in envelope[@"series"] ?: @[]){BOOL found=NO;for(NSDictionary *old in series)if([old[@"id"] isEqual:incoming[@"id"]]){found=YES;break;}if(!found)[series addObject:incoming];}
+        NSMutableDictionary *overrides=SSCalendarOverrides().mutableCopy;for(NSString *key in envelope[@"calendarOverrides"])if(!overrides[key])overrides[key]=envelope[@"calendarOverrides"][key];
+        if(![self restoreBackupState:@{@"tasks":merged,@"submissions":records,@"series":series,@"calendarOverrides":overrides}])return;
         self.notice=[NSString stringWithFormat:@"已导入 %ld 项任务及提交记录；可以撤销。",(long)added];[self render];return;
     }];
 }

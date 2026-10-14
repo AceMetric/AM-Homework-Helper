@@ -288,3 +288,4 @@ NSDictionary<NSString *, NSNumber *> *DDLMonthSummary(NSArray *items, NSDate *mo
 }
 
 #include "AMPlanning.inc"
+#include "AMRecurrence.inc"

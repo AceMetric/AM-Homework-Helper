@@ -11,12 +11,15 @@ NSDate *DDLPlanDate(NSString *key,NSCalendar *calendar) {
 BOOL DDLPlanningValid(NSDictionary *task) {
     NSCalendar *calendar=[[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian];calendar.timeZone=[NSTimeZone timeZoneForSecondsFromGMT:0];
     if(task[@"plannedDate"] && !DDLPlanDate(task[@"plannedDate"],calendar))return NO;
+    for(NSString *key in @[@"seriesID",@"occurrenceKey"])if(task[key] && ![task[key] isKindOfClass:NSString.class])return NO;
+    for(NSString *key in @[@"completedAt",@"nominalDue"])if(task[key] && ![task[key] isKindOfClass:NSDate.class])return NO;
     id children=task[@"subtasks"];if(!children)return YES;if(![children isKindOfClass:NSArray.class] || [children count]>500)return NO;
     NSMutableSet *seen=NSMutableSet.set;
     for(id sub in children){if(![sub isKindOfClass:NSDictionary.class] || ![sub[@"id"] isKindOfClass:NSString.class] || ![sub[@"id"] length] || [seen containsObject:sub[@"id"]] || ![sub[@"title"] isKindOfClass:NSString.class] || ![[sub[@"title"] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] length] || ![sub[@"completed"] isKindOfClass:NSNumber.class])return NO;if(sub[@"plannedDate"] && !DDLPlanDate(sub[@"plannedDate"],calendar))return NO;[seen addObject:sub[@"id"]];}return YES;
 }
 NSDictionary *DDLTaskCompletion(NSDictionary *task,BOOL complete) {
     NSMutableDictionary *result=task.mutableCopy;result[@"completed"]=@(complete);
+    if(complete && ![task[@"completed"] boolValue])result[@"completedAt"]=NSDate.date;
     if(complete && task[@"subtasks"]){NSMutableArray *children=NSMutableArray.array;for(NSDictionary *sub in task[@"subtasks"]){NSMutableDictionary *copy=sub.mutableCopy;copy[@"completed"]=@YES;[children addObject:copy];}result[@"subtasks"]=children;}
     return result;
 }
@@ -24,7 +27,7 @@ NSArray<NSDictionary *> *DDLWeekSections(NSArray *tasks,NSDate *now,NSInteger of
     NSDate *today=[calendar startOfDayForDate:now];NSInteger weekday=([calendar component:NSCalendarUnitWeekday fromDate:today]+5)%7;
     NSDate *monday=[calendar dateByAddingUnit:NSCalendarUnitDay value:-weekday+offset*7 toDate:today options:0];
     NSMutableArray *sections=NSMutableArray.array;NSMutableDictionary *byDate=NSMutableDictionary.dictionary;
-    for(NSInteger i=0;i<7;i++){NSDate *date=[calendar dateByAddingUnit:NSCalendarUnitDay value:i toDate:monday options:0];NSString *key=DDLPlanKey(date,calendar);NSMutableDictionary *section=[@{@"id":key,@"label":[NSString stringWithFormat:@"%@ · %ld/%ld",@[@"周一",@"周二",@"周三",@"周四",@"周五",@"周六",@"周日"][i],(long)[calendar component:NSCalendarUnitMonth fromDate:date],(long)[calendar component:NSCalendarUnitDay fromDate:date]],@"items":NSMutableArray.array,@"date":date} mutableCopy];[sections addObject:section];byDate[key]=section;}
+    for(NSInteger i=0;i<7;i++){NSDate *date=[calendar dateByAddingUnit:NSCalendarUnitDay value:i toDate:monday options:0];NSString *key=DDLPlanKey(date,calendar);NSMutableDictionary *section=[@{@"id":key,@"label":[NSString stringWithFormat:@"%@ · %ld/%ld",@[@"周一",@"周二",@"周三",@"周四",@"周五",@"周六",@"周日"][i],(long)[calendar component:NSCalendarUnitMonth fromDate:date],(long)[calendar component:NSCalendarUnitDay fromDate:date]],@"items":NSMutableArray.array,@"date":date,@"dayInfo":DDLChinaDayInfo(date,calendar,@{})} mutableCopy];[sections addObject:section];byDate[key]=section;}
     NSMutableDictionary *overdue=[@{@"id":@"overdue",@"label":@"待重新安排",@"items":NSMutableArray.array} mutableCopy],*unplanned=[@{@"id":@"unplanned",@"label":@"尚未安排",@"items":NSMutableArray.array} mutableCopy];
     NSString *todayKey=DDLPlanKey(today,calendar);query=[query stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     for(NSDictionary *task in tasks){if([task[@"completed"] boolValue] || [task[@"archived"] boolValue] || [task[@"deleted"] boolValue])continue;
