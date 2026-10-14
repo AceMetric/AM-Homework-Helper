@@ -58,6 +58,8 @@ jobs:
           AM_UI_TEST=GuideUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=RendererUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=AppearanceUsage zsh verify-hybrid-ui.sh
+          AM_UI_TEST=NativeControlsUsage zsh verify-hybrid-ui.sh
+          AM_UI_TEST=NativePromotionUsage zsh verify-hybrid-ui.sh
       - name: Compile local image privacy scanner
         run: >-
           clang -fobjc-arc -Wall -Wextra -Werror -mmacosx-version-min=13.0

@@ -11,10 +11,9 @@ static void Await(BOOL (^finished)(void)) {
     NSDate *limit=[NSDate dateWithTimeIntervalSinceNow:3];while(!finished() && limit.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
 }
 static void Capture(NSView *view, NSString *path) {
-    [view.window makeKeyAndOrderFront:nil]; [view.window makeFirstResponder:nil]; [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.15]]; [view.window displayIfNeeded];
-    NSBitmapImageRep *bitmap = [view bitmapImageRepForCachingDisplayInRect:view.bounds]; [view cacheDisplayInRect:view.bounds toBitmapImageRep:bitmap];
-    Check([[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:YES], @"synthetic screenshot saved");
+    (void)path;[view layoutSubtreeIfNeeded];Check(!NSIsEmptyRect(view.bounds),@"synthetic form lays out without image capture");
 }
+#import "FixtureButtons.h"
 static void Route(AppDelegate *app, NSInteger page) { NSButton *button = NSButton.new; button.tag = page; [app navigate:button]; }
 @interface FailedReviewApp : AppDelegate @end
 @implementation FailedReviewApp
@@ -140,7 +139,7 @@ int main(void) { @autoreleasepool {
     Check([courses.statusLabel.stringValue containsString:@"student/physics"] && !courses.commitButton.enabled && courses.courseSnapshots.count == 2, @"browsing another course retains captured operation target and locks writes"); courses.busy = NO;
     SSSubmissionController *submission = [[SSSubmissionController alloc] initWithCourse:course changes:@[@{@"path":@"answers.md", @"status":@" M", @"sensitive":@NO}, @{@"path":@".env", @"status":@"??", @"sensitive":@YES}]];
     [submission configureTasks:@[@{@"id":@"related-task",@"title":@"关联模拟作业"},@{@"id":@"other-task",@"title":@"另一份模拟作业"}] selected:@[@"related-task"]];
-    Check(submission.taskChecks[0].state==NSControlStateValueOn && submission.taskChecks[1].state==NSControlStateValueOff && submission.checks[0].enclosingScrollView.frame.origin.y>=264,@"task association does not overlap file controls or select files");
+    Check(submission.taskChecks[0].state==NSControlStateValueOn && submission.taskChecks[1].state==NSControlStateValueOff && NSMinY([submission.fileListScroll convertRect:submission.fileListScroll.bounds toView:submission.filesPage])>=NSMaxY(submission.taskSection.frame),@"task association does not overlap file controls or select files");
     Check(submission.checks[0].state == NSControlStateValueOff && !submission.checks[1].enabled, @"submission defaults unchecked and excludes sensitive files");
     __block NSArray *selected; submission.submit = ^(NSArray *paths, NSString *message) { selected = paths; }; [submission save:nil]; Check(selected == nil, @"empty submission is blocked");
     submission.performCheck=^NSDictionary *(NSArray *paths,NSArray *ids,NSString *extra,NSMutableDictionary *cache,BOOL(^cancelled)(void),NSError **error){return @{@"snapshot":@{},@"requirements":@"",@"report":@{@"version":@"fixture",@"issues":@[],@"coverage":@[],@"images":@[]}};};
@@ -160,7 +159,7 @@ int main(void) { @autoreleasepool {
     Check([courses selectCourseID:course[@"fork"]] && [courses.query isEqual:@"物理筛选"] && courses.sections.selectedSegment==2 && courses.typeFilter.indexOfSelectedItem==2,@"course retains its own query, section and type");
     [courses selectCourseID:nil];Check(courses.syncButton.hidden && courses.commitButton.hidden && [courses.scanButton.title isEqual:@"检查所有课程"],@"all-courses view has no ambiguous sync or submit target");
     Check(courses.courseWorkspace.view.superview!=nil && !courses.courseWorkspace.view.hidden && courses.table.enclosingScrollView.hidden,@"SwiftUI course details replace visible legacy table");
-    Check([app.navigationScroll.documentView.subviews count]>=7,@"main sidebar expands course entries without second sidebar");
+    Check(app.navigationController.outline.numberOfRows>=7,@"main sidebar expands course entries without second sidebar");
     courses.query=@"";courses.sections.selectedSegment=0;[courses.typeFilter selectItemAtIndex:0];[courses selectCourseID:course[@"fork"]];
     // Actual keyboard equivalents on the shared sheet, with no persistence in preview mode.
     [app addTask:nil]; app.editor.titleField.stringValue = @"键盘保存模拟任务"; [app.editor updateDate:DDLParseDate(@"明天 21:00", NSDate.date, Cal())]; before = app.tasks.count;

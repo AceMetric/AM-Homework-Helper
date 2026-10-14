@@ -3,35 +3,37 @@ import SwiftUI
 
 // One semantic palette for SwiftUI and the existing AppKit drawing layer.
 @objc(AMAppearance) public final class AMAppearance:NSObject {
-    private static func controlLayer(_ fraction:CGFloat)->NSColor {
-        NSColor(name:nil){appearance in
-            var result=NSColor.windowBackgroundColor
-            appearance.performAsCurrentDrawingAppearance {result=NSColor.controlBackgroundColor.blended(withFraction:fraction,of:.labelColor) ?? .windowBackgroundColor}
-            return result
-        }
-    }
-    @objc public static var canvas:NSColor {controlLayer(0.04)}
+    @objc public static var canvas:NSColor {.windowBackgroundColor}
     @objc public static var surface:NSColor {.controlBackgroundColor}
-    @objc public static var sidebar:NSColor {controlLayer(0.065)}
+    @objc public static var sidebar:NSColor {.windowBackgroundColor}
     @objc public static var separator:NSColor {.separatorColor}
     @objc public static var ink:NSColor {.labelColor}
     @objc public static var muted:NSColor {.secondaryLabelColor}
-    @objc public static var accent:NSColor {.systemBlue}
+    @objc public static var accent:NSColor {.controlAccentColor}
     @objc public static var selection:NSColor {accent.withAlphaComponent(0.12)}
 }
+// Use the system glass button implementations; older OS/SDK lanes retain native controls.
+private extension View {
+    @ViewBuilder func amPrimaryAction()->some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0,*) {self.buttonStyle(.glassProminent)}
+        else {self.buttonStyle(.borderedProminent)}
+        #else
+        self.buttonStyle(.borderedProminent)
+        #endif
+    }
+    func amSecondaryActions()->some View {self.buttonStyle(.bordered)}
+}
 private struct WorkspaceSection<Content:View>:View {
-    @Environment(\.colorSchemeContrast) private var contrast
     let title:String
     let content:Content
     init(_ title:String,@ViewBuilder content:()->Content){self.title=title;self.content=content()}
     var body:some View {
-        VStack(alignment:.leading,spacing:8){Text(title).font(.system(size:13,weight:.semibold));content}
-            .padding(12).frame(maxWidth:.infinity,alignment:.leading)
-            .background(Color(nsColor:AMAppearance.surface))
-            .overlay(RoundedRectangle(cornerRadius:6).stroke(Color(nsColor:contrast == .increased ? AMAppearance.muted:AMAppearance.separator).opacity(contrast == .increased ? 1:0.55),lineWidth:contrast == .increased ? 1.5:0.5))
-            .clipShape(RoundedRectangle(cornerRadius:6))
+        GroupBox {content.frame(maxWidth:.infinity,alignment:.leading).padding(8)} label:{Text(title).font(.headline)}
+            .frame(maxWidth:.infinity,alignment:.leading)
     }
 }
+
 private func string(_ record: NSDictionary, _ key: String) -> String { record[key] as? String ?? "" }
 private func flag(_ record: NSDictionary, _ key: String) -> Bool { (record[key] as? NSNumber)?.boolValue ?? false }
 private func identifier(_ record: NSDictionary) -> String { string(record, "id") }
@@ -357,12 +359,20 @@ private struct WorkspaceButton:NSViewRepresentable {
     func makeCoordinator()->Target {Target()}
     func makeNSView(context:Context)->NSButton {
         let button=NSButton(title:title,target:context.coordinator,action:#selector(Target.press(_:)))
-        button.bezelStyle = .rounded;button.controlSize = .large
+        button.bezelStyle = .rounded
+        #if compiler(>=6.2)
+        if #available(macOS 26.0,*) {button.borderShape = .capsule}
+        #endif
+        button.controlSize = .large
         button.setContentHuggingPriority(.required,for:.horizontal)
         return button
     }
     func updateNSView(_ button:NSButton,context:Context){
         context.coordinator.action=action;button.title=title;button.isEnabled=enabled
+        button.bezelStyle = .rounded
+        #if compiler(>=6.2)
+        if #available(macOS 26.0,*) {if prominent {button.bezelStyle = .glass}}
+        #endif
         button.bezelColor=prominent ? .controlAccentColor:nil
         button.setAccessibilityIdentifier(identity)
         button.keyEquivalent=saveShortcut ? "\r":"";button.keyEquivalentModifierMask = .command
@@ -385,24 +395,17 @@ private struct ReviewWorkspace: View {
     @FocusState private var searchFocused:Bool
     @FocusState private var listFocused:Bool
     private var entries:some View {
-                ScrollView {
-                    LazyVStack(alignment:.leading,spacing:4) {
-                        ForEach(workspaceRows(state.visible)) { row in
-                            let record = row.record
-                            HStack(alignment:.top,spacing:8) {
-                                Toggle("选择",isOn:Binding(get:{state.checked.contains(identifier(record))},set:{if $0 {state.checked.insert(identifier(record))}else{state.checked.remove(identifier(record))}})).labelsHidden().toggleStyle(.checkbox).accessibilityLabel("选择\(string(record,"title"))").disabled(string(record,"reviewStatus")=="已导入")
-                                Button { state.select(record) } label: {
-                                    VStack(alignment:.leading,spacing:5) {
-                                        Text(string(record,"suggestedTitle").isEmpty ? string(record,"title") : string(record,"suggestedTitle")).font(.system(size:13,weight:.medium)).lineLimit(2)
-                                        Text(string(record,"repository")).font(.caption).foregroundStyle(.secondary)
-                                        Label(record["existingTask"] == nil ? "新作业" : "更新建议",systemImage:record["existingTask"] == nil ? "tray" : "arrow.triangle.2.circlepath").font(.caption).foregroundStyle(.secondary)
-                                    }.frame(maxWidth:.infinity,alignment:.leading).padding(8).background(state.selected == identifier(record) ? Color(nsColor:AMAppearance.selection) : Color.clear).cornerRadius(8)
-                                }.buttonStyle(.plain)
-                            }.padding(.horizontal,4)
-                        }
-                    }.padding(.vertical,4)
-                }.focusable().focused($listFocused)
-                    .overlay(Button("全选"){state.selectAll()}.keyboardShortcut("a",modifiers:.command).disabled(!listFocused).frame(width:0,height:0).clipped().accessibilityHidden(true))
+        List(selection:Binding<String?>(get:{state.selected.isEmpty ? nil:state.selected},set:{value in
+            guard let value,value != state.selected else{return};DispatchQueue.main.async{if let record=state.visible.first(where:{identifier($0)==value}){state.select(record)}}
+        })) {
+            ForEach(workspaceRows(state.visible)){row in let record=row.record
+                HStack(alignment:.top,spacing:8){
+                    Toggle("选择",isOn:Binding(get:{state.checked.contains(identifier(record))},set:{if $0{state.checked.insert(identifier(record))}else{state.checked.remove(identifier(record))}})).labelsHidden().toggleStyle(.checkbox).accessibilityLabel("选择\(string(record,"title"))").disabled(state.saving || string(record,"reviewStatus")=="已导入")
+                    VStack(alignment:.leading,spacing:5){Text(string(record,"suggestedTitle").isEmpty ? string(record,"title"):string(record,"suggestedTitle")).font(.system(size:13,weight:.medium)).lineLimit(2);Text(string(record,"repository")).font(.caption).foregroundStyle(.secondary);Label(record["existingTask"]==nil ? "新作业":"更新建议",systemImage:record["existingTask"]==nil ? "tray":"arrow.triangle.2.circlepath").font(.caption).foregroundStyle(.secondary)}
+                }.padding(.vertical,4).tag(identifier(record))
+            }
+        }.listStyle(.inset).focused($listFocused)
+        .overlay(Button("全选"){state.selectAll()}.keyboardShortcut("a",modifiers:.command).disabled(!listFocused).frame(width:0,height:0).clipped().accessibilityHidden(true))
     }
     private var details:some View {
                 ScrollView {
@@ -430,7 +433,7 @@ private struct ReviewWorkspace: View {
                 else {HSplitView{entries.frame(minWidth:220,idealWidth:280,maxWidth:340);details}}
             }}
             ReviewSaveBar(state:state,advance:true)
-        }.padding(12).font(.system(size:13)).tint(Color(nsColor:AMAppearance.accent)).onChange(of:state.searchToken){_ in searchFocused=true}
+        }.padding(12).font(.system(size:13)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions().onChange(of:state.searchToken){_ in searchFocused=true}
     }
 }
 
@@ -559,11 +562,11 @@ private struct SettingsWorkspace:View {
                         }
                         Toggle("自动加入完整明确日期的新作业",isOn:binding(\.automatic))
                         Text("相对日期、缺失时间和考试不会自动加入；已有任务更新仍需审核。").foregroundStyle(.secondary)
-                        Button("保存识别设置"){_ = state.persist()}.buttonStyle(.borderedProminent).disabled(state.localBusy)
+                        Button("保存识别设置"){_ = state.persist()}.amPrimaryAction().disabled(state.localBusy)
                         if !state.message.isEmpty {Text(state.message).textSelection(.enabled)}
                     }.padding(8).frame(maxWidth:.infinity,alignment:.leading)
                 }
-                WorkspaceSection("助手识别 · Skill") {VStack(alignment:.leading,spacing:12){Text("准备多门课程的新材料，复制指令交给助手；结果自动接回待审核，无需手动导入。").foregroundStyle(.secondary);HStack{Button("助手识别"){state.action?("skill-export")}.buttonStyle(.borderedProminent);Button("批次与进度…"){state.action?("skill-status")};Spacer()};DisclosureGroup("课程与兼容操作"){HStack{Button("调整课程…"){state.action?("skill-courses")};Button("重新分析全部…"){state.action?("skill-all")};Button("手动导入…"){state.action?("skill-import")}}};Text("不会自动发送老师原文或启动付费分析。").font(.caption).foregroundStyle(.secondary)}}
+                WorkspaceSection("助手识别 · Skill") {VStack(alignment:.leading,spacing:12){Text("准备多门课程的新材料，复制指令交给助手；结果自动接回待审核，无需手动导入。").foregroundStyle(.secondary);HStack{Button("助手识别"){state.action?("skill-export")}.amPrimaryAction();Button("批次与进度…"){state.action?("skill-status")};Spacer()};DisclosureGroup("课程与兼容操作"){HStack{Button("调整课程…"){state.action?("skill-courses")};Button("重新分析全部…"){state.action?("skill-all")};Button("手动导入…"){state.action?("skill-import")}}};Text("不会自动发送老师原文或启动付费分析。").font(.caption).foregroundStyle(.secondary)}}
                 WorkspaceSection("作业文件在线复核") {VStack(alignment:.leading,spacing:10){Text("Gemini 综合检查整份项目、代码与图片。使用自己的免费项目，仅主动复核时发送所选材料。").foregroundStyle(.secondary);Button("配置在线复核…"){state.action?("online-review")};Text("与老师作业识别分开；本机检查和 Skill 仍然可用。").font(.caption).foregroundStyle(.secondary)}}
                 WorkspaceSection("账户与提醒") {HStack{Button("GitHub 账户…"){state.action?("account")};Button("提醒设置与测试…"){state.action?("notifications")};Button("排查提醒…"){state.action?("notification-help")};Spacer()}.padding(8)}
                 WorkspaceSection("软件更新") {HStack{Button("检查更新…"){state.action?("check-update")};Button("自动检查设置…"){state.action?("updates")};Spacer()}.padding(8)}
@@ -571,7 +574,7 @@ private struct SettingsWorkspace:View {
                 DisclosureGroup("高级设置") {Button("GitHub 登录与兼容设置…"){state.action?("advanced")}.padding(.top,8)}
                 HStack{Spacer();Button("完成"){state.action?("close")}.keyboardShortcut(.cancelAction)}
             }.padding(24)
-        }.onChange(of:state.mode){state.changeMode($0)}.font(.system(size:13)).frame(minWidth:540,minHeight:520).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent))
+        }.onChange(of:state.mode){state.changeMode($0)}.font(.system(size:13)).frame(minWidth:540,minHeight:520).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions()
     }
 }
 @objc(AMSettingsController)
@@ -703,7 +706,7 @@ private struct CourseWorkspace:View {
             else if state.records.isEmpty {detailPane}
             else if geometry.size.width<760 {VSplitView{entries.frame(minHeight:160,idealHeight:220);detailPane.frame(minHeight:180)}}
             else {HSplitView{entries.frame(idealWidth:300,maxWidth:360);detailPane}}
-        }.font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent))
+        }.font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions()
     }
 }
 @objc(AMCourseController)
@@ -760,7 +763,7 @@ private struct SetupWorkspace:View {
             Text(state.message).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
             Divider()
             footer
-        }.padding(24).frame(minWidth:620,minHeight:450).font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent))
+        }.padding(24).frame(minWidth:620,minHeight:450).font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions()
     }
     @ViewBuilder private var content:some View {
         if state.step==0 {
@@ -824,10 +827,10 @@ private struct SetupWorkspace:View {
             Button(state.busy && state.step==0 ? "取消登录":(state.step==4 ? "稍后查看":"下次继续")){state.send("close")}.keyboardShortcut(.cancelAction)
             if state.step>0 && state.step<4 {Button("返回"){state.send("back")}.disabled(state.busy)}
             Spacer()
-            if state.step==0 {if !state.busy && string(state.context,"code").isEmpty{Button("先使用本机作业功能"){state.send("local")}};Button("连接 GitHub 课程"){state.send("login")}.disabled(state.busy || !string(state.context,"code").isEmpty).keyboardShortcut(.defaultAction)}
-            else if state.step==1 {Button("下一步：核验课程"){state.send("select")}.disabled(state.busy || state.selected.isEmpty).keyboardShortcut(.defaultAction)}
-            else if state.step==2 {Button("确认并开始检查"){state.send("link-check")}.disabled(state.busy || !state.records.contains{!flag($0,"invalid") && !(state.paths[string($0,"fork")] ?? string($0,"path")).isEmpty}).buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)}
-            else if state.step==3 {Button("重试未完成课程"){state.send("retry-check")}.disabled(state.busy);Button("完成配置"){state.send("finish")}.disabled(state.busy).keyboardShortcut(.defaultAction)}
+            if state.step==0 {if !state.busy && string(state.context,"code").isEmpty{Button("先使用本机作业功能"){state.send("local")}};Button("连接 GitHub 课程"){state.send("login")}.amPrimaryAction().disabled(state.busy || !string(state.context,"code").isEmpty).keyboardShortcut(.defaultAction)}
+            else if state.step==1 {Button("下一步：核验课程"){state.send("select")}.amPrimaryAction().disabled(state.busy || state.selected.isEmpty).keyboardShortcut(.defaultAction)}
+            else if state.step==2 {Button("确认并开始检查"){state.send("link-check")}.disabled(state.busy || !state.records.contains{!flag($0,"invalid") && !(state.paths[string($0,"fork")] ?? string($0,"path")).isEmpty}).amPrimaryAction().keyboardShortcut(.defaultAction)}
+            else if state.step==3 {Button("重试未完成课程"){state.send("retry-check")}.disabled(state.busy);Button("完成配置"){state.send("finish")}.amPrimaryAction().disabled(state.busy).keyboardShortcut(.defaultAction)}
             else {Button("重新运行配置引导"){state.send("restart")}.disabled(state.busy);Button("查看课程"){state.send("courses")}.keyboardShortcut(.defaultAction);Button("查看待审核"){state.send("review")}}
         }
     }
@@ -864,7 +867,7 @@ private struct SkillJobsWorkspace:View {
                     HStack{if !flag(record,"cleaned"){Button("复制指令"){state.action?("copy",key)};Button("显示材料"){state.action?("reveal",key)};if !string(record,"reportVersion").isEmpty {Button("查看检查报告"){state.action?("view-report",key)}}};if status=="需处理" {Button("重试接回"){state.action?("retry",key)};if string(record,"reportVersion").isEmpty {Button("重新准备未成功材料"){state.action?("prepare-failed",key)}}}}.disabled(state.busy)
                 }.padding(.vertical,8)
             }.listStyle(.inset)}
-        }.padding(16).font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent))
+        }.padding(16).font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions()
     }
 }
 @objc(AMSkillJobsController) @MainActor public final class AMSkillJobsController:NSViewController {
@@ -892,7 +895,7 @@ private struct TaskPlanningView:View {
             if children.isEmpty{Text("拆成几个小步骤，逐项完成。").font(.caption).foregroundStyle(.secondary)}
             ForEach(workspaceRows(children)){row in
                 HStack(alignment:.top,spacing:8){
-                    Button{state.action?("toggle",identifier(state.task),identifier(row.record),"")}label:{Image(systemName:flag(row.record,"completed") ? "checkmark.circle.fill":"circle").foregroundStyle(flag(row.record,"completed") ? Color(nsColor:AMAppearance.accent):Color.secondary)}.buttonStyle(.plain).accessibilityLabel((flag(row.record,"completed") ? "已完成：":"未完成：")+string(row.record,"title")).accessibilityHint("切换子任务完成状态")
+                    Toggle("",isOn:Binding(get:{flag(row.record,"completed")},set:{_ in state.action?("toggle",identifier(state.task),identifier(row.record),"")})).labelsHidden().toggleStyle(.checkbox).accessibilityLabel((flag(row.record,"completed") ? "已完成：":"未完成：")+string(row.record,"title")).accessibilityHint("切换子任务完成状态")
                     VStack(alignment:.leading,spacing:3){Text(string(row.record,"title")).strikethrough(flag(row.record,"completed")).lineLimit(3).help(string(row.record,"title")).fixedSize(horizontal:false,vertical:true);if !string(row.record,"plannedDate").isEmpty{Text(string(row.record,"plannedDate")).font(.caption).foregroundStyle(.secondary)}}.frame(maxWidth:.infinity,alignment:.leading)
                     Menu{Button("编辑名称…"){state.action?("edit",identifier(state.task),identifier(row.record),"")};Button("安排到…"){state.action?("plan",identifier(state.task),identifier(row.record),"")};Button("上移"){state.action?("up",identifier(state.task),identifier(row.record),"")};Button("下移"){state.action?("down",identifier(state.task),identifier(row.record),"")};Divider();Button("删除",role:.destructive){state.action?("delete",identifier(state.task),identifier(row.record),"")}}label:{Image(systemName:"ellipsis")}.menuStyle(.borderlessButton).frame(width:24).help("子任务操作")
                 }.padding(.vertical,3)
@@ -947,7 +950,7 @@ private struct WeeklyPlanningView:View {
                     ForEach(workspaceRows(Array(state.sections.dropFirst(7)))){row in section(row.record).padding(.top,12)}
                 }
             }.padding(4)
-        }.background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent))
+        }.background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions()
     }
 }
 @objc(AMWeeklyPlanningController) public final class AMWeeklyPlanningController:NSViewController {
@@ -1058,7 +1061,7 @@ private struct QuickEntryView:View {
         if geo.size.width<760{VStack(spacing:0){rows.frame(height:150);Divider();details}}else{HStack(spacing:0){rows.frame(width:260);Divider();details}}
         Divider();Text(state.notice).font(.callout).foregroundStyle(Color(nsColor:.labelColor)).textSelection(.enabled).accessibilityIdentifier("quick-status")
         HStack{Button("手动导入助手结果…"){state.send("import")};Spacer();WorkspaceButton(title:"保存选中作业",enabled:!state.busy && state.entries.contains{flag($0,"selected")},prominent:true,identity:"quick-save",saveShortcut:true){state.send("save")}.fixedSize()}
-    }.padding(16).font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).accessibilityElement(children:.contain)
+    }.padding(16).font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions().accessibilityElement(children:.contain)
     .sheet(isPresented:$state.showingOriginal){VStack(spacing:12){HStack{Text("截图原图").font(.headline);Spacer();Text("缩放");Slider(value:$state.imageScale,in:0.25...3).frame(width:140).accessibilityLabel("原图缩放");Button("完成"){state.showingOriginal=false}.keyboardShortcut(.cancelAction)};if let image=state.ocrImage{ScrollView([.horizontal,.vertical]){Image(nsImage:image).resizable().frame(width:image.size.width*state.imageScale,height:image.size.height*state.imageScale).accessibilityLabel("完整录入截图，可滚动查看")}}}.padding(16).frame(minWidth:620,idealWidth:800,minHeight:460,idealHeight:600)}}}
 }
 @objc(AMQuickEntryController) @MainActor public final class AMQuickEntryController:NSViewController {
@@ -1142,8 +1145,8 @@ private struct CheckScopeWorkspace:View {
             Text(state.notice).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).lineLimit(2)
             HStack{Text("文档 \(state.valid.filter{!flag($0,"image")}.count) · 已选 \(state.valid.count) · 图片 \(state.valid.filter{flag($0,"image")}.count) · 排除 \(state.records.filter{!flag($0,"selectable")}.count)").font(.caption).foregroundStyle(.secondary);Spacer();Text(ByteCountFormatter.string(fromByteCount:state.bytes,countStyle:.file)).font(.caption)}
             Divider()
-            HStack{Button(state.busy ? "取消整理":"取消"){state.send("cancel")}.keyboardShortcut(.cancelAction);Text(state.hint).font(.caption).foregroundStyle(state.canStart ? Color.secondary:Color.orange);Spacer();Button("开始检查"){state.send("check")}.buttonStyle(.borderedProminent).disabled(!state.canStart).keyboardShortcut(.defaultAction)}
-        }.padding(20).font(.system(size:13)).frame(minWidth:860,minHeight:560).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).onChange(of:state.chosen){_ in state.send("preview")}
+            HStack{Button(state.busy ? "取消整理":"取消"){state.send("cancel")}.keyboardShortcut(.cancelAction);Text(state.hint).font(.caption).foregroundStyle(state.canStart ? Color.secondary:Color.orange);Spacer();Button("开始检查"){state.send("check")}.amPrimaryAction().disabled(!state.canStart).keyboardShortcut(.defaultAction)}
+        }.padding(20).font(.system(size:13)).frame(minWidth:860,minHeight:560).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions().onChange(of:state.chosen){_ in state.send("preview")}
     }
     private func fileRow(_ node:CheckFileNode)->some View {
         HStack(spacing:6){if let row=node.record {Toggle("包含 \(node.id)",isOn:Binding(get:{state.selected.contains(node.id)},set:{if $0{state.selected.insert(node.id)}else{state.selected.remove(node.id)}})).labelsHidden().toggleStyle(.checkbox).disabled(!flag(row,"selectable"));Image(systemName:flag(row,"selectable") ? (flag(row,"image") ? "photo":"doc.text"):"minus.circle").foregroundStyle(.secondary)}else{Image(systemName:"folder").foregroundStyle(.secondary)}
@@ -1174,12 +1177,12 @@ private struct HelpWorkspace:View {
     var body:some View {
         ScrollView{VStack(alignment:.leading,spacing:20){
             WorkspaceHeading(title:"从这里开始",subtitle:"连接课程是可选的；本机录入和文件检查无需登录。",symbol:"sparkles")
-            WorkspaceSection("准备好开始了吗？"){HStack{Button("继续配置课程"){action("setup")}.buttonStyle(.borderedProminent);Button("快速录入作业"){action("quick")};Button("查看任务"){action("tasks")};Spacer()}}
+            WorkspaceSection("准备好开始了吗？"){HStack{Button("继续配置课程"){action("setup")}.amPrimaryAction();Button("快速录入作业"){action("quick")};Button("查看任务"){action("tasks")};Spacer()}}
             ForEach(Array(zip(["检查新作业","审核作业","检查作业文件","助手识别 · Skill","同步课程文件","提交作业"],["老师有新内容时，在课程页检查；不会合并文件或推送。","核对截止时间和内容后保存；支持全选、批量确认，保存后从审核列表移除。","选中任务，在详情中选择作业文件夹或文件，核对范围后检查。答案和推导可以再交给助手。","准备材料，复制指令给助手；结果自动接回。不会自动发送原文或启动付费分析。","需要更新本机课程资料时使用；会合并老师更新并安全更新个人 fork。","逐项选择提交文件、填写说明，查看提交前检查，只推送个人仓库。"])),id:\.0){title,detail in
                 WorkspaceSection(title){VStack(alignment:.leading,spacing:10){Text(detail).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true);if title=="审核作业"{Button("打开待审核作业"){action("review")}}else if title=="检查作业文件"{Button("选择任务开始检查"){action("tasks")}}else if title=="助手识别 · Skill"{Button("查看识别批次"){action("skill")}}else{Button("打开课程"){action("courses")}}}}
             }
             Text("本机检查不证明答案正确。检查、同步和提交是不同操作；完成任务也不等于代码已推送。").font(.caption).foregroundStyle(.secondary)
-        }.padding(24).frame(maxWidth:900,alignment:.leading).frame(maxWidth:.infinity,alignment:.leading)}.font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent))
+        }.padding(24).frame(maxWidth:900,alignment:.leading).frame(maxWidth:.infinity,alignment:.leading)}.font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions()
     }
 }
 @objc(AMHelpController) @MainActor public final class AMHelpController:NSViewController {

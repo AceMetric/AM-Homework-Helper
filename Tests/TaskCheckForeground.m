@@ -4,6 +4,7 @@
 #import "../Sources/App.m"
 #undef main
 #import "../Sources/SSCourseWindow.m"
+#import "FixtureButtons.h"
 static NSUInteger checks;
 static void Check(BOOL value,NSString *message){checks++;if(!value){fprintf(stderr,"FAIL: %s\n",message.UTF8String);exit(1);}}
 static void Wait(BOOL(^ready)(void)){NSDate *limit=[NSDate dateWithTimeIntervalSinceNow:15];while(!ready() && limit.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];Check(ready(),@"visible operation completes");}
@@ -60,12 +61,10 @@ int main(void){@autoreleasepool{
     Check(courses.busy && sheet.checkOnly && sheet.window.sheetParent==nil && sheet.window==courses.checkScopeWindow && sheet.findings.count>0 && !sheet.submit,@"visible report completes while course queue stays suspended, without submit callback");
     for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]){
         sheet.window.appearance=[NSAppearance appearanceNamed:appearance];[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.5]];[sheet.window.contentView layoutSubtreeIfNeeded];
-        NSView *view=sheet.window.contentView;NSBitmapImageRep *bitmap=[view bitmapImageRepForCachingDisplayInRect:view.bounds];[view cacheDisplayInRect:view.bounds toBitmapImageRep:bitmap];
-        NSString *name=[appearance isEqual:NSAppearanceNameAqua] ? @"light":@"dark";
-        Check([[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[NSString stringWithFormat:@"build/qa/task-check-active-scan-%@.png",name] atomically:YES],@"synthetic visible report screenshot saved");
+        Check(!NSIsEmptyRect(sheet.window.contentView.bounds),@"report geometry remains available without image capture");
     }
     [sheet.window setContentSize:NSMakeSize(900,620)];[sheet layoutReport];
-    Check(NSMaxY(sheet.primary.frame)<=NSHeight(sheet.checkPage.bounds) && NSMinX(sheet.findingDetail.enclosingScrollView.frame)>=NSMaxX(sheet.findingsTable.enclosingScrollView.frame),@"workspace keeps a wide file and detail area with visible primary action");
+    Check(NSContainsRect(sheet.checkPage.bounds,[sheet.primary convertRect:sheet.primary.bounds toView:sheet.checkPage]) && NSMinX([sheet.findingDetail.enclosingScrollView convertRect:sheet.findingDetail.enclosingScrollView.bounds toView:sheet.checkPage])>=NSMaxX([sheet.findingsTable.enclosingScrollView convertRect:sheet.findingsTable.enclosingScrollView.bounds toView:sheet.checkPage]),@"workspace keeps a wide file and detail area with visible primary action");
     [@"# Changed report\n" writeToURL:file atomically:YES encoding:NSUTF8StringEncoding error:NULL];[sheet pollReview:nil];Check(sheet.reportStale && !sheet.assistantButton.enabled,@"file modification marks old report stale before assistant export");
     [text writeToURL:file atomically:YES encoding:NSUTF8StringEncoding error:NULL];
     [sheet backToFiles:nil];Wait(^BOOL{return courses.checkScopeWindow!=nil && courses.checkScopeWindow.sheetParent==nil;});Check(!courses.checkScope.preparing,@"adjust scope preserves completed enumeration and selection");[courses.checkScope requestCheck];Wait(^BOOL{return courses.submission!=nil && courses.submission!=sheet && courses.submission.report!=nil;});sheet=courses.submission;

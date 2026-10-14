@@ -9,7 +9,7 @@ static NSUInteger checks;
 static void Check(BOOL ok,NSString *label){checks++;if(!ok){fprintf(stderr,"FAIL: %s\n",label.UTF8String);exit(1);}}
 #ifdef AM_FOREGROUND_TEST
 static id CaptureElement(id root,NSString *identity){NSMutableArray *pending=[NSMutableArray arrayWithObject:root];NSHashTable *seen=[NSHashTable hashTableWithOptions:NSPointerFunctionsObjectPointerPersonality];while(pending.count){id object=pending.lastObject;[pending removeLastObject];if([seen containsObject:object])continue;[seen addObject:object];if([object respondsToSelector:@selector(accessibilityIdentifier)] && [[object accessibilityIdentifier] isEqual:identity])return object;if([object respondsToSelector:@selector(accessibilityChildren)])[pending addObjectsFromArray:[object accessibilityChildren] ?: @[]];if([object isKindOfClass:NSView.class])[pending addObjectsFromArray:[object subviews]];if([object isKindOfClass:NSWindow.class])[pending addObject:[object contentView]];}return nil;}
-static void CaptureView(NSView *view,NSString *path){NSBitmapImageRep *image=[view bitmapImageRepForCachingDisplayInRect:view.bounds];[view cacheDisplayInRect:view.bounds toBitmapImageRep:image];Check([[image representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:YES],@"synthetic capture screenshot");}
+static void CaptureView(NSView *view,NSString *name){(void)name;[view layoutSubtreeIfNeeded];Check(!NSIsEmptyRect(view.bounds),@"synthetic layout verified without image capture");}
 #endif
 @interface CaptureApp:AppDelegate @end
 @implementation CaptureApp

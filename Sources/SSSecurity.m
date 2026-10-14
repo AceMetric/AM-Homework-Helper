@@ -46,7 +46,7 @@ BOOL SSContainsSecret(NSData *data) {
     }
     return NO;
 }
-NSString *SSRedactedText(NSString *text) {
+NSString *SSRedactedContent(NSString *text) {
     NSString *result = text ?: @"";
     NSArray *patterns = [SecretPatterns() arrayByAddingObjectsFromArray:@[@"(?i)https?://[^/\\s]+@", @"(?i)(?:authorization|bearer)\\s*[:=]?\\s+[A-Za-z0-9_./+=-]{10,}"]];
     for (NSString *pattern in patterns) {
@@ -55,5 +55,9 @@ NSString *SSRedactedText(NSString *text) {
     }
     NSString *home = NSHomeDirectory();
     if (home.length) result = [result stringByReplacingOccurrencesOfString:home withString:@"~"];
+    return result;
+}
+NSString *SSRedactedText(NSString *text) {
+    NSString *result=SSRedactedContent(text);
     return result.length > 1600 ? [result substringToIndex:1600] : result;
 }

@@ -362,7 +362,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     if (SSContainsSecret(data)) return @"检测到疑似凭据，预览已隐藏。请移除敏感内容，并轮换真实凭据后再提交。";
     NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     if (!text) return @"这是非 UTF-8 文本或二进制文件，请在对应应用中查看。";
-    NSString *preview = SSRedactedText(text.length ? text : @"没有文本差异，可能仅修改了文件属性。"); return text.length > 1600 ? [preview stringByAppendingString:@"\n…预览已截断；提交检查会覆盖完整内容。"] : preview;
+    return SSRedactedContent(text.length ? text : @"没有文本差异，可能仅修改了文件属性。");
 }
 - (BOOL)checkObjects:(NSString *)range path:(NSString *)path error:(NSError **)error {
     SSGitResult *objects = [self checked:@[@"rev-list", @"--objects", @"--no-object-names", range] in:path token:nil error:error]; if (!objects) return NO;

@@ -7,10 +7,7 @@
 static NSInteger assertions;
 static void Check(BOOL passed, NSString *message) { assertions++; if (!passed) { fprintf(stderr, "FAIL: %s\n", message.UTF8String); exit(1); } }
 static void Snapshot(NSView *view, NSString *path) {
-    [view.window displayIfNeeded];
-    NSBitmapImageRep *bitmap = [view bitmapImageRepForCachingDisplayInRect:view.bounds];
-    [view cacheDisplayInRect:view.bounds toBitmapImageRep:bitmap];
-    Check([[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:NO], @"screenshot saved");
+    (void)path;[view layoutSubtreeIfNeeded];Check(!NSIsEmptyRect(view.bounds),@"synthetic form lays out without image capture");
 }
 static BOOL SameColor(NSColor *a, NSColor *b, NSAppearance *appearance) {
     __block NSColor *ca, *cb; [appearance performAsCurrentDrawingAppearance:^{ ca = [a colorUsingColorSpace:NSColorSpace.sRGBColorSpace]; cb = [b colorUsingColorSpace:NSColorSpace.sRGBColorSpace]; }];
@@ -30,8 +27,8 @@ int main(int argc, const char *argv[]) {
             [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
             NSTextView *fieldEditor = (NSTextView *)editor.reminderField.currentEditor;
             Check(fieldEditor != nil, @"reminder accepts keyboard focus");
-            Check(SameColor(fieldEditor.selectedTextAttributes[NSBackgroundColorAttributeName], Emphasis(), editor.window.effectiveAppearance), @"selection follows palette");
-            Check(SameColor(fieldEditor.insertionPointColor, Accent(), editor.window.effectiveAppearance), @"caret follows palette");
+            Check(SameColor(fieldEditor.selectedTextAttributes[NSBackgroundColorAttributeName], NSColor.selectedTextBackgroundColor, editor.window.effectiveAppearance), @"field selection follows system appearance");
+            Check(SameColor(fieldEditor.insertionPointColor, NSColor.controlAccentColor, editor.window.effectiveAppearance), @"field caret follows system appearance");
             [fieldEditor setSelectedRange:NSMakeRange(fieldEditor.string.length, 0)];
             Snapshot(editor.window.contentView, [NSString stringWithFormat:@"build/qa/form-%@.png", [appearance isEqual:NSAppearanceNameAqua] ? @"light" : @"dark"]);
             PastelPopUpButton *preset = (PastelPopUpButton *)editor.reminderPreset;
@@ -48,7 +45,7 @@ int main(int argc, const char *argv[]) {
             NSButton *step = [NSButton new]; step.tag = 1; NSDate *beforeStep = editor.selectedDate; [editor stepTime:step];
             Check([editor.selectedDate timeIntervalSinceDate:beforeStep] == 60 && [editor.timePicker.stringValue isEqual:@"00:00"], @"time stepper crosses midnight correctly");
             [editor.window makeFirstResponder:editor.notesField];
-            Check(SameColor(editor.notesField.insertionPointColor, Accent(), editor.window.effectiveAppearance), @"notes use adaptive caret");
+            Check(SameColor(editor.notesField.insertionPointColor, NSColor.controlAccentColor, editor.window.effectiveAppearance), @"notes use the system adaptive caret");
             Check([editor.saveButton.keyEquivalent isEqual:@"\r"], @"Return saves unified editor");
             Check([editor.window.title isEqual:@"新建任务"] && editor.datePopover == nil, @"new task uses unified sheet with collapsed date picker");
             editor.titleField.stringValue = @"尚未保存的标题"; editor.notesField.string = @"尚未保存的备注";

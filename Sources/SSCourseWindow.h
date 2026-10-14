@@ -2,6 +2,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 @interface SSCourseController : NSViewController <NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate>
+@property(readonly) BOOL hasCheckWorkspace;
 @property (copy) NSArray<NSDictionary *> * (^tasksProvider)(void);
 @property (copy) void (^reviewCandidate)(NSDictionary *candidate);
 @property (copy, nullable) void (^restoreTaskNotes)(NSString *identifier);

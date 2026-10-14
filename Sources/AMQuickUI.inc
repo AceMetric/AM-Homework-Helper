@@ -30,7 +30,7 @@
     [self loadQuick];if(!self.quickState){[self render];return;}
     self.quickController=AMQuickEntryController.new;__weak typeof(self) owner=self;
     self.quickController.actionHandler=^(NSString *action,NSDictionary *payload){[owner quickAction:action payload:payload];};
-    self.quickWindow=[[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,1000,760) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];self.quickWindow.title=@"快速录入作业";self.quickWindow.minSize=NSMakeSize(650,640);self.quickWindow.delegate=self;self.quickWindow.releasedWhenClosed=NO;self.quickWindow.contentViewController=self.quickController;[self.quickWindow setContentSize:NSMakeSize(1000,760)];
+    self.quickWindow=[[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,1000,760) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];self.quickWindow.title=@"快速录入作业";self.quickWindow.contentMinSize=NSMakeSize(650,640);self.quickWindow.delegate=self;self.quickWindow.releasedWhenClosed=NO;self.quickWindow.contentViewController=self.quickController;[self.quickWindow setContentSize:NSMakeSize(1000,760)];
     [self refreshQuick:nil];[self.window beginSheet:self.quickWindow completionHandler:nil];
 }
 - (void)closeQuick {

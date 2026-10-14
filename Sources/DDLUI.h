@@ -58,11 +58,25 @@ ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL acti
 @end
 void AMShowOperations(NSWindow *parent);
 void AMRefreshViewAppearance(NSView *root);
+NSScrollView *AMScrollableForm(NSStackView *stack);
 
 @interface AMCheckWindow : DDLFormPanel @end
 
-NSView *AMNavigationMaterial(NSView *content);
-
-NSView *AMToolbarProgress(id target, SEL action);
-
 NSWindow *AMMakeCheckWorkspace(NSWindow *parent);
+
+// Native presentation adapters. Records and identifiers never own business state.
+@interface AMNativeSidebar : NSViewController
+@property(readonly) NSOutlineView *outline;
+@property(readonly) NSScrollView *scroll;
+@property(copy) void (^actionHandler)(NSString *identifier);
+- (void)updateItems:(NSArray<NSDictionary *> *)items selected:(NSString *)identifier account:(NSString *)account footer:(NSString *)footer;
+@end
+@interface AMNativeTaskList : NSViewController
+@property(readonly) NSTableView *table;
+@property(readonly) NSScrollView *scroll;
+@property(copy) void (^actionHandler)(NSString *action,NSString *identifier);
+@property(copy) NSMenu *(^menuProvider)(NSString *identifier);
+- (void)updateGroups:(NSArray<NSDictionary *> *)groups selected:(NSString *)identifier heading:(NSString *)heading;
+- (void)updateTasks:(NSArray<NSDictionary *> *)tasks selected:(NSString *)identifier heading:(NSString *)heading;
+- (void)focusSelection;
+@end
