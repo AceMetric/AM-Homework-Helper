@@ -58,44 +58,15 @@ void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight weight, NS
 @implementation ActionButton
 @synthesize tone=_tone;
 @synthesize symbol=_symbol;
-- (void)setTone:(NSInteger)tone {_tone=tone;self.bordered=tone!=3;self.bezelColor=tone==1 ? Accent():nil;self.contentTintColor=tone==1 ? NSColor.whiteColor:nil;self.needsDisplay=YES;}
-- (void)setSymbol:(NSString *)symbol {_symbol=symbol.copy;if(self.tone!=3){self.image=symbol.length ? [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil]:nil;self.imagePosition=symbol.length ? (self.title.length ? NSImageLeft:NSImageOnly):NSNoImage;}self.needsDisplay=YES;}
-
-- (instancetype)initWithFrame:(NSRect)frame {
-    if ((self = [super initWithFrame:frame])) { self.bordered = YES; self.bezelStyle=NSBezelStyleRounded; self.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium]; [self setButtonType:NSButtonTypeMomentaryPushIn]; self.focusRingType = NSFocusRingTypeDefault; self.allowsHoverFill = YES; }
-    return self;
+- (instancetype)initWithFrame:(NSRect)frame {if((self=[super initWithFrame:frame])){self.bezelStyle=NSBezelStyleRounded;self.font=[NSFont systemFontOfSize:13];[self setButtonType:NSButtonTypeMomentaryPushIn];self.focusRingType=NSFocusRingTypeDefault;}return self;}
+- (void)setTone:(NSInteger)tone {
+    _tone=tone;self.bordered=tone!=3;self.bezelStyle=NSBezelStyleRounded;
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
+    if(@available(macOS 26.0,*)){if(tone==1)self.bezelStyle=NSBezelStyleGlass;self.borderShape=NSControlBorderShapeCapsule;}
+#endif
+    self.bezelColor=tone==1 ? Accent():nil;self.contentTintColor=nil;
 }
-- (BOOL)isFlipped { return YES; }
-- (void)updateTrackingAreas {
-    if (self.hoverArea) [self removeTrackingArea:self.hoverArea];
-    self.hoverArea = [[NSTrackingArea alloc] initWithRect:self.bounds options:(NSTrackingMouseEnteredAndExited | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect) owner:self userInfo:nil];
-    [self addTrackingArea:self.hoverArea]; [super updateTrackingAreas];
-}
-- (void)mouseEntered:(NSEvent *)event { self.hovered = YES; self.needsDisplay = YES; }
-- (void)mouseExited:(NSEvent *)event { self.hovered = NO; self.needsDisplay = YES; }
-- (void)drawRect:(NSRect)dirtyRect {
-    if(self.tone!=3){[super drawRect:dirtyRect];return;}
-    NSColor *fill = self.tone == 1 && self.enabled ? Accent() : (self.selected ? Tint() : Card());
-    BOOL hoverFill = self.allowsHoverFill && (self.hovered || self.highlighted);
-    if (self.tone == 3 && !self.selected && !hoverFill) fill = NSColor.clearColor;
-    if (hoverFill) fill = [fill blendedColorWithFraction:0.10 ofColor:Accent()];
-    NSBezierPath *buttonPath = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 1, 1) xRadius:6 yRadius:6];
-    [fill setFill]; [buttonPath fill];
-    if(self.tone!=3 && self.tone!=1){[Line() setStroke];buttonPath.lineWidth=NSWorkspace.sharedWorkspace.accessibilityDisplayShouldIncreaseContrast ? 1.5:0.5;[buttonPath stroke];}
-    NSColor *color = self.tone == 1 && self.enabled ? NSColor.whiteColor : (self.selected ? Accent() : Ink());
-    if (!self.enabled) color = Muted();
-    BOOL iconOnly = self.symbol.length && self.title.length == 0;
-    CGFloat tx = self.symbol.length ? 35 : 8;
-    if (self.symbol.length) {
-        NSImage *image = [[NSImage imageWithSystemSymbolName:self.symbol accessibilityDescription:nil] imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithHierarchicalColor:color]];
-        CGFloat imageSize = MIN(16, self.bounds.size.height - 6);
-        CGFloat imageX = iconOnly ? (self.bounds.size.width - imageSize) / 2 : 12;
-        [image drawInRect:NSMakeRect(imageX, (self.bounds.size.height - imageSize) / 2, imageSize, imageSize) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:self.enabled ? 1 : 0.5 respectFlipped:YES hints:nil];
-    }
-    if (!iconOnly) DrawText(self.title, NSMakeRect(tx, (self.bounds.size.height - 17) / 2, self.bounds.size.width - tx - 8, 18), self.font.pointSize, self.tone==1 || self.selected ? NSFontWeightSemibold:NSFontWeightRegular, color, self.symbol.length ? NSTextAlignmentLeft : NSTextAlignmentCenter);
-    if (self.window.firstResponder == self) { [Accent() setStroke]; [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 2, 2) xRadius:7 yRadius:7] stroke]; }
-}
-- (void)viewDidChangeEffectiveAppearance { self.needsDisplay = YES; }
+- (void)setSymbol:(NSString *)symbol {_symbol=symbol.copy;self.image=symbol.length ? [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil]:nil;self.imagePosition=symbol.length ? (self.title.length ? NSImageLeft:NSImageOnly):NSNoImage;}
 @end
 ActionButton *Button(NSString *title, id target, SEL action, NSInteger tone) {
     ActionButton *b = [[ActionButton alloc] initWithFrame:NSZeroRect]; b.title = title; b.target = target; b.action = action; b.tone = tone; [b setAccessibilityLabel:title]; return b;
@@ -103,53 +74,11 @@ ActionButton *Button(NSString *title, id target, SEL action, NSInteger tone) {
 Surface *Box(NSColor *fill, CGFloat radius) { Surface *v = [Surface new]; v.fill = fill; v.radius = radius; return v; }
 Surface *GradientBox(NSColor *start, NSColor *end, CGFloat radius) { Surface *v = Box(start, radius); v.gradientEnd = nil; return v; }
 
-// Shared AppKit form surfaces; native editing and menu keyboard behavior are retained.
-static void DrawFieldChrome(NSRect bounds, BOOL focused, BOOL filled) {
-    NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(bounds, 1, 1) xRadius:8 yRadius:8];
-    [Card() setFill]; [path fill];
-    [(focused ? Accent() : Line()) setStroke]; path.lineWidth = focused ? 1.5 : 1; [path stroke];
-}
-void ThemeEditor(NSTextView *editor) {
-    editor.insertionPointColor = Accent();
-    editor.selectedTextAttributes = @{NSBackgroundColorAttributeName:Emphasis(), NSForegroundColorAttributeName:Ink()};
-}
-@implementation PastelTextCell
-- (NSRect)textRect:(NSRect)rect {
-    CGFloat height = ceil(self.font.ascender - self.font.descender) + 2;
-    return NSMakeRect(NSMinX(rect) + 10, NSMinY(rect) + floor((NSHeight(rect) - height) / 2), MAX(0, NSWidth(rect) - 20), height);
-}
-- (void)drawWithFrame:(NSRect)frame inView:(NSView *)view {
-    DrawFieldChrome(frame, [(NSTextField *)view currentEditor] != nil, NO);
-    self.textColor = Ink();
-    [super drawInteriorWithFrame:[self textRect:frame] inView:view];
-}
-- (void)editWithFrame:(NSRect)rect inView:(NSView *)view editor:(NSText *)editor delegate:(id)delegate event:(NSEvent *)event {
-    ThemeEditor((NSTextView *)editor);
-    [super editWithFrame:[self textRect:rect] inView:view editor:editor delegate:delegate event:event];
-    ThemeEditor((NSTextView *)editor);
-}
-- (void)selectWithFrame:(NSRect)rect inView:(NSView *)view editor:(NSText *)editor delegate:(id)delegate start:(NSInteger)start length:(NSInteger)length {
-    ThemeEditor((NSTextView *)editor);
-    [super selectWithFrame:[self textRect:rect] inView:view editor:editor delegate:delegate start:start length:length];
-    ThemeEditor((NSTextView *)editor);
-}
-@end
+// System field drawing and focus rings; retain class names for existing controllers.
+void ThemeEditor(NSTextView *editor) {editor.insertionPointColor=NSColor.controlAccentColor;editor.selectedTextAttributes=@{NSBackgroundColorAttributeName:NSColor.selectedTextBackgroundColor,NSForegroundColorAttributeName:NSColor.selectedTextColor};}
+@implementation PastelTextCell @end
 @implementation PastelTextField
-+ (Class)cellClass { return PastelTextCell.class; }
-- (instancetype)initWithFrame:(NSRect)frame {
-    if ((self = [super initWithFrame:frame])) {
-        self.bezeled = NO; self.bordered = NO; self.drawsBackground = NO; self.focusRingType = NSFocusRingTypeNone;
-        self.font = [NSFont systemFontOfSize:13]; self.textColor = Ink(); self.cell.scrollable = YES;
-    }
-    return self;
-}
-- (void)setPlaceholderString:(NSString *)placeholder {
-    self.placeholderAttributedString = [[NSAttributedString alloc] initWithString:placeholder ?: @"" attributes:@{NSForegroundColorAttributeName:Muted(), NSFontAttributeName:self.font}];
-}
-- (BOOL)becomeFirstResponder { BOOL result = [super becomeFirstResponder]; ThemeEditor((NSTextView *)self.currentEditor); self.needsDisplay = YES; return result; }
-- (BOOL)resignFirstResponder { BOOL result = [super resignFirstResponder]; self.needsDisplay = YES; return result; }
-- (void)textDidBeginEditing:(NSNotification *)notification { [super textDidBeginEditing:notification]; ThemeEditor((NSTextView *)self.currentEditor); self.needsDisplay = YES; }
-- (void)textDidEndEditing:(NSNotification *)notification { [super textDidEndEditing:notification]; self.needsDisplay = YES; }
+- (instancetype)initWithFrame:(NSRect)frame {if((self=[super initWithFrame:frame])){self.bezeled=YES;self.bordered=YES;self.drawsBackground=YES;self.backgroundColor=NSColor.textBackgroundColor;self.focusRingType=NSFocusRingTypeDefault;self.font=[NSFont systemFontOfSize:13];self.cell.scrollable=YES;}return self;}
 @end
 
 @implementation PastelNotesView
@@ -183,11 +112,18 @@ void ThemeEditor(NSTextView *editor) {
 - (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay = YES; }
 @end
 ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL action) {
-    ThemeSegmentedControl *control = [[ThemeSegmentedControl alloc] initWithFrame:NSZeroRect]; control.segmentCount = labels.count;
-    for (NSInteger index = 0; index < (NSInteger)labels.count; index++) [control setLabel:labels[index] forSegment:index];
-    control.segmentStyle=NSSegmentStyleRounded; control.focusRingType = NSFocusRingTypeDefault; control.trackingMode = NSSegmentSwitchTrackingSelectOne; control.target = target; control.action = action; control.selectedSegment = 0;
-    return control;
+    ThemeSegmentedControl *control=[[ThemeSegmentedControl alloc] initWithFrame:NSZeroRect];control.segmentCount=labels.count;
+    for(NSInteger index=0;index<(NSInteger)labels.count;index++)[control setLabel:labels[index] forSegment:index];
+    control.segmentStyle=NSSegmentStyleAutomatic;control.controlSize=NSControlSizeLarge;
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
+    if(@available(macOS 26.0,*))control.borderShape=NSControlBorderShapeCapsule;
+#endif
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 270000
+    if(@available(macOS 27.0,*))control.role=NSSegmentedControlRoleTabs;
+#endif
+    control.focusRingType=NSFocusRingTypeDefault;control.trackingMode=NSSegmentSwitchTrackingSelectOne;control.target=target;control.action=action;control.selectedSegment=0;return control;
 }
+#import "AMNativeUI.inc"
 #import "AMProgressUI.inc"
 
 #import "AMRenderer.inc"
@@ -195,18 +131,5 @@ ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL acti
 @implementation AMCheckWindow
 - (void)performClose:(id)sender{[self orderOut:sender];}
 @end
-
-// Public macOS 26 API, weakly discovered so the older SDK CI lane still builds.
-@protocol AMNativeGlass <NSObject>
-- (void)setContentView:(NSView *)view;
-- (void)setStyle:(NSInteger)style;
-- (void)setCornerRadius:(CGFloat)radius;
-@end
-NSView *AMNavigationMaterial(NSView *content){
-    NSView *material=nil;
-    if(@available(macOS 26.0,*)){Class cls=NSClassFromString(@"NSGlassEffectView");if(cls){material=[[cls alloc] initWithFrame:content.frame];[(id<AMNativeGlass>)material setStyle:0];[(id<AMNativeGlass>)material setCornerRadius:0];[(id<AMNativeGlass>)material setContentView:content];}}
-    if(!material){NSVisualEffectView *effect=[[NSVisualEffectView alloc] initWithFrame:content.frame];effect.material=NSVisualEffectMaterialSidebar;effect.blendingMode=NSVisualEffectBlendingModeBehindWindow;effect.state=NSVisualEffectStateFollowsWindowActiveState;[effect addSubview:content];material=effect;}
-    content.frame=material.bounds;content.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;return material;
-}
 
 NSWindow *AMMakeCheckWorkspace(NSWindow *parent){AMCheckWindow *window=[[AMCheckWindow alloc] initWithContentRect:NSMakeRect(0,0,1120,760) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];window.releasedWhenClosed=NO;window.contentMinSize=NSMakeSize(900,620);if(![window setFrameUsingName:@"AMFileCheckWorkspace"])[window center];[window setFrameAutosaveName:@"AMFileCheckWorkspace"];NSRect available=(parent.screen ?: NSScreen.mainScreen).visibleFrame;NSRect frame=window.frame;frame.size.width=MIN(frame.size.width,available.size.width);frame.size.height=MIN(frame.size.height,available.size.height);frame.origin.x=MAX(NSMinX(available),MIN(frame.origin.x,NSMaxX(available)-frame.size.width));frame.origin.y=MAX(NSMinY(available),MIN(frame.origin.y,NSMaxY(available)-frame.size.height));[window setFrame:frame display:NO];return window;}

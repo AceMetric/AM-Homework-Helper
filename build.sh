@@ -2,8 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="${0:A:h}"
+SDK_VERSION=$(xcrun --show-sdk-version)
+if [[ "${AM_RELEASE_BUILD:-0}" == 1 ]] && (( ${SDK_VERSION%%.*} < 26 )); then
+  print -u2 -- "Release requires macOS SDK 26 or newer; compatibility builds are not release artifacts."
+  exit 1
+fi
 PRODUCT_NAME=$(python3 -c 'import plistlib,sys; print(plistlib.load(open(sys.argv[1], "rb"))["CFBundleName"])' "$SCRIPT_DIR/Info.plist")
-APP_DIR="$SCRIPT_DIR/build/$PRODUCT_NAME.app"
+APP_DIR="${AM_BUILD_OUTPUT_DIR:-$SCRIPT_DIR/build}/$PRODUCT_NAME.app"
 CONTENTS="$APP_DIR/Contents"
 export CLANG_MODULE_CACHE_PATH="$SCRIPT_DIR/build/module-cache"
 
@@ -51,6 +56,11 @@ clang \
   -o "$CONTENTS/MacOS/DDLManager"
 
 cp "$SCRIPT_DIR/Info.plist" "$CONTENTS/Info.plist"
+python3 - "$CONTENTS/Info.plist" "$SDK_VERSION" <<'PYSDK'
+import plistlib,sys
+from pathlib import Path
+path=Path(sys.argv[1]);info=plistlib.loads(path.read_bytes());info['AMBuildSDK']=sys.argv[2];path.write_bytes(plistlib.dumps(info))
+PYSDK
 python3 "$SCRIPT_DIR/Tools/configure-bundle.py" "$SCRIPT_DIR/Config/GitHubApp.plist" "$CONTENTS/Info.plist"
 cp "$SCRIPT_DIR/Tools/SSAskPass.sh" "$CONTENTS/Resources/SSAskPass.sh"
 chmod 700 "$CONTENTS/Resources/SSAskPass.sh"

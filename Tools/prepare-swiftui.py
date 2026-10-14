@@ -11,7 +11,9 @@ output.mkdir(parents=True, exist_ok=True)
 compiler = subprocess.check_output(['xcrun', '--find', 'swiftc'], text=True).strip()
 sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
 version = subprocess.check_output([compiler, '--version'])
-fingerprint = hashlib.sha256(source.read_bytes() + version).hexdigest()
+sdk_version = subprocess.check_output(['xcrun', '--show-sdk-version'])
+sdk_build = subprocess.check_output(['xcrun', '--show-sdk-build-version'])
+fingerprint = hashlib.sha256(source.read_bytes() + version + sdk.encode() + sdk_version + sdk_build).hexdigest()
 marker = output / '.source-hash'
 library = output / 'libAMUI.dylib'
 header = output / 'AMUI-Swift.h'

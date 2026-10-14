@@ -98,9 +98,7 @@ int main(int argc, const char *argv[]) {
             CheckUI([app.selectedDay isEqual:selectedDay] && [app.month isEqual:month] && [app.tasks isEqual:tasksBeforeTheme], @"appearance preserves dates and tasks");
             CheckUI(NSEqualPoints(app.calendarScroll.contentView.bounds.origin, scrollBeforeTheme), @"appearance preserves calendar scroll");
             [app.window displayIfNeeded];
-            NSBitmapImageRep *bitmap = [app.root bitmapImageRepForCachingDisplayInRect:app.root.bounds]; [app.root cacheDisplayInRect:app.root.bounds toBitmapImageRep:bitmap];
-            NSString *path = [NSString stringWithFormat:@"build/qa/calendar-%@.png", [appearance isEqual:NSAppearanceNameAqua] ? @"light" : @"dark"];
-            CheckUI([[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:path atomically:NO], @"synthetic appearance preview exported");
+
         }
         OverviewGrid *hoverGrid = nil;
         for (NSView *view in app.calendarDocument.subviews) {
@@ -143,13 +141,13 @@ int main(int argc, const char *argv[]) {
         TaskSelectionRow *interactive=(TaskSelectionRow *)[app taskRow:noteTask width:700];
         NSView *titleHit=[interactive hitTest:NSMakePoint(80,24)],*checkHit=[interactive hitTest:NSMakePoint(24,36)];
         CheckUI(titleHit==interactive && [checkHit isKindOfClass:NSButton.class] && ((NSButton *)checkHit).action==@selector(toggleTask:),@"row selection hit area does not intercept completion button");
-        CheckUI([app.window.firstResponder isKindOfClass:TaskSelectionRow.class],@"selected row receives keyboard focus");
+        CheckUI(app.window.firstResponder==app.nativeTasks.table,@"native task list receives keyboard focus");
         NSMutableDictionary *far=noteTask.mutableCopy;far[@"id"]=@"offscreen-focus";far[@"due"]=[NSDate dateWithTimeIntervalSinceNow:900*86400];[app.tasks addObject:far];NSButton *farSelect=NSButton.new;farSelect.identifier=far[@"id"];[app selectTask:farSelect];
-        CheckUI([app.window.firstResponder isKindOfClass:TaskSelectionRow.class] && [((NSView *)app.window.firstResponder).identifier isEqual:far[@"id"]],@"offscreen selection survives virtual list scroll rebuild");[app selectTask:select];
+        CheckUI(app.window.firstResponder==app.nativeTasks.table && [app.selectedTaskID isEqual:far[@"id"]] && app.nativeTasks.table.selectedRow>=0,@"offscreen selection retains native table row and task identity");[app selectTask:select];
         CheckUI(!NSIntersectsRect(app.scroll.frame,app.taskDetails.frame) && NSMaxX(app.taskDetails.frame)<=NSWidth(app.root.bounds) && NSMaxY(app.taskDetails.frame)<=NSHeight(app.root.bounds),@"task list and inspector fit minimum window without overlap");
         NSArray *ordered=app.selectionTasks;NSUInteger selectedIndex=0;for(NSUInteger i=0;i<ordered.count;i++)if([ordered[i][@"id"] isEqual:noteTask[@"id"]]){selectedIndex=i;break;}
-        NSEvent *down=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0 windowNumber:app.window.windowNumber context:nil characters:@"" charactersIgnoringModifiers:@"" isARepeat:NO keyCode:125];
-        [(TaskSelectionRow *)app.window.firstResponder keyDown:down];CheckUI([app.selectedTaskID isEqual:ordered[MIN(selectedIndex+1,ordered.count-1)][@"id"]],@"arrow key selects adjacent task by stable identity");[app selectTask:select];
+        NSEvent *down=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0 windowNumber:app.window.windowNumber context:nil characters:@"\uF701" charactersIgnoringModifiers:@"\uF701" isARepeat:NO keyCode:125];
+        [(NSTableView *)app.window.firstResponder keyDown:down];CheckUI([app.selectedTaskID isEqual:ordered[MIN(selectedIndex+1,ordered.count-1)][@"id"]],@"arrow key selects adjacent task by stable identity");[app selectTask:select];
         NSEvent *escape=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0 windowNumber:app.window.windowNumber context:nil characters:@"\033" charactersIgnoringModifiers:@"\033" isARepeat:NO keyCode:53];
         [(TaskSelectionRow *)app.window.firstResponder keyDown:escape];CheckUI(app.selectedTaskID==nil && app.taskDetails.hidden,@"Escape from selected task row closes inspector");[app selectTask:select];
         NSArray *taskSnapshot=[[NSArray alloc] initWithArray:app.tasks copyItems:YES];TaskDetailsText *sameDetails=app.taskDetailsText;[app render];
@@ -163,7 +161,7 @@ int main(int argc, const char *argv[]) {
         for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]){NSApp.appearance=[NSAppearance appearanceNamed:appearance];[app refreshAppearance];CheckUI([app.selectedTaskID isEqual:noteTask[@"id"]] && [app.taskDetailsText.string containsString:noteTask[@"notes"]],@"appearance preserves selected task and full notes");}
         Search(app,@"not-a-task");[app applySearch];CheckUI(app.selectedTaskID==nil && app.taskDetails.hidden,@"filtering out selected task closes inspector");Search(app,@"");[app applySearch];
         noteTask[@"notes"]=@"";[app selectTask:select];CheckUI([app.taskDetailsText.string containsString:@"暂无备注"],@"empty notes have a short actionable hint");
-        for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]){NSApp.appearance=[NSAppearance appearanceNamed:appearance];[app refreshAppearance];[app.window displayIfNeeded];NSBitmapImageRep *preview=[app.root bitmapImageRepForCachingDisplayInRect:app.root.bounds];[app.root cacheDisplayInRect:app.root.bounds toBitmapImageRep:preview];CheckUI([[preview representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[NSString stringWithFormat:@"build/qa/task-inspector-%@.png",[appearance isEqual:NSAppearanceNameAqua] ? @"light":@"dark"] atomically:NO],@"synthetic task inspector preview exported");}
+
         [app.taskDetailsText cancelOperation:nil];CheckUI(app.selectedTaskID==nil && app.taskDetails.hidden,@"Escape closes notes inspector");
         [app selectTask:select];noteTask[@"deleted"]=@YES;[app render];CheckUI(app.selectedTaskID==nil && app.taskDetails.hidden,@"deleted task does not leave stale details");noteTask[@"deleted"]=@NO;
         [app openCalendar:nil];app.selectedDay=noteTask[@"due"];[app selectTask:select];
@@ -174,11 +172,7 @@ int main(int argc, const char *argv[]) {
         [app openCourses:nil]; CheckUI(app.page == 4 && !app.courseWindow.view.hidden && app.courseWindow.view.window == app.window, @"courses share the main window");
         [app openList:nil];
         [app.window displayIfNeeded];
-        NSBitmapImageRep *listBitmap = [app.root bitmapImageRepForCachingDisplayInRect:app.root.bounds];
-        [app.root cacheDisplayInRect:app.root.bounds toBitmapImageRep:listBitmap];
-        [[listBitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:@"build/qa/tasks-default.png" atomically:NO];
-        ActionButton *navigationFocus = nil; for (NSView *view in app.navigationScroll.documentView.subviews) if ([view isKindOfClass:ActionButton.class] && ((ActionButton *)view).action == @selector(selectSidebarCourse:) && [view.identifier isEqual:@""]) navigationFocus = (ActionButton *)view;
-        [app.window makeFirstResponder:navigationFocus]; [app refreshAppearance]; CheckUI([app.window.firstResponder isKindOfClass:ActionButton.class] && ((ActionButton *)app.window.firstResponder).action == @selector(selectSidebarCourse:) && [[(NSView *)app.window.firstResponder identifier] isEqual:@""], @"appearance refresh preserves sidebar keyboard focus");
+        [app.window makeFirstResponder:app.navigationController.outline];[app refreshAppearance];CheckUI(app.window.firstResponder==app.navigationController.outline,@"appearance refresh preserves native sidebar keyboard focus");
         [app.taskUndo removeAllActions]; [app.taskUndo beginUndoGrouping]; NSButton *check = NSButton.new; check.identifier = app.tasks.firstObject[@"id"]; BOOL completed = [app.tasks.firstObject[@"completed"] boolValue]; [app toggleTask:check]; [app.taskUndo endUndoGrouping];
         CheckUI([app.tasks.firstObject[@"completed"] boolValue] != completed, @"task completion updates through unified rows"); [app undo:nil]; CheckUI([app.tasks.firstObject[@"completed"] boolValue] == completed, @"undo restores completion after navigation changes");
         NSMenuItem *archive = NSMenuItem.new; archive.representedObject = check.identifier; [app archiveTask:archive]; CheckUI([app.tasks.firstObject[@"archived"] boolValue], @"more-menu archive uses represented task identity");

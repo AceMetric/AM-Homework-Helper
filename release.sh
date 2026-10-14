@@ -9,7 +9,7 @@ if [[ -n "$mode" && "$mode" != "--candidate" ]]; then
   exit 2
 fi
 zsh verify-quiet.sh
-zsh build.sh
+AM_RELEASE_BUILD=1 zsh build.sh
 zsh test.sh
 zsh verify-quality.sh
 zsh verify-planning.sh
@@ -36,6 +36,8 @@ AM_UI_TEST=QuickUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=GuideUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=RendererUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=AppearanceUsage zsh verify-hybrid-ui.sh
+AM_UI_TEST=NativeControlsUsage zsh verify-hybrid-ui.sh
+AM_UI_TEST=NativePromotionUsage zsh verify-hybrid-ui.sh
 # Foreground tests are an explicit maintainer lane; do not activate windows in routine builds.
 if [[ "${AM_FOREGROUND_QA:-0}" == "1" ]]; then
   AM_UI_TEST=ForegroundUsage zsh verify-hybrid-ui.sh

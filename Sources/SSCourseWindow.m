@@ -45,6 +45,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property NSInteger presentedType;
 @property NSInteger presentedReviewFilter;
 @property NSSegmentedControl *sections;
+@property NSStackView *nativeHeader;
 @property NSSearchField *search;
 @property NSString *query;
 @property NSString *selectedFork;
@@ -138,6 +139,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (void)configureCredentialAccess { __weak typeof(self) weakSelf=self;self.git.teacherCredentialProvider=[@[@"oauth",@"githubCLI"] containsObject:self.github.authType] ? ^NSString *(NSDictionary *course,NSError **error){if(![weakSelf.github readableTeacher:course error:error])return nil;return [weakSelf.github accessToken:error];} : nil; }
 - (NSWindow *)window { return self.view.window; }
 - (BOOL)operationBusy { return self.busy; }
+- (BOOL)hasCheckWorkspace {return self.checkScopeWindow!=nil;}
 - (BOOL)hasUnsavedReview { return self.reviewWorkspace.hasUnsavedChanges || self.courseWorkspace.hasUnsavedChanges || self.setupWindow.sheetParent != nil; }
 - (BOOL)resolveUnsavedReview { if(self.setupWindow.sheetParent){NSAlert *alert=NSAlert.new;alert.messageText=@"课程配置尚未关闭";alert.informativeText=@"已成功关联的课程已经保存；尚未关联的目录选择会被放弃。";[alert addButtonWithTitle:@"继续配置"];[alert addButtonWithTitle:@"放弃未关联选择并继续"];if([alert runModal]!=NSAlertSecondButtonReturn)return NO;[self closeCourseSetup];} self.resolvingReview=YES; self.reviewWorkspace.paused=NO; self.courseWorkspace.paused=NO; BOOL ok=[self.reviewWorkspace resolveUnsavedChanges] && [self.courseWorkspace resolveUnsavedChanges]; self.resolvingReview=NO; self.reviewWorkspace.paused=self.busy || self.operationsPaused; self.courseWorkspace.paused=self.busy || self.operationsPaused; return ok; }
 - (void)discardReview { [self.reviewWorkspace discardChanges];[self.courseWorkspace discardChanges];[self closeCourseSetup]; }
@@ -229,39 +231,36 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.skillJobsController=AMSkillJobsController.new;[self addChildViewController:self.skillJobsController];[root addSubview:self.skillJobsController.view];self.skillJobsController.view.hidden=YES;
     self.skillJobsController.actionHandler=^(NSString *action,NSString *batch){[owner skillJobAction:action batch:batch];};
     self.cancelReadButton=SSButton(@"取消检查",self,@selector(cancelReadOperation:),NSZeroRect);[root addSubview:self.cancelReadButton];self.cancelReadButton.hidden=YES;
+    self.nativeHeader=NSStackView.new;self.nativeHeader.orientation=NSUserInterfaceLayoutOrientationVertical;self.nativeHeader.alignment=NSLayoutAttributeLeading;self.nativeHeader.spacing=12;self.nativeHeader.translatesAutoresizingMaskIntoConstraints=NO;[root addSubview:self.nativeHeader];
+    for(NSArray *controls in @[@[self.accountLabel,self.setupButton],@[self.scanButton,self.syncButton,self.commitButton,self.assistantButton,self.moreButton],@[self.sections],@[self.reviewFilter,self.typeFilter,self.search]]){
+        NSStackView *row=[NSStackView stackViewWithViews:controls];row.orientation=NSUserInterfaceLayoutOrientationHorizontal;row.spacing=8;row.alignment=NSLayoutAttributeCenterY;row.detachesHiddenViews=YES;[self.nativeHeader addArrangedSubview:row];row.translatesAutoresizingMaskIntoConstraints=NO;[row.widthAnchor constraintEqualToAnchor:self.nativeHeader.widthAnchor].active=YES;
+    }
+    [NSLayoutConstraint activateConstraints:@[[self.nativeHeader.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[self.nativeHeader.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[self.nativeHeader.topAnchor constraintEqualToAnchor:root.safeAreaLayoutGuide.topAnchor]]];
+    [self.search.widthAnchor constraintGreaterThanOrEqualToConstant:160].active=YES;[self.search setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];[self.accountLabel setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
     [self layoutContent];
 }
 - (void)layoutContent {
     CGFloat w = NSWidth(self.view.bounds), h = NSHeight(self.view.bounds);
-    self.accountLabel.frame = NSMakeRect(0, 0, w - 152, 28); self.setupButton.frame = NSMakeRect(w - 136, 0, 136, 28);
-    self.scanButton.frame = NSMakeRect(0,32,124,32); self.syncButton.frame=NSMakeRect(136,32,132,32);self.commitButton.frame=NSMakeRect(280,32,108,32);self.moreButton.frame=NSMakeRect(w-72,32,72,32);
-    self.assistantButton.frame=NSMakeRect([self course] ? 400:136,32,124,32);self.assistantImportButton.frame=NSMakeRect(276,48,124,36);
-    self.assistantButton.hidden=self.inbox;self.assistantImportButton.hidden=YES;
-    self.assistantButton.enabled=self.assistantImportButton.enabled=!self.busy && !self.operationsPaused;
-    CGFloat segmentWidth=MIN(380,MAX(280,w-248));
-    self.sections.frame = NSMakeRect(0, 80, segmentWidth, 28); self.sections.hidden = self.inbox;
-    self.typeFilter.frame = NSMakeRect(segmentWidth+8, 80, 112, 28); self.typeFilter.hidden = self.inbox || self.sections.selectedSegment != 0;
-    self.reviewFilter.frame = NSMakeRect(0, 80, 152, 28); self.reviewFilter.hidden = !self.inbox;
-    CGFloat searchX=self.sections.selectedSegment==0 ? segmentWidth+128:segmentWidth+8;
-    self.search.frame = NSMakeRect(searchX,80,MAX(104,w-searchX),28);
-    if (self.inbox) self.search.frame = NSMakeRect(w - 272, 80, 272, 28);
-    self.statusLabel.frame = NSMakeRect(24, 116, w - 180, 24); self.progress.frame = NSMakeRect(24, 142, MAX(120,w-48), 6); self.recoveryButton.frame = NSMakeRect(w - 144, 112, 144, 28);
+    self.sections.hidden=self.inbox;self.typeFilter.hidden=self.inbox || self.sections.selectedSegment!=0;self.reviewFilter.hidden=!self.inbox;self.search.hidden=self.inbox;self.assistantButton.hidden=self.inbox;self.assistantImportButton.hidden=YES;self.assistantButton.enabled=self.assistantImportButton.enabled=!self.busy && !self.operationsPaused;
+    self.syncButton.hidden=self.inbox || ![self course];self.commitButton.hidden=self.syncButton.hidden;
+    [self.view layoutSubtreeIfNeeded];CGFloat headerBottom=NSMaxY(self.nativeHeader.frame),statusTop=headerBottom+8,workspaceTop=statusTop+(self.statusLabel.stringValue.length || self.busy ? 36:0);
+    self.statusLabel.frame=NSMakeRect(0,statusTop,w-160,24);self.progress.frame=NSMakeRect(0,statusTop+26,w,6);self.recoveryButton.frame=NSMakeRect(w-144,statusTop,144,28);
     self.table.enclosingScrollView.frame = NSMakeRect(0, 184, w, MAX(112, h - 348));
     self.detail.enclosingScrollView.frame = NSMakeRect(0, h - 152, w, 104); self.reviewButton.frame = NSMakeRect(w - 152, h - 40, 152, 36);
     self.typeButton.frame = NSMakeRect(0, h - 40, 136, 36);
     self.emptyLabel.frame = NSMakeRect(16, 204, w - 32, 72);
-    CGFloat reviewTop = self.inbox ? (self.statusLabel.stringValue.length ? 144 : 116) : 144;
-    self.reviewWorkspace.view.frame = NSMakeRect(0, reviewTop, w, MAX(240,h - reviewTop));
+    CGFloat reviewTop=workspaceTop;
+    self.reviewWorkspace.view.frame = NSMakeRect(0, reviewTop, w, MAX(120,h - reviewTop));
     self.reviewWorkspace.view.hidden = !self.inbox;
     if (self.inbox) { self.table.enclosingScrollView.hidden = YES; self.detail.enclosingScrollView.hidden = YES; self.reviewButton.hidden = YES; self.typeButton.hidden = YES; self.emptyLabel.hidden = YES; self.search.hidden = YES; }
     else { self.detail.enclosingScrollView.hidden = NO; self.search.hidden = NO; }
-    self.courseWorkspace.view.hidden=self.inbox;self.courseWorkspace.view.frame=NSMakeRect(0,144,w,MAX(200,h-144));
+    self.courseWorkspace.view.hidden=self.inbox;self.courseWorkspace.view.frame=NSMakeRect(0,workspaceTop,w,MAX(120,h-workspaceTop));
     if(!self.inbox){self.table.enclosingScrollView.hidden=YES;self.detail.enclosingScrollView.hidden=YES;self.reviewButton.hidden=YES;self.typeButton.hidden=YES;self.emptyLabel.hidden=YES;}
-    self.submissionHistory.view.frame=NSMakeRect(0,144,w,MAX(240,h-144));self.submissionHistory.view.hidden=self.inbox || self.sections.selectedSegment!=3 || self.showingSkillJobs;
+    self.submissionHistory.view.frame=NSMakeRect(0,workspaceTop,w,MAX(120,h-workspaceTop));self.submissionHistory.view.hidden=self.inbox || self.sections.selectedSegment!=3 || self.showingSkillJobs;
     if(!self.submissionHistory.view.hidden){self.courseWorkspace.view.hidden=YES;self.reviewWorkspace.view.hidden=YES;}
-    self.skillJobsController.view.frame=NSMakeRect(0,144,w,MAX(240,h-144));self.skillJobsController.view.hidden=!self.showingSkillJobs;
+    self.skillJobsController.view.frame=NSMakeRect(0,workspaceTop,w,MAX(120,h-workspaceTop));self.skillJobsController.view.hidden=!self.showingSkillJobs;
     if(self.showingSkillJobs){self.courseWorkspace.view.hidden=YES;self.reviewWorkspace.view.hidden=YES;}
-    self.cancelReadButton.frame=NSMakeRect(w-144,112,144,28);self.cancelReadButton.hidden=!self.busy || !self.git.readsCancellable;
+    self.cancelReadButton.frame=NSMakeRect(w-144,statusTop,144,28);self.cancelReadButton.hidden=!self.busy || !self.git.readsCancellable;
     CGFloat available = w - 132; self.table.tableColumns[3].width = 96;
     NSArray *weights = @[@0.34, @0.28, @0.38];
     for (NSUInteger i = 0; i < 3; i++) self.table.tableColumns[i].width = MAX(72, available * [weights[i] doubleValue]);

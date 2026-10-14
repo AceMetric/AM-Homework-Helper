@@ -285,6 +285,11 @@ static void GitTests(void) {
     service.denyTeacher = YES; Check(![service scanCourse:f cache:cache error:&error], @"private upstream denied fails safely"); service.denyTeacher = NO;
     Write([path stringByAppendingPathComponent:@"answer one.txt"], @"my homework\n"); Write([path stringByAppendingPathComponent:@"unrelated.txt"], @"keep local\n");
     Check([[service previewForCourse:f path:@"answer one.txt" error:&error] containsString:@"my homework"], @"untracked text has safe preview");
+    NSString *longPreview=[[@"Report content\n" stringByPaddingToLength:6000 withString:@"Complete readable content\n" startingAtIndex:0] stringByAppendingString:@"END-OF-REPORT"];
+    NSString *longPath=[path stringByAppendingPathComponent:@"long-report.md"];Write(longPath,longPreview);
+    Check([[service previewForCourse:f path:@"long-report.md" error:&error] hasSuffix:@"END-OF-REPORT"],@"safe preview retains content beyond the logging limit");
+    Check(SSRedactedText(longPreview).length==1600 && [SSRedactedContent(longPreview) isEqual:longPreview],@"logs remain bounded while document previews stay complete");
+    [NSFileManager.defaultManager removeItemAtPath:longPath error:NULL];
     Check(![service previewForCourse:f path:@"../outside.txt" error:&error], @"preview requires a current changed path");
     Check(![service syncCourse:f token:@"test" error:&error], @"dirty worktree blocks sync");
     Check(![error.userInfo[@"SSPendingPush"] boolValue], @"dirty worktree does not suggest retrying a push");

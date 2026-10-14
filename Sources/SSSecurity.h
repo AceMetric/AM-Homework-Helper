@@ -6,4 +6,5 @@ BOOL SSValidBranch(NSString *branch);
 BOOL SSSensitivePath(NSString *path);
 BOOL SSContainsSecret(NSData *data);
 NSString *SSRedactedText(NSString *text);
+NSString *SSRedactedContent(NSString *text);
 NS_ASSUME_NONNULL_END

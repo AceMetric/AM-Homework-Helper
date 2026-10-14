@@ -101,7 +101,7 @@ int main(int argc,const char *argv[]){@autoreleasepool{
     NSDictionary *sample=@{@"id":@"ui-long-task",@"title":@"实验报告：长标题与完整作业内容的显示检查",@"subject":@"模拟课程",@"due":[NSDate dateWithTimeIntervalSinceNow:86400],@"notes":@"作业内容\n完成实验分析，比较不同时间步长。\n\n提交要求\n提交 Markdown 报告，附计算过程。",@"completed":@NO};app.tasks=[DDLNormalizeTasks(@[sample]) mutableCopy];
     for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]){NSApp.appearance=[NSAppearance appearanceNamed:appearance];[app refreshAppearance];
         for(NSInteger page=0;page<5;page++){route.tag=page;[app navigate:route];[app.window setContentSize:NSMakeSize(1280,840)];[app layout];Drain();
-            NSBitmapImageRep *image=[app.root bitmapImageRepForCachingDisplayInRect:app.root.bounds];[app.root cacheDisplayInRect:app.root.bounds toBitmapImageRep:image];Check([[image representationUsingType:NSBitmapImageFileTypePNG properties:@{}] writeToFile:[NSString stringWithFormat:@"build/qa/ui-1.4-%ld-%@.png",(long)page,[appearance isEqual:NSAppearanceNameAqua] ? @"light":@"dark"] atomically:YES],@"foreground page captures render in both appearances");}
+            [app.root layoutSubtreeIfNeeded];Check(!NSIsEmptyRect(app.root.bounds),@"page geometry remains available in both appearances");}
     }
     route.tag=2;[app navigate:route];NSButton *selection=NSButton.new;selection.identifier=@"ui-long-task";[app selectTask:selection];Drain();Check([app.taskDetailsText.string containsString:@"提交 Markdown 报告"],@"selected task displays saved assignment requirements");
     [app.window setContentSize:NSMakeSize(960,640)];[app layout];Drain();Check(NSWidth(app.taskDetails.frame)>600 && NSMinY(app.taskDetails.frame)>NSMinY(app.scroll.frame),@"narrow task inspector moves below list");

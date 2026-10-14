@@ -1,7 +1,7 @@
 // Included in SSCourseController. Background work uses the existing serial queue.
 - (void)presentCourseSetup {
     if(self.setupWindow.sheetParent)return;
-    self.setupWorkspace=AMSetupController.new;self.setupWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,560) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];self.setupWindow.minSize=NSMakeSize(660,560);self.setupWindow.title=@"开始使用 AM Helper";self.setupWindow.contentViewController=self.setupWorkspace;
+    self.setupWorkspace=AMSetupController.new;self.setupWindow=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,720,560) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];self.setupWindow.contentMinSize=NSMakeSize(660,560);self.setupWindow.title=@"开始使用 AM Helper";self.setupWindow.contentViewController=self.setupWorkspace;
     __weak typeof(self) weakSelf=self;self.setupWorkspace.actionHandler=^(NSDictionary *request){[weakSelf handleSetupAction:request];};
     [self updateCourseSetup:@"已有课程可重新核验并继续关联，不会删除任务或覆盖文件。"];[self.window beginSheet:self.setupWindow completionHandler:nil];
 }
