@@ -788,10 +788,12 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     __weak typeof(self) owner=self;
     // Check-only reads do not queue behind teacher scans or model analysis.
     // Submission snapshots remain serialized with course Git operations.
-    dispatch_queue_t readQueue=sheet.checkOnly ? dispatch_queue_create("ddl.preflight-read",DISPATCH_QUEUE_SERIAL):self.queue;
+    dispatch_queue_t readQueue=dispatch_queue_create("ddl.preflight-read",DISPATCH_QUEUE_SERIAL);
     __weak SSSubmissionController *weakSheet=sheet;
     sheet.performCheck=^NSDictionary *(NSArray *paths,NSArray *ids,NSString *extra,NSMutableDictionary *cache,BOOL(^cancelled)(void),NSError **error){
-        SSCourseController *self=owner;if(!self || cancelled())return nil;__block NSDictionary *snapshot=nil;__block NSString *requirements=nil;__block NSError *failure=nil;
+        SSCourseController *self=owner;if(!self || cancelled())return nil;
+        if(self.busy && !self.git.readsCancellable){if(error)*error=[NSError errorWithDomain:@"AMPreflight" code:1 userInfo:@{NSLocalizedDescriptionKey:@"正在写入课程文件，请等待结束后重新检查；所选文件和说明已保留。"}];return nil;}
+        __block NSDictionary *snapshot=nil;__block NSString *requirements=nil;__block NSError *failure=nil;
         dispatch_sync(readQueue,^{if(cancelled())return;SSGit *reader=SSGit.new;reader.readsCancellable=YES;dispatch_source_t cancellation=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_global_queue(QOS_CLASS_UTILITY,0));dispatch_source_set_timer(cancellation,dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),100*NSEC_PER_MSEC,10*NSEC_PER_MSEC);dispatch_source_set_event_handler(cancellation,^{if(cancelled())reader.cancelledReads=YES;});dispatch_resume(cancellation);NSMutableArray *selected=NSMutableArray.array;for(NSDictionary *task in tasks)if([ids containsObject:task[@"id"]])[selected addObject:task];snapshot=[reader preflightSnapshotForCourse:course paths:paths error:&failure];requirements=[reader preflightRequirementsForCourse:course tasks:selected];dispatch_source_cancel(cancellation);});
         if(!snapshot || cancelled()){if(error)*error=failure;return nil;}
         if(extra.length)requirements=[NSString stringWithFormat:@"%@\n\n用户补充题目：\n%@",requirements ?: @"",extra];
