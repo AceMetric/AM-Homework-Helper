@@ -30,6 +30,11 @@ int main(int argc, const char *argv[]) {
         [app openCalendar:nil];
         OverviewGrid *initial = FirstGrid(app);
         CheckUI(initial != nil && app.calendarDocument.subviews.count == 26, @"13 calendar sections loaded");
+        NSButton *todayButton=nil;for(NSView *row in app.calendarHeader.arrangedSubviews)if([row isKindOfClass:NSStackView.class])for(NSView *control in [(NSStackView *)row arrangedSubviews])if([control.identifier isEqual:@"calendar-today"] || ([control isKindOfClass:NSButton.class] && [[(NSButton *)control title] isEqual:@"今天"]))todayButton=(NSButton *)control;
+        CheckUI(todayButton!=nil,@"calendar exposes its real Today navigation button");
+        app.month=DDLParseDate(@"2024-08-01 12:00",NSDate.date,Cal());app.calendarBaseMonth=app.month;app.calendarNeedsCenter=YES;[app render];
+        for(NSUInteger attempt=0;attempt<3;attempt++){[todayButton performClick:nil];[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.35]];CheckUI([Cal() isDate:app.month equalToDate:NSDate.date toUnitGranularity:NSCalendarUnitMonth] && [Cal() isDateInToday:app.selectedDay],@"repeated Today clicks return from a distant month without stepping backward");}
+        initial=FirstGrid(app);
         // Freeze the cache minute for deterministic reuse assertions.
         app.overviewMinute = (NSInteger)floor(NSDate.date.timeIntervalSince1970 / 60);
         [app render];

@@ -74,7 +74,7 @@ static NSDictionary *PFEffectiveReview(NSString *version){for(NSDictionary *job 
 @property NSStackView *reportFooter;
 @property NSLayoutConstraint *supplementHeight;
 @property BOOL layingOutReport;
-@property BOOL checking;
+@property(nonatomic) BOOL checking;
 @property BOOL reportStale;
 @property BOOL closed;
 @property BOOL finalValidation;
@@ -101,6 +101,8 @@ static NSDictionary *PFEffectiveReview(NSString *version){for(NSDictionary *job 
 - (instancetype)initWithCourse:(NSDictionary *)course changes:(NSArray *)changes;
 @end
 @implementation SSSubmissionController
+@synthesize checking=_checking;
+- (void)setChecking:(BOOL)checking {_checking=checking;self.operationView.hidden=!checking;self.validation.hidden=checking;}
 - (void)submissionSplitResized:(NSNotification *)notification {[self layoutFiles];}
 - (void)layoutFiles {
     if(self.layingOutFiles)return;
@@ -195,6 +197,7 @@ static NSDictionary *PFEffectiveReview(NSString *version){for(NSDictionary *job 
 - (NSArray *)chosenTasks {NSMutableArray *ids=NSMutableArray.array;for(NSButton *check in self.taskChecks)if(check.state==NSControlStateValueOn)[ids addObject:check.identifier];return ids;}
 - (void)save:(id)sender {
     if(self.checking || self.closed)return;
+    if(![self.window makeFirstResponder:nil]){self.validation.stringValue=@"请先完成当前输入，再开始检查。";self.validation.textColor=NSColor.systemRedColor;return;}
     if(!self.checkPage || self.checkPage.hidden){self.selectedPaths=[self chosenPaths];self.taskIDs=[self chosenTasks];if(!self.selectedPaths.count || (!self.checkOnly && ![self.message.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length)){self.validation.stringValue=self.checkOnly ? @"请先选择需要检查的文件。":@"请选择文件并填写提交说明。";self.validation.textColor=NSColor.systemRedColor;return;}[self buildCheckPage];[self checkNow:nil];return;}
     if(self.checkOnly){[self cancel:nil];return;}
     if(!self.report){self.validation.stringValue=@"检查未完成，请重新检查或返回。";return;}
@@ -228,8 +231,8 @@ static NSDictionary *PFEffectiveReview(NSString *version){for(NSDictionary *job 
     for(NSArray *option in options){NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:option[0] action:NSSelectorFromString(option[1]) keyEquivalent:@""];item.target=self;[self.reportMenu.menu addItem:item];}
     NSStackView *actions=[NSStackView stackViewWithViews:@[self.onlineButton,recheck,self.reportMenu]];actions.spacing=12;[footer addArrangedSubview:actions];
     self.acknowledge=[NSButton checkboxWithTitle:@"已核对问题与未检查项，继续提交" target:nil action:nil];self.acknowledge.hidden=self.checkOnly;[footer addArrangedSubview:self.acknowledge];
-    self.validation=Text(@"正在读取拟提交版本…",12,NSFontWeightRegular,Muted());self.checkValidation=self.validation;self.validation.hidden=YES;self.validation.selectable=YES;
-    self.operationView=AMOperationView.new;[footer addArrangedSubview:self.operationView];[self.operationView.heightAnchor constraintEqualToConstant:64].active=YES;
+    self.validation=Text(@"正在读取拟提交版本…",12,NSFontWeightRegular,Muted());self.checkValidation=self.validation;self.validation.selectable=YES;self.validation.maximumNumberOfLines=0;self.validation.lineBreakMode=NSLineBreakByWordWrapping;[footer addArrangedSubview:self.validation];[self.validation.widthAnchor constraintEqualToAnchor:footer.widthAnchor].active=YES;
+    self.operationView=AMOperationView.new;self.operationView.hidden=YES;[footer addArrangedSubview:self.operationView];[self.operationView.heightAnchor constraintEqualToConstant:64].active=YES;
     NSButton *back=Button(self.checkOnly ? @"调整范围":@"返回文件",self,@selector(backToFiles:),0);back.enabled=self.changes.count>0;NSButton *cancel=Button(@"取消",self,@selector(cancel:),0);cancel.keyEquivalent=@"\033";cancel.keyEquivalentModifierMask=0;
     self.primary=Button(self.checkOnly ? @"完成":@"提交到个人仓库",self,@selector(save:),1);self.primary.keyEquivalent=@"\r";self.primary.keyEquivalentModifierMask=0;self.window.defaultButtonCell=self.primary.cell;
     NSView *space=NSView.new;[space.widthAnchor constraintGreaterThanOrEqualToConstant:8].active=YES;NSStackView *bottom=[NSStackView stackViewWithViews:@[back,space,cancel,self.primary]];bottom.spacing=12;[footer addArrangedSubview:bottom];
@@ -243,7 +246,8 @@ static NSDictionary *PFEffectiveReview(NSString *version){for(NSDictionary *job 
 - (void)toggleSupplement:(id)sender{self.supplement.enclosingScrollView.hidden=!self.supplement.enclosingScrollView.hidden;[self layoutReport];if(!self.supplement.enclosingScrollView.hidden)[self.window makeFirstResponder:self.supplement];}
 - (void)backToFiles:(id)sender {if(self.checking)return;if(self.checkOnly && self.backToScope){self.backToScope();return;}self.window.contentMinSize=NSMakeSize(760,self.taskChecks ? 676:580);self.checkPage.hidden=YES;for(NSView *view in self.window.contentView.subviews)if(view!=self.checkPage)view.hidden=NO;self.validation=self.filesValidation;self.report=nil;self.snapshot=nil;self.finalValidation=NO;self.window.defaultButtonCell=self.filesPrimary.cell;[self layoutFiles];}
 - (void)checkNow:(id)sender {
-    if(self.checking || self.closed || !self.performCheck)return;
+    if(self.checking || self.closed)return;
+    if(!self.performCheck){self.validation.hidden=NO;self.validation.stringValue=@"检查尚未准备好，请返回文件列表后重试。";self.validation.textColor=NSColor.systemRedColor;return;}
     self.operationID=AMOperationBegin(@"本机文件检查",self.course[@"fork"] ?: @"当前文件",YES,^{self.previewGeneration++;self.checking=NO;self.primary.enabled=YES;self.validation.stringValue=@"检查已取消，可重新检查。";AMOperationFinish(self.operationID,@"cancelled",@"检查已取消");});self.operationView.operationID=self.operationID;self.checking=YES;self.primary.enabled=NO;self.assistantButton.enabled=NO;self.onlineButton.enabled=NO;self.validation.textColor=Muted();self.validation.stringValue=self.finalValidation ? @"正在核对提交版本…":@"读取文件 → 检查结构、附件与未完成项…";
     NSUInteger generation=++self.previewGeneration;BOOL final=self.finalValidation;self.finalValidation=NO;NSString *extra=self.supplement.string.copy;NSArray *paths=self.selectedPaths.copy,*ids=self.taskIDs.copy;NSDictionary *previous=self.report;NSMutableDictionary *runCache=self.checkCache.mutableCopy;__weak typeof(self) owner=self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{NSError *error=nil;NSDictionary *bundle=owner.performCheck(paths,ids,extra,runCache,^BOOL{return !owner || owner.previewGeneration!=generation;},&error);
