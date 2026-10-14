@@ -1,0 +1,46 @@
+- (BOOL)applyRecurrenceToTask:(NSMutableDictionary *)task tasks:(NSMutableArray *)tasks error:(NSError **)error {
+    NSDictionary *rule=task[@"_recurrenceRule"];BOOL future=[task[@"_seriesScope"] boolValue];BOOL stop=[task[@"_stopRecurrence"] boolValue];
+    [task removeObjectForKey:@"_recurrenceRule"];[task removeObjectForKey:@"_stopRecurrence"];[task removeObjectForKey:@"_seriesScope"];
+    if(task[@"seriesID"] && !future){task[@"occurrenceEdited"]=@YES;return YES;}
+    if(!task[@"seriesID"] && !rule)return YES;
+    if(rule && (!self.recurrenceSeries || !DDLRecurrenceValid(rule))){self.editor.validation.stringValue=@"请填写 1—1000 的重复间隔、有效结束日期或次数。";return NO;}
+    if([rule[@"unit"] isEqual:@"week"] && [rule[@"mode"] isEqual:@"fixed"] && ![rule[@"weekdays"] count]){self.editor.validation.stringValue=@"请至少选择一个星期。";return NO;}
+    if(rule){NSError *failure=nil;NSDate *end=[Cal() dateByAddingUnit:NSCalendarUnitDay value:90 toDate:task[@"due"] options:0];DDLRecurrenceDates(rule,task[@"due"],end, self.preview ? @{}:SSCalendarOverrides(),&failure);
+        if(failure && ![rule[@"holidayPolicy"] isEqual:@"keep"]){NSAlert *alert=NSAlert.new;alert.messageText=@"部分年份的节假日安排未收录";alert.informativeText=@"是否确认这些年份暂时只按周末避让？已收录年份仍使用法定放假及调休。";[alert addButtonWithTitle:@"返回修改"];[alert addButtonWithTitle:@"确认仅按周末"];if([alert runModal]!=NSAlertSecondButtonReturn){self.editor.validation.stringValue=failure.localizedDescription;return NO;}NSMutableDictionary *confirmed=rule.mutableCopy;NSMutableSet *years=[NSMutableSet setWithArray:rule[@"allowedUnknownYears"] ?: @[]];NSCalendar *c=Cal();for(NSInteger y=[c component:NSCalendarUnitYear fromDate:task[@"due"]];y<=[c component:NSCalendarUnitYear fromDate:end];y++)if(y!=2026)[years addObject:@(y)];confirmed[@"allowedUnknownYears"]=years.allObjects;self.editor.allowedUnknownYears=years.allObjects;rule=confirmed;}
+    }
+    NSMutableArray *series=[self.recurrenceSeries mutableCopy] ?: NSMutableArray.array;NSString *oldID=task[@"seriesID"];NSDate *boundary=task[@"nominalDue"] ?: task[@"due"];
+    if(oldID){for(NSUInteger i=0;i<series.count;i++)if([series[i][@"id"] isEqual:oldID]){NSMutableDictionary *old=[series[i] mutableCopy],*oldRule=[old[@"rule"] mutableCopy];oldRule[@"until"]=[boundary dateByAddingTimeInterval:-1];old[@"rule"]=oldRule;if(stop)old[@"stopped"]=@YES;series[i]=old;}
+        // Future untouched rows become tombstones; their stable identities keep
+        // them from reappearing. Completed and manually edited rows stay intact.
+        for(NSUInteger i=0;i<tasks.count;i++){NSDictionary *row=tasks[i];if([row[@"seriesID"] isEqual:oldID] && ![row[@"id"] isEqual:task[@"id"]] && ![row[@"completed"] boolValue] && ![row[@"occurrenceEdited"] boolValue] && [(row[@"nominalDue"] ?: row[@"due"]) compare:boundary]!=NSOrderedAscending){NSMutableDictionary *copy=row.mutableCopy;copy[@"deleted"]=@YES;copy[@"deletedAt"]=NSDate.date;tasks[i]=copy;}}
+    }
+    if(rule){NSString *identifier=NSUUID.UUID.UUIDString;NSMutableDictionary *template=task.mutableCopy;for(NSString *key in task.allKeys)if([key hasPrefix:@"source"] || [key hasPrefix:@"entry"] || [key hasPrefix:@"_"] || [@[@"seriesID",@"occurrenceKey",@"occurrenceIndex",@"nominalDue",@"completedAt",@"occurrenceEdited"] containsObject:key])[template removeObjectForKey:key];
+        [series addObject:@{@"id":identifier,@"rule":rule,@"template":template}];task[@"seriesID"]=identifier;task[@"occurrenceKey"]=[rule[@"mode"] isEqual:@"completion"] ? @"initial":[NSString stringWithFormat:@"%@:0",DDLPlanKey(rule[@"anchor"],[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian])];task[@"occurrenceIndex"]=@0;task[@"nominalDue"]=rule[@"anchor"];
+        NSCalendar *calendar=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];calendar.timeZone=[NSTimeZone timeZoneWithName:rule[@"timeZone"]];NSMutableDictionary *firstRule=rule.mutableCopy;firstRule[@"count"]=@1;NSArray *dates=DDLRecurrenceDates(firstRule,rule[@"anchor"],[calendar dateByAddingUnit:NSCalendarUnitDay value:365 toDate:rule[@"anchor"] options:0],self.preview ? @{}:SSCalendarOverrides(),NULL);if(dates.count){task[@"occurrenceKey"]=[rule[@"mode"] isEqual:@"completion"] ? @"initial":dates[0][@"key"];task[@"due"]=dates[0][@"due"];task[@"nominalDue"]=dates[0][@"nominal"];task[@"occurrenceIndex"]=dates[0][@"index"];}
+    }else {for(NSString *key in @[@"seriesID",@"occurrenceKey",@"occurrenceIndex",@"nominalDue"])[task removeObjectForKey:key];}
+    self.recurrenceSeries=series;return YES;
+}
+- (void)generateRecurrencesThrough:(NSDate *)end {
+    if(self.generatingRecurrences || self.taskStoreBlocked || !self.recurrenceSeries.count)return;
+    self.generatingRecurrences=YES;NSError *error=nil;NSDate *now=[Cal() startOfDayForDate:NSDate.date];NSArray *next=DDLMaterializeRecurringTasks([self snapshot],self.recurrenceSeries,now,end ?: [Cal() dateByAddingUnit:NSCalendarUnitDay value:90 toDate:now options:0],self.preview ? @{}:SSCalendarOverrides(),&error);
+    if(next && ![next isEqual:[self snapshot]]){if(self.preview || SSSaveScheduledTasks([self snapshot],next,self.recurrenceSeries,SSCalendarOverrides(),&error)){self.tasks=[DDLNormalizeTasks(next) mutableCopy];if(!self.preview)[self refreshReminders];}}
+    self.recurrenceDay=DDLPlanKey(NSDate.date,Cal());if(error)self.notice=error.localizedDescription;self.generatingRecurrences=NO;
+}
+- (void)copyAsRecurringTask:(NSMenuItem *)sender {
+    NSDictionary *task=[self taskWithID:sender.representedObject];if(!task)return;NSMutableDictionary *copy=task.mutableCopy;for(NSString *key in task.allKeys)if([key hasPrefix:@"source"] || [key hasPrefix:@"entry"] || [@[@"seriesID",@"occurrenceKey",@"occurrenceIndex",@"nominalDue",@"completedAt"] containsObject:key])[copy removeObjectForKey:key];[copy removeObjectForKey:@"id"];copy[@"completed"]=@NO;self.editor=[[EditorController alloc] initWithTask:copy owner:self];[self.editor.repeatMode selectItemAtIndex:1];[self.editor recurrenceChanged:nil];[self.window beginSheet:self.editor.window completionHandler:nil];
+}
+- (void)calendarOverrides:(id)sender {
+    NSAlert *alert=NSAlert.new;alert.messageText=@"本机休息日与工作日覆盖";alert.informativeText=@"学校安排可覆盖官方日历。未收录年份仍会明确标记；这里不修改老师截止时间。";
+    NSStackView *form=[NSStackView stackViewWithViews:@[]];form.orientation=NSUserInterfaceLayoutOrientationVertical;form.alignment=NSLayoutAttributeLeading;form.spacing=12;form.frame=NSMakeRect(0,0,420,170);
+    NSDatePicker *date=NSDatePicker.new;date.datePickerElements=NSDatePickerElementFlagYearMonthDay;date.dateValue=NSDate.date;NSPopUpButton *kind=NSPopUpButton.new;[kind addItemsWithTitles:@[@"休息日",@"工作日",@"恢复官方安排"]];NSTextField *name=[[PastelTextField alloc] initWithFrame:NSZeroRect];name.placeholderString=@"名称，如学校假期";NSTextField *reason=[[PastelTextField alloc] initWithFrame:NSZeroRect];reason.placeholderString=@"依据，如学校通知";
+    for(NSView *view in @[date,kind,name,reason]){[form addArrangedSubview:view];[view.widthAnchor constraintEqualToAnchor:form.widthAnchor].active=YES;}alert.accessoryView=form;[alert addButtonWithTitle:@"保存"];[alert addButtonWithTitle:@"取消"];if([alert runModal]!=NSAlertFirstButtonReturn)return;
+    NSMutableDictionary *overrides=SSCalendarOverrides().mutableCopy;NSString *key=DDLPlanKey(date.dateValue,Cal());if(kind.indexOfSelectedItem==2)[overrides removeObjectForKey:key];else {if(!name.stringValue.length || !reason.stringValue.length){self.notice=@"请填写日期覆盖的名称和依据。";[self render];return;}overrides[key]=@{@"rest":@(kind.indexOfSelectedItem==0),@"name":name.stringValue,@"reason":reason.stringValue};}
+    NSError *error=nil;if(!SSSaveScheduledTasks([self snapshot],[self snapshot],self.recurrenceSeries ?: @[],overrides,&error))self.notice=error.localizedDescription;else self.notice=@"本机日期覆盖已保存；已有任务日期保留，后续生成使用新安排。";[self render];
+}
+
+- (void)catchUpRecurrences:(id)sender {
+    if(!self.recurrenceSeries.count){self.notice=@"暂无周期任务。";[self render];return;}
+    NSAlert *alert=NSAlert.new;alert.messageText=@"补建漏过的固定周期任务";alert.informativeText=@"选择日期范围；已有、跳过及删除的发生项不会重复添加。补建的过去日期不会补发提醒。";
+    NSDatePicker *start=NSDatePicker.new,*end=NSDatePicker.new;start.datePickerElements=end.datePickerElements=NSDatePickerElementFlagYearMonthDay;start.dateValue=[Cal() dateByAddingUnit:NSCalendarUnitMonth value:-1 toDate:NSDate.date options:0];end.dateValue=NSDate.date;NSStackView *form=[NSStackView stackViewWithViews:@[start,end]];form.orientation=NSUserInterfaceLayoutOrientationVertical;form.frame=NSMakeRect(0,0,360,90);alert.accessoryView=form;[alert addButtonWithTitle:@"补建所选范围"];[alert addButtonWithTitle:@"取消"];if([alert runModal]!=NSAlertFirstButtonReturn)return;
+    NSError *error=nil;NSArray *next=DDLMaterializeRecurringTasks([self snapshot],self.recurrenceSeries,[Cal() startOfDayForDate:start.dateValue],[Cal() dateBySettingHour:23 minute:59 second:59 ofDate:end.dateValue options:0],self.preview ? @{}:SSCalendarOverrides(),&error);if(!next){self.notice=error.localizedDescription;[self render];return;}NSUInteger added=next.count-self.tasks.count;self.notice=[self replaceTasks:next action:@"补建周期任务" error:&error] ? [NSString stringWithFormat:@"已补建 %lu 项；过去的提醒未补发。",(unsigned long)added]:error.localizedDescription;[self render];
+}

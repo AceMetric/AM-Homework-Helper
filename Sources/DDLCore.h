@@ -19,6 +19,10 @@ NSDictionary<NSString *, NSNumber *> *DDLMonthSummary(NSArray *items, NSDate *mo
 NSString *DDLPlanKey(NSDate *date, NSCalendar *calendar);
 NSDate * _Nullable DDLPlanDate(NSString * _Nullable key, NSCalendar *calendar);
 BOOL DDLPlanningValid(NSDictionary *task);
+NSDictionary *DDLChinaDayInfo(NSDate *date, NSCalendar *calendar, NSDictionary *overrides);
+BOOL DDLRecurrenceValid(NSDictionary *rule);
+NSArray * _Nullable DDLRecurrenceDates(NSDictionary *rule, NSDate *from, NSDate *to, NSDictionary *overrides, NSError **error);
+NSArray * _Nullable DDLMaterializeRecurringTasks(NSArray *tasks, NSArray *series, NSDate *now, NSDate *end, NSDictionary *overrides, NSError **error);
 NSDictionary *DDLTaskCompletion(NSDictionary *task, BOOL complete);
 NSArray<NSDictionary *> *DDLWeekSections(NSArray *tasks, NSDate *now, NSInteger offset, NSCalendar *calendar, NSString *query);
 NS_ASSUME_NONNULL_END

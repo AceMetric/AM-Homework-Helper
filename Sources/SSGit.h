@@ -12,6 +12,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSDictionary * _Nullable)verifySubmission:(NSDictionary *)record course:(NSDictionary *)course token:(NSString *)token retry:(BOOL)retry error:(NSError **)error;
 - (NSDictionary * _Nullable)submissionDetailsForCourse:(NSDictionary *)course commit:(NSString *)commit error:(NSError **)error;
 - (NSArray * _Nullable)recentCommits:(NSDictionary *)course error:(NSError **)error;
+- (NSArray * _Nullable)externalCommits:(NSDictionary *)course offset:(NSUInteger)offset error:(NSError **)error;
+- (NSArray * _Nullable)verifyExternalRecords:(NSArray *)records course:(NSDictionary *)course token:(NSString *)token error:(NSError **)error;
+- (NSArray *)classifyExternalRecords:(NSArray *)records course:(NSDictionary *)course;
 @property(atomic) BOOL readsCancellable;
 @property(atomic) BOOL cancelledReads;
 /// Required before cloning, committing, merging or pushing. Rechecks GitHub ownership.

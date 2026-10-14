@@ -91,6 +91,9 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property NSTextField *statusLabel;
 @property NSTimer *timer;
 @property BOOL busy;
+@property BOOL discoveringExternal;
+@property NSDate *lastExternalDiscovery;
+@property NSMutableDictionary *externalOffsets;
 @property BOOL loginActive;
 @property NSArray<NSButton *> *actionButtons;
 @property NSDictionary *reports;
@@ -276,6 +279,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     [self refreshCourses]; [self.table.enclosingScrollView.contentView scrollToPoint:NSMakePoint(0, [state[@"scroll"] doubleValue])];
 }
 - (void)startAutomaticChecks {
+    [self discoverExternalSubmissions:NO];
     if (self.preview || self.timer) return;
     [self startSkillReception];
     NSDictionary *progress=SSReadPlist(@"onboarding.plist");
@@ -529,8 +533,9 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSMutableArray *summaries=NSMutableArray.array;if(!course && !self.inbox){for(NSDictionary *snapshot in self.courseSnapshots){NSMutableDictionary *row=snapshot.mutableCopy;row[@"failed"]=@([self.reports[snapshot[@"id"]][@"error"] length]>0);if([row[@"failed"] boolValue])row[@"status"]=[NSString stringWithFormat:@"未完成检查：%@ · 保留上次成功结果",self.reports[snapshot[@"id"]][@"error"]];[summaries addObject:row];}[content removeAllObjects];information=@"";}[self.courseWorkspace showCourseSummaries:summaries visible:!course && !self.inbox];
     [self.courseWorkspace updateRecords:content selected:self.selectedCandidateID ?: @"" information:information empty:self.emptyLabel.stringValue paused:self.busy || self.operationsPaused];
     self.presentedSection=self.sections.selectedSegment;self.presentedType=self.typeFilter.indexOfSelectedItem;self.presentedReviewFilter=self.reviewFilter.indexOfSelectedItem;
+    if(!self.inbox && self.sections.selectedSegment==3 && !self.discoveringExternal)dispatch_async(dispatch_get_main_queue(),^{[self discoverExternalSubmissions:NO];});
     NSError *historyError=nil;NSArray *storedHistory=AMSubmissionRecords(&historyError);if(historyError && !self.inbox && self.sections.selectedSegment==3)self.statusLabel.stringValue=historyError.localizedDescription;
-    NSMutableArray *history=NSMutableArray.array;for(NSDictionary *record in storedHistory ?: @[])if(!course || [record[@"repository"] isEqual:course[@"fork"]]){NSMutableDictionary *row=record.mutableCopy;row[@"label"]=AMSubmissionStateLabel(record);[history insertObject:row atIndex:0];}[self.submissionHistory updateRecords:history busy:self.busy || self.operationsPaused];
+    NSMutableArray *history=NSMutableArray.array;for(NSDictionary *record in storedHistory ?: @[])if(![record[@"teacherHistoryExcluded"] boolValue] && (!course || [record[@"repository"] isEqual:course[@"fork"]])){NSMutableDictionary *row=record.mutableCopy;row[@"label"]=AMSubmissionStateLabel(record);[history insertObject:row atIndex:0];}[self.submissionHistory updateRecords:history busy:self.busy || self.operationsPaused];
     [self layoutContent]; self.refreshing = NO;
     if (self.stateChanged) self.stateChanged();
 }
@@ -691,7 +696,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             if([recognitionSettings[@"mode"] isEqual:@"local"] && scan[@"modelCompleted"]){SSWritePlist(@"recognition-last-result.plist",@{@"course":course[@"fork"],@"date":NSDate.date,@"model":recognitionSettings[@"model"] ?: @"",@"success":scan[@"modelCompleted"]},NULL);}
             if([recognitionSettings[@"mode"] isEqual:@"local"] && [scan[@"modelCompleted"] boolValue])self.statuses[course[@"fork"]]=[self.statuses[course[@"fork"]] stringByAppendingString:@" · 本地模型分析完成"];
             if ([scan[@"recognitionMessages"] count]) self.statuses[course[@"fork"]] = [self.statuses[course[@"fork"]] stringByAppendingFormat:@" · %@",[scan[@"recognitionMessages"] firstObject]];
-            course[@"lastScan"] = scan[@"date"];
+            course[@"lastScan"] = scan[@"date"];if(scan[@"commit"])course[@"teacherCommit"]=scan[@"commit"];
             if (scan[@"branch"]) course[@"upstreamBranch"] = scan[@"branch"];
             [messages addObject:[NSString stringWithFormat:@"%@：%lu 项建议，%lu 个文件跳过", course[@"fork"], [scan[@"candidates"] count], [scan[@"skipped"] count]]];
         }
@@ -783,6 +788,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     }];
 }
 #include "AMSubmissionUI.inc"
+#include "AMExternalSubmissions.inc"
 - (void)configurePreflight:(SSSubmissionController *)sheet course:(NSDictionary *)course tasks:(NSArray *)tasks {
     course=course.copy;
     __weak typeof(self) owner=self;

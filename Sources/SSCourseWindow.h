@@ -24,6 +24,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readonly, nullable) NSString *selectedCourseID;
 - (BOOL)selectCourseID:(nullable NSString *)identifier;
 - (void)recoverSubmissionRecords;
+- (void)discoverExternalSubmissions:(BOOL)loadMore;
 - (void)showCheckWorkspace;
 - (void)checkTask:(NSString *)identifier;
 - (void)submitTask:(NSString *)identifier;
