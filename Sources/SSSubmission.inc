@@ -115,7 +115,7 @@ static NSDictionary *PFEffectiveReview(NSString *version){for(NSDictionary *job 
 - (void)layoutReport {
     if(!self.reportSplit || self.layingOutReport)return;self.layingOutReport=YES;
     self.supplementHeight.constant=self.supplement.enclosingScrollView.hidden ? 0:58;
-    [self.checkPage layoutSubtreeIfNeeded];self.findingsTable.tableColumns.firstObject.width=MAX(160,self.findingsTable.enclosingScrollView.contentSize.width-16);
+    [self.window.contentView layoutSubtreeIfNeeded];self.findingsTable.tableColumns.firstObject.width=MAX(160,self.findingsTable.enclosingScrollView.contentSize.width-16);
     self.layingOutReport=NO;
 }
 
