@@ -105,7 +105,7 @@ static NSDictionary *PFEffectiveReview(NSString *version){for(NSDictionary *job 
 - (void)layoutFiles {
     if(self.layingOutFiles)return;
     if(self.checkPage && !self.checkPage.hidden){self.checkPage.frame=self.window.contentView.bounds;return;}
-    self.layingOutFiles=YES;[self.filesPage layoutSubtreeIfNeeded];
+    self.layingOutFiles=YES;[self.window.contentView layoutSubtreeIfNeeded];
     NSView *document=self.fileListScroll.documentView;CGFloat width=self.fileListScroll.contentSize.width;NSRect frame=document.frame;frame.size.width=width;document.frame=frame;
     for(NSView *row in document.subviews){NSRect rect=row.frame;if([row isKindOfClass:NSButton.class] && ((NSButton *)row).action==@selector(showPreview:)){rect.origin.x=width-68;rect.size.width=60;}else rect.size.width=MAX(80,width-([row isKindOfClass:NSButton.class] ? 16:84));row.frame=rect;}
     if(self.taskListScroll){NSRect rect=self.taskListScroll.documentView.frame;rect.size.width=self.taskListScroll.contentSize.width;self.taskListScroll.documentView.frame=rect;}
