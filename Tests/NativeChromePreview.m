@@ -36,12 +36,13 @@
     [self.courseWindow refreshCourses];[self openList:nil];[self render];
     NSString *revision=[NSBundle.mainBundle objectForInfoDictionaryKey:@"AMPreviewRevision"];self.window.title=[@"AM Helper 界面预览 · " stringByAppendingString:revision ?: @""];
     NSMenu *menu=NSApp.windowsMenu;
-    for(NSArray *spec in @[@[@"原生控件样例…",@"showGallery:"],@[@"任务页样例",@"showTasksSample:"],@[@"课程页样例",@"showCourseSample:"],@[@"提交与预览样例…",@"showSubmissionSample:"]]){NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:spec[0] action:NSSelectorFromString(spec[1]) keyEquivalent:@""];item.target=self;[menu addItem:item];}
+    for(NSArray *spec in @[@[@"任务编辑表单…",@"showEditorSample:"],@[@"原生控件样例…",@"showGallery:"],@[@"任务页样例",@"showTasksSample:"],@[@"课程页样例",@"showCourseSample:"],@[@"提交与预览样例…",@"showSubmissionSample:"]]){NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:spec[0] action:NSSelectorFromString(spec[1]) keyEquivalent:@""];item.target=self;[menu addItem:item];}
 
     __block NSString *operation;operation=AMOperationBegin(@"检查文件",@"模拟作业项目",YES,^{AMOperationFinish(operation,@"cancelled",@"模拟检查已取消");});AMOperationProgress(operation,@"检查文件与图片",12,37);
     NSString *finished=AMOperationBegin(@"检查所有课程",@"模拟课程",NO,nil);AMOperationFinish(finished,@"success",@"检查完成，发现 3 项待审核作业");
 }
 - (void)showGallery:(id)sender{if(!self.gallery)self.gallery=AMNativeControlGallery.new;[self.gallery.window makeKeyAndOrderFront:nil];}
+- (void)showEditorSample:(id)sender{if(self.editor)return;self.editor=[[EditorController alloc] initWithTask:self.tasks.firstObject owner:self];[self.window beginSheet:self.editor.window completionHandler:nil];}
 - (void)showTasksSample:(id)sender{[self openList:nil];}
 - (void)showCourseSample:(id)sender{NSButton *button=NSButton.new;button.identifier=@"demo/physics";[self selectSidebarCourse:button];}
 - (void)showSubmissionSample:(id)sender{[self showCourseSample:nil];[self.courseWindow commit:nil];}

@@ -78,7 +78,9 @@ Surface *GradientBox(NSColor *start, NSColor *end, CGFloat radius) { Surface *v 
 void ThemeEditor(NSTextView *editor) {editor.insertionPointColor=NSColor.controlAccentColor;editor.selectedTextAttributes=@{NSBackgroundColorAttributeName:NSColor.selectedTextBackgroundColor,NSForegroundColorAttributeName:NSColor.selectedTextColor};}
 @implementation PastelTextCell @end
 void AMConfigureSingleLineField(NSTextField *field) {
-    field.bezeled=YES;field.bordered=YES;field.bezelStyle=NSTextFieldRoundedBezel;
+    // isBordered and isBezeled are mutually exclusive in AppKit. Setting
+    // isBordered after isBezeled disables the rounded bezel altogether.
+    field.bordered=NO;field.bezeled=YES;field.bezelStyle=NSTextFieldRoundedBezel;
     field.controlSize=NSControlSizeLarge;field.drawsBackground=YES;field.backgroundColor=NSColor.textBackgroundColor;
     field.focusRingType=NSFocusRingTypeDefault;field.maximumNumberOfLines=1;
     NSTextFieldCell *cell=(NSTextFieldCell *)field.cell;cell.scrollable=YES;cell.usesSingleLineMode=YES;

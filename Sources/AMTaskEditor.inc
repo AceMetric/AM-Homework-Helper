@@ -1,0 +1,54 @@
+// Shared native form. Legacy date text remains an internal adapter for imports
+// and unresolved teacher dates; ordinary tasks have one visible date control.
+- (instancetype)initWithTask:(NSDictionary *)task owner:(AppDelegate *)owner {
+    DDLFormPanel *panel=[[DDLFormPanel alloc] initWithContentRect:NSMakeRect(0,0,680,620) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
+    if(!(self=[super initWithWindow:panel]))return nil;
+    self.appDelegate=owner;self.task=task;self.candidate=task[@"_reviewCandidate"];
+    panel.title=self.candidate ? ([task[@"_existing"] boolValue] ? @"审核更新":@"审核作业"):(task ? @"编辑任务":@"新建任务");panel.minSize=NSMakeSize(560,500);panel.releasedWhenClosed=NO;
+    Surface *root=Box(Canvas(),0);panel.contentView=root;
+    NSScrollView *scroll=NSScrollView.new;scroll.hasVerticalScroller=YES;scroll.autohidesScrollers=YES;scroll.drawsBackground=NO;
+    NSStackView *body=[NSStackView stackViewWithViews:@[]];body.orientation=NSUserInterfaceLayoutOrientationVertical;body.alignment=NSLayoutAttributeLeading;body.spacing=16;body.edgeInsets=NSEdgeInsetsMake(20,24,20,24);self.editorBody=body;scroll.documentView=body;
+    NSStackView *(^row)(NSArray *)=^NSStackView *(NSArray *views){NSStackView *r=[NSStackView stackViewWithViews:views];r.orientation=NSUserInterfaceLayoutOrientationHorizontal;r.alignment=NSLayoutAttributeCenterY;r.spacing=12;return r;};
+    void (^add)(NSView *)=^(NSView *view){[body addArrangedSubview:view];view.translatesAutoresizingMaskIntoConstraints=NO;[view.widthAnchor constraintEqualToAnchor:body.widthAnchor constant:-48].active=YES;};
+    NSStackView *(^field)(NSString *,NSView *)=^NSStackView *(NSString *label,NSView *control){NSStackView *v=[NSStackView stackViewWithViews:@[Text(label,12,NSFontWeightMedium,Muted()),control]];v.orientation=NSUserInterfaceLayoutOrientationVertical;v.alignment=NSLayoutAttributeLeading;v.spacing=6;control.translatesAutoresizingMaskIntoConstraints=NO;[control.widthAnchor constraintEqualToAnchor:v.widthAnchor].active=YES;return v;};
+    __weak typeof(self) weak=self;panel.onConfirm=^{if(weak.candidate)[weak saveAndReviewNext:nil];else [weak save:nil];};panel.onCancel=^{[weak cancel:nil];};
+    self.reviewProgress=Text(@"",12,NSFontWeightRegular,Muted());if(self.candidate)add(self.reviewProgress);
+    self.importStatus=Text(@"",12,NSFontWeightRegular,Muted());self.importStatus.maximumNumberOfLines=0;
+    if(!task){add(row(@[Button(@"粘贴并识别",self,@selector(importClipboard:),0),Button(@"选择截图…",self,@selector(chooseScreenshot:),0)]));add(self.importStatus);}
+    self.titleField=[[PastelTextField alloc] initWithFrame:NSZeroRect];self.titleField.stringValue=task[@"title"] ?: @"";self.titleField.placeholderString=@"例如：完成实验报告";add(field(@"任务名称",self.titleField));
+    self.subjectField=[[PastelTextField alloc] initWithFrame:NSZeroRect];self.subjectField.stringValue=task[@"subject"] ?: @"";self.subjectField.placeholderString=@"选填";
+    self.priority=[[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];[self.priority addItemsWithTitles:@[@"普通",@"重要",@"紧急"]];[self.priority selectItemAtIndex:[task[@"priority"] integerValue]];
+    NSStackView *subject=field(@"课程／分类",self.subjectField),*priority=field(@"优先级",self.priority);add(row(@[subject,priority]));[priority.widthAnchor constraintEqualToConstant:140].active=YES;
+    self.selectedDate=task[@"due"] ?: DDLParseDate(@"明天 23:59",NSDate.date,Cal());
+    self.deadlineLabel=Text(@"作业 DDL",12,NSFontWeightMedium,Muted());
+    self.deadlineField=[[PastelTextField alloc] initWithFrame:NSZeroRect];self.deadlineField.delegate=self;self.deadlineField.stringValue=self.candidate && !task[@"due"] ? (self.candidate[@"dateOnly"] ?: @""):[self formatTeacherDate:self.selectedDate];
+    self.timePicker=[[PastelTextField alloc] initWithFrame:NSZeroRect];self.timePicker.delegate=self;self.timePicker.stringValue=[self timeString:self.selectedDate];
+    self.nativeDeadlinePicker=NSDatePicker.new;self.nativeDeadlinePicker.datePickerStyle=NSDatePickerStyleTextFieldAndStepper;self.nativeDeadlinePicker.datePickerElements=NSDatePickerElementFlagYearMonthDay|NSDatePickerElementFlagHourMinute;self.nativeDeadlinePicker.calendar=self.teacherCalendar;self.nativeDeadlinePicker.timeZone=self.teacherCalendar.timeZone;self.nativeDeadlinePicker.dateValue=self.selectedDate;self.nativeDeadlinePicker.target=self;self.nativeDeadlinePicker.action=@selector(nativeDeadlineChanged:);self.nativeDeadlinePicker.accessibilityLabel=@"截止日期和时间";
+    add(field(@"截止日期和时间",self.nativeDeadlinePicker));
+    if(self.candidate){
+        NSTextField *hint=Text(self.candidate[@"deadlineText"] ?: @"请核对老师原文，确认截止日期和时间。",12,NSFontWeightRegular,Muted());hint.maximumNumberOfLines=0;hint.selectable=YES;add(hint);
+        if(!task[@"due"]){self.deadlineField.placeholderString=@"请填写完整日期及时间，或使用上方日期控件确认";add(field(@"待确认的原文日期",self.deadlineField));}
+        self.sourceScroll=NSScrollView.new;self.sourceScroll.hasVerticalScroller=YES;self.sourceScroll.autohidesScrollers=YES;
+        NSTextView *source=[[PastelNotesView alloc] initWithFrame:NSMakeRect(0,0,600,120)];source.editable=NO;source.richText=NO;source.font=[NSFont systemFontOfSize:13];source.string=self.candidate[@"snippet"] ?: @"";source.autoresizingMask=NSViewWidthSizable;source.textContainer.widthTracksTextView=YES;self.sourceScroll.documentView=source;[self.sourceScroll.heightAnchor constraintEqualToConstant:120].active=YES;
+        NSButton *show=Button(@"显示老师原文",self,@selector(toggleTeacherSource:),0);add(show);add(self.sourceScroll);self.sourceScroll.hidden=YES;
+        if([self.candidate[@"warnings"] count]){NSTextField *warning=Text([self.candidate[@"warnings"] componentsJoinedByString:@"；"],12,NSFontWeightRegular,NSColor.systemOrangeColor);warning.maximumNumberOfLines=0;add(warning);}
+    }
+    self.calendar=MonthView.new;self.calendar.month=self.selectedDate;self.calendar.selection=self.selectedDate;self.calendar.tasks=@[];
+    self.reminderField=[[PastelTextField alloc] initWithFrame:NSZeroRect];self.reminderField.delegate=self;self.reminderField.stringValue=DDLFormatReminderOffsets(task ? DDLReminderOffsetsForTask(task):DDLDefaultReminderOffsets());
+    self.reminderPreset=[[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];[self.reminderPreset addItemsWithTitles:@[@"常用提醒…",@"7天、3天、1天、1小时、到期",@"提前7天",@"提前3天",@"提前1天",@"提前1小时",@"仅到期",@"不提醒"]];self.reminderPreset.target=self;self.reminderPreset.action=@selector(reminderPresetChanged:);[self.reminderPreset.widthAnchor constraintEqualToConstant:160].active=YES;
+    add(field(@"提醒",row(@[self.reminderField,self.reminderPreset])));self.reminderValidation=Text(@"",12,NSFontWeightRegular,Muted());add(self.reminderValidation);
+    self.recurrenceSection=[NSStackView stackViewWithViews:@[]];self.recurrenceSection.orientation=NSUserInterfaceLayoutOrientationVertical;self.recurrenceSection.alignment=NSLayoutAttributeLeading;add(self.recurrenceSection);
+    NSScrollView *notesScroll=NSScrollView.new;notesScroll.hasVerticalScroller=YES;notesScroll.autohidesScrollers=YES;notesScroll.borderType=NSBezelBorder;[notesScroll.heightAnchor constraintEqualToConstant:120].active=YES;
+    self.notesField=[[PastelNotesView alloc] initWithFrame:NSMakeRect(0,0,600,120)];self.notesField.richText=NO;self.notesField.allowsUndo=YES;self.notesField.font=[NSFont systemFontOfSize:13];self.notesField.string=task[@"notes"] ?: @"";self.notesField.autoresizingMask=NSViewWidthSizable;self.notesField.textContainer.widthTracksTextView=YES;self.notesField.textContainerInset=NSMakeSize(8,8);ThemeEditor(self.notesField);notesScroll.documentView=self.notesField;add(field(@"备注（选填）",notesScroll));
+    self.validation=Text(@"",12,NSFontWeightRegular,Muted());self.validation.maximumNumberOfLines=3;self.validation.lineBreakMode=NSLineBreakByWordWrapping;
+    NSButton *cancel=Button(@"取消",self,@selector(cancel:),0);cancel.keyEquivalent=@"\033";cancel.keyEquivalentModifierMask=0;
+    self.saveButton=Button(task ? @"保存修改":@"添加任务",self,@selector(save:),1);self.saveButton.keyEquivalent=@"\r";self.saveButton.keyEquivalentModifierMask=0;
+    NSMutableArray *actions=[@[cancel] mutableCopy];if(self.candidate){[actions addObject:Button(@"稍后审核",self,@selector(deferReview:),0)];self.saveButton.title=@"保存并关闭";self.saveButton.keyEquivalentModifierMask=NSEventModifierFlagCommand;((ActionButton *)self.saveButton).tone=0;[actions addObject:self.saveButton];self.nextReviewButton=Button(@"保存并下一项",self,@selector(saveAndReviewNext:),1);self.nextReviewButton.keyEquivalent=@"\r";self.nextReviewButton.keyEquivalentModifierMask=0;[actions addObject:self.nextReviewButton];}else [actions addObject:self.saveButton];
+    NSStackView *buttons=row(actions);NSStackView *footer=[NSStackView stackViewWithViews:@[self.validation,buttons]];footer.orientation=NSUserInterfaceLayoutOrientationVertical;footer.alignment=NSLayoutAttributeTrailing;footer.spacing=10;footer.edgeInsets=NSEdgeInsetsMake(12,24,16,24);[self.validation.widthAnchor constraintEqualToAnchor:footer.widthAnchor constant:-48].active=YES;
+    [root addSubview:scroll];[root addSubview:footer];scroll.translatesAutoresizingMaskIntoConstraints=NO;body.translatesAutoresizingMaskIntoConstraints=NO;footer.translatesAutoresizingMaskIntoConstraints=NO;
+    [NSLayoutConstraint activateConstraints:@[[scroll.topAnchor constraintEqualToAnchor:root.topAnchor],[scroll.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[scroll.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[scroll.bottomAnchor constraintEqualToAnchor:footer.topAnchor],[footer.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[footer.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[footer.bottomAnchor constraintEqualToAnchor:root.bottomAnchor],[body.widthAnchor constraintEqualToAnchor:scroll.contentView.widthAnchor],[body.topAnchor constraintEqualToAnchor:scroll.contentView.topAnchor],[body.leadingAnchor constraintEqualToAnchor:scroll.contentView.leadingAnchor]]];
+    self.titleField.accessibilityLabel=@"任务名称";self.subjectField.accessibilityLabel=@"课程或分类";self.reminderField.accessibilityLabel=@"提醒时间";self.notesField.accessibilityLabel=@"我的备注";panel.initialFirstResponder=self.titleField;panel.defaultButtonCell=self.nextReviewButton ? self.nextReviewButton.cell:self.saveButton.cell;panel.autorecalculatesKeyViewLoop=YES;
+    [self validateReminders];[self validateDate];self.initialValues=[self formValues];return self;
+}
+- (void)nativeDeadlineChanged:(NSDatePicker *)sender {[self updateDate:sender.dateValue];}
+- (void)toggleTeacherSource:(NSButton *)sender {self.sourceScroll.hidden=!self.sourceScroll.hidden;sender.title=self.sourceScroll.hidden ? @"显示老师原文":@"收起老师原文";}
