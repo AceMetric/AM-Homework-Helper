@@ -34,17 +34,17 @@ python3 - "$PREVIEW_APP/Contents/Info.plist" "$PREVIEW_ROOT/data" "$PREVIEW_REVI
 import plistlib,sys
 from pathlib import Path
 path=Path(sys.argv[1]);info=plistlib.loads(path.read_bytes())
-info.update(CFBundleIdentifier='io.github.acemetric.sshomeworkmanager.ui-preview.'+sys.argv[3].lower(),CFBundleName='AM Helper Preview '+sys.argv[3],CFBundleDisplayName='AM Helper 界面预览 '+sys.argv[3],AMPreviewRevision=sys.argv[3],AMPreviewTargetVersion='1.12.0',AMPreviewStatus='visual-review-pending',AMBuildSDK=sys.argv[4],DDLTestDataDirectory=sys.argv[2],DDLTestKeychainService='io.github.acemetric.ui-preview.no-credentials.'+sys.argv[3].lower())
+info.update(CFBundleIdentifier='io.github.acemetric.sshomeworkmanager.ui-preview.'+sys.argv[3].lower(),CFBundleName='AM Helper Preview '+sys.argv[3],CFBundleDisplayName='AM Helper 界面预览 '+sys.argv[3],AMPreviewRevision=sys.argv[3],AMPreviewTargetVersion=info['CFBundleShortVersionString'],AMPreviewStatus='visual-review-pending',AMBuildSDK=sys.argv[4],DDLTestDataDirectory=sys.argv[2],DDLTestKeychainService='io.github.acemetric.ui-preview.no-credentials.'+sys.argv[3].lower())
 path.write_bytes(plistlib.dumps(info,sort_keys=False))
 PY
 python3 - "$PREVIEW_ROOT" "$PREVIEW_REVISION" "$SDK_VERSION" <<'PYMANIFEST'
-import hashlib,json,subprocess,sys
+import hashlib,json,plistlib,subprocess,sys
 from pathlib import Path
 paths=sorted(Path('Sources').rglob('*'))+[Path('Tests/NativeChromePreview.m'),Path('Tests/NativeControlGallery.inc')]
 digest=hashlib.sha256()
 for path in paths:
     if path.is_file(): digest.update(str(path).encode()+b'\0'+path.read_bytes())
-record={'revision':sys.argv[2],'sdk':sys.argv[3],'source_sha256':digest.hexdigest(),'base_commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'target_version':'1.12.0','visual_acceptance':'pending user screenshots','data':'isolated synthetic data'}
+record={'revision':sys.argv[2],'sdk':sys.argv[3],'source_sha256':digest.hexdigest(),'base_commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'target_version':plistlib.loads(Path('Info.plist').read_bytes())['CFBundleShortVersionString'],'visual_acceptance':'pending user screenshots','data':'isolated synthetic data'}
 (Path(sys.argv[1])/'manifest.json').write_text(json.dumps(record,indent=2)+'\n')
 PYMANIFEST
 codesign --force --sign - "$PREVIEW_APP"
