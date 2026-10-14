@@ -6,6 +6,16 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>AM's Homework Helper</title>
         <item>
+            <title>1.12.2</title>
+            <pubDate>Wed, 14 Oct 2026 18:56:30 +0800</pubDate>
+            <sparkle:version>31</sparkle:version>
+            <sparkle:shortVersionString>1.12.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <sparkle:releaseNotesLink sparkle:edSignature="tYgp7dVqh/C15Ap2oGnyj1EdBniKYYSqSuP6g7V3zT5BQ7FFz5q5cmqlaId0gdfxd71y3RUrbXwa7JFJNAwZDw==" sparkle:length="1579">https://acemetric.github.io/AM-Homework-Helper/updates/AM-Homework-Helper-1.12.2-macOS-arm64.md</sparkle:releaseNotesLink>
+            <enclosure url="https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.12.2/AM-Homework-Helper-1.12.2-macOS-arm64.zip" length="25593421" type="application/octet-stream" sparkle:edSignature="4sL1pvN5i8ikecHB7kBi5w3c0JEZ65zBFR5KluL5rkO2+To5L8MOAZZ+5E1+Tn4tbEp+i2cqgp512TSJ47DPCA=="/>
+        </item>
+        <item>
             <title>1.12.1</title>
             <pubDate>Wed, 14 Oct 2026 11:12:53 +0800</pubDate>
             <sparkle:version>30</sparkle:version>
@@ -25,19 +35,9 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
             <sparkle:releaseNotesLink sparkle:edSignature="wKWfX0sEBO84dmw3OMOjubpHnHDdWW40nRdtg6iZ/X+VISJLs4TxxHfzPrxDcQGh0Y0w6CDv20Ta6lZAf5abCA==" sparkle:length="2389">https://acemetric.github.io/AM-Homework-Helper/updates/AM-Homework-Helper-1.12.0-macOS-arm64.md</sparkle:releaseNotesLink>
             <enclosure url="https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.12.0/AM-Homework-Helper-1.12.0-macOS-arm64.zip" length="25588391" type="application/octet-stream" sparkle:edSignature="oQ4SHpBQp+55j07WhaCmddxqvqe+Y9M3YqR3B+3NE29cbNON5SO0YqrM4iDmwzUP6DtA47s6ogHa7l9w+4RTBw=="/>
         </item>
-        <item>
-            <title>1.11.0</title>
-            <pubDate>Tue, 13 Oct 2026 19:23:01 +0800</pubDate>
-            <sparkle:version>28</sparkle:version>
-            <sparkle:shortVersionString>1.11.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <sparkle:releaseNotesLink sparkle:edSignature="RV6tfhT+PLZ7QRPfF3FU0ccZKMsziHdzegsFpX/jyR4sU8INMTEgXtyPYVDTjxxT634/7A5XnEWxEwLq82sDCg==" sparkle:length="2251">https://acemetric.github.io/AM-Homework-Helper/updates/AM-Homework-Helper-1.11.0-macOS-arm64.md</sparkle:releaseNotesLink>
-            <enclosure url="https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.11.0/AM-Homework-Helper-1.11.0-macOS-arm64.zip" length="25566828" type="application/octet-stream" sparkle:edSignature="dHwGe/3qRvWOPohzVp5ZNwzfEQwfIObpM1JaWeaf3qtSOZthiD89QEBqO0hf9fAPzIt21aLxwfxCSA8PqUErAA=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: ZnuCffvXthkszw+YO4kC5Y99N9paVQCSvt9DthGc1ixalkgHz803aHHaLWv/KbOoevXqfcBYX4dMFolfdEncCQ==
+edSignature: NWXZbornV+3mb9OAnQRB8kXgYlI5a7qQJwxd42/izaAg1WXG30g0vs958QmZOrpnHWA8VGaViE5cCyGyGlVRBg==
 length: 3483
 -->
