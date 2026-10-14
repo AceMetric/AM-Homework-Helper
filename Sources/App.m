@@ -806,7 +806,13 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)accessibilityChanged:(NSNotification *)notification {[self refreshAppearance];}
 - (void)refreshAppearance {
     // Restyle existing controls: never recreate editors, lists or first responders.
-    for(NSWindow *window in NSApp.windows){window.backgroundColor=Canvas();[window.effectiveAppearance performAsCurrentDrawingAppearance:^{AMRefreshViewAppearance(window.contentView);if(window==self.window)for(NSView *view in self.calendarDocument.subviews)if([view isKindOfClass:OverviewGrid.class])[(OverviewGrid *)view refreshColors];}];}
+    for(NSWindow *window in NSApp.windows){
+        // NSApp.windows also includes the system's menu-bar and popup windows.
+        // Their backgrounds and material belong to macOS, not our content theme.
+        if(!(window.styleMask & NSWindowStyleMaskTitled))continue;
+        window.backgroundColor=Canvas();
+        [window.effectiveAppearance performAsCurrentDrawingAppearance:^{AMRefreshViewAppearance(window.contentView);if(window==self.window)for(NSView *view in self.calendarDocument.subviews)if([view isKindOfClass:OverviewGrid.class])[(OverviewGrid *)view refreshColors];}];
+    }
 }
 - (void)loadPreview {
     NSArray *samples = @[
