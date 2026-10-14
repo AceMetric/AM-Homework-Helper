@@ -8,7 +8,9 @@
 static NSUInteger checks;
 static void Check(BOOL condition, NSString *label) { checks++; if (!condition) { fprintf(stderr, "FAIL: %s\n", label.UTF8String); exit(1); } }
 static void Await(BOOL (^finished)(void)) {
-    NSDate *limit=[NSDate dateWithTimeIntervalSinceNow:3];while(!finished() && limit.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    // A cold WebKit process can use the renderer's 12-second timeout on CI.
+    NSDate *limit=[NSDate dateWithTimeIntervalSinceNow:20];while(!finished() && limit.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    Check(finished(),@"asynchronous UI operation completes within its renderer allowance");
 }
 static void Capture(NSView *view, NSString *path) {
     (void)path;[view layoutSubtreeIfNeeded];Check(!NSIsEmptyRect(view.bounds),@"synthetic form lays out without image capture");
