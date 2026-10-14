@@ -1049,7 +1049,7 @@ private struct QuickEntryView:View {
             WorkspaceSection("备注"){TextEditor(text:state.field("notes")).frame(minHeight:90).accessibilityIdentifier("quick-notes");Text("概括和提交要求已预填，可修改或清空。").font(.caption).foregroundStyle(.secondary)}
             WorkspaceSection("提醒"){ForEach([10080,4320,1440,60,0],id:\.self){minutes in let values=(r["reminderOffsets"] as? [NSNumber] ?? []).map(\.intValue);Toggle([10080:"提前7天",4320:"提前3天",1440:"提前1天",60:"提前1小时",0:"到期"][minutes]!,isOn:Binding(get:{values.contains(minutes)},set:{yes in var next=Set(values);if yes{next.insert(minutes)}else{next.remove(minutes)};state.change("reminderOffsets",Array(next).sorted(by:>))}))}}
             DisclosureGroup("查看原文"){Text(string(r,"evidence")).font(.caption).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}
-        }else{Text("识别后选中一项，在这里核对和修改。").foregroundStyle(.secondary)}}.padding(12)}
+        }else{Text("识别后选中一项，在这里核对和修改。").foregroundStyle(.secondary)}}.padding(12).textFieldStyle(.roundedBorder)}
     }
     var body:some View {GeometryReader{geo in VStack(alignment:.leading,spacing:12){
         HStack{Text("快速录入作业").font(.title2.bold());Spacer();Button("保存草稿并关闭"){state.send("close")}.keyboardShortcut(.cancelAction)}

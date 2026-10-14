@@ -77,8 +77,17 @@ Surface *GradientBox(NSColor *start, NSColor *end, CGFloat radius) { Surface *v 
 // System field drawing and focus rings; retain class names for existing controllers.
 void ThemeEditor(NSTextView *editor) {editor.insertionPointColor=NSColor.controlAccentColor;editor.selectedTextAttributes=@{NSBackgroundColorAttributeName:NSColor.selectedTextBackgroundColor,NSForegroundColorAttributeName:NSColor.selectedTextColor};}
 @implementation PastelTextCell @end
+void AMConfigureSingleLineField(NSTextField *field) {
+    field.bezeled=YES;field.bordered=YES;field.bezelStyle=NSTextFieldRoundedBezel;
+    field.controlSize=NSControlSizeLarge;field.drawsBackground=YES;field.backgroundColor=NSColor.textBackgroundColor;
+    field.focusRingType=NSFocusRingTypeDefault;field.maximumNumberOfLines=1;
+    NSTextFieldCell *cell=(NSTextFieldCell *)field.cell;cell.scrollable=YES;cell.usesSingleLineMode=YES;
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
+    if(@available(macOS 26.0,*))field.borderShape=NSControlBorderShapeCapsule;
+#endif
+}
 @implementation PastelTextField
-- (instancetype)initWithFrame:(NSRect)frame {if((self=[super initWithFrame:frame])){self.bezeled=YES;self.bordered=YES;self.drawsBackground=YES;self.backgroundColor=NSColor.textBackgroundColor;self.focusRingType=NSFocusRingTypeDefault;self.font=[NSFont systemFontOfSize:13];self.cell.scrollable=YES;}return self;}
+- (instancetype)initWithFrame:(NSRect)frame {if((self=[super initWithFrame:frame])){AMConfigureSingleLineField(self);self.font=[NSFont systemFontOfSize:13];}return self;}
 @end
 
 @implementation PastelNotesView

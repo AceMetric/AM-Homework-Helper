@@ -11,6 +11,7 @@ void Put(NSView *parent, NSView *child, CGFloat x, CGFloat y, CGFloat w, CGFloat
 void Clear(NSView *view);
 void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight weight, NSColor *color, NSTextAlignment alignment);
 void ThemeEditor(NSTextView *editor);
+void AMConfigureSingleLineField(NSTextField *field);
 @interface DDLFormPanel : NSPanel
 @property(copy) void (^onConfirm)(void);
 @property(copy) void (^onCancel)(void);
