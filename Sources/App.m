@@ -373,6 +373,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSMutableArray<NSMutableDictionary *> *tasks;
 @property NSUndoManager *taskUndo;
 @property NSStatusItem *statusItem;
+@property BOOL layingOutMain;
 @property EditorController *editor;
 @property SSCourseController *courseWindow;
 @property SSUpdateController *updates;
@@ -888,7 +889,11 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     return YES;
 }
 - (void)layout {
-    if (!self.scroll) return;
+    if (!self.scroll || self.layingOutMain) return;
+    self.layingOutMain=YES;
+    // Split-view sizing may be deferred until layout on older AppKit versions.
+    // Resolve the containing panes before computing content frames.
+    [self.mainSplit.view layoutSubtreeIfNeeded];
     CGFloat w = NSWidth(self.root.bounds), fullHeight=NSHeight(self.root.bounds),h=fullHeight-(self.operationStrip.hidden ? 0:88), x = 24, content = w - x - 24;
     self.operationStrip.frame=NSMakeRect(x,fullHeight-84,content,72);
     self.sidebar.hidden = NO;
@@ -905,6 +910,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.helpController.view.hidden=self.page!=5;self.helpController.view.frame=NSMakeRect(x,112,content,h-136);
     if (self.courseWindow) { self.courseWindow.view.frame = NSMakeRect(x, 112, content, h - 136); [self.courseWindow layoutContent]; }
     [self render];
+    self.layingOutMain=NO;
 }
 - (void)layoutTaskArea {
     BOOL weekly=self.page==0 && self.weeklyMode;self.weeklyController.view.hidden=!weekly;self.scroll.hidden=self.page>=2 || self.calendarMode || weekly || self.page==2;self.nativeTasks.view.hidden=!(self.page==2 || (self.page==0 && !weekly));self.scroll.hidden=YES;

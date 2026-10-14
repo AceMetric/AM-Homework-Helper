@@ -19,6 +19,7 @@ int main(){@autoreleasepool{
     for(NSValue *size in @[[NSValue valueWithSize:NSMakeSize(960,640)],[NSValue valueWithSize:NSMakeSize(1500,1000)],[NSValue valueWithSize:NSMakeSize(1280,840)]]){
         [app.window setContentSize:size.sizeValue];[app layout];[app.mainSplit.view layoutSubtreeIfNeeded];
         Check(NSContainsRect(app.mainSplit.view.bounds,In(app.sidebar,app.mainSplit.view)),@"sidebar remains inside native split at every size");
+        if(!NSContainsRect(app.root.bounds,app.nativeTasks.view.frame))fprintf(stderr,"Task geometry: window=%s root=%s list=%s\n",NSStringFromSize(size.sizeValue).UTF8String,NSStringFromRect(app.root.bounds).UTF8String,NSStringFromRect(app.nativeTasks.view.frame).UTF8String);
         Check(NSContainsRect(app.root.bounds,app.nativeTasks.view.frame),@"native task list remains inside its content pane");
     }
     [table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];Check(app.selectedTaskID.length && !app.taskDetails.hidden,@"table selection opens task detail by stable identity");
