@@ -38,7 +38,7 @@ int main(int argc, const char *argv[]) {
         [app renderOverview];
         CheckUI(FirstGrid(app) == initial, @"date selection reuses calendar views");
         CheckUI([Cal() isDate:initial.selection inSameDayAsDate:app.selectedDay], @"reused calendar receives new selection");
-        NSPopUpButton *yearPicker = app.yearPicker;
+        NSPopUpButton *yearPicker = app.yearPicker;[app layout];CheckUI(app.yearPicker==yearPicker,@"calendar layout retains native month controls before deferred events");
         Search(app, @"英"); NSTimer *first = app.searchTimer;
         Search(app, @"  英语  ");
         CheckUI(!first.valid && app.searchTimer.valid, @"successive searches cancel pending refresh");

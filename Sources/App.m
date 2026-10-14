@@ -360,6 +360,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSPopUpButton *yearPicker;
 @property NSPopUpButton *monthPicker;
 @property NSTextField *calendarMonthTitle;
+@property NSStackView *calendarHeader;
 @property NSTextField *calendarProgressText;
 @property Surface *agenda;
 @property NSScrollView *agendaScroll;
@@ -1122,8 +1123,9 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)renderHeader {
     [self refreshPageToolbar];
-    Clear(self.header); CGFloat w = NSWidth(self.header.bounds);
-    if (self.calendarMode) { [self renderCalendarHeader]; return; }
+    CGFloat w=NSWidth(self.header.bounds);
+    if(self.calendarMode){if(self.calendarHeader.superview!=self.header){Clear(self.header);[self renderCalendarHeader];}else [self updateCalendarHeaderState];return;}
+    Clear(self.header);
     NSString *title = @[@"今日与近期安排", @"日历", @"任务", @"待审核作业", @"课程", @"开始使用"][self.page];
     if(self.page==0 && self.weeklyMode)title=@"每周安排";
     if(self.page==4)title=self.courseWindow.selectedCourseID.lastPathComponent ?: @"所有课程";
@@ -1186,21 +1188,15 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 
 - (void)renderCalendarHeader {
-    CGFloat w = NSWidth(self.header.bounds);
-    self.calendarMonthTitle = Text(@"", 25, NSFontWeightSemibold, Ink()); Put(self.header, self.calendarMonthTitle, 0, 4, w - 152, 32);
-    ActionButton *add = Button(@"新建任务", self, @selector(addTask:), 1); add.symbol = @"plus"; Put(self.header, add, w - 136, 0, 136, 36);
-    self.yearPicker = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
-    for (NSInteger year = 1900; year <= 2200; year++) [self.yearPicker addItemWithTitle:[NSString stringWithFormat:@"%ld 年", (long)year]];
-    self.yearPicker.target = self; self.yearPicker.action = @selector(jumpCalendar:);
-    self.monthPicker = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
-    for (NSInteger month = 1; month <= 12; month++) [self.monthPicker addItemWithTitle:[NSString stringWithFormat:@"%ld 月", (long)month]];
-    self.monthPicker.target = self; self.monthPicker.action = @selector(jumpCalendar:);
-    Put(self.header, self.yearPicker, 0, 48, 104, 32); Put(self.header, self.monthPicker, 112, 48, 80, 32);
-    ActionButton *prev = Button(@"", self, @selector(navigateCalendar:), 3); prev.tag = -1; prev.symbol = @"chevron.up"; prev.accessibilityLabel = @"上个月";
-    ActionButton *today = Button(@"今天", self, @selector(navigateCalendar:), 2);
-    ActionButton *next = Button(@"", self, @selector(navigateCalendar:), 3); next.tag = 1; next.symbol = @"chevron.down"; next.accessibilityLabel = @"下个月";
-    Put(self.header, prev, 208, 48, 32, 32); Put(self.header, today, 248, 48, 64, 32); Put(self.header, next, 320, 48, 32, 32);
-    self.calendarProgressText = Text(@"", 12, NSFontWeightRegular, Muted()); self.calendarProgressText.alignment = NSTextAlignmentRight; Put(self.header, self.calendarProgressText, w - 240, 48, 240, 24);
+    self.calendarHeader=NSStackView.new;self.calendarHeader.orientation=NSUserInterfaceLayoutOrientationVertical;self.calendarHeader.alignment=NSLayoutAttributeLeading;self.calendarHeader.spacing=12;self.calendarHeader.translatesAutoresizingMaskIntoConstraints=NO;[self.header addSubview:self.calendarHeader];
+    [NSLayoutConstraint activateConstraints:@[[self.calendarHeader.leadingAnchor constraintEqualToAnchor:self.header.leadingAnchor],[self.calendarHeader.trailingAnchor constraintEqualToAnchor:self.header.trailingAnchor],[self.calendarHeader.topAnchor constraintEqualToAnchor:self.header.topAnchor constant:4],[self.calendarHeader.bottomAnchor constraintLessThanOrEqualToAnchor:self.header.bottomAnchor]]];
+    self.calendarMonthTitle=Text(@"",25,NSFontWeightSemibold,Ink());[self.calendarMonthTitle setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+    ActionButton *add=Button(@"新建任务",self,@selector(addTask:),1);add.symbol=@"plus";
+    self.yearPicker=[[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];for(NSInteger year=1900;year<=2200;year++)[self.yearPicker addItemWithTitle:[NSString stringWithFormat:@"%ld 年",(long)year]];self.yearPicker.target=self;self.yearPicker.action=@selector(jumpCalendar:);
+    self.monthPicker=[[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];for(NSInteger month=1;month<=12;month++)[self.monthPicker addItemWithTitle:[NSString stringWithFormat:@"%ld 月",(long)month]];self.monthPicker.target=self;self.monthPicker.action=@selector(jumpCalendar:);
+    ActionButton *prev=Button(@"",self,@selector(navigateCalendar:),0);prev.tag=-1;prev.symbol=@"chevron.up";prev.accessibilityLabel=@"上个月";ActionButton *today=Button(@"今天",self,@selector(navigateCalendar:),0);ActionButton *next=Button(@"",self,@selector(navigateCalendar:),0);next.tag=1;next.symbol=@"chevron.down";next.accessibilityLabel=@"下个月";
+    self.calendarProgressText=Text(@"",12,NSFontWeightRegular,Muted());self.calendarProgressText.alignment=NSTextAlignmentRight;[self.calendarProgressText setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+    for(NSArray *controls in @[@[self.calendarMonthTitle,add],@[self.yearPicker,self.monthPicker,prev,today,next,self.calendarProgressText]]){NSStackView *row=[NSStackView stackViewWithViews:controls];row.spacing=8;row.alignment=NSLayoutAttributeCenterY;[self.calendarHeader addArrangedSubview:row];[row.widthAnchor constraintEqualToAnchor:self.calendarHeader.widthAnchor].active=YES;}
     [self updateCalendarHeaderState];
 }
 - (void)updateCalendarHeaderState {
