@@ -39,6 +39,23 @@ int main(){@autoreleasepool{
     Check(plus.action==@selector(quickEntry:) && ![plus isKindOfClass:NSMenuToolbarItem.class],@"plus is a direct quick-entry action");[NSApp sendAction:plus.action to:plus.target from:plus];Check(app.quickController!=nil,@"plus opens quick entry directly");[app closeQuick];
     ThemeSegmentedControl *tabs=Segments(@[@"课程内容",@"已加入任务",@"仓库信息",@"提交记录"],nil,NULL);for(NSInteger index=0;index<4;index++){tabs.selectedSegment=index;Check(tabs.selectedSegment==index,@"all navigation segments can be selected");}if(@available(macOS 26.0,*))Check([[tabs valueForKey:@"borderShape"] integerValue]==1,@"capsule shape requested through public system API");
     [app.courseWindow selectCourseID:@""];app.courseWindow.inbox=NO;[app.courseWindow.view setFrameSize:NSMakeSize(692,520)];[app.courseWindow layoutContent];[app.courseWindow.view layoutSubtreeIfNeeded];Check(NSHeight(app.courseWindow.sections.frame)>=app.courseWindow.sections.intrinsicContentSize.height && NSContainsRect(app.courseWindow.view.bounds,In(app.courseWindow.sections,app.courseWindow.view)),@"course navigation uses intrinsic size without clipping");
+    SSCourseController *course=app.courseWindow;course.busy=YES;course.git.readsCancellable=YES;course.cancelReadButton.enabled=YES;
+    course.statusLabel.stringValue=@"example/physics：本地模型正在分析课程材料和附件，保留完整路径与当前阶段以便查看进度";
+    for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua])for(NSNumber *width in @[@692,@1120])for(NSNumber *recovery in @[@NO,@YES]){
+        course.view.appearance=[NSAppearance appearanceNamed:appearance];course.recoveryButton.hidden=!recovery.boolValue;course.recoveryButton.title=@"处理冲突…";
+        [course.view setFrameSize:NSMakeSize(width.doubleValue,520)];[course layoutContent];[course.view layoutSubtreeIfNeeded];
+        NSRect cancel=In(course.cancelReadButton,course.view),bar=In(course.progress,course.view),label=In(course.statusLabel,course.view);
+        Check(!course.cancelReadButton.hidden && NSContainsRect(course.view.bounds,cancel),@"running course check keeps its cancel button fully inside the pane");
+        Check(NSMaxY(cancel)+4<=NSMinY(bar) && NSMaxY(label)+4<=NSMinY(bar),@"course progress occupies a separate row below status text and the native cancel button");
+        Check(!NSIntersectsRect(label,cancel) && NSWidth(label)>160,@"long status text leaves room for the cancel action at the minimum width");
+        Check(NSMinY(course.courseWorkspace.view.frame)>=NSMaxY(bar)+4,@"course content starts below the progress row");
+        if(recovery.boolValue)Check(!NSIntersectsRect(In(course.recoveryButton,course.view),cancel),@"recovery and cancel actions never share the same frame");
+    }
+    [course cancelReadOperation:nil];Check(course.git.cancelledReads && !course.cancelReadButton.enabled && [course.statusLabel.stringValue containsString:@"正在取消"],@"cancel remains connected to the active read after layout changes");
+    course.busy=NO;course.git.readsCancellable=NO;course.git.cancelledReads=NO;[course refreshPresentation];
+    Check(course.cancelReadButton.hidden && course.progress.hidden,@"finished course check removes the cancel action and progress bar");
+    course.statusLabel.stringValue=@"";course.recoveryButton.hidden=YES;[course layoutContent];
+    Check(course.operationStatus.hidden && NSMinY(course.courseWorkspace.view.frame)==NSMaxY(course.nativeHeader.frame)+8,@"idle course has no empty progress area");course.view.appearance=nil;
     NSString *operation=AMOperationBegin(@"检查文件",@"模拟项目",NO,nil);AMOperationProgress(operation,@"检查文件与图片",12,37);Check(AMOperations().count==1,@"background operation remains recorded without adding a duplicate main-window progress view");
     AMShowOperations(app.window);NSWindow *panel=nil;for(NSWindow *window in NSApp.windows)if([window.title isEqual:@"后台任务"])panel=window;Check(panel!=nil,@"Window menu progress action opens compact history");AMOperationFinish(operation,@"success",@"完成");Await(^BOOL{return [[(NSScrollView *)[panel valueForKey:@"operationScroll"] documentView] subviews].count==1;});Check([[(NSScrollView *)[panel valueForKey:@"operationScroll"] documentView] subviews].count==1,@"completed operations are initially collapsed");
     AMNativeControlGallery *gallery=AMNativeControlGallery.new;[gallery.window.contentView layoutSubtreeIfNeeded];Check(gallery.window.contentMinSize.width==680,@"interactive native gallery is resizable");
