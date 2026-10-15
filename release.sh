@@ -13,7 +13,9 @@ AM_RELEASE_BUILD=1 zsh build.sh
 zsh test.sh
 zsh verify-quality.sh
 zsh verify-planning.sh
+zsh verify-schedules.sh
 zsh verify-submissions.sh
+AM_UI_TEST=AIEnhancementUsage zsh verify-hybrid-ui.sh
 zsh verify-preflight.sh
 zsh verify-online-review.sh
 zsh verify-quick-entry.sh

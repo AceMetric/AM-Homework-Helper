@@ -16,6 +16,7 @@ int main(int argc,const char *argv[]){@autoreleasepool{
     NSDictionary *course=@{@"fork":@"student/fixture",@"upstream":@"teacher/fixture",@"path":@"/synthetic/fixture"};SSGit *git=SSGit.new;
     Check(assignments.count==2 && [scan[@"materials"] count]==1 && Calls(settings)==0,@"rules are ready before any model request");
     NSDictionary *enhanced=[git enhanceScan:scan course:course settings:settings paths:nil cache:cache];
+    if([enhanced[@"candidates"] count]!=2 || [enhanced[@"materials"] count]!=1)fprintf(stderr,"fixture groups: assignments=%lu materials=%lu calls=%lu\n",(unsigned long)[enhanced[@"candidates"] count],(unsigned long)[enhanced[@"materials"] count],(unsigned long)Calls(settings));
     Check(Calls(settings)==3 && [enhanced[@"candidates"] count]==2 && [enhanced[@"materials"] count]==1,@"serial enhancement preserves homework count and grouped exam");
     Check([enhanced[@"modelCompleted"] boolValue] && [enhanced[@"candidates"][0][@"summary"] length]>0,@"model result has validated summary and completion state");
     [git enhanceScan:scan course:course settings:settings paths:nil cache:cache];Check(Calls(settings)==3,@"unchanged source reuses model cache");

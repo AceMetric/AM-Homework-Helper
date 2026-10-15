@@ -293,7 +293,7 @@ private struct ReviewDetails: View {
             WorkspaceSection("截止时间") {
                 VStack(alignment:.leading,spacing:10) {
                     Text(string(record,"dateText").isEmpty ? "老师未说明完整截止时间" : "老师原文：\(string(record,"dateText"))").textSelection(.enabled)
-                    if let warnings=record["warnings"] as? [String] { ForEach(Array(warnings.enumerated()),id:\.offset){Text($0.element).foregroundStyle(.orange)} }
+                    ForEach(Array(((record["warnings"] as? [String] ?? [])+(record["contentWarnings"] as? [String] ?? [])).enumerated()),id:\.offset){Text($0.element).foregroundStyle(.orange)}
                     if let due=record["suggestedDue"] as? Date {
                         Text("原文日期建议：\(due.formatted(date:.abbreviated,time:.shortened))")
                         if let basis=record["dateBasis"] as? NSDictionary, let date=basis["date"] as? Date { Text("依据：\(date.formatted()) · \(String(string(basis,"commit").prefix(7)))").font(.caption).foregroundStyle(.secondary) }
@@ -556,7 +556,7 @@ private struct SettingsWorkspace:View {
                                     Toggle(course,isOn:Binding(get:{state.cloudCourses.contains(course)},set:{if $0 {state.cloudCourses.insert(course)}else{state.cloudCourses.remove(course)};state.dirty=true}))
                                 }
                                 if state.availableCourses.isEmpty {Text("先在课程页添加课程，再启用云端识别。").foregroundStyle(.secondary)}
-                                Text("不发送个人任务或凭据。每天最多20次请求，包含失败；可能产生服务费用。").foregroundStyle(.secondary)
+                                Text("后台检查只用规则。点击课程中的 AI 增强识别并确认材料后才发送；不发送个人任务或凭据。每天最多20次请求，包含失败；可能产生服务费用。").foregroundStyle(.secondary)
                             }
                             else {Text("仅使用本机已安装模型，不自动下载；失败后继续规则识别。").foregroundStyle(.secondary)}
                         }
@@ -964,6 +964,7 @@ private struct WeeklyPlanningView:View {
 }
 
 @MainActor private final class SubmissionHistoryState:ObservableObject {
+    @Published var reading=false
     @Published var records:[NSDictionary]=[]
     @Published var selected:String?
     @Published var busy=false
@@ -989,6 +990,7 @@ private struct SubmissionHistoryView:View {
     var body:some View {GeometryReader{geo in
         let list=List(selection:Binding(get:{state.selected},set:{state.selected=$0})){ForEach(workspaceRows(state.records)){row in let r=row.record;VStack(alignment:.leading,spacing:5){Text(string(r,"message").isEmpty ? "课程操作":string(r,"message")).lineLimit(2);Text(string(r,"label")).font(.caption).foregroundStyle(string(r,"state")=="confirmed" ? Color.secondary:Color.orange);Text(String(string(r,"commit").prefix(12))).font(.caption2.monospaced())}.padding(.vertical,4).tag(identifier(r))}}.listStyle(.inset)
         VStack(alignment:.leading,spacing:8){HStack{Text("提交记录").font(.headline);Spacer();Button("刷新终端提交"){state.action?("refresh-external","")}.disabled(state.busy);Button("更早记录"){state.action?("more-external","")}.disabled(state.busy);Button("关联已有提交…"){state.action?("existing","")}.disabled(state.busy)}.padding(.horizontal,12)
+            if state.reading{HStack{ProgressView().progressViewStyle(.linear).frame(width:140);Text("正在读取／核验终端提交…").foregroundStyle(.secondary)}.padding(.horizontal,12)}
             if state.records.isEmpty{VStack(spacing:12){Image(systemName:"clock.arrow.circlepath").font(.largeTitle);Text("暂无提交记录").font(.headline);Text("应用或终端产生的提交会显示在这里；本地提交与已推送分别核验。").foregroundStyle(.secondary)}.frame(maxWidth:.infinity,maxHeight:.infinity)}
             else if geo.size.width<760{VStack(spacing:0){list.frame(height:max(150,geo.size.height*0.4));Divider();if let r=current{details(r)}else{Text("选择一条记录查看详情").foregroundStyle(.secondary).padding()}}}
             else{HStack(spacing:0){list.frame(width:280);Divider();if let r=current{details(r)}else{Text("选择提交记录，查看文件、提交号与推送状态。").foregroundStyle(.secondary).frame(maxWidth:.infinity,maxHeight:.infinity)}}}
@@ -998,6 +1000,7 @@ private struct SubmissionHistoryView:View {
 @objc(AMSubmissionHistoryController) @MainActor public final class AMSubmissionHistoryController:NSViewController {
     private let state=SubmissionHistoryState()
     @objc public var actionHandler:((String,String)->Void)? {didSet{state.action=actionHandler}}
+    @objc public func updateReading(_ reading:Bool){state.reading=reading}
     @objc public func updateRecords(_ records:[NSDictionary],busy:Bool){state.records=workspaceRecords(records);state.busy=busy;if !state.records.contains(where:{recordIdentifier($0)==state.selected}){state.selected=state.records.first.map{recordIdentifier($0)}}}
     public override func loadView(){view=NSHostingView(rootView:SubmissionHistoryView(state:state))}
 }
