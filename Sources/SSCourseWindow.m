@@ -47,6 +47,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property NSSegmentedControl *sections;
 @property NSStackView *nativeHeader;
 @property NSStackView *operationStatus;
+@property NSView *progressRow;
 @property NSSearchField *search;
 @property NSString *query;
 @property NSString *selectedFork;
@@ -245,17 +246,21 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     [NSLayoutConstraint activateConstraints:@[[self.nativeHeader.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[self.nativeHeader.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[self.nativeHeader.topAnchor constraintEqualToAnchor:root.safeAreaLayoutGuide.topAnchor]]];
     [self.search.widthAnchor constraintGreaterThanOrEqualToConstant:160].active=YES;[self.search.widthAnchor constraintLessThanOrEqualToConstant:360].active=YES;[self.search setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];[self.accountLabel setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
     self.operationStatus=NSStackView.new;self.operationStatus.orientation=NSUserInterfaceLayoutOrientationVertical;self.operationStatus.alignment=NSLayoutAttributeLeading;self.operationStatus.spacing=8;self.operationStatus.detachesHiddenViews=YES;self.operationStatus.translatesAutoresizingMaskIntoConstraints=NO;[root addSubview:self.operationStatus];
-    NSStackView *statusRow=[NSStackView stackViewWithViews:@[self.statusLabel,self.recoveryButton,self.cancelReadButton]];statusRow.orientation=NSUserInterfaceLayoutOrientationHorizontal;statusRow.alignment=NSLayoutAttributeCenterY;statusRow.spacing=8;statusRow.detachesHiddenViews=YES;statusRow.edgeInsets=NSEdgeInsetsMake(4,0,4,4);[self.operationStatus addArrangedSubview:statusRow];[self.operationStatus addArrangedSubview:self.progress];
+    NSStackView *statusRow=[NSStackView stackViewWithViews:@[self.statusLabel,self.recoveryButton,self.cancelReadButton]];statusRow.orientation=NSUserInterfaceLayoutOrientationHorizontal;statusRow.alignment=NSLayoutAttributeCenterY;statusRow.spacing=8;statusRow.detachesHiddenViews=YES;statusRow.edgeInsets=NSEdgeInsetsMake(4,0,4,4);[self.operationStatus addArrangedSubview:statusRow];
+    // Keep the indicator's full frame inside its own row: AppKit's alignment
+    // insets differ between legacy progress bars and the current appearance.
+    CGFloat progressHeight=MAX(6,self.progress.fittingSize.height);
+    self.progressRow=[[NSView alloc] initWithFrame:NSMakeRect(0,0,1,progressHeight)];self.progress.frame=self.progressRow.bounds;self.progress.autoresizingMask=NSViewWidthSizable | NSViewHeightSizable;[self.progressRow addSubview:self.progress];[self.operationStatus addArrangedSubview:self.progressRow];
     self.statusLabel.lineBreakMode=NSLineBreakByTruncatingMiddle;[self.statusLabel setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];[self.statusLabel setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
     for(NSButton *button in @[self.recoveryButton,self.cancelReadButton]){[button setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];[button setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];}
-    [NSLayoutConstraint activateConstraints:@[[self.operationStatus.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[self.operationStatus.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[self.operationStatus.topAnchor constraintEqualToAnchor:self.nativeHeader.bottomAnchor constant:8],[statusRow.widthAnchor constraintEqualToAnchor:self.operationStatus.widthAnchor],[self.progress.widthAnchor constraintEqualToAnchor:self.operationStatus.widthAnchor],[self.progress.heightAnchor constraintEqualToConstant:6]]];
+    [NSLayoutConstraint activateConstraints:@[[self.operationStatus.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[self.operationStatus.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[self.operationStatus.topAnchor constraintEqualToAnchor:self.nativeHeader.bottomAnchor constant:8],[statusRow.widthAnchor constraintEqualToAnchor:self.operationStatus.widthAnchor],[self.progressRow.widthAnchor constraintEqualToAnchor:self.operationStatus.widthAnchor],[self.progressRow.heightAnchor constraintEqualToConstant:progressHeight]]];
     [self layoutContent];
 }
 - (void)layoutContent {
     CGFloat w = NSWidth(self.view.bounds), h = NSHeight(self.view.bounds);
     self.sections.hidden=self.inbox;self.typeFilter.hidden=self.inbox || self.sections.selectedSegment!=0;self.reviewFilter.hidden=!self.inbox;self.search.hidden=self.inbox;self.assistantButton.hidden=self.inbox;self.assistantImportButton.hidden=YES;self.assistantButton.enabled=self.assistantImportButton.enabled=!self.busy && !self.operationsPaused;BOOL modelConfigured=![SSRecognitionSettings()[@"mode"] isEqual:@"rules"];self.assistantButton.hidden=self.inbox || !modelConfigured;self.assistantButton.title=modelConfigured ? @"AI增强识别…":@"Skill识别…";self.assistantButton.action=modelConfigured ? @selector(enhanceRecognition:):@selector(exportSkillContext:);
     self.syncButton.hidden=self.inbox || ![self course];self.commitButton.hidden=self.syncButton.hidden;
-    self.cancelReadButton.hidden=!self.busy || !self.git.readsCancellable;self.progress.hidden=!self.busy;
+    self.cancelReadButton.hidden=!self.busy || !self.git.readsCancellable;self.progress.hidden=!self.busy;self.progressRow.hidden=!self.busy;
     self.operationStatus.hidden=!self.statusLabel.stringValue.length && !self.busy && self.recoveryButton.hidden;
     [self.view layoutSubtreeIfNeeded];CGFloat workspaceTop=self.operationStatus.hidden ? NSMaxY(self.nativeHeader.frame)+8:NSMaxY(self.operationStatus.frame)+8;
     self.table.enclosingScrollView.frame = NSMakeRect(0, 184, w, MAX(112, h - 348));

@@ -23,6 +23,8 @@ jobs:
         run: python3 Tools/security-audit.py --history
       - name: Native build
         run: zsh build.sh
+      - name: Native control geometry and interaction
+        run: AM_UI_TEST=NativeControlsUsage zsh verify-hybrid-ui.sh
       - name: Dates and reminders
         run: zsh test.sh
       - name: Document and screenshot import
@@ -62,7 +64,6 @@ jobs:
           AM_UI_TEST=GuideUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=RendererUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=AppearanceUsage zsh verify-hybrid-ui.sh
-          AM_UI_TEST=NativeControlsUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=NativePromotionUsage zsh verify-hybrid-ui.sh
       - name: Compile local image privacy scanner
         run: >-
