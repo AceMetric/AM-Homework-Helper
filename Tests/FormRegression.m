@@ -5,6 +5,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 static NSInteger assertions;
+@interface EditorOutsideEvent:NSObject
+@property NSWindow *window;
+@property NSPoint locationInWindow;
+@end
+@implementation EditorOutsideEvent @end
 static void Check(BOOL passed, NSString *message) { assertions++; if (!passed) { fprintf(stderr, "FAIL: %s\n", message.UTF8String); exit(1); } }
 static void Snapshot(NSView *view, NSString *path) {
     (void)path;[view layoutSubtreeIfNeeded];Check(!NSIsEmptyRect(view.bounds),@"synthetic form lays out without image capture");
@@ -74,6 +79,13 @@ int main(int argc, const char *argv[]) {
             Check([editor.titleField.stringValue isEqual:longTitle] && [editor.notesField.string isEqual:longNotes] && editor.notesField.enclosingScrollView.hasVerticalScroller, @"long title and notes remain editable and scrollable");
             Check(NSMaxY(editor.notesField.enclosingScrollView.superview.frame) <= NSHeight(editor.notesField.enclosingScrollView.superview.superview.frame), @"long form fits its scrolling document");
             [editor.window orderOut:nil]; app.editor = nil;
+        }
+        EditorOutsideEvent *outside=EditorOutsideEvent.new;outside.window=app.window;outside.locationInWindow=NSMakePoint(NSWidth(app.window.frame)-4,4);
+        for(NSUInteger attempt=0;attempt<2;attempt++){
+            app.editor=[[EditorController alloc] initWithTask:app.tasks.firstObject owner:app];NSWindow *sheet=app.editor.window;[sheet setFrame:NSMakeRect(NSMinX(app.window.frame)+40,NSMinY(app.window.frame)+40,560,500) display:NO];[app.window beginSheet:sheet completionHandler:nil];
+            EditorOutsideEvent *inside=EditorOutsideEvent.new;inside.window=sheet;inside.locationInWindow=NSMakePoint(80,80);Check(![app dismissEditorForMouseEvent:(id)inside] && app.editor,@"inside editor click cannot dismiss the sheet");
+            if(attempt){app.editor.titleField.stringValue=@"未保存的新名称";[AMQuietDialogChoices addObject:@(NSAlertThirdButtonReturn)];Check([app dismissEditorForMouseEvent:(id)outside] && app.editor && [app.editor.titleField.stringValue isEqual:@"未保存的新名称"],@"outside click preserves dirty editor when continuing");[AMQuietDialogChoices addObject:@(NSAlertSecondButtonReturn)];}
+            Check([app dismissEditorForMouseEvent:(id)outside] && !app.editor && !app.window.attachedSheet,@"outside gray-area click closes unchanged or explicitly discarded editor");
         }
         [app.ticker invalidate]; [app.searchTimer invalidate]; [app.window orderOut:nil]; [NSStatusBar.systemStatusBar removeStatusItem:app.statusItem];
         printf("PASS: %ld form assertions\n", (long)assertions);

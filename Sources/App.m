@@ -260,8 +260,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         CallbackButton *number = [[CallbackButton alloc] initWithFrame:NSZeroRect]; number.title = DDLFormatDate(date, @"d"); number.tone = today ? 1 : 3; number.allowsHoverFill = NO; number.font = [NSFont systemFontOfSize:12]; number.onClick = hit.onClick; number.accessibilityLabel = hit.accessibilityLabel;
         hit.toolTip=[NSString stringWithFormat:@"%@ · %@",info[@"name"],info[@"source"]];hit.accessibilityLabel=[hit.accessibilityLabel stringByAppendingFormat:@"，%@",info[@"name"]];
         BOOL showDayInfo=![info[@"kind"] isEqual:@"workday"] && ![info[@"kind"] isEqual:@"weekend"];
-        CGFloat eventStart=showDayInfo ? 52:32;
-        if(showDayInfo){BOOL marked=![info[@"kind"] isEqual:@"weekend"];NSString *caption=[info[@"kind"] isEqual:@"holiday"] ? [info[@"name"] stringByAppendingString:@"（休）"]:([info[@"kind"] isEqual:@"makeup"] ? @"调休（班）":info[@"name"]);Surface *badge=Box(marked ? ([info[@"rest"] boolValue] ? Tint():Panel()):nil,6);badge.identifier=@"calendar-day-kind";badge.toolTip=hit.toolTip;Put(cell,badge,6,32,cellW-16,18);NSTextField *holiday=Text(caption,10,NSFontWeightMedium,marked && [info[@"rest"] boolValue] ? Accent():Muted());holiday.toolTip=hit.toolTip;CGFloat labelWidth=cellW-26;if(holiday.intrinsicContentSize.width>labelWidth)holiday.stringValue=[info[@"kind"] isEqual:@"makeup"] ? @"补班":info[@"name"];if(holiday.intrinsicContentSize.width>labelWidth && [info[@"kind"] isEqual:@"holiday"])holiday.stringValue=[info[@"name"] stringByReplacingOccurrencesOfString:@"节" withString:@""];Put(badge,holiday,5,1,labelWidth,16);}
+        CGFloat eventStart=32;
+        if(showDayInfo){BOOL marked=![info[@"kind"] isEqual:@"weekend"];NSString *caption=[info[@"kind"] isEqual:@"holiday"] ? [info[@"name"] stringByAppendingString:@"（休）"]:([info[@"kind"] isEqual:@"makeup"] ? @"调休（班）":info[@"name"]);Surface *badge=Box(marked ? ([info[@"rest"] boolValue] ? Tint():Panel()):nil,6);badge.identifier=@"calendar-day-kind";badge.toolTip=hit.toolTip;Put(cell,badge,6,NSHeight(cell.bounds)-24,cellW-16,18);NSTextField *holiday=Text(caption,10,NSFontWeightMedium,marked && [info[@"rest"] boolValue] ? Accent():Muted());holiday.toolTip=hit.toolTip;CGFloat labelWidth=cellW-26;if(holiday.intrinsicContentSize.width>labelWidth)holiday.stringValue=[info[@"kind"] isEqual:@"makeup"] ? @"补班":info[@"name"];if(holiday.intrinsicContentSize.width>labelWidth && [info[@"kind"] isEqual:@"holiday"])holiday.stringValue=[info[@"name"] stringByReplacingOccurrencesOfString:@"节" withString:@""];Put(badge,holiday,5,1,labelWidth,16);}
         Put(cell, number, 6, 4, 40, 27); if (!inMonth) number.alphaValue = 0.45;
         if (tasks.count) {
             NSInteger done = 0; for (NSDictionary *t in tasks) if ([t[@"completed"] boolValue]) done++;
@@ -269,8 +269,9 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
             Put(cell, count, cellW - 48, 11, 32, 15);
         }
         CGFloat eventHeight = cellH < 90 ? 20 : 23, step = eventHeight + 2;
-        NSInteger capacity = MAX(1, (NSInteger)((cellH - eventStart - 6) / step));
-        NSInteger shown = MIN((NSInteger)tasks.count, (NSInteger)tasks.count > capacity ? MAX(1, (NSInteger)((cellH - eventStart - 24) / step)) : capacity);
+        CGFloat contentBottom=NSHeight(cell.bounds)-(showDayInfo ? 28:6);
+        NSInteger capacity=MAX(0,(NSInteger)floor((contentBottom-eventStart+2)/step));
+        NSInteger shown=MIN((NSInteger)tasks.count,(NSInteger)tasks.count>capacity ? MAX(0,(NSInteger)floor((contentBottom-eventStart-16+2)/step)):capacity);
         for (NSInteger j = 0; j < shown; j++) {
             NSDictionary *task = tasks[j]; CalendarTaskButton *event = [[CalendarTaskButton alloc] initWithFrame:NSZeroRect]; event.task = task; event.title = task[@"title"];
             NSString *state = [task[@"completed"] boolValue] ? @"已完成" : ([task[@"due"] timeIntervalSinceNow] < 0 ? @"已逾期" : @"待完成");
@@ -444,6 +445,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)layoutContent;
 - (BOOL)dismissSettings;
 - (BOOL)dismissSettingsForMouseEvent:(NSEvent *)event;
+- (BOOL)dismissEditorForMouseEvent:(NSEvent *)event;
 - (void)renderDashboard;
 - (void)reviewGitHubCandidate:(NSDictionary *)candidate;
 - (void)continueReviewQueue:(NSArray<NSString *> *)queue after:(NSString *)identifier;
@@ -710,7 +712,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.nativeTasks.actionHandler=^(NSString *action,NSString *identifier){NSButton *sender=NSButton.new;sender.identifier=identifier;if([action isEqual:@"select"])[weakSelf selectTask:sender];else if([action isEqual:@"toggle"])[weakSelf toggleTask:sender];else if([action isEqual:@"edit"])[weakSelf editTask:sender];else if([action isEqual:@"close"])[weakSelf closeTaskDetails:nil];};
     self.nativeTasks.menuProvider=^NSMenu *(NSString *identifier){return [weakSelf menuForTaskID:identifier];};
     self.root.onResize = ^{ [weakSelf layoutContent]; };
-    self.searchFocusMonitor=[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown handler:^NSEvent *(NSEvent *event){if([weakSelf dismissSettingsForMouseEvent:event])return nil;if(event.window==weakSelf.window)[weakSelf dismissSearchAtWindowPoint:event.locationInWindow];return event;}];
+    self.searchFocusMonitor=[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown handler:^NSEvent *(NSEvent *event){if([weakSelf dismissEditorForMouseEvent:event] || [weakSelf dismissSettingsForMouseEvent:event])return nil;if(event.window==weakSelf.window)[weakSelf dismissSearchAtWindowPoint:event.locationInWindow];return event;}];
     self.statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
     self.statusItem.button.image = [NSImage imageWithSystemSymbolName:@"checklist" accessibilityDescription:@"AM's Homework Helper"];
     self.statusItem.button.imagePosition = NSImageLeft; self.statusItem.button.target = self; self.statusItem.button.action = @selector(statusClick:); [self.statusItem.button sendActionOn:NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp];
@@ -1053,6 +1055,15 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if(!settings || self.window.attachedSheet!=settings || !event.window || event.window==settings || event.window.sheetParent==settings)return NO;
     [self dismissSettings];return YES;
 }
+- (BOOL)dismissEditorForMouseEvent:(NSEvent *)event {
+    NSWindow *sheet=self.editor.window;
+    if(!sheet || self.window.attachedSheet!=sheet || sheet.attachedSheet || (NSApp.modalWindow && NSApp.modalWindow!=sheet))return NO;
+    if(event.window!=self.window && event.window!=sheet)return NO;
+    NSPoint point=[event.window convertPointToScreen:event.locationInWindow];
+    if(!NSPointInRect(point,self.window.frame) || NSPointInRect(point,sheet.frame))return NO;
+    if([sheet makeFirstResponder:nil])[self windowShouldClose:sheet];
+    return YES;
+}
 - (void)showSettings:(id)sender {
     [self showWindow]; if (self.window.attachedSheet) return;
     self.settingsController = AMSettingsController.new;
@@ -1220,7 +1231,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (!self.calendarBaseMonth) self.calendarBaseMonth = self.month;
     NSDate *baseStart = nil; [Cal() rangeOfUnit:NSCalendarUnitMonth startDate:&baseStart interval:NULL forDate:self.calendarBaseMonth];
     CGFloat calendarWidth = self.calendarScroll.contentSize.width;
-    self.calendarSectionHeight = MAX(510, self.calendarScroll.contentSize.height);
+    self.calendarSectionHeight = MAX(600, self.calendarScroll.contentSize.height);
     NSInteger minute = (NSInteger)floor(NSDate.date.timeIntervalSince1970 / 60);
     BOOL rebuild = ![self.overviewSnapshot isEqualToArray:visible] || ![self.overviewBaseMonth isEqual:baseStart]
         || !NSEqualSizes(self.overviewSize, self.calendarScroll.contentSize) || self.overviewMinute != minute

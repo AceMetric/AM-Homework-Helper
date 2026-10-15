@@ -463,7 +463,6 @@ private struct ReviewWorkspace: View {
                 }.frame(minWidth:300)    }
     var body: some View {
         VStack(spacing:12) {
-            WorkspaceHint(key:"review",text:"选中后直接在侧边核对；完整条目可全选批量确认，保存成功即从列表移除。")
             HStack {
                 TextField("搜索名称、课程或文件",text:$state.query).textFieldStyle(.roundedBorder).focused($searchFocused)
                 Text("已选 \(state.checked.count) / \(state.visible.count) 项").foregroundStyle(.secondary)
@@ -741,7 +740,7 @@ private struct CourseWorkspace:View {
         }.frame(minWidth:260)
     }
     private var detailPane:some View {
-        VStack(spacing:0){WorkspaceHint(key:"course-review",text:"核对侧边的名称、截止时间和备注后确认；保存成功即移出审核列表。").padding(.horizontal,12);ReviewFeedback(state:state.review).padding(.horizontal,12);details;if let record=state.current,!flag(record,"confirmed"),state.reviewRecord(record) != nil {Divider();ReviewSaveBar(state:state.review,advance:false).padding(12)}}
+        VStack(spacing:0){ReviewFeedback(state:state.review).padding(.horizontal,12);details;if let record=state.current,!flag(record,"confirmed"),state.reviewRecord(record) != nil {Divider();ReviewSaveBar(state:state.review,advance:false).padding(12)}}
     }
     private var summaries:some View {
         List{ForEach(workspaceRows(state.summaries)){row in let r=row.record
