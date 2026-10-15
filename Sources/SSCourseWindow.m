@@ -246,7 +246,16 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     [NSLayoutConstraint activateConstraints:@[[self.nativeHeader.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[self.nativeHeader.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[self.nativeHeader.topAnchor constraintEqualToAnchor:root.safeAreaLayoutGuide.topAnchor]]];
     [self.search.widthAnchor constraintGreaterThanOrEqualToConstant:160].active=YES;[self.search.widthAnchor constraintLessThanOrEqualToConstant:360].active=YES;[self.search setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];[self.accountLabel setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
     self.operationStatus=NSStackView.new;self.operationStatus.orientation=NSUserInterfaceLayoutOrientationVertical;self.operationStatus.alignment=NSLayoutAttributeLeading;self.operationStatus.spacing=8;self.operationStatus.detachesHiddenViews=YES;self.operationStatus.translatesAutoresizingMaskIntoConstraints=NO;[root addSubview:self.operationStatus];
-    NSStackView *statusRow=[NSStackView stackViewWithViews:@[self.statusLabel,self.recoveryButton,self.cancelReadButton]];statusRow.orientation=NSUserInterfaceLayoutOrientationHorizontal;statusRow.alignment=NSLayoutAttributeCenterY;statusRow.spacing=8;statusRow.detachesHiddenViews=YES;statusRow.edgeInsets=NSEdgeInsetsMake(4,0,4,4);[self.operationStatus addArrangedSubview:statusRow];
+    NSStackView *statusRow=[NSStackView stackViewWithViews:@[self.statusLabel,self.recoveryButton,self.cancelReadButton]];
+    statusRow.orientation=NSUserInterfaceLayoutOrientationHorizontal;statusRow.alignment=NSLayoutAttributeCenterY;statusRow.distribution=NSStackViewDistributionFill;statusRow.detachesHiddenViews=YES;
+    // Stack views space alignment rectangles. Reserve the native drawing
+    // outsets as well so complete control frames remain separate on older OSes.
+    NSEdgeInsets labelInsets=self.statusLabel.alignmentRectInsets,buttonInsets=self.cancelReadButton.alignmentRectInsets;
+    NSEdgeInsets recoveryInsets=self.recoveryButton.alignmentRectInsets;
+    CGFloat buttonLeft=MAX(0,MAX(buttonInsets.left,recoveryInsets.left)),buttonRight=MAX(0,MAX(buttonInsets.right,recoveryInsets.right));
+    statusRow.spacing=8+MAX(0,MAX(labelInsets.right,buttonRight))+buttonLeft;
+    statusRow.edgeInsets=NSEdgeInsetsMake(MAX(4,MAX(buttonInsets.top,recoveryInsets.top)),MAX(4,labelInsets.left),MAX(4,MAX(buttonInsets.bottom,recoveryInsets.bottom)),MAX(4,buttonRight));
+    [self.operationStatus addArrangedSubview:statusRow];
     // Keep the indicator's full frame inside its own row: AppKit's alignment
     // insets differ between legacy progress bars and the current appearance.
     CGFloat progressHeight=MAX(6,self.progress.fittingSize.height);
