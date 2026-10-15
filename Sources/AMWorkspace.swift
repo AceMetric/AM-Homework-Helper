@@ -287,11 +287,12 @@ private struct ReviewDetails: View {
     }
     var body:some View {
         VStack(alignment:.leading,spacing:16) {
-            Text(record["existingTask"] == nil ? "审核作业" : "编辑作业").font(.title3.bold())
+            Text("作业信息").font(.headline)
             if string(record,"reviewStatus")=="已导入" {Text("已加入任务，修改后保存即可同步。").foregroundStyle(.secondary)}
-            TextField("作业名称",text:editing(\.title)).textFieldStyle(.roundedBorder)
-            WorkspaceSection("截止时间") {
-                VStack(alignment:.leading,spacing:10) {
+            VStack(alignment:.leading,spacing:6){Text("名称").foregroundStyle(.secondary);TextField("作业名称",text:editing(\.title)).textFieldStyle(.roundedBorder).controlSize(.large)}
+            VStack(alignment:.leading,spacing:12) {
+                    Divider()
+                    Text("截止日期和时间").font(.headline)
                     Text(string(record,"dateText").isEmpty ? "老师未说明完整截止时间" : "老师原文：\(string(record,"dateText"))").textSelection(.enabled)
                     ForEach(Array(((record["warnings"] as? [String] ?? [])+(record["contentWarnings"] as? [String] ?? [])).enumerated()),id:\.offset){Text($0.element).foregroundStyle(.orange)}
                     if let due=record["suggestedDue"] as? Date {
@@ -304,21 +305,21 @@ private struct ReviewDetails: View {
                         Button("确认填写的截止时间"){state.hasDate=true;state.dateConfirmed=true;state.dirty=true}
                     }
                     Text("课程时区：\(string(record,"timeZone"))").font(.caption).foregroundStyle(.secondary)
-                    Toggle("启用提醒",isOn:editing(\.reminders))
+                    Divider()
+                    Toggle("提醒",isOn:editing(\.reminders)).controlSize(.large).frame(minHeight:32)
                     if state.reminders {
                         LazyVGrid(columns:[GridItem(.adaptive(minimum:85))],alignment:.leading) {
                             ForEach([10080,4320,1440,60,0],id:\.self){offset in
-                                Toggle([10080:"7天",4320:"3天",1440:"1天",60:"1小时",0:"到期"][offset]!,isOn:Binding(get:{state.reminderOffsets.contains(offset)},set:{if $0 {state.reminderOffsets.insert(offset)}else{state.reminderOffsets.remove(offset)};state.dirty=true})).toggleStyle(.checkbox)
+                                Toggle([10080:"7天",4320:"3天",1440:"1天",60:"1小时",0:"到期"][offset]!,isOn:Binding(get:{state.reminderOffsets.contains(offset)},set:{if $0 {state.reminderOffsets.insert(offset)}else{state.reminderOffsets.remove(offset)};state.dirty=true})).toggleStyle(.checkbox).controlSize(.large).frame(minHeight:32)
                             }
                         }
                         let custom = state.reminderOffsets.subtracting([10080,4320,1440,60,0]).sorted(by:>)
                         if !custom.isEmpty { Text("保留自定义提醒：\(custom.map{"提前\($0)分钟"}.joined(separator:"、"))").font(.caption).foregroundStyle(.secondary) }
                         Button("使用全部常用提醒"){state.reminderOffsets=[10080,4320,1440,60,0];state.dirty=true}
                     }
-                }.frame(maxWidth:.infinity,alignment:.leading).padding(4)
+            }.frame(maxWidth:.infinity,alignment:.leading)
                 .environment(\.timeZone,TimeZone(identifier:string(record,"timeZone")) ?? .current)
-            }
-            VStack(alignment:.leading,spacing:6) { Text("备注（可修改或清空）").fontWeight(.medium); TextEditor(text:editing(\.notes)).frame(minHeight:140).padding(6).background(Color(nsColor:.textBackgroundColor)).clipShape(RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).stroke(Color(nsColor:AMAppearance.separator),lineWidth:0.5)) }
+            VStack(alignment:.leading,spacing:6) { Text("备注（可修改或清空）").fontWeight(.medium); TextEditor(text:editing(\.notes)).frame(minHeight:140,maxHeight:180).padding(6).background(Color(nsColor:.textBackgroundColor)).clipShape(RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).stroke(Color(nsColor:AMAppearance.separator),lineWidth:0.5)) }
             DisclosureGroup("老师原文与来源") {
                 VStack(alignment:.leading,spacing:8) {
                     Text("\(string(record,"repository")) / \(string(record,"path")):\((record["line"] as? NSNumber)?.intValue ?? 1)").font(.caption).foregroundStyle(.secondary)
@@ -326,7 +327,7 @@ private struct ReviewDetails: View {
                     if let attachments=record["attachments"] as? [NSDictionary] { ForEach(workspaceRows(attachments,key:"path")){Text("附件：\(string($0.record,"path"))\n\(string($0.record,"snippet"))").textSelection(.enabled)} }
                 }.padding(4)
             }
-        }.padding(.horizontal,16).padding(.vertical,8)
+        }.frame(maxWidth:720,alignment:.leading).padding(.horizontal,16).padding(.vertical,12).frame(maxWidth:.infinity,alignment:.leading)
     }
 }
 private struct ReviewFeedback:View {
@@ -345,6 +346,23 @@ private struct ReviewFeedback:View {
 }
 // Native targets are also available to isolated UI tests without global mouse
 // input or foreground accessibility. Both editors share this exact save action.
+private struct WorkspaceCheck:NSViewRepresentable {
+    let title:String
+    @Binding var checked:Bool
+    var enabled=true
+    final class Target:NSObject {
+        var change:((Bool)->Void)?
+        @objc func press(_ sender:NSButton){change?(sender.state == .on)}
+    }
+    func makeCoordinator()->Target {Target()}
+    func makeNSView(context:Context)->NSButton {
+        let button=NSButton(checkboxWithTitle:"",target:context.coordinator,action:#selector(Target.press(_:)))
+        button.controlSize = .large;button.imagePosition = .imageOnly;button.alignment = .center
+        button.setContentHuggingPriority(.defaultLow,for:.horizontal)
+        return button
+    }
+    func updateNSView(_ button:NSButton,context:Context){context.coordinator.change={checked=$0};button.state=checked ? .on:.off;button.isEnabled=enabled;button.setAccessibilityLabel(title)}
+}
 private struct WorkspaceButton:NSViewRepresentable {
     let title:String
     var enabled=true
@@ -400,7 +418,7 @@ private struct ReviewWorkspace: View {
         })) {
             ForEach(workspaceRows(state.visible)){row in let record=row.record
                 HStack(alignment:.top,spacing:8){
-                    Toggle("选择",isOn:Binding(get:{state.checked.contains(identifier(record))},set:{if $0{state.checked.insert(identifier(record))}else{state.checked.remove(identifier(record))}})).labelsHidden().toggleStyle(.checkbox).accessibilityLabel("选择\(string(record,"title"))").disabled(state.saving || string(record,"reviewStatus")=="已导入")
+                    WorkspaceCheck(title:"选择\(string(record,"title"))",checked:Binding(get:{state.checked.contains(identifier(record))},set:{if $0{state.checked.insert(identifier(record))}else{state.checked.remove(identifier(record))}}),enabled:!state.saving && string(record,"reviewStatus") != "已导入").frame(width:36,height:36)
                     VStack(alignment:.leading,spacing:5){Text(string(record,"suggestedTitle").isEmpty ? string(record,"title"):string(record,"suggestedTitle")).font(.system(size:13,weight:.medium)).lineLimit(2);Text(string(record,"repository")).font(.caption).foregroundStyle(.secondary);Label(record["existingTask"]==nil ? "新作业":"更新建议",systemImage:record["existingTask"]==nil ? "tray":"arrow.triangle.2.circlepath").font(.caption).foregroundStyle(.secondary)}
                 }.padding(.vertical,4).tag(identifier(record))
             }
