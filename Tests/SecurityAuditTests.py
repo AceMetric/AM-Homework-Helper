@@ -32,6 +32,17 @@ class AuditTests(unittest.TestCase):
         SCAN(png(b'tEXt', b'Author\0' + self.address), 'preview.png')
         self.assertIn(('preview.png', 'personal-email'), GLOBALS['findings'])
 
+    def test_release_tagger_email_is_not_a_legacy_commit_exception(self):
+        tag = b'object ' + b'a' * 40 + b'\ntype commit\ntag v1.0.0\ntagger Release Bot <' + self.address + b'> 1 +0000\n\nRelease\n'
+        SCAN(tag, 'history/tag/v1.0.0')
+        self.assertIn(('history/tag/v1.0.0', 'personal-email'), GLOBALS['findings'])
+
+    def test_github_noreply_release_tagger_is_safe(self):
+        address = b'42+release-bot@users.noreply.github.com'
+        tag = b'object ' + b'a' * 40 + b'\ntype commit\ntag v1.0.0\ntagger Release Bot <' + address + b'> 1 +0000\n\nRelease\n'
+        SCAN(tag, 'history/tag/v1.0.0')
+        self.assertEqual(GLOBALS['findings'], set())
+
     def test_compressed_metadata_is_still_checked(self):
         SCAN(png(b'zTXt', b'Author\0\0' + zlib.compress(self.address)), 'preview.png')
         self.assertIn(('preview.png', 'personal-email'), GLOBALS['findings'])
