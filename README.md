@@ -21,13 +21,13 @@
 - 应用内检查新版本、查看更新说明、确认下载与重启；未保存内容和正在执行的作业操作受到退出保护。
 - **作业只推送到经核验属于当前登录用户的个人 fork，绝不推送到老师仓库，也不强推。**
 
-## 1.13.0
+## 1.13.1
 
-新增原生圆角表单、[周期任务与中国大陆日历](docs/SCHEDULES.md)、终端 Git 提交自动发现，以及主动确认范围的 AI 增强识别。日历、设置、审核与任务操作根据实际窗口反馈调整，详见[版本说明](docs/releases/1.13.0.md)。
+修复课程检查中进度条与取消按钮重叠，兼容不同 macOS 原生控件的尺寸与外边距；窄窗口、长状态文字及恢复操作同时显示时保持布局清楚，详见[版本说明](docs/releases/1.13.1.md)。沿用 1.13.0 的原生圆角表单、[周期任务与中国大陆日历](docs/SCHEDULES.md)、终端 Git 提交发现及主动确认范围的 AI 增强识别。
 
 ## 安装与使用
 
-从 [GitHub Releases](https://github.com/AceMetric/AM-Homework-Helper/releases/latest) 下载 **1.13.0** 的 `AM-Homework-Helper-1.13.0-macOS-arm64.zip`，安装说明与校验文件作为独立附件提供。当前构建使用临时签名，**未经 Apple 公证**。
+从 [GitHub Releases](https://github.com/AceMetric/AM-Homework-Helper/releases/latest) 下载 **1.13.1** 的 `AM-Homework-Helper-1.13.1-macOS-arm64.zip`，安装说明与校验文件作为独立附件提供。当前构建使用临时签名，**未经 Apple 公证**。
 
 解压后将 `AM's Homework Helper.app` 放入“应用程序”。首次打开若被系统阻止，可在“系统设置 → 隐私与安全性”按系统提示选择“仍要打开”。更新前退出正在运行的旧测试版。
 
