@@ -55,8 +55,13 @@ int main(int argc, const char *argv[]) {
                 [editor.window setContentSize:size.sizeValue];[editor.window.contentView layoutSubtreeIfNeeded];
                 NSRect button=[editor.saveButton convertRect:editor.saveButton.bounds toView:editor.window.contentView];
                 NSRect footer=[editor.saveButton.superview.superview convertRect:editor.saveButton.superview.superview.bounds toView:editor.window.contentView];
-                Check(NSMaxX(button)<=NSWidth(editor.window.contentView.bounds)-23 && NSMinX(button)>=24 && NSContainsRect(footer,button), @"save action retains visible footer insets through resize");
-                Check(NSMaxY(button)<=NSHeight(editor.window.contentView.bounds)-15, @"save action stays above bottom edge through resize");
+                // Auto Layout pins system controls by their alignment rect. Older
+                // rounded buttons include extra transparent shadow in their frame.
+                NSRect alignment=[editor.saveButton.superview convertRect:[editor.saveButton alignmentRectForFrame:editor.saveButton.frame] toView:editor.window.contentView];
+                BOOL insets=NSMaxX(alignment)<=NSWidth(editor.window.contentView.bounds)-23 && NSMinX(alignment)>=24 && NSContainsRect(footer,alignment) && NSMaxX(button)<=NSWidth(editor.window.contentView.bounds)-12;
+                if(!insets)fprintf(stderr,"Footer geometry: content=%s footer=%s button=%s alignment=%s\n",NSStringFromRect(editor.window.contentView.bounds).UTF8String,NSStringFromRect(footer).UTF8String,NSStringFromRect(button).UTF8String,NSStringFromRect(alignment).UTF8String);
+                Check(insets, @"save action retains visible footer insets through resize");
+                Check(NSMaxY(alignment)<=NSHeight(editor.window.contentView.bounds)-15 && NSMaxY(button)<=NSHeight(editor.window.contentView.bounds)-8, @"save action stays above bottom edge through resize");
             }
             Check([editor.window.title isEqual:@"新建任务"] && editor.datePopover == nil, @"new task uses unified sheet with collapsed date picker");
             editor.titleField.stringValue = @"尚未保存的标题"; editor.notesField.string = @"尚未保存的备注";
