@@ -108,7 +108,8 @@ int main(void){@autoreleasepool{
     Check(!SSValidatedSkillResults(@{@"format":@"am-course-results-v1",@"documents":@[stale]},@[document],@[],NULL),@"Skill cannot import another course");
     Check(!SSValidatedSkillResults(@{@"format":@"am-course-results-v1",@"documents":@[NSNull.null]},@[document],@[],NULL),@"malformed Skill document cannot mutate tasks");
     NSDictionary *scoped=@{@"mode":@"cloud",@"cloudCourses":@[@"student/math"]};
-    Check([SSCourseRecognitionSettings(scoped,@{@"fork":@"student/math"})[@"mode"] isEqual:@"cloud"],@"selected course can use cloud enhancement");
+    Check([SSCourseRecognitionSettings(scoped,@{@"fork":@"student/math"})[@"mode"] isEqual:@"rules"],@"routine scan never transmits selected course automatically");
+    NSMutableDictionary *approved=scoped.mutableCopy;approved[@"manualCloud"]=@YES;Check([SSCourseRecognitionSettings(approved,@{@"fork":@"student/math"})[@"mode"] isEqual:@"cloud"],@"selected course uses cloud only after active scope confirmation");
     Check([SSCourseRecognitionSettings(scoped,@{@"fork":@"student/other"})[@"mode"] isEqual:@"rules"],@"unselected course uses rules without transmitting material");
     NSMutableDictionary *linked=record.mutableCopy;linked[@"path"]=@"assignments/a.md";linked[@"snippet"]=@"阅读 [题目](../resources/exercises.md)。外链 [example](https://example.invalid/a.md)";
     NSDictionary *attachment=@{@"repository":@"teacher/course",@"path":@"resources/exercises.md",@"blobSHA":@"a1",@"text":@"解答指定题目。"};

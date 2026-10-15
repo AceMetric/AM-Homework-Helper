@@ -4,7 +4,7 @@
     DDLFormPanel *panel=[[DDLFormPanel alloc] initWithContentRect:NSMakeRect(0,0,680,620) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
     if(!(self=[super initWithWindow:panel]))return nil;
     self.appDelegate=owner;self.task=task;self.candidate=task[@"_reviewCandidate"];
-    panel.title=self.candidate ? ([task[@"_existing"] boolValue] ? @"审核更新":@"审核作业"):(task ? @"编辑任务":@"新建任务");panel.minSize=NSMakeSize(560,500);panel.releasedWhenClosed=NO;
+    panel.title=self.candidate ? ([task[@"_existing"] boolValue] ? @"审核更新":@"审核作业"):(task ? @"编辑任务":@"新建任务");panel.minSize=NSMakeSize(560,500);panel.releasedWhenClosed=NO;panel.delegate=owner;
     Surface *root=Box(Canvas(),0);panel.contentView=root;
     NSScrollView *scroll=NSScrollView.new;scroll.hasVerticalScroller=YES;scroll.autohidesScrollers=YES;scroll.drawsBackground=NO;
     NSStackView *body=[NSStackView stackViewWithViews:@[]];body.orientation=NSUserInterfaceLayoutOrientationVertical;body.alignment=NSLayoutAttributeLeading;body.spacing=16;body.edgeInsets=NSEdgeInsetsMake(20,24,20,24);self.editorBody=body;scroll.documentView=body;
@@ -31,7 +31,7 @@
         self.sourceScroll=NSScrollView.new;self.sourceScroll.hasVerticalScroller=YES;self.sourceScroll.autohidesScrollers=YES;
         NSTextView *source=[[PastelNotesView alloc] initWithFrame:NSMakeRect(0,0,600,120)];source.editable=NO;source.richText=NO;source.font=[NSFont systemFontOfSize:13];source.string=self.candidate[@"snippet"] ?: @"";source.autoresizingMask=NSViewWidthSizable;source.textContainer.widthTracksTextView=YES;self.sourceScroll.documentView=source;[self.sourceScroll.heightAnchor constraintEqualToConstant:120].active=YES;
         NSButton *show=Button(@"显示老师原文",self,@selector(toggleTeacherSource:),0);add(show);add(self.sourceScroll);self.sourceScroll.hidden=YES;
-        if([self.candidate[@"warnings"] count]){NSTextField *warning=Text([self.candidate[@"warnings"] componentsJoinedByString:@"；"],12,NSFontWeightRegular,NSColor.systemOrangeColor);warning.maximumNumberOfLines=0;add(warning);}
+        NSArray *warnings=[(self.candidate[@"warnings"] ?: @[]) arrayByAddingObjectsFromArray:self.candidate[@"contentWarnings"] ?: @[]];if(warnings.count){NSTextField *warning=Text([warnings componentsJoinedByString:@"；"],12,NSFontWeightRegular,NSColor.systemOrangeColor);warning.maximumNumberOfLines=0;add(warning);}
     }
     self.calendar=MonthView.new;self.calendar.month=self.selectedDate;self.calendar.selection=self.selectedDate;self.calendar.tasks=@[];
     self.reminderField=[[PastelTextField alloc] initWithFrame:NSZeroRect];self.reminderField.delegate=self;self.reminderField.stringValue=DDLFormatReminderOffsets(task ? DDLReminderOffsetsForTask(task):DDLDefaultReminderOffsets());

@@ -94,6 +94,9 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property BOOL discoveringExternal;
 @property NSDate *lastExternalDiscovery;
 @property NSMutableDictionary *externalOffsets;
+#ifdef DDL_TESTING
+@property(copy) NSArray * (^recognitionScopeSelector)(PFMaterials *materials);
+#endif
 @property BOOL loginActive;
 @property NSArray<NSButton *> *actionButtons;
 @property NSDictionary *reports;
@@ -244,7 +247,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)layoutContent {
     CGFloat w = NSWidth(self.view.bounds), h = NSHeight(self.view.bounds);
-    self.sections.hidden=self.inbox;self.typeFilter.hidden=self.inbox || self.sections.selectedSegment!=0;self.reviewFilter.hidden=!self.inbox;self.search.hidden=self.inbox;self.assistantButton.hidden=self.inbox;self.assistantImportButton.hidden=YES;self.assistantButton.enabled=self.assistantImportButton.enabled=!self.busy && !self.operationsPaused;
+    self.sections.hidden=self.inbox;self.typeFilter.hidden=self.inbox || self.sections.selectedSegment!=0;self.reviewFilter.hidden=!self.inbox;self.search.hidden=self.inbox;self.assistantButton.hidden=self.inbox;self.assistantImportButton.hidden=YES;self.assistantButton.enabled=self.assistantImportButton.enabled=!self.busy && !self.operationsPaused;BOOL modelConfigured=![SSRecognitionSettings()[@"mode"] isEqual:@"rules"];self.assistantButton.title=modelConfigured ? @"AI增强识别…":@"Skill识别…";self.assistantButton.action=modelConfigured ? @selector(enhanceRecognition:):@selector(exportSkillContext:);
     self.syncButton.hidden=self.inbox || ![self course];self.commitButton.hidden=self.syncButton.hidden;
     [self.view layoutSubtreeIfNeeded];CGFloat headerBottom=NSMaxY(self.nativeHeader.frame),statusTop=headerBottom+8,workspaceTop=statusTop+(self.statusLabel.stringValue.length || self.busy ? 36:0);
     self.statusLabel.frame=NSMakeRect(0,statusTop,w-160,24);self.progress.frame=NSMakeRect(0,statusTop+26,w,6);self.recoveryButton.frame=NSMakeRect(w-144,statusTop,144,28);
@@ -331,7 +334,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)more:(NSButton *)sender {
     NSMenu *menu = NSMenu.new; menu.autoenablesItems = NO; NSDictionary *course = [self course];
-    for (NSArray *entry in @[@[@"添加课程…", NSStringFromSelector(@selector(addFork:))], @[@"关联文件夹…", NSStringFromSelector(@selector(linkFolder:))], @[@"下载课程仓库…", NSStringFromSelector(@selector(cloneFork:))], @[@"打开文件夹", NSStringFromSelector(@selector(openFolder:))], @[@"继续处理冲突…", NSStringFromSelector(@selector(continueMerge:))], @[@"重试推送", NSStringFromSelector(@selector(push:))], @[@"启用 / 停用自动检查", NSStringFromSelector(@selector(toggleCourse:))], @[@"仓库详情", NSStringFromSelector(@selector(repositoryDetails:))], @[@"操作详情…", NSStringFromSelector(@selector(operationDetails:))],@[@"恢复课程访问…",NSStringFromSelector(@selector(restoreAccess:))],@[@"高级登录设置…",NSStringFromSelector(@selector(authenticationSettings:))], @[@"移除课程…", NSStringFromSelector(@selector(removeCourse:))]]) {
+    for (NSArray *entry in @[@[@"AI增强识别…",NSStringFromSelector(@selector(enhanceRecognition:))], @[@"Skill识别…",NSStringFromSelector(@selector(exportSkillContext:))], @[@"添加课程…", NSStringFromSelector(@selector(addFork:))], @[@"关联文件夹…", NSStringFromSelector(@selector(linkFolder:))], @[@"下载课程仓库…", NSStringFromSelector(@selector(cloneFork:))], @[@"打开文件夹", NSStringFromSelector(@selector(openFolder:))], @[@"继续处理冲突…", NSStringFromSelector(@selector(continueMerge:))], @[@"重试推送", NSStringFromSelector(@selector(push:))], @[@"启用 / 停用自动检查", NSStringFromSelector(@selector(toggleCourse:))], @[@"仓库详情", NSStringFromSelector(@selector(repositoryDetails:))], @[@"操作详情…", NSStringFromSelector(@selector(operationDetails:))],@[@"恢复课程访问…",NSStringFromSelector(@selector(restoreAccess:))],@[@"高级登录设置…",NSStringFromSelector(@selector(authenticationSettings:))], @[@"移除课程…", NSStringFromSelector(@selector(removeCourse:))]]) {
         NSMenuItem *item = [menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""]; item.target = self; item.enabled=course!=nil || item.action==@selector(addFork:) || item.action==@selector(authenticationSettings:);
         if (item.action == @selector(continueMerge:)) item.enabled = [course[@"pendingMergeTip"] length] > 0;
         if (item.action == @selector(push:)) item.enabled = [course[@"pushFailed"] boolValue];
@@ -535,7 +538,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.presentedSection=self.sections.selectedSegment;self.presentedType=self.typeFilter.indexOfSelectedItem;self.presentedReviewFilter=self.reviewFilter.indexOfSelectedItem;
     if(!self.inbox && self.sections.selectedSegment==3 && !self.discoveringExternal)dispatch_async(dispatch_get_main_queue(),^{[self discoverExternalSubmissions:NO];});
     NSError *historyError=nil;NSArray *storedHistory=AMSubmissionRecords(&historyError);if(historyError && !self.inbox && self.sections.selectedSegment==3)self.statusLabel.stringValue=historyError.localizedDescription;
-    NSMutableArray *history=NSMutableArray.array;for(NSDictionary *record in storedHistory ?: @[])if(![record[@"teacherHistoryExcluded"] boolValue] && (!course || [record[@"repository"] isEqual:course[@"fork"]])){NSMutableDictionary *row=record.mutableCopy;row[@"label"]=AMSubmissionStateLabel(record);[history insertObject:row atIndex:0];}[self.submissionHistory updateRecords:history busy:self.busy || self.operationsPaused];
+    NSMutableArray *history=NSMutableArray.array;for(NSDictionary *record in storedHistory ?: @[])if(![record[@"teacherHistoryExcluded"] boolValue] && (!course || [record[@"repository"] isEqual:course[@"fork"]])){NSMutableDictionary *row=record.mutableCopy;row[@"label"]=AMSubmissionStateLabel(record);[history insertObject:row atIndex:0];}[self.submissionHistory updateReading:self.discoveringExternal];[self.submissionHistory updateRecords:history busy:self.busy || self.operationsPaused || self.discoveringExternal];
     [self layoutContent]; self.refreshing = NO;
     if (self.stateChanged) self.stateChanged();
 }
@@ -789,6 +792,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 #include "AMSubmissionUI.inc"
 #include "AMExternalSubmissions.inc"
+#include "AMCourseEnhancement.inc"
 - (void)configurePreflight:(SSSubmissionController *)sheet course:(NSDictionary *)course tasks:(NSArray *)tasks {
     course=course.copy;
     __weak typeof(self) owner=self;

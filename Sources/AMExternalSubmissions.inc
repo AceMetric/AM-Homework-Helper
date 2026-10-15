@@ -3,7 +3,7 @@
     if(!loadMore && self.lastExternalDiscovery && -self.lastExternalDiscovery.timeIntervalSinceNow<60)return;
     if(!self.externalOffsets)self.externalOffsets=NSMutableDictionary.dictionary;
     NSArray *courses=loadMore && [self course] ? @[[self course].copy]:self.courses.copy;
-    NSDictionary *offsets=self.externalOffsets.copy;self.discoveringExternal=YES;self.lastExternalDiscovery=NSDate.date;
+    NSDictionary *offsets=self.externalOffsets.copy;self.discoveringExternal=YES;self.lastExternalDiscovery=NSDate.date;[self refreshPresentation];
     dispatch_async(self.queue,^{
         NSMutableArray *failures=NSMutableArray.array;NSMutableDictionary *advanced=NSMutableDictionary.dictionary;NSError *tokenError=nil;NSString *token=self.connected ? [self.github accessToken:&tokenError]:nil;
         for(NSDictionary *course in courses){if(![course[@"path"] length])continue;NSError *error=nil;SSGit *reader=SSGit.new;reader.identityVerifier=self.git.identityVerifier;reader.readsCancellable=YES;
@@ -13,7 +13,7 @@
                 if(existing){if([existing[@"origin"] isEqual:@"external"])[pending addObject:existing];continue;}
                 NSMutableDictionary *record=row.mutableCopy;record[@"id"]=NSUUID.UUID.UUIDString;record[@"repository"]=course[@"fork"];record[@"branch"]=course[@"branch"];record[@"state"]=@"uncertain";record[@"taskIDs"]=@[];if(!AMStoreSubmission(record,&error)){[failures addObject:error.localizedDescription];continue;}[pending addObject:record];
             }
-            advanced[course[@"fork"]]=@(MAX([offsets[course[@"fork"]] unsignedIntegerValue],offset+rows.count));
+            advanced[course[@"fork"]]=@(MAX([offsets[course[@"fork"]] unsignedIntegerValue],offset+50));
             NSMutableArray *toVerify=NSMutableArray.array;for(NSDictionary *record in pending)if(!record[@"checkedAt"] || -[record[@"checkedAt"] timeIntervalSinceNow]>300)[toVerify addObject:record];
             if(token.length && toVerify.count){NSArray *verified=[reader verifyExternalRecords:toVerify course:course token:token error:&error];if(verified){for(NSDictionary *record in verified)AMStoreSubmission(record,NULL);}else if(error)[failures addObject:[NSString stringWithFormat:@"%@：远端暂未核验，保留本机记录。",course[@"name"] ?: @"课程"]];}
         }

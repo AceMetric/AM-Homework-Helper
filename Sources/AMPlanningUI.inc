@@ -20,7 +20,7 @@
     else if([action isEqual:@"delete"] && subID.length)[children removeObjectAtIndex:index];
     else if(([action isEqual:@"up"] || [action isEqual:@"down"]) && subID.length){NSInteger destination=(NSInteger)index+([action isEqual:@"up"] ? -1:1);if(destination<0 || destination>=(NSInteger)children.count)return YES;[children exchangeObjectAtIndex:index withObjectAtIndex:(NSUInteger)destination];}
     else return NO;
-    task[@"subtasks"]=children;
+    task[@"subtasks"]=children;if(task[@"seriesID"])task[@"occurrenceEdited"]=@YES;
     NSMutableArray *tasks=[[self snapshot] mutableCopy];NSUInteger position=[tasks indexOfObjectPassingTest:^BOOL(NSDictionary *item,NSUInteger i,BOOL *stop){return [item[@"id"] isEqual:identifier];}];if(position==NSNotFound)return NO;tasks[position]=task;
     NSError *error=nil;BOOL saved=[self replaceTasks:tasks action:[action isEqual:@"set-plan"] ? @"调整计划":@"修改子任务" error:&error];self.notice=saved ? @"已保存，可按 ⌘Z 撤销。":(error.localizedDescription ?: @"未能保存，请重试。");[self render];return saved;
 }

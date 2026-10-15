@@ -448,6 +448,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)refreshReminders;
 - (void)refreshPermission;
 - (void)generateRecurrencesThrough:(NSDate *)end;
+- (void)generateRecurrencesFrom:(NSDate *)from through:(NSDate *)end;
 - (BOOL)applyRecurrenceToTask:(NSMutableDictionary *)task tasks:(NSMutableArray *)tasks error:(NSError **)error;
 - (void)updateCalendarHeaderState;
 - (void)scrollCalendarToMonth:(NSDate *)targetMonth animated:(BOOL)animated;
@@ -491,7 +492,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (notification.object == self.timePicker) { [self timeChanged:self.timePicker]; return; }
     if (notification.object == self.reminderField) { [self validateReminders]; return; }
     NSDate *date = DDLParseDate(self.deadlineField.stringValue, NSDate.date, self.teacherCalendar);
-    if (date) { self.selectedDate = date; self.calendar.selection = date; self.calendar.month = date; [self.calendar reload]; self.timePicker.stringValue = [self timeString:date]; }
+    if (date) { self.selectedDate = date; self.calendar.selection = date; self.calendar.month = date; [self.calendar reload]; self.timePicker.stringValue = [self timeString:date];self.nativeDeadlinePicker.dateValue=date; }
     [self validateDate];
 }
 - (void)validateReminders {
@@ -530,7 +531,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSDate *date = [self parsedTime];
     if (!date) { self.validation.stringValue = @"时间格式：00:00–23:59"; self.validation.textColor = NSColor.systemRedColor; return; }
     // Keep the active field editor and caret intact while typing.
-    self.selectedDate = date; self.deadlineField.stringValue = [self formatTeacherDate:date];
+    self.selectedDate = date;self.nativeDeadlinePicker.dateValue=date; self.deadlineField.stringValue = [self formatTeacherDate:date];
     self.calendar.selection = date; self.calendar.month = date; [self.calendar reload]; [self validateDate];
 }
 - (void)stepTime:(NSButton *)sender {
@@ -608,6 +609,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)focusInput:(NSView *)field { [field scrollRectToVisible:field.bounds]; [self.window makeFirstResponder:field]; }
 - (void)save:(id)sender {
     if(![self.window makeFirstResponder:nil])return;
+    if(self.nativeDeadlinePicker && ![self.nativeDeadlinePicker.dateValue isEqual:self.selectedDate])[self updateDate:self.nativeDeadlinePicker.dateValue];
     NSString *title = [self.titleField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!title.length) { self.validation.stringValue = @"先写一个任务名称。"; self.validation.textColor = NSColor.systemRedColor; [self focusInput:self.titleField]; return; }
     if (![self validateAssignmentDate]) { [self focusInput:self.deadlineField]; return; }
@@ -827,6 +829,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (NSUndoManager *)windowWillReturnUndoManager:(NSWindow *)window { return self.taskUndo; }
 - (BOOL)windowShouldClose:(NSWindow *)window {
+    if(window==self.editor.window){
+        if(self.editor.hasUnsavedChanges){NSAlert *alert=NSAlert.new;alert.messageText=@"保存任务修改？";[alert addButtonWithTitle:@"保存"];[alert addButtonWithTitle:@"不保存"];[alert addButtonWithTitle:@"继续编辑"];NSModalResponse choice=[alert runModal];if(choice==NSAlertFirstButtonReturn){[self.editor save:nil];return NO;}if(choice!=NSAlertSecondButtonReturn)return NO;}
+        [self closeEditor];return NO;
+    }
     if(window==self.quickWindow){NSError *error=nil;if(![self persistQuick:&error]){[self.quickController setNotice:@"草稿未保存，请重试。" busy:NO];return NO;}[self closeQuick];return NO;}
     if (window==self.settingsWindow) { [self dismissSettings]; return NO; }
     return YES;
@@ -1281,7 +1287,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     [self scrollCalendarToMonth:targetMonth animated:YES];
 }
 - (void)scrollCalendarToMonth:(NSDate *)targetMonth animated:(BOOL)animated {
-    [self generateRecurrencesThrough:[Cal() dateByAddingUnit:NSCalendarUnitMonth value:2 toDate:targetMonth options:0]];
+    NSDate *from=nil;[Cal() rangeOfUnit:NSCalendarUnitMonth startDate:&from interval:NULL forDate:targetMonth];NSDate *today=[Cal() startOfDayForDate:NSDate.date];if([from compare:today]==NSOrderedAscending)from=today;[self generateRecurrencesFrom:from through:[Cal() dateByAddingUnit:NSCalendarUnitMonth value:2 toDate:targetMonth options:0]];
     if (!targetMonth || self.calendarSectionHeight <= 0 || !self.calendarBaseMonth) return;
     NSDate *baseStart = nil, *targetStart = nil;
     [Cal() rangeOfUnit:NSCalendarUnitMonth startDate:&baseStart interval:NULL forDate:self.calendarBaseMonth];
