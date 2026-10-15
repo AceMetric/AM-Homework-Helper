@@ -42,7 +42,7 @@ python3 Tools/prepare-update.py --notes /path/to/public-release-notes.md
 构建和签名脚本只准备本机文件。维护者在检查通过后实际上传 Release 并部署 Pages；不把更新私钥交给 GitHub Actions，也不创建 PR。
 
 1. 检查 `Info.plist` 版本与构建号，完成上述回归、签名与隐私检查。
-2. 向个人仓库 `AceMetric/AM-Homework-Helper` 的版本标签 `v<版本>` 发布固定的 ZIP、校验文件、独立安装说明及必要公开文档。已发布的版本附件不原地替换。
+2. 创建版本标签时，使用已核验 GitHub 账户的 `ID+用户名@users.noreply.github.com` 匿名邮箱作为 tagger，不继承本机私人邮箱。**标签创建后、推送前**再运行 `python3 Tools/security-audit.py --history`，检查新标签元数据；构建阶段的历史扫描不包含此后创建的标签。通过后再向个人仓库 `AceMetric/AM-Homework-Helper` 的版本标签 `v<版本>` 发布固定的 ZIP、校验文件、独立安装说明及必要公开文档。已发布的版本附件不原地替换。
 3. 确认 Release 附件可通过 HTTPS 下载，且下载内容与本机校验值一致。
 4. Pages 使用独立 `gh-pages` 分支的根目录并强制 HTTPS。分支仅含公开首页、`.nojekyll`、`updates/appcast.xml` 与签名 Markdown 更新说明；保持签名字节，不经过 Jekyll 转换。只发布显式选择的文件，不部署整个工作区或 `build/`。
 5. 用上一版应用检查公开源，确认新版本、更新说明和升级成功。失败时撤下对应清单条目，重新签名发布；已发布 ZIP 保持不变，用更高构建号发布修复。

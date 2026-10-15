@@ -19,6 +19,8 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Source and tag privacy preflight
+        run: python3 Tools/security-audit.py --history
       - name: Native build
         run: zsh build.sh
       - name: Dates and reminders
