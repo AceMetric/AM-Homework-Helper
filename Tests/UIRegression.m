@@ -89,6 +89,10 @@ int main(int argc, const char *argv[]) {
         for (NSView *view in adjacentCell.subviews) if ([view isKindOfClass:CalendarTaskButton.class]) adjacentEvents++;
         CheckUI(adjacentCell != nil && !adjacentCell.inMonth && adjacentEvents == 0, @"adjacent-month dates hide schedule entries");
         CheckUI([adjacentCell.fill isEqual:[Panel() blendedColorWithFraction:0.48 ofColor:Line()]], @"adjacent-month dates use deeper background");
+        OverviewGrid *holidayGrid=OverviewGrid.new;holidayGrid.frame=NSMakeRect(0,0,560,540);holidayGrid.month=DDLParseDate(@"2026-10-01 12:00",NSDate.date,Cal());holidayGrid.selection=DDLParseDate(@"2026-10-15 12:00",NSDate.date,Cal());holidayGrid.tasksByDay=@{};[holidayGrid reload];
+        NSUInteger holidayMarks=0;BOOL makeup=NO,weekend=NO;
+        for(NSView *view in holidayGrid.subviews)if([view isKindOfClass:CalendarDayCell.class]){CalendarDayCell *cell=(id)view;if(!cell.inMonth)continue;for(NSView *badge in cell.subviews)if([badge.identifier isEqual:@"calendar-day-kind"]){NSTextField *label=(id)badge.subviews.firstObject;CheckUI(NSWidth(label.frame)>[label intrinsicContentSize].width,@"holiday and weekend names have full readable width");if([cell.dayKind isEqual:@"holiday"])holidayMarks++;if([cell.dayKind isEqual:@"makeup"])makeup=!cell.weekend;if([cell.dayKind isEqual:@"weekend"])weekend=cell.weekend;}}
+        CheckUI(holidayMarks==7 && makeup && weekend,@"October visibly marks all seven national holiday days, makeup workday and weekends");
         NSButton *today = [NSButton new]; today.tag = 0; [app navigateCalendar:today];
         [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.4]];
         NSDate *selectedDay = app.selectedDay, *month = app.month;

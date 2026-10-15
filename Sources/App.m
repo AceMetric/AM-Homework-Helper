@@ -173,6 +173,7 @@ static NSColor *EventFill(NSDictionary *task) {
 @property NSDate *date;
 @property BOOL inMonth;
 @property BOOL weekend;
+@property NSString *dayKind;
 @property BOOL hovered;
 @property NSTrackingArea *hoverArea;
 - (void)syncHoverAtWindowPoint:(NSPoint)point;
@@ -202,7 +203,7 @@ static NSColor *EventFill(NSDictionary *task) {
 static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (selected) { cell.fill = Emphasis(); cell.gradientEnd = Tint(); cell.stroke = Accent(); }
     else if (!cell.inMonth) { cell.fill = [Panel() blendedColorWithFraction:0.48 ofColor:Line()]; cell.gradientEnd = [Panel() blendedColorWithFraction:0.24 ofColor:Line()]; cell.stroke = Line(); }
-    else if (cell.weekend) { cell.fill = [Card() blendedColorWithFraction:0.22 ofColor:Panel()]; cell.gradientEnd = Panel(); cell.stroke = Line(); }
+    else if (cell.weekend) { cell.fill=[cell.dayKind isEqual:@"holiday"] ? [Canvas() blendedColorWithFraction:0.07 ofColor:Accent()]:[Canvas() blendedColorWithFraction:0.35 ofColor:Panel()];cell.gradientEnd=cell.fill;cell.stroke=Line(); }
     else { cell.fill = Card(); cell.gradientEnd = Canvas(); cell.stroke = Line(); }
     cell.needsDisplay = YES;
 }
@@ -252,13 +253,15 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         BOOL selected = [calendar isDate:date inSameDayAsDate:self.selection];
         BOOL today = [calendar isDateInToday:date];
         NSArray *tasks = inMonth ? (self.tasksByDay[[calendar startOfDayForDate:date]] ?: @[]) : @[];
-        CalendarDayCell *cell = [CalendarDayCell new]; cell.date = date; cell.inMonth = inMonth; cell.weekend = [DDLChinaDayInfo(date,calendar,SSCalendarOverrides())[@"rest"] boolValue]; cell.radius = 9;
+        NSDictionary *info=DDLChinaDayInfo(date,calendar,SSCalendarOverrides());CalendarDayCell *cell = [CalendarDayCell new]; cell.date = date; cell.inMonth = inMonth; cell.weekend = [info[@"rest"] boolValue];cell.dayKind=info[@"kind"]; cell.radius = 9;
         ConfigureCalendarCell(cell, selected);
         Put(self, cell, 8 + (i % 7) * cellW + 2, 36 + (i / 7) * cellH + 2, cellW - 4, cellH - 4);
         CallbackButton *hit = [[CallbackButton alloc] initWithFrame:cell.bounds]; hit.title = @""; hit.tone = 3; hit.allowsHoverFill = NO; hit.accessibilityLabel = [NSString stringWithFormat:@"%@，%lu 项任务", DDLFormatDate(date, @"yyyy年M月d日 EEEE"), tasks.count]; hit.onClick = ^{ if (weakSelf.onSelect) weakSelf.onSelect(date, nil); }; [cell addSubview:hit];
         CallbackButton *number = [[CallbackButton alloc] initWithFrame:NSZeroRect]; number.title = DDLFormatDate(date, @"d"); number.tone = today ? 1 : 3; number.allowsHoverFill = NO; number.font = [NSFont systemFontOfSize:12]; number.onClick = hit.onClick; number.accessibilityLabel = hit.accessibilityLabel;
-        NSDictionary *info=DDLChinaDayInfo(date,calendar,SSCalendarOverrides());hit.toolTip=[NSString stringWithFormat:@"%@ · %@",info[@"name"],info[@"source"]];hit.accessibilityLabel=[hit.accessibilityLabel stringByAppendingFormat:@"，%@",info[@"name"]];
-        if(![info[@"kind"] isEqual:@"workday"]){NSTextField *holiday=Text(info[@"name"],9,NSFontWeightRegular,Muted());holiday.toolTip=hit.toolTip;Put(cell,holiday,48,8,MAX(20,cellW-90),18);}
+        hit.toolTip=[NSString stringWithFormat:@"%@ · %@",info[@"name"],info[@"source"]];hit.accessibilityLabel=[hit.accessibilityLabel stringByAppendingFormat:@"，%@",info[@"name"]];
+        BOOL showDayInfo=![info[@"kind"] isEqual:@"workday"];
+        CGFloat eventStart=showDayInfo ? 52:32;
+        if(showDayInfo){BOOL marked=![info[@"kind"] isEqual:@"weekend"];NSString *caption=[info[@"kind"] isEqual:@"holiday"] ? [info[@"name"] stringByAppendingString:@"（休）"]:([info[@"kind"] isEqual:@"makeup"] ? @"调休（班）":info[@"name"]);if([caption sizeWithAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:10 weight:NSFontWeightMedium]}].width>cellW-26)caption=[info[@"kind"] isEqual:@"makeup"] ? @"补班":info[@"name"];Surface *badge=Box(marked ? ([info[@"rest"] boolValue] ? Tint():Panel()):nil,6);badge.identifier=@"calendar-day-kind";badge.toolTip=hit.toolTip;Put(cell,badge,6,32,cellW-16,18);NSTextField *holiday=Text(caption,10,NSFontWeightMedium,marked && [info[@"rest"] boolValue] ? Accent():Muted());holiday.toolTip=hit.toolTip;Put(badge,holiday,5,1,cellW-26,16);}
         Put(cell, number, 6, 4, 40, 27); if (!inMonth) number.alphaValue = 0.45;
         if (tasks.count) {
             NSInteger done = 0; for (NSDictionary *t in tasks) if ([t[@"completed"] boolValue]) done++;
@@ -266,19 +269,19 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
             Put(cell, count, cellW - 48, 11, 32, 15);
         }
         CGFloat eventHeight = cellH < 90 ? 20 : 23, step = eventHeight + 2;
-        NSInteger capacity = MAX(1, (NSInteger)((cellH - 38) / step));
-        NSInteger shown = MIN((NSInteger)tasks.count, (NSInteger)tasks.count > capacity ? MAX(1, (NSInteger)((cellH - 56) / step)) : capacity);
+        NSInteger capacity = MAX(1, (NSInteger)((cellH - eventStart - 6) / step));
+        NSInteger shown = MIN((NSInteger)tasks.count, (NSInteger)tasks.count > capacity ? MAX(1, (NSInteger)((cellH - eventStart - 24) / step)) : capacity);
         for (NSInteger j = 0; j < shown; j++) {
             NSDictionary *task = tasks[j]; CalendarTaskButton *event = [[CalendarTaskButton alloc] initWithFrame:NSZeroRect]; event.task = task; event.title = task[@"title"];
             NSString *state = [task[@"completed"] boolValue] ? @"已完成" : ([task[@"due"] timeIntervalSinceNow] < 0 ? @"已逾期" : @"待完成");
             event.accessibilityLabel = [NSString stringWithFormat:@"%@：%@，%@", state, task[@"title"], DDLFormatDate(task[@"due"], @"M月d日 HH:mm")];
             event.toolTip = [NSString stringWithFormat:@"%@ · %@\n[%@] %@\n点击查看详情", state, task[@"title"], task[@"subject"], DDLFormatDate(task[@"due"], @"yyyy-MM-dd HH:mm")];
             event.onClick = ^{ if (weakSelf.onSelect) weakSelf.onSelect(date, task[@"id"]); };
-            Put(cell, event, 6, 32 + j * step, cellW - 16, eventHeight);
+            Put(cell, event, 6, eventStart + j * step, cellW - 16, eventHeight);
         }
         if ((NSInteger)tasks.count > shown) {
             CallbackButton *more = [[CallbackButton alloc] initWithFrame:NSZeroRect]; more.title = [NSString stringWithFormat:@"另 %lu 项 · 查看全部", tasks.count - shown]; more.font = [NSFont systemFontOfSize:9]; more.tone = 3; more.allowsHoverFill = NO; more.onClick = hit.onClick; more.accessibilityLabel = [NSString stringWithFormat:@"%@，查看全部 %lu 项任务", DDLFormatDate(date, @"M月d日"), tasks.count];
-            Put(cell, more, 5, 32 + shown * step, cellW - 14, 16);
+            Put(cell, more, 5, eventStart + shown * step, cellW - 14, 16);
         }
     }
 }
@@ -1256,7 +1259,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSInteger completed = 0; for (NSDictionary *task in dayTasks) if ([task[@"completed"] boolValue]) completed++;
     NSString *detail = [NSString stringWithFormat:@"%@ · %lu 项待做 · %ld 项已完成", DDLFormatDate(self.selectedDay, @"EEEE"), dayTasks.count - completed, (long)completed];
     Put(self.agenda, Text(detail, 10, NSFontWeightRegular, Muted()), 18, 62, 264, 18);
-    Put(self.agenda, self.agendaScroll, 12, 80, NSWidth(self.agenda.bounds) - 24, MAX(64, NSHeight(self.agenda.bounds) - 96));
+    NSDictionary *dayInfo=DDLChinaDayInfo(self.selectedDay,Cal(),self.preview ? @{}:SSCalendarOverrides());NSTextField *dayKind=Text([NSString stringWithFormat:@"%@ · %@",dayInfo[@"name"],dayInfo[@"source"]],11,NSFontWeightMedium,[dayInfo[@"kind"] isEqual:@"holiday"] ? Accent():Muted());dayKind.identifier=@"calendar-selected-day-kind";dayKind.maximumNumberOfLines=2;dayKind.lineBreakMode=NSLineBreakByWordWrapping;dayKind.toolTip=dayKind.stringValue;Put(self.agenda,dayKind,18,84,NSWidth(self.agenda.bounds)-36,34);
+    Put(self.agenda, self.agendaScroll, 12, 126, NSWidth(self.agenda.bounds) - 24, MAX(64, NSHeight(self.agenda.bounds) - 142));
     CGFloat w = self.agendaScroll.contentSize.width - 4, y = 0, focusY = -1;
     for (NSDictionary *task in dayTasks) {
         if ([self.focusedTaskID isEqual:task[@"id"]]) focusY = y;
