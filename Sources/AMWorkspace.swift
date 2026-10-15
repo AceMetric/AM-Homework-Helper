@@ -12,6 +12,34 @@ import SwiftUI
     @objc public static var accent:NSColor {.controlAccentColor}
     @objc public static var selection:NSColor {accent.withAlphaComponent(0.12)}
 }
+// Preserve DisclosureGroup semantics while making its whole header a target.
+private struct WorkspaceDisclosureStyle:DisclosureGroupStyle {
+    func makeBody(configuration:Configuration)->some View {
+        VStack(alignment:.leading,spacing:8) {
+            Button {configuration.isExpanded.toggle()} label:{
+                HStack(spacing:6) {
+                    Image(systemName:configuration.isExpanded ? "chevron.down":"chevron.right")
+                        .font(.system(size:10,weight:.semibold)).foregroundStyle(.secondary).frame(width:12)
+                    configuration.label
+                    Spacer(minLength:0)
+                }.frame(maxWidth:.infinity,minHeight:34,alignment:.leading).contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityValue(configuration.isExpanded ? "已展开":"已收起")
+            if configuration.isExpanded {configuration.content.padding(.leading,18)}
+        }
+    }
+}
+private struct WorkspaceDisclosure<Content:View>:View {
+    let title:String
+    let content:Content
+    init(_ title:String,@ViewBuilder content:()->Content){self.title=title;self.content=content()}
+    var body:some View {DisclosureGroup(title){content}.disclosureGroupStyle(WorkspaceDisclosureStyle())}
+}
+private struct WorkspaceExpandedSection<Content:View>:View {
+    let title:String
+    let content:Content
+    init(_ title:String,@ViewBuilder content:()->Content){self.title=title;self.content=content()}
+    var body:some View {VStack(alignment:.leading,spacing:10){Text(title).font(.subheadline.weight(.medium));content}.frame(maxWidth:.infinity,alignment:.leading)}
+}
 // Use the system glass button implementations; older OS/SDK lanes retain native controls.
 private extension View {
     @ViewBuilder func amPrimaryAction()->some View {
@@ -320,7 +348,7 @@ private struct ReviewDetails: View {
             }.frame(maxWidth:.infinity,alignment:.leading)
                 .environment(\.timeZone,TimeZone(identifier:string(record,"timeZone")) ?? .current)
             VStack(alignment:.leading,spacing:6) { Text("备注（可修改或清空）").fontWeight(.medium); TextEditor(text:editing(\.notes)).frame(minHeight:140,maxHeight:180).padding(6).background(Color(nsColor:.textBackgroundColor)).clipShape(RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).stroke(Color(nsColor:AMAppearance.separator),lineWidth:0.5)) }
-            DisclosureGroup("老师原文与来源") {
+            WorkspaceDisclosure("老师原文与来源") {
                 VStack(alignment:.leading,spacing:8) {
                     Text("\(string(record,"repository")) / \(string(record,"path")):\((record["line"] as? NSNumber)?.intValue ?? 1)").font(.caption).foregroundStyle(.secondary)
                     Text(string(record,"snippet")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)
@@ -553,7 +581,7 @@ private struct SettingsWorkspace:View {
                 WorkspaceSection("作业识别") {
                     VStack(alignment:.leading,spacing:12) {
                         Label("规则检查免费可用；复杂文档可交给助手识别。",systemImage:"checkmark.shield").foregroundStyle(.secondary)
-                        DisclosureGroup("高级识别：本地模型与云 API") {
+                        WorkspaceExpandedSection("本地模型与云 API") {
                             VStack(alignment:.leading,spacing:12) {
                         Picker("识别方式",selection:binding(\.mode)){Text("免费规则").tag("rules");Text("本地 Ollama").tag("local");Text("云端 API").tag("cloud")}
                         if state.mode != "rules" {
@@ -565,7 +593,7 @@ private struct SettingsWorkspace:View {
                                 Toggle("检查新作业时自动使用本地模型",isOn:binding(\.localAutomatic))
                                 Text("关闭后仍可在课程“更多”中手动重新识别。规则结果先显示，模型随后补充。").foregroundStyle(.secondary)
                                 if !state.localStatus.isEmpty {Text(state.localStatus).textSelection(.enabled)}
-                                DisclosureGroup("高级：服务地址与模型名称"){VStack(spacing:8){TextField("本地地址",text:binding(\.endpoint)).textFieldStyle(.roundedBorder);TextField("已安装模型名称",text:binding(\.model)).textFieldStyle(.roundedBorder)}}
+                                WorkspaceExpandedSection("服务地址与模型名称"){VStack(spacing:8){TextField("本地地址",text:binding(\.endpoint)).textFieldStyle(.roundedBorder);TextField("已安装模型名称",text:binding(\.model)).textFieldStyle(.roundedBorder)}}
                             }
                             if state.mode == "cloud" {
                                 SecureField("此服务的 API 密钥（留空保留原值）",text:binding(\.key)).textFieldStyle(.roundedBorder)
@@ -578,7 +606,7 @@ private struct SettingsWorkspace:View {
                             }
                             else {Text("仅使用本机已安装模型，不自动下载；失败后继续规则识别。").foregroundStyle(.secondary)}
                         }
-                            }.padding(.top,12)
+                            }
                         }
                         Toggle("自动加入完整明确日期的新作业",isOn:binding(\.automatic))
                         Text("相对日期、缺失时间和考试不会自动加入；已有任务更新仍需审核。").foregroundStyle(.secondary)
@@ -586,13 +614,13 @@ private struct SettingsWorkspace:View {
                         if !state.message.isEmpty {Text(state.message).textSelection(.enabled)}
                     }.padding(8).frame(maxWidth:.infinity,alignment:.leading)
                 }
-                WorkspaceSection("助手识别 · Skill") {VStack(alignment:.leading,spacing:12){Text("准备多门课程的新材料，复制指令交给助手；结果自动接回待审核，无需手动导入。").foregroundStyle(.secondary);HStack{Button("助手识别"){state.action?("skill-export")}.amPrimaryAction();Button("批次与进度…"){state.action?("skill-status")};Spacer()};DisclosureGroup("课程与兼容操作"){HStack{Button("调整课程…"){state.action?("skill-courses")};Button("重新分析全部…"){state.action?("skill-all")};Button("手动导入…"){state.action?("skill-import")}}};Text("不会自动发送老师原文或启动付费分析。").font(.caption).foregroundStyle(.secondary)}}
+                WorkspaceSection("助手识别 · Skill") {VStack(alignment:.leading,spacing:12){Text("准备多门课程的新材料，复制指令交给助手；结果自动接回待审核，无需手动导入。").foregroundStyle(.secondary);HStack{Button("助手识别"){state.action?("skill-export")}.amPrimaryAction();Button("批次与进度…"){state.action?("skill-status")};Spacer()};WorkspaceExpandedSection("课程与兼容操作"){HStack{Button("调整课程…"){state.action?("skill-courses")};Button("重新分析全部…"){state.action?("skill-all")};Button("手动导入…"){state.action?("skill-import")}}};Text("不会自动发送老师原文或启动付费分析。").font(.caption).foregroundStyle(.secondary)}}
                 WorkspaceSection("作业文件在线复核") {VStack(alignment:.leading,spacing:10){Text("Gemini 综合检查整份项目、代码与图片。使用自己的免费项目，仅主动复核时发送所选材料。").foregroundStyle(.secondary);Button("配置在线复核…"){state.action?("online-review")};Text("与老师作业识别分开；本机检查和 Skill 仍然可用。").font(.caption).foregroundStyle(.secondary)}}
                 WorkspaceSection("账户与提醒") {HStack{Button("GitHub 账户…"){state.action?("account")};Button("提醒设置与测试…"){state.action?("notifications")};Button("排查提醒…"){state.action?("notification-help")};Spacer()}.padding(8)}
                 WorkspaceSection("软件更新") {HStack{Button("检查更新…"){state.action?("check-update")};Button("自动检查设置…"){state.action?("updates")};Spacer()}.padding(8)}
                 WorkspaceSection("日历与假期") {Button("设置本机休息日／工作日…"){state.action?("calendar-overrides")};Text("默认标记中国大陆周末、法定假期和调休；不会修改老师截止时间。").font(.caption).foregroundStyle(.secondary)}
                 WorkspaceSection("数据与反馈"){HStack{Button("恢复任务…"){state.action?("recovery")};Button("诊断与反馈…"){state.action?("diagnostics")};Spacer()}}
-                DisclosureGroup("高级设置") {Button("GitHub 登录与兼容设置…"){state.action?("advanced")}.padding(.top,8)}
+                WorkspaceExpandedSection("高级设置") {Button("GitHub 登录与兼容设置…"){state.action?("advanced")}.padding(.top,8)}
             }.padding(24)
         }}.onChange(of:state.mode){state.changeMode($0)}.font(.system(size:13)).frame(minWidth:540,minHeight:520).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions()
     }
@@ -789,14 +817,14 @@ private struct SetupWorkspace:View {
         if state.step==0 {
             ScrollView {VStack(alignment:.leading,spacing:16){
                 Label("用浏览器连接 GitHub，无需 SSH 或额外安装工具。",systemImage:"person.crop.circle.badge.checkmark")
-                DisclosureGroup("登录权限与隐私说明"){Text(official ? "授权页面会显示 GitHub CLI，这是软件内置的 GitHub 官方登录工具。它申请 repo、read:org、gist 权限，范围比所选课程更宽；本应用仅处理你选择的课程，登录令牌只保存在这台 Mac 的钥匙串。":"你在高级设置中选择了旧兼容登录，不使用内置官方工具。旧 OAuth 可能受组织应用限制，旧 GitHub App 需单独安装授权及本机上游凭据。登录令牌只存本机。").foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}
+                WorkspaceDisclosure("登录权限与隐私说明"){Text(official ? "授权页面会显示 GitHub CLI，这是软件内置的 GitHub 官方登录工具。它申请 repo、read:org、gist 权限，范围比所选课程更宽；本应用仅处理你选择的课程，登录令牌只保存在这台 Mac 的钥匙串。":"你在高级设置中选择了旧兼容登录，不使用内置官方工具。旧 OAuth 可能受组织应用限制，旧 GitHub App 需单独安装授权及本机上游凭据。登录令牌只存本机。").foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}
                 Text(official ? "不需要申请批准本项目应用。GitHub 登录、双重验证及学校 SSO 仍由你本人完成，课程访问权限需要已具备。":"如需简化配置，可取消引导，在高级登录设置选择 GitHub 官方登录。").foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)
                 if !string(state.context,"code").isEmpty {
                     Text(string(state.context,"code")).font(.system(size:30,weight:.semibold,design:.monospaced)).textSelection(.enabled).accessibilityLabel("GitHub 验证码")
                     HStack {Button("复制代码"){state.send("copyCode")};Button("打开 GitHub"){state.send("openLogin")}}
                     Text("在网页输入上方代码并确认。完成后这里会自动继续。").foregroundStyle(.secondary)
                 }
-                if !string(state.context,"detail").isEmpty {DisclosureGroup("详情"){Text(string(state.context,"detail")).font(.caption).textSelection(.enabled)}}
+                if !string(state.context,"detail").isEmpty {WorkspaceDisclosure("详情"){Text(string(state.context,"detail")).font(.caption).textSelection(.enabled)}}
             }.frame(maxWidth:.infinity,alignment:.leading)}
         } else if state.step==1 {
             Text("勾选自己的课程 fork，老师仓库和读取权限将自动核验。").foregroundStyle(.secondary)
@@ -837,7 +865,7 @@ private struct SetupWorkspace:View {
                 if state.step==2,!options.isEmpty {Picker("已有目录",selection:Binding(get:{state.paths[key] ?? ""},set:{state.paths[key]=$0})){Text("请选择").tag("");ForEach(options,id:\.self){Text($0).tag($0)}}.disabled(state.busy)}
                 if state.step==2,let path=state.paths[key],!path.isEmpty {Text(path).font(.caption).textSelection(.enabled).lineLimit(2)}
                 if !string(record,"status").isEmpty {Text(string(record,"status")).foregroundStyle(flag(record,"invalid") ? Color.orange:Color.secondary).fixedSize(horizontal:false,vertical:true)}
-                if !string(record,"detail").isEmpty {DisclosureGroup("详情"){Text(string(record,"detail")).font(.caption).textSelection(.enabled)}}
+                if !string(record,"detail").isEmpty {WorkspaceDisclosure("详情"){Text(string(record,"detail")).font(.caption).textSelection(.enabled)}}
                 if !string(record,"helpURL").isEmpty,let url=URL(string:string(record,"helpURL")){Link("打开 GitHub 处理…",destination:url)}
             }.padding(.vertical,6)
         }
@@ -1073,7 +1101,7 @@ private struct QuickEntryView:View {
             WorkspaceSection("截止时间"){TextField("例如 2026-10-20 18:00",text:state.field("dateText")).accessibilityIdentifier("quick-deadline");Text(string(r,"hint")).font(.caption).foregroundStyle(.secondary);Text("时区：\(string(r,"timeZone")) · 消息／录入日期：\((r["referenceDate"] as? Date ?? state.reference).formatted())").font(.caption2).foregroundStyle(.secondary)}
             WorkspaceSection("备注"){TextEditor(text:state.field("notes")).frame(minHeight:90).accessibilityIdentifier("quick-notes");Text("概括和提交要求已预填，可修改或清空。").font(.caption).foregroundStyle(.secondary)}
             WorkspaceSection("提醒"){ForEach([10080,4320,1440,60,0],id:\.self){minutes in let values=(r["reminderOffsets"] as? [NSNumber] ?? []).map(\.intValue);Toggle([10080:"提前7天",4320:"提前3天",1440:"提前1天",60:"提前1小时",0:"到期"][minutes]!,isOn:Binding(get:{values.contains(minutes)},set:{yes in var next=Set(values);if yes{next.insert(minutes)}else{next.remove(minutes)};state.change("reminderOffsets",Array(next).sorted(by:>))}))}}
-            DisclosureGroup("查看原文"){Text(string(r,"evidence")).font(.caption).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}
+            WorkspaceDisclosure("查看原文"){Text(string(r,"evidence")).font(.caption).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}
         }else{Text("识别后选中一项，在这里核对和修改。").foregroundStyle(.secondary)}}.padding(12).textFieldStyle(.roundedBorder)}
     }
     var body:some View {GeometryReader{geo in VStack(alignment:.leading,spacing:12){
@@ -1161,11 +1189,11 @@ private struct CheckScopeWorkspace:View {
             HSplitView {
                 List(selection:selection){
                     OutlineGroup(checkFileTree(state.visible.filter{flag($0,"selectable")},flat:!state.query.isEmpty),children:\.children){node in fileRow(node)}
-                    if state.visible.contains(where:{!flag($0,"selectable")}){DisclosureGroup("已排除 · \(state.visible.filter{!flag($0,"selectable")}.count)"){ForEach(checkFileTree(state.visible.filter{!flag($0,"selectable")},flat:true)){node in fileRow(node)}}}
+                    if state.visible.contains(where:{!flag($0,"selectable")}){WorkspaceDisclosure("已排除 · \(state.visible.filter{!flag($0,"selectable")}.count)"){ForEach(checkFileTree(state.visible.filter{!flag($0,"selectable")},flat:true)){node in fileRow(node)}}}
                 }.listStyle(.inset).scrollContentBackground(.hidden).frame(minWidth:280,idealWidth:360,maxWidth:520,maxHeight:.infinity).accessibilityLabel("检查范围文件树").background(CheckSplitAnchor())
                 VStack(alignment:.leading,spacing:8){Text(state.chosen.isEmpty ? "选择文件预览":state.chosen).font(.caption).foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled);CheckPreviewHost(preview:state.preview).frame(maxWidth:.infinity,maxHeight:.infinity)}.padding(8).frame(minWidth:360,maxWidth:.infinity,maxHeight:.infinity).background(Color(nsColor:AMAppearance.surface))
             }.frame(maxWidth:.infinity,maxHeight:.infinity)
-            DisclosureGroup("范围与安全说明"){Text("包含子文件夹；Markdown 图片自动关联并去重。只读取所选范围，越界图片需要选择共同父目录。隐藏配置、依赖、缓存、构建目录和敏感文件已排除；未检查不算通过。").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}
+            WorkspaceDisclosure("范围与安全说明"){Text("包含子文件夹；Markdown 图片自动关联并去重。只读取所选范围，越界图片需要选择共同父目录。隐藏配置、依赖、缓存、构建目录和敏感文件已排除；未检查不算通过。").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}
             if state.busy{ProgressView().progressViewStyle(.linear)}
             Text(state.notice).font(.caption).foregroundStyle(.secondary).textSelection(.enabled).lineLimit(2)
             HStack{Text("文档 \(state.valid.filter{!flag($0,"image")}.count) · 已选 \(state.valid.count) · 图片 \(state.valid.filter{flag($0,"image")}.count) · 排除 \(state.records.filter{!flag($0,"selectable")}.count)").font(.caption).foregroundStyle(.secondary);Spacer();Text(ByteCountFormatter.string(fromByteCount:state.bytes,countStyle:.file)).font(.caption)}
