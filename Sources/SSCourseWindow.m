@@ -46,6 +46,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property NSInteger presentedReviewFilter;
 @property NSSegmentedControl *sections;
 @property NSStackView *nativeHeader;
+@property NSStackView *operationStatus;
 @property NSSearchField *search;
 @property NSString *query;
 @property NSString *selectedFork;
@@ -243,14 +244,20 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     }
     [NSLayoutConstraint activateConstraints:@[[self.nativeHeader.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[self.nativeHeader.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[self.nativeHeader.topAnchor constraintEqualToAnchor:root.safeAreaLayoutGuide.topAnchor]]];
     [self.search.widthAnchor constraintGreaterThanOrEqualToConstant:160].active=YES;[self.search.widthAnchor constraintLessThanOrEqualToConstant:360].active=YES;[self.search setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];[self.accountLabel setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+    self.operationStatus=NSStackView.new;self.operationStatus.orientation=NSUserInterfaceLayoutOrientationVertical;self.operationStatus.alignment=NSLayoutAttributeLeading;self.operationStatus.spacing=8;self.operationStatus.detachesHiddenViews=YES;self.operationStatus.translatesAutoresizingMaskIntoConstraints=NO;[root addSubview:self.operationStatus];
+    NSStackView *statusRow=[NSStackView stackViewWithViews:@[self.statusLabel,self.recoveryButton,self.cancelReadButton]];statusRow.orientation=NSUserInterfaceLayoutOrientationHorizontal;statusRow.alignment=NSLayoutAttributeCenterY;statusRow.spacing=8;statusRow.detachesHiddenViews=YES;statusRow.edgeInsets=NSEdgeInsetsMake(4,0,4,4);[self.operationStatus addArrangedSubview:statusRow];[self.operationStatus addArrangedSubview:self.progress];
+    self.statusLabel.lineBreakMode=NSLineBreakByTruncatingMiddle;[self.statusLabel setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];[self.statusLabel setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+    for(NSButton *button in @[self.recoveryButton,self.cancelReadButton]){[button setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];[button setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];}
+    [NSLayoutConstraint activateConstraints:@[[self.operationStatus.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[self.operationStatus.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[self.operationStatus.topAnchor constraintEqualToAnchor:self.nativeHeader.bottomAnchor constant:8],[statusRow.widthAnchor constraintEqualToAnchor:self.operationStatus.widthAnchor],[self.progress.widthAnchor constraintEqualToAnchor:self.operationStatus.widthAnchor],[self.progress.heightAnchor constraintEqualToConstant:6]]];
     [self layoutContent];
 }
 - (void)layoutContent {
     CGFloat w = NSWidth(self.view.bounds), h = NSHeight(self.view.bounds);
     self.sections.hidden=self.inbox;self.typeFilter.hidden=self.inbox || self.sections.selectedSegment!=0;self.reviewFilter.hidden=!self.inbox;self.search.hidden=self.inbox;self.assistantButton.hidden=self.inbox;self.assistantImportButton.hidden=YES;self.assistantButton.enabled=self.assistantImportButton.enabled=!self.busy && !self.operationsPaused;BOOL modelConfigured=![SSRecognitionSettings()[@"mode"] isEqual:@"rules"];self.assistantButton.hidden=self.inbox || !modelConfigured;self.assistantButton.title=modelConfigured ? @"AI增强识别…":@"Skill识别…";self.assistantButton.action=modelConfigured ? @selector(enhanceRecognition:):@selector(exportSkillContext:);
     self.syncButton.hidden=self.inbox || ![self course];self.commitButton.hidden=self.syncButton.hidden;
-    [self.view layoutSubtreeIfNeeded];CGFloat headerBottom=NSMaxY(self.nativeHeader.frame),statusTop=headerBottom+8,workspaceTop=statusTop+(self.statusLabel.stringValue.length || self.busy ? 36:0);
-    self.statusLabel.frame=NSMakeRect(0,statusTop,w-160,24);self.progress.frame=NSMakeRect(0,statusTop+26,w,6);self.recoveryButton.frame=NSMakeRect(w-144,statusTop,144,28);
+    self.cancelReadButton.hidden=!self.busy || !self.git.readsCancellable;self.progress.hidden=!self.busy;
+    self.operationStatus.hidden=!self.statusLabel.stringValue.length && !self.busy && self.recoveryButton.hidden;
+    [self.view layoutSubtreeIfNeeded];CGFloat workspaceTop=self.operationStatus.hidden ? NSMaxY(self.nativeHeader.frame)+8:NSMaxY(self.operationStatus.frame)+8;
     self.table.enclosingScrollView.frame = NSMakeRect(0, 184, w, MAX(112, h - 348));
     self.detail.enclosingScrollView.frame = NSMakeRect(0, h - 152, w, 104); self.reviewButton.frame = NSMakeRect(w - 152, h - 40, 152, 36);
     self.typeButton.frame = NSMakeRect(0, h - 40, 136, 36);
@@ -266,7 +273,6 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if(!self.submissionHistory.view.hidden){self.courseWorkspace.view.hidden=YES;self.reviewWorkspace.view.hidden=YES;}
     self.skillJobsController.view.frame=NSMakeRect(0,workspaceTop,w,MAX(120,h-workspaceTop));self.skillJobsController.view.hidden=!self.showingSkillJobs;
     if(self.showingSkillJobs){self.courseWorkspace.view.hidden=YES;self.reviewWorkspace.view.hidden=YES;}
-    self.cancelReadButton.frame=NSMakeRect(w-144,statusTop,144,28);self.cancelReadButton.hidden=!self.busy || !self.git.readsCancellable;
     CGFloat available = w - 132; self.table.tableColumns[3].width = 96;
     NSArray *weights = @[@0.34, @0.28, @0.38];
     for (NSUInteger i = 0; i < 3; i++) self.table.tableColumns[i].width = MAX(72, available * [weights[i] doubleValue]);
