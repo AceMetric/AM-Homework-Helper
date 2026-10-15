@@ -203,7 +203,7 @@ static NSColor *EventFill(NSDictionary *task) {
 static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (selected) { cell.fill = Emphasis(); cell.gradientEnd = Tint(); cell.stroke = Accent(); }
     else if (!cell.inMonth) { cell.fill = [Panel() blendedColorWithFraction:0.48 ofColor:Line()]; cell.gradientEnd = [Panel() blendedColorWithFraction:0.24 ofColor:Line()]; cell.stroke = Line(); }
-    else if (cell.weekend) { cell.fill=[cell.dayKind isEqual:@"holiday"] ? [Canvas() blendedColorWithFraction:0.07 ofColor:Accent()]:[Canvas() blendedColorWithFraction:0.35 ofColor:Panel()];cell.gradientEnd=cell.fill;cell.stroke=Line(); }
+    else if (cell.weekend) { cell.fill=[cell.dayKind isEqual:@"holiday"] ? [Canvas() blendedColorWithFraction:0.07 ofColor:Accent()]:[Canvas() blendedColorWithFraction:0.08 ofColor:Ink()];cell.gradientEnd=cell.fill;cell.stroke=Line(); }
     else { cell.fill = Card(); cell.gradientEnd = Canvas(); cell.stroke = Line(); }
     cell.needsDisplay = YES;
 }
@@ -259,7 +259,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         CallbackButton *hit = [[CallbackButton alloc] initWithFrame:cell.bounds]; hit.title = @""; hit.tone = 3; hit.allowsHoverFill = NO; hit.accessibilityLabel = [NSString stringWithFormat:@"%@，%lu 项任务", DDLFormatDate(date, @"yyyy年M月d日 EEEE"), tasks.count]; hit.onClick = ^{ if (weakSelf.onSelect) weakSelf.onSelect(date, nil); }; [cell addSubview:hit];
         CallbackButton *number = [[CallbackButton alloc] initWithFrame:NSZeroRect]; number.title = DDLFormatDate(date, @"d"); number.tone = today ? 1 : 3; number.allowsHoverFill = NO; number.font = [NSFont systemFontOfSize:12]; number.onClick = hit.onClick; number.accessibilityLabel = hit.accessibilityLabel;
         hit.toolTip=[NSString stringWithFormat:@"%@ · %@",info[@"name"],info[@"source"]];hit.accessibilityLabel=[hit.accessibilityLabel stringByAppendingFormat:@"，%@",info[@"name"]];
-        BOOL showDayInfo=![info[@"kind"] isEqual:@"workday"];
+        BOOL showDayInfo=![info[@"kind"] isEqual:@"workday"] && ![info[@"kind"] isEqual:@"weekend"];
         CGFloat eventStart=showDayInfo ? 52:32;
         if(showDayInfo){BOOL marked=![info[@"kind"] isEqual:@"weekend"];NSString *caption=[info[@"kind"] isEqual:@"holiday"] ? [info[@"name"] stringByAppendingString:@"（休）"]:([info[@"kind"] isEqual:@"makeup"] ? @"调休（班）":info[@"name"]);Surface *badge=Box(marked ? ([info[@"rest"] boolValue] ? Tint():Panel()):nil,6);badge.identifier=@"calendar-day-kind";badge.toolTip=hit.toolTip;Put(cell,badge,6,32,cellW-16,18);NSTextField *holiday=Text(caption,10,NSFontWeightMedium,marked && [info[@"rest"] boolValue] ? Accent():Muted());holiday.toolTip=hit.toolTip;CGFloat labelWidth=cellW-26;if(holiday.intrinsicContentSize.width>labelWidth)holiday.stringValue=[info[@"kind"] isEqual:@"makeup"] ? @"补班":info[@"name"];if(holiday.intrinsicContentSize.width>labelWidth && [info[@"kind"] isEqual:@"holiday"])holiday.stringValue=[info[@"name"] stringByReplacingOccurrencesOfString:@"节" withString:@""];Put(badge,holiday,5,1,labelWidth,16);}
         Put(cell, number, 6, 4, 40, 27); if (!inMonth) number.alphaValue = 0.45;
@@ -516,7 +516,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     else { self.validation.stringValue = [NSString stringWithFormat:@"%@ · %@", DDLFormatDate(date, @"M月d日 EEEE HH:mm"), DDLRemaining(date, NSDate.date, NO)]; self.validation.textColor = Accent(); }
 }
 - (void)updateDate:(NSDate *)date {
-    if (!date) return; self.nativeDeadlinePicker.dateValue=date; NSDictionary *dayInfo=DDLChinaDayInfo(date,self.teacherCalendar,self.appDelegate.preview ? @{}:SSCalendarOverrides());self.calendarHint.stringValue=[NSString stringWithFormat:@"%@ · %@",dayInfo[@"name"],dayInfo[@"source"]]; self.selectedDate = date; self.deadlineField.stringValue = [self formatTeacherDate:date]; self.calendar.selection = date; self.calendar.month = date; self.timePicker.stringValue = [self timeString:date]; [self.calendar reload]; [self validateDate];
+    if (!date) return; self.nativeDeadlinePicker.dateValue=date; NSDictionary *dayInfo=DDLChinaDayInfo(date,self.teacherCalendar,self.appDelegate.preview ? @{}:SSCalendarOverrides());self.calendarHint.stringValue=([dayInfo[@"known"] boolValue] ? dayInfo[@"name"]:[NSString stringWithFormat:@"%@ · %@",dayInfo[@"name"],dayInfo[@"source"]]); self.selectedDate = date; self.deadlineField.stringValue = [self formatTeacherDate:date]; self.calendar.selection = date; self.calendar.month = date; self.timePicker.stringValue = [self timeString:date]; [self.calendar reload]; [self validateDate];
 }
 - (void)chooseDate:(NSDate *)date {
     NSDateComponents *time = [self.teacherCalendar components:NSCalendarUnitHour | NSCalendarUnitMinute fromDate:self.selectedDate];
@@ -1259,7 +1259,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSInteger completed = 0; for (NSDictionary *task in dayTasks) if ([task[@"completed"] boolValue]) completed++;
     NSString *detail = [NSString stringWithFormat:@"%@ · %lu 项待做 · %ld 项已完成", DDLFormatDate(self.selectedDay, @"EEEE"), dayTasks.count - completed, (long)completed];
     Put(self.agenda, Text(detail, 10, NSFontWeightRegular, Muted()), 18, 62, 264, 18);
-    NSDictionary *dayInfo=DDLChinaDayInfo(self.selectedDay,Cal(),self.preview ? @{}:SSCalendarOverrides());NSTextField *dayKind=Text([NSString stringWithFormat:@"%@ · %@",dayInfo[@"name"],dayInfo[@"source"]],11,NSFontWeightMedium,[dayInfo[@"kind"] isEqual:@"holiday"] ? Accent():Muted());dayKind.identifier=@"calendar-selected-day-kind";dayKind.maximumNumberOfLines=2;dayKind.lineBreakMode=NSLineBreakByWordWrapping;dayKind.toolTip=dayKind.stringValue;Put(self.agenda,dayKind,18,84,NSWidth(self.agenda.bounds)-36,34);
+    NSDictionary *dayInfo=DDLChinaDayInfo(self.selectedDay,Cal(),self.preview ? @{}:SSCalendarOverrides());NSTextField *dayKind=Text(([dayInfo[@"known"] boolValue] ? dayInfo[@"name"]:[NSString stringWithFormat:@"%@ · %@",dayInfo[@"name"],dayInfo[@"source"]]),11,NSFontWeightMedium,[dayInfo[@"kind"] isEqual:@"holiday"] ? Accent():Muted());dayKind.identifier=@"calendar-selected-day-kind";dayKind.maximumNumberOfLines=2;dayKind.lineBreakMode=NSLineBreakByWordWrapping;dayKind.toolTip=dayKind.stringValue;Put(self.agenda,dayKind,18,84,NSWidth(self.agenda.bounds)-36,34);
     Put(self.agenda, self.agendaScroll, 12, 126, NSWidth(self.agenda.bounds) - 24, MAX(64, NSHeight(self.agenda.bounds) - 142));
     CGFloat w = self.agendaScroll.contentSize.width - 4, y = 0, focusY = -1;
     for (NSDictionary *task in dayTasks) {
