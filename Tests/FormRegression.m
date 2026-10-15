@@ -49,6 +49,15 @@ int main(int argc, const char *argv[]) {
             [editor.window makeFirstResponder:editor.notesField];
             Check(SameColor(editor.notesField.insertionPointColor, NSColor.controlAccentColor, editor.window.effectiveAppearance), @"notes use the system adaptive caret");
             Check([editor.saveButton.keyEquivalent isEqual:@"\r"], @"Return saves unified editor");
+            Surface *notesContainer=(Surface *)editor.notesField.enclosingScrollView.superview;
+            Check([notesContainer isKindOfClass:Surface.class] && notesContainer.radius==10 && editor.notesField.enclosingScrollView.borderType==NSNoBorder, @"multiline notes retain rounded container without square scroll bezel");
+            for(NSValue *size in @[[NSValue valueWithSize:NSMakeSize(560,500)],[NSValue valueWithSize:NSMakeSize(680,620)],[NSValue valueWithSize:NSMakeSize(1000,800)]]){
+                [editor.window setContentSize:size.sizeValue];[editor.window.contentView layoutSubtreeIfNeeded];
+                NSRect button=[editor.saveButton convertRect:editor.saveButton.bounds toView:editor.window.contentView];
+                NSRect footer=[editor.saveButton.superview.superview convertRect:editor.saveButton.superview.superview.bounds toView:editor.window.contentView];
+                Check(NSMaxX(button)<=NSWidth(editor.window.contentView.bounds)-23 && NSMinX(button)>=24 && NSContainsRect(footer,button), @"save action retains visible footer insets through resize");
+                Check(NSMaxY(button)<=NSHeight(editor.window.contentView.bounds)-15, @"save action stays above bottom edge through resize");
+            }
             Check([editor.window.title isEqual:@"新建任务"] && editor.datePopover == nil, @"new task uses unified sheet with collapsed date picker");
             editor.titleField.stringValue = @"尚未保存的标题"; editor.notesField.string = @"尚未保存的备注";
             app.editor = editor; NSApp.appearance = [NSAppearance appearanceNamed:[appearance isEqual:NSAppearanceNameAqua] ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua]; [app refreshAppearance];
