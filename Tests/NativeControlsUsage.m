@@ -45,6 +45,7 @@ int main(){@autoreleasepool{
         course.view.appearance=[NSAppearance appearanceNamed:appearance];course.recoveryButton.hidden=!recovery.boolValue;course.recoveryButton.title=@"处理冲突…";
         [course.view setFrameSize:NSMakeSize(width.doubleValue,520)];[course layoutContent];[course.view layoutSubtreeIfNeeded];
         NSRect cancel=In(course.cancelReadButton,course.view),bar=In(course.progress,course.view),label=In(course.statusLabel,course.view);
+        if(NSMaxY(cancel)+4>NSMinY(bar) || NSMaxY(label)+4>NSMinY(bar))fprintf(stderr,"Course geometry: appearance=%s width=%s recovery=%s cancel=%s label=%s progress=%s\n",appearance.UTF8String,width.stringValue.UTF8String,recovery.stringValue.UTF8String,NSStringFromRect(cancel).UTF8String,NSStringFromRect(label).UTF8String,NSStringFromRect(bar).UTF8String);
         Check(!course.cancelReadButton.hidden && NSContainsRect(course.view.bounds,cancel),@"running course check keeps its cancel button fully inside the pane");
         Check(NSMaxY(cancel)+4<=NSMinY(bar) && NSMaxY(label)+4<=NSMinY(bar),@"course progress occupies a separate row below status text and the native cancel button");
         Check(!NSIntersectsRect(label,cancel) && NSWidth(label)>160,@"long status text leaves room for the cancel action at the minimum width");
