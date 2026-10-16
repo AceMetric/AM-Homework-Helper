@@ -1290,20 +1290,19 @@ private struct HelpTopic:Identifiable {
     let button:String
 }
 private let helpTopics:[HelpTopic]=[
-    HelpTopic(id:"entry",title:"录入与周期安排",details:"用＋或⌘⇧N录入通知、文字或截图，核对名称、截止时间和备注后保存；每项最多10个提醒点。概括与提交要求可修改或清空。\n重复可按固定日历或完成后计算，支持间隔、星期和结束条件；保存前查看接下来五次。老师作业保留原截止时间，可从任务菜单另建周期安排。",action:"quick",button:"快速录入"),
-    HelpTopic(id:"calendar",title:"日历与筛选",details:"在日历工具栏切换全部、待完成和已完成，搜索内容会一起生效；点击今天回到当前日期。总览可切换今日或本周。计划完成日期只调整工作安排，不改变截止时间或提醒；可拖放到日期或使用“安排到…”。子任务沿用作业截止时间。\n周末、假期和补班以底色与名称区分；未收录年份会提示。默认只标记，避让按每项周期任务设置。本机日期覆盖可按学校安排设置，不改变老师截止时间。",action:"calendar",button:"打开日历"),
-    HelpTopic(id:"courses",title:"课程检查与审核",details:"连接个人课程 fork 后检查老师的新内容。检查不合并文件或推送；未变材料默认跳过，模型或提示词升级不会自动重分析。需要时在课程“更多”重新分析所选范围。\n规则识别默认免费；本地模型需已安装，可选择自动增强。云端识别仅在确认范围后发送。Skill 可准备多门课程材料，将指令交给获准的本机助手，结果自动接回。\n在待审核列表核对原文、日期和备注；完整条目可批量确认。保存后移出列表。误识别项可删除、撤销或从已删除筛选恢复；相同材料版本不会重复出现。",action:"courses",button:"打开课程"),
-    HelpTopic(id:"checking",title:"本机检查与在线复核",details:"选中任务后选择作业文件夹或文件，核对范围再开始本机检查。子目录和关联图片会去重，隐藏配置、依赖、缓存、构建产物和敏感文件排除；越界图片需选共同父目录。\n报告分别列出格式、公式和内容复核覆盖范围；本机检查不证明答案正确，未完成不算通过。在线复核使用确认材料和可见模型，费用及服务条件在发送前确认。\n网页助手不能读取 Mac 路径：准备并上传材料包，下载助手返回的 JSON 后在报告导入。本机助手经授权读取所选材料，写回结果后自动接回。",action:"tasks",button:"打开任务"),
-    HelpTopic(id:"submissions",title:"提交与记录",details:"同步课程文件会合并老师更新并安全更新个人 fork；提交作业需逐项选择文件、填写说明、核对报告及目标后确认。只推送个人仓库，安全检查不能略过。发生冲突时先处理冲突文件，确认后继续；放弃合并会丢弃本次合并结果。\n终端创建的提交也会显示在提交记录，区分仅本地、已核验远端及待核验。可关联作业；关联或提交不自动完成任务，标记任务完成也不等于已推送。",action:"courses",button:"查看课程与记录"),
-    HelpTopic(id:"settings",title:"设置与常见问题",details:"设置管理识别、在线复核、GitHub、提醒、日期覆盖和更新。本机录入与文件检查无需连接课程。登录验证码由浏览器确认；选择自己的课程 fork 后，可用课程总文件夹匹配，缺少的课程下载到所选位置。\n测试提醒约5秒送达。未收到时检查系统设置→通知→AM Helper的权限、提示样式和声音，再检查专注模式；应用需保持运行。\n模型工作时可继续浏览或编辑，新请求执行或排队。退出及更新可能等待保存或 Git 写入安全结束，弹窗会显示进度；可中断项与 Git 写入分开处理。",action:"settings",button:"打开设置")
+    HelpTopic(id:"entry",title:"添加任务",details:"粘贴通知或截图，确认截止时间。",action:"quick",button:"快速录入"),
+    HelpTopic(id:"calendar",title:"查看日历",details:"查看待办、周末和节假日。",action:"calendar",button:"打开日历"),
+    HelpTopic(id:"courses",title:"发现新作业",details:"连接课程，检查并确认新作业。",action:"courses",button:"打开课程"),
+    HelpTopic(id:"checking",title:"检查作业",details:"选择文件，查看问题和修改建议。",action:"tasks",button:"打开任务"),
+    HelpTopic(id:"submissions",title:"提交与记录",details:"提交到个人仓库，查看提交记录。",action:"courses",button:"打开课程"),
+    HelpTopic(id:"settings",title:"设置",details:"管理账户、提醒和更新。",action:"settings",button:"打开设置")
 ]
 private struct HelpWorkspace:View {
     var action:(String)->Void
     var body:some View {
         ScrollView{VStack(alignment:.leading,spacing:20){
-            HStack{Button("配置课程"){action("setup")}.amPrimaryAction();Button("查看识别批次"){action("skill")};Spacer()}
             ForEach(helpTopics){topic in
-                WorkspaceSection(topic.title){VStack(alignment:.leading,spacing:12){Text(topic.details).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true).textSelection(.enabled);Button(topic.button){action(topic.action)}}}.accessibilityElement(children:.contain).accessibilityIdentifier("help-topic-"+topic.id)
+                WorkspaceSection(topic.title){HStack(spacing:16){Text(topic.details).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true);Spacer(minLength:8);Button(topic.button){action(topic.action)}.fixedSize()}}.accessibilityElement(children:.contain).accessibilityIdentifier("help-topic-"+topic.id)
             }
         }.padding(24).frame(maxWidth:900,alignment:.leading).frame(maxWidth:.infinity,alignment:.leading)}.font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions()
     }
