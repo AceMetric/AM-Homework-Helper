@@ -32,6 +32,9 @@ BOOL SSWritePlist(NSString *name, id value, NSError **error) {
     return ok;
 }
 
+#import "AMScanCache.inc"
+#import "AMReviewDecisions.inc"
+
 static NSMutableDictionary *KeychainQuery(NSString *account) {
     // This service identifier is persistent data, not the public product name.
     NSString *service = @"io.github.acemetric.sshomeworkmanager.github";

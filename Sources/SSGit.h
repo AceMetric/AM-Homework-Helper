@@ -24,6 +24,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSArray<NSString *> * _Nullable)remoteArguments:(NSArray<NSString *> *)arguments course:(NSDictionary *)course role:(NSString *)role error:(NSError **)error;
 - (NSDictionary<NSString *, NSArray<NSString *> *> *)matchingDirectories:(NSString *)root courses:(NSArray<NSDictionary *> *)courses;
 @property (copy, nullable) NSDictionary *recognitionSettings;
+/// Checkpoint successful documents; a failed durable write stops this scan.
+@property (copy, nullable) BOOL (^scanCheckpoint)(NSMutableDictionary *cache, NSError **error);
 @property (copy) NSDictionary * _Nullable (^identityVerifier)(NSDictionary *course, NSError **error);
 /// Course keys: fork, upstream, branch, upstreamBranch, path, upstreamURL.
 - (BOOL)validateCourse:(NSDictionary *)course error:(NSError **)error;

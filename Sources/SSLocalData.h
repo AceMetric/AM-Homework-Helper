@@ -4,6 +4,12 @@ NS_ASSUME_NONNULL_BEGIN
 NSURL *SSDataDirectory(void);
 id _Nullable SSReadPlist(NSString *name);
 BOOL SSWritePlist(NSString *name, id value, NSError **error);
+NSMutableDictionary * _Nullable AMScanCacheLoad(NSError **error);
+BOOL AMScanCacheSave(NSMutableDictionary *cache, NSError **error);
+NSDictionary * _Nullable AMReviewDecisions(NSError **error);
+BOOL AMReviewIsDeleted(NSDictionary *record);
+BOOL AMReviewSetDeleted(NSArray *records, BOOL deleted, NSError **error);
+NSArray *AMReviewDeletedRecords(void);
 NSDictionary * _Nullable SSReadSecret(NSString *account);
 BOOL SSWriteSecret(NSString *account, NSDictionary *value);
 void SSDeleteSecret(NSString *account);

@@ -150,5 +150,24 @@ int main(void){@autoreleasepool{
     Check([SSCourseRecognitionSettings(@{@"mode":@"local",@"localAutomatic":@NO},courseA)[@"mode"] isEqual:@"rules"],@"disabling local automatic keeps routine scans free of model requests");
     Check([SSCourseRecognitionSettings(@{@"mode":@"local",@"localAutomatic":@NO,@"manualLocal":@YES},courseA)[@"mode"] isEqual:@"local"],@"manual local identification remains available when automatic is off");
     Check([SSCourseRecognitionSettings(@{@"mode":@"local"},courseA)[@"mode"] isEqual:@"local"],@"existing local preference retains automatic behavior");
+    NSError *cacheFailure=nil;NSMutableDictionary *one=AMScanCacheLoad(&cacheFailure),*two=AMScanCacheLoad(&cacheFailure);one[@"fixture-one"]=@[];two[@"fixture-two"]=@[@"empty analyses are completed"];
+    Check(AMScanCacheSave(one,&cacheFailure) && AMScanCacheSave(two,&cacheFailure),@"independent cache sessions save successfully");
+    NSMutableDictionary *merged=AMScanCacheLoad(&cacheFailure);Check(merged[@"fixture-one"] && merged[@"fixture-two"],@"cache writers merge only their own changes without losing another job");
+    Check([SSRecognitionCacheKey(@"teacher/course",@"a.md",@"blob",calendar,@{@"mode":@"rules",@"dailyLimit":@20}) isEqual:SSRecognitionCacheKey(@"teacher/course",@"a.md",@"blob",calendar,@{@"mode":@"rules",@"dailyLimit":@99,@"automaticImport":@YES})],@"quota and import preferences do not invalidate recognition");
+    NSMutableDictionary *proposal=record.mutableCopy;proposal[@"attachments"]=@[@{@"path":@"questions.md",@"blobSHA":@"a1",@"snippet":@"fixture question"}];
+    Check(AMReviewSetDeleted(@[proposal],YES,&error) && AMReviewIsDeleted(proposal),@"deleted evidence persists before removing the visible proposal");
+    NSMutableDictionary *rephrased=proposal.mutableCopy;rephrased[@"id"]=@"another-model-id";rephrased[@"title"]=@"a rewritten title";rephrased[@"sourceTitle"]=@"different model title";rephrased[@"blobSHA"]=@"unrelated-file-change";
+    Check(AMReviewIsDeleted(rephrased),@"model rephrasing or unrelated file commit cannot resurrect the same evidence");
+    NSMutableDictionary *changed=proposal.mutableCopy;changed[@"snippet"]=[proposal[@"snippet"] stringByAppendingString:@"new source requirement"];
+    Check(!AMReviewIsDeleted(changed),@"changed source evidence is a new review version");
+    changed=proposal.mutableCopy;changed[@"attachments"]=@[@{@"path":@"questions.md",@"blobSHA":@"a2",@"snippet":@"fixture question"}];
+    Check(!AMReviewIsDeleted(changed),@"changed linked attachment is a new review version");
+    NSURL *decisions=[SSDataDirectory() URLByAppendingPathComponent:@"review-decisions.plist"];NSData *storedDecision=[NSData dataWithContentsOfURL:decisions];
+    [NSFileManager.defaultManager removeItemAtURL:decisions error:NULL];[NSFileManager.defaultManager createDirectoryAtURL:decisions withIntermediateDirectories:YES attributes:nil error:NULL];error=nil;
+    Check(!AMReviewSetDeleted(@[changed],YES,&error) && error && !AMReviewIsDeleted(changed),@"failed decision storage keeps the original visible state");
+    [NSFileManager.defaultManager removeItemAtURL:decisions error:NULL];[storedDecision writeToURL:decisions atomically:YES];
+    NSString *originalDirectory=SSDataDirectory().path;NSString *other=[originalDirectory stringByAppendingPathComponent:@"restart-fixture"];setenv("AM_TEST_DATA",other.UTF8String,1);AMReviewDecisions(NULL);setenv("AM_TEST_DATA",originalDirectory.UTF8String,1);
+    Check(AMReviewIsDeleted(proposal) && AMReviewDeletedRecords().count==1,@"deletion survives loading durable state in a new session");
+    Check(AMReviewSetDeleted(@[proposal],NO,NULL) && !AMReviewIsDeleted(proposal),@"undo or restore removes exactly this evidence decision");
     printf("PASS: %lu recognition assertions\n",(unsigned long)assertions);
 }return 0;}

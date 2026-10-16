@@ -1,5 +1,6 @@
 #import "SSGit.h"
 #import "AMPreflight.h"
+#import "AMPrompts.h"
 #import "SSAssignments.h"
 #import "SSRecognition.h"
 #import "SSSecurity.h"
@@ -21,6 +22,10 @@ static NSError *GitError(NSString *message) {
 }
 static NSError *PendingPushError(NSError *error) { return [NSError errorWithDomain:@"SSGit" code:2 userInfo:@{NSLocalizedDescriptionKey:[@"本地更新已保留，尚未推送。修复原因后选择“重试推送”：\n" stringByAppendingString:error.localizedDescription ?: @"网络或权限错误"], @"SSPendingPush":@YES}]; }
 static NSString *Trim(NSString *value) { return [value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]; }
+static NSString *ScanIdentity(NSDictionary *course,NSString *branch) {
+    NSArray *parts=@[[course[@"upstream"] lowercaseString] ?: @"",[course[@"path"] stringByStandardizingPath] ?: @"",branch ?: @"",course[@"timeZone"] ?: NSTimeZone.localTimeZone.name];
+    return AMPreflightHash([NSJSONSerialization dataWithJSONObject:parts options:0 error:NULL]);
+}
 static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSMutableArray *parts = NSMutableArray.array;
     for (NSString *part in [value componentsSeparatedByString:separator]) if (part.length) [parts addObject:part];
@@ -238,6 +243,13 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSCalendar *calendar = [NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian]; calendar.timeZone = [NSTimeZone timeZoneWithName:candidate[@"timeZone"] ?: @""] ?: NSTimeZone.localTimeZone;
     return SSApplyDateReference(candidate, [NSDate dateWithTimeIntervalSince1970:timestamp], commit, calendar);
 }
+- (NSDictionary *)cachedDateReference:(NSDictionary *)candidate head:(NSString *)head branch:(NSString *)branch path:(NSString *)path cache:(NSMutableDictionary *)cache {
+    NSString *key=[NSString stringWithFormat:@"reference-v6|%@|%@|%@|%@|%@|%@",candidate[@"repository"],candidate[@"path"],candidate[@"blobSHA"],candidate[@"line"],candidate[@"timeZone"] ?: @"",branch ?: @""];
+    NSDictionary *saved=cache[key];BOOL sameHistory=[saved[@"head"] isEqual:head];
+    if(!sameHistory && [saved[@"head"] length]){SSGitResult *ancestry=[self run:@[@"merge-base",@"--is-ancestor",saved[@"head"],head] in:path token:nil error:NULL];sameHistory=ancestry && ancestry.status==0;}
+    if(sameHistory && saved[@"record"]){cache[key]=@{@"head":head,@"record":saved[@"record"]};return saved[@"record"];}
+    NSDictionary *record=[self dateReferenceForCandidate:candidate head:head path:path];if(record[@"dateBasis"])cache[key]=@{@"head":head,@"record":record};return record;
+}
 - (NSDictionary *)readCourseDocuments:(NSDictionary *)course paths:(NSArray *)paths fetch:(BOOL)fetch cache:(NSMutableDictionary *)cache error:(NSError **)error {
     if (![self validateCourse:course error:error]) return nil;
     NSString *path = course[@"path"];
@@ -245,10 +257,18 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSString *branch=[self teacherBranch:url course:course error:error];if(!branch)return nil;
     if(fetch && ![self teacherRequest:@[@"fetch",@"--no-tags",@"--",url,[@"refs/heads/" stringByAppendingString:branch]] course:course error:error])return nil;
     SSGitResult *tip=[self checked:@[@"rev-parse",@"FETCH_HEAD"] in:path token:nil error:error];NSString *head=tip ? Trim([self string:tip]) : nil;if(!head)return nil;
+    NSString *snapshotKey=[@"document-snapshot-v1|" stringByAppendingString:ScanIdentity(course,branch)];
+    NSDictionary *previous=cache[snapshotKey];
+    if([previous[@"commit"] isEqual:head]){
+        NSMutableDictionary *reused=previous.mutableCopy;reused[@"date"]=NSDate.date;
+        if(paths)reused[@"documents"]=[previous[@"documents"] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *doc,NSDictionary *bindings){return [paths containsObject:doc[@"path"]];}]];
+        reused[@"scanSummary"]=@{@"new":@0,@"changed":@0,@"reused":@([reused[@"documents"] count]),@"read":@0};return reused;
+    }
     SSGitResult *tree = [self checked:@[@"ls-tree", @"-r", @"-l", @"-z", head] in:path token:nil error:error]; if (!tree) return nil;
     NSMutableArray *skipped = NSMutableArray.array;
     NSMutableArray *documents = NSMutableArray.array;
-    NSUInteger total = 0;
+    NSUInteger total = 0,readCount=0,newCount=0,changedCount=0,reusedCount=0;
+    NSMutableDictionary *previousVersions=NSMutableDictionary.dictionary;for(NSDictionary *doc in previous[@"documents"])previousVersions[doc[@"path"]]=doc[@"blobSHA"];
     NSCalendar *calendar = [NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];
     calendar.timeZone = [NSTimeZone timeZoneWithName:course[@"timeZone"] ?: NSTimeZone.localTimeZone.name] ?: NSTimeZone.localTimeZone;
     for (NSString *entry in NonemptyParts([self string:tree], @"\0")) {
@@ -263,6 +283,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
         NSString *key = [NSString stringWithFormat:@"document-v7|%@|%@|%@", course[@"upstream"], file, fields[2]];
         NSString *text = [cache[key] isKindOfClass:NSString.class] ? cache[key] : nil;
         if (!text) {
+            readCount++;
             SSGitResult *blob = [self checked:@[@"cat-file", @"blob", fields[2]] in:path token:nil error:error]; if (!blob) return nil;
             text = [[NSString alloc] initWithData:blob.data encoding:NSUTF8StringEncoding];
             if (!text && blob.data.length >= 2) { const unsigned char *bytes = blob.data.bytes; if ((bytes[0] == 0xff && bytes[1] == 0xfe) || (bytes[0] == 0xfe && bytes[1] == 0xff)) text = [[NSString alloc] initWithData:blob.data encoding:NSUTF16StringEncoding]; }
@@ -270,33 +291,44 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
             if (SSContainsSecret(blob.data)) { [skipped addObject:[file stringByAppendingString:@"：含疑似凭据，未导入原文"]]; continue; }
             cache[key] = text;
         }
+        if([previousVersions[file] isEqual:fields[2]])reusedCount++;else if(previousVersions[file])changedCount++;else newCount++;
         [documents addObject:@{@"repository":course[@"upstream"],@"path":file,@"blobSHA":fields[2],@"text":text,@"timeZone":calendar.timeZone.name}];
     }
-    return @{@"documents":documents,@"skipped":skipped,@"commit":head,@"branch":branch,@"date":NSDate.date};
+    NSDictionary *snapshot=@{@"documents":documents,@"skipped":skipped,@"commit":head,@"branch":branch,@"date":NSDate.date,@"scanSummary":@{@"new":@(newCount),@"changed":@(changedCount),@"reused":@(reusedCount),@"read":@(readCount)}};
+    if(!paths)cache[snapshotKey]=snapshot;return snapshot;
 }
 - (NSDictionary *)scanCourse:(NSDictionary *)course cache:(NSMutableDictionary *)cache error:(NSError **)error {
     NSDictionary *snapshot=[self readCourseDocuments:course paths:nil fetch:YES cache:cache error:error];if(!snapshot)return nil;
     NSArray *documents=snapshot[@"documents"],*skipped=snapshot[@"skipped"];NSString *head=snapshot[@"commit"],*branch=snapshot[@"branch"],*path=course[@"path"];
     NSDictionary *settings=SSCourseRecognitionSettings(self.recognitionSettings ?: @{@"mode":@"rules"},course);
+    NSCalendar *signatureCalendar=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];signatureCalendar.timeZone=[NSTimeZone timeZoneWithName:course[@"timeZone"] ?: NSTimeZone.localTimeZone.name] ?: NSTimeZone.localTimeZone;
+    NSString *resultKey=[@"rules-snapshot-v1|" stringByAppendingString:ScanIdentity(course,branch)];
+    NSString *signature=SSRecognitionCacheKey(course[@"upstream"],@"*",@"*",signatureCalendar,settings);
+    NSDictionary *previous=cache[resultKey];
+    if([previous[@"commit"] isEqual:head] && [previous[@"recognitionSignature"] isEqual:signature] && [previous[@"referencesComplete"] boolValue]){
+        NSMutableDictionary *reused=previous.mutableCopy;reused[@"date"]=NSDate.date;reused[@"scanSummary"]=snapshot[@"scanSummary"];return reused;
+    }
     NSMutableArray *candidates=NSMutableArray.array,*materials=NSMutableArray.array,*recognitionMessages=NSMutableArray.array;
     NSMutableSet *dedup=NSMutableSet.set;NSCalendar *calendar=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];
     calendar.timeZone=[NSTimeZone timeZoneWithName:course[@"timeZone"] ?: NSTimeZone.localTimeZone.name] ?: NSTimeZone.localTimeZone;
-    for(NSDictionary *document in documents){NSString *text=document[@"text"],*file=document[@"path"],*blob=document[@"blobSHA"];
+    BOOL referencesComplete=YES;
+    for(NSDictionary *document in documents){if(self.readsCancellable && self.cancelledReads){if(error)*error=GitError(@"检查已取消，已完成的文档保留。");return nil;}NSString *text=document[@"text"],*file=document[@"path"],*blob=document[@"blobSHA"];
         NSError *recognitionError = nil;
-        if (self.progress) self.progress([NSString stringWithFormat:@"正在识别老师文档：%@",file]);
+        if (self.progress && !SSCachedRecognition(course[@"upstream"],file,blob,calendar,settings,cache)) self.progress([NSString stringWithFormat:@"正在识别新材料：%@",file]);
         NSArray *found = SSRecognizeDocument(text, course[@"upstream"], file, blob, calendar, settings, cache, &recognitionError);
         if (recognitionError) [recognitionMessages addObject:[NSString stringWithFormat:@"%@：%@",file,recognitionError.localizedDescription]];
         for (NSDictionary *candidate in found) {
             if (![candidate[@"kind"] isEqual:@"assignment"]) { [materials addObject:candidate]; continue; }
             NSString *fingerprint = candidate[@"id"];
             if ([dedup containsObject:fingerprint]) continue; [dedup addObject:fingerprint];
-            NSString *referenceKey = [NSString stringWithFormat:@"reference-v4|%@|%@|%@|%@|%@|%@", course[@"upstream"], head, file, blob, candidate[@"line"], calendar.timeZone.name];
-            NSDictionary *referenced = [cache[referenceKey] isKindOfClass:NSArray.class] ? [cache[referenceKey] firstObject] : nil;
-            if (!referenced) { referenced = [self dateReferenceForCandidate:candidate head:head path:path]; if ([candidate[@"relative"] boolValue]) cache[referenceKey] = @[referenced]; }
+            NSDictionary *referenced=nil;
+            if([candidate[@"relative"] boolValue] && ![candidate[@"needsTime"] boolValue]){referenced=[self cachedDateReference:candidate head:head branch:branch path:path cache:cache];if(!referenced[@"dateBasis"])referencesComplete=NO;}
             NSMutableDictionary *copy = candidate.mutableCopy;for(NSString *field in @[@"suggestedDue",@"dateBasis"])if(referenced[field])copy[field]=referenced[field]; if (!copy[@"timeZone"]) copy[@"timeZone"] = calendar.timeZone.name; [candidates addObject:copy];
         }
+        if(self.scanCheckpoint && !self.scanCheckpoint(cache,error))return nil;
     }
-    return @{@"candidates":SSAttachLinkedDocuments(SSConsolidateAssignments(candidates),documents), @"materials":SSGroupMaterials(materials), @"documents":documents, @"recognitionMessages":recognitionMessages, @"skipped":skipped, @"commit":head, @"branch":branch, @"date":NSDate.date};
+    NSDictionary *result=@{@"candidates":SSAttachLinkedDocuments(SSConsolidateAssignments(candidates),documents), @"materials":SSGroupMaterials(materials), @"documents":documents, @"recognitionMessages":recognitionMessages, @"skipped":skipped, @"commit":head, @"branch":branch, @"date":NSDate.date,@"recognitionSignature":signature,@"referencesComplete":@(referencesComplete && !recognitionMessages.count),@"scanSummary":snapshot[@"scanSummary"]};
+    cache[resultKey]=result;if(self.scanCheckpoint && !self.scanCheckpoint(cache,error))return nil;return result;
 }
 - (NSDictionary *)resolveSkillDates:(NSDictionary *)validated scans:(NSDictionary *)scans courses:(NSArray *)courses {
     NSMutableDictionary *result=validated.mutableCopy,*records=NSMutableDictionary.dictionary;
@@ -310,19 +342,35 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSDictionary *scoped=SSCourseRecognitionSettings(settings,course);if([scoped[@"mode"] isEqual:@"rules"])return scan;
     NSMutableDictionary *byID=NSMutableDictionary.dictionary;for(NSDictionary *record in scan[@"candidates"])byID[record[@"id"]]=record;
     for(NSDictionary *group in scan[@"materials"])for(NSDictionary *record in group[@"documents"] ?: @[group])byID[record[@"id"]]=record;
-    NSMutableArray *messages=NSMutableArray.array;NSUInteger processed=0;
-    for(NSDictionary *document in scan[@"documents"]){if(paths && ![paths containsObject:document[@"path"]])continue;processed++;
-        if(self.progress)self.progress([NSString stringWithFormat:@"本地或模型分析 %lu：%@",(unsigned long)processed,document[@"path"]]);
+    NSMutableArray *messages=NSMutableArray.array;NSUInteger processed=0,reused=0,pending=0;
+    for(NSDictionary *document in scan[@"documents"]){if(paths && ![paths containsObject:document[@"path"]])continue;
+        if(self.readsCancellable && self.cancelledReads){[messages addObject:@"分析已取消，已完成的材料保留。"];break;}
         NSCalendar *calendar=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];calendar.timeZone=[NSTimeZone timeZoneWithName:document[@"timeZone"]] ?: NSTimeZone.localTimeZone;
-        NSError *failure=nil;NSArray *found=SSRecognizeDocument(document[@"text"],document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,scoped,cache,&failure);
+        NSString *completedKey=[NSString stringWithFormat:@"model-complete-v1|%@|%@|%@|%@",[document[@"repository"] lowercaseString],document[@"path"],document[@"blobSHA"],calendar.timeZone.name];
+        NSDictionary *completed=cache[completedKey];NSError *failure=nil;NSArray *found=nil;
+        if(completed && ![scoped[@"forceRecognition"] boolValue]){
+            if(![completed[@"validation"] isEqual:AMCourseValidationVersion()]){[messages addObject:[NSString stringWithFormat:@"%@：旧分析需要手动重新核验，规则结果保留。",document[@"path"]]];continue;}
+            found=completed[@"records"];reused++;
+        }else{
+            BOOL cached=![scoped[@"forceRecognition"] boolValue] && SSCachedRecognition(document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,scoped,cache)!=nil;
+            if(!cached && [scoped[@"cacheOnly"] boolValue]){pending++;continue;}
+            if(!cached && self.progress)self.progress([NSString stringWithFormat:@"分析新材料 %lu：%@",(unsigned long)(processed+1),document[@"path"]]);
+            if(cached)found=SSRecognizeDocument(document[@"text"],document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,scoped,cache,&failure);
+            else found=AMPerformModelOperation(SSRecognitionCacheKey(document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,scoped),document[@"path"],[scoped[@"manualLocal"] boolValue] || [scoped[@"manualCloud"] boolValue],^BOOL{return self.readsCancellable && self.cancelledReads;},^id(NSError **problem){return SSRecognizeDocument(document[@"text"],document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,scoped,cache,problem);},&failure);
+            if(!failure && found){completed=@{@"records":found,@"model":scoped[@"model"] ?: @"",@"prompt":AMCoursePromptVersion(),@"validation":AMCourseValidationVersion(),@"date":NSDate.date};cache[completedKey]=completed;if(cached)reused++;else processed++;}
+            if(self.scanCheckpoint && !self.scanCheckpoint(cache,&failure))found=nil;
+        }
         if(failure){[messages addObject:[NSString stringWithFormat:@"%@：%@",document[@"path"],failure.localizedDescription]];if([scoped[@"mode"] isEqual:@"local"] && ([failure.localizedDescription containsString:@"连接失败"] || [failure.localizedDescription containsString:@"超时"] || [failure.localizedDescription containsString:@"服务返回 HTTP"])){[messages addObject:@"其余文档暂用规则结果，可恢复服务后重试。"];break;}continue;}
         for(NSDictionary *record in found){NSMutableDictionary *copy=record.mutableCopy;NSDictionary *old=byID[record[@"id"]];
-            if([record[@"relative"] boolValue]){NSDictionary *basis=old[@"dateBasis"] ? old : [self dateReferenceForCandidate:record head:scan[@"commit"] path:course[@"path"]];for(NSString *field in @[@"dateBasis",@"suggestedDue"])if(basis[field])copy[field]=basis[field];}
+            if(completed[@"model"])copy[@"analysisModel"]=completed[@"model"];
+            if(completed[@"prompt"])copy[@"analysisPrompt"]=completed[@"prompt"];
+            if([record[@"recognizer"] hasPrefix:@"rules"] || [record[@"recognizer"] hasPrefix:@"template"])continue;
+            if([record[@"relative"] boolValue]){NSDictionary *basis=old[@"dateBasis"] ? old : [self cachedDateReference:record head:scan[@"commit"] branch:scan[@"branch"] path:course[@"path"] cache:cache];for(NSString *field in @[@"dateBasis",@"suggestedDue"])if(basis[field])copy[field]=basis[field];}
             byID[record[@"id"]]=copy;
         }
     }
     NSMutableArray *assignments=NSMutableArray.array,*materials=NSMutableArray.array;for(NSDictionary *record in byID.allValues)if([record[@"kind"] isEqual:@"assignment"])[assignments addObject:record];else[materials addObject:record];
-    NSMutableDictionary *result=scan.mutableCopy;result[@"candidates"]=SSAttachLinkedDocuments(SSConsolidateAssignments(assignments),scan[@"documents"]);result[@"materials"]=SSGroupMaterials(materials);result[@"recognitionMessages"]=messages;result[@"modelCompleted"]=@(messages.count==0);return result;
+    NSMutableDictionary *result=scan.mutableCopy;result[@"candidates"]=SSAttachLinkedDocuments(SSConsolidateAssignments(assignments),scan[@"documents"]);result[@"materials"]=SSGroupMaterials(materials);result[@"recognitionMessages"]=messages;result[@"modelCompleted"]=@(messages.count==0 && pending==0);result[@"modelSummary"]=@{@"processed":@(processed),@"reused":@(reused),@"failed":@(messages.count),@"pending":@(pending)};return result;
 }
 - (BOOL)cleanWorktree:(NSString *)path error:(NSError **)error {
     SSGitResult *status = [self checked:@[@"status", @"--porcelain=v1", @"-z", @"--untracked-files=all"] in:path token:nil error:error]; if (!status) return NO;
