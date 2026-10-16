@@ -15,19 +15,22 @@ int main(int argc,const char *argv[]){@autoreleasepool{
     NSDictionary *scan=@{@"documents":documents,@"candidates":assignments,@"materials":SSGroupMaterials(materials),@"commit":@"fixed-version"};
     NSDictionary *course=@{@"fork":@"student/fixture",@"upstream":@"teacher/fixture",@"path":@"/synthetic/fixture"};SSGit *git=SSGit.new;
     Check(assignments.count==2 && [scan[@"materials"] count]==1 && Calls(settings)==0,@"rules are ready before any model request");
+    NSMutableDictionary *cacheOnly=settings.mutableCopy;cacheOnly[@"cacheOnly"]=@YES;
+    NSDictionary *deferred=[git enhanceScan:scan course:course settings:cacheOnly paths:nil cache:cache];Check(Calls(settings)==0 && ![deferred[@"modelCompleted"] boolValue] && [deferred[@"modelSummary"][@"pending"] integerValue]==3,@"rules phase never sends pending model work and reports it accurately");
     NSDictionary *enhanced=[git enhanceScan:scan course:course settings:settings paths:nil cache:cache];
     if([enhanced[@"candidates"] count]!=2 || [enhanced[@"materials"] count]!=1)fprintf(stderr,"fixture groups: assignments=%lu materials=%lu calls=%lu\n",(unsigned long)[enhanced[@"candidates"] count],(unsigned long)[enhanced[@"materials"] count],(unsigned long)Calls(settings));
     Check(Calls(settings)==3 && [enhanced[@"candidates"] count]==2 && [enhanced[@"materials"] count]==1,@"serial enhancement preserves homework count and grouped exam");
     Check([enhanced[@"modelCompleted"] boolValue] && [enhanced[@"candidates"][0][@"summary"] length]>0,@"model result has validated summary and completion state");
+    NSData *saved=[NSPropertyListSerialization dataWithPropertyList:cache format:NSPropertyListBinaryFormat_v1_0 options:0 error:NULL];cache=[[NSPropertyListSerialization propertyListWithData:saved options:NSPropertyListImmutable format:NULL error:NULL] mutableCopy];
     [git enhanceScan:scan course:course settings:settings paths:nil cache:cache];Check(Calls(settings)==3,@"unchanged source reuses model cache");
     NSMutableDictionary *manual=settings.mutableCopy;manual[@"manualLocal"]=@YES;manual[@"forceRecognition"]=@YES;manual[@"localAutomatic"]=@NO;
     [git enhanceScan:scan course:course settings:manual paths:@[paths[0]] cache:cache];Check(Calls(settings)==4,@"manual selection bypasses only that source cache");
     NSMutableDictionary *disabled=settings.mutableCopy;disabled[@"localAutomatic"]=@NO;
     Check([[git enhanceScan:scan course:course settings:disabled paths:nil cache:cache] isEqual:scan] && Calls(settings)==4,@"disabled automatic does not contact model");
     NSMutableDictionary *changed=settings.mutableCopy;changed[@"modelDigest"]=@"replacement-digest";
-    [git enhanceScan:scan course:course settings:changed paths:nil cache:cache];Check(Calls(settings)==7,@"model digest change reanalyzes unchanged sources");
-    changed[@"model"]=@"invalid-fixture";NSDictionary *failed=[git enhanceScan:scan course:course settings:changed paths:nil cache:cache];
+    [git enhanceScan:scan course:course settings:changed paths:nil cache:cache];Check(Calls(settings)==4,@"model digest change preserves completed unchanged sources until explicit reanalysis");
+    changed[@"model"]=@"invalid-fixture";changed[@"forceRecognition"]=@YES;NSDictionary *failed=[git enhanceScan:scan course:course settings:changed paths:nil cache:cache];
     Check([failed[@"recognitionMessages"] count]==3 && [failed[@"candidates"] count]==2 && ![failed[@"modelCompleted"] boolValue],@"invalid responses retain rules and remain retryable");
-    [git enhanceScan:scan course:course settings:changed paths:@[paths[0]] cache:cache];Check(Calls(settings)==11,@"failed analysis is not cached as success");
+    [git enhanceScan:scan course:course settings:changed paths:@[paths[0]] cache:cache];Check(Calls(settings)==8,@"failed analysis is not cached as success");
     printf("PASS: %lu local model integration assertions\n",(unsigned long)checks);
 }return 0;}

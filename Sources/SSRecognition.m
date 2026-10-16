@@ -309,11 +309,27 @@ NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repositor
     return object[@"activities"];
 }
 @end
-NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings, NSMutableDictionary *cache, NSError **error) {
-    NSMutableDictionary *cacheSettings=settings.mutableCopy;for(NSString *field in @[@"forceRecognition",@"manualLocal",@"localAutomatic",@"manualCloud"])[cacheSettings removeObjectForKey:field];
+NSString *SSRecognitionCacheKey(NSString *repository,NSString *path,NSString *blob,NSCalendar *calendar,NSDictionary *settings) {
+    NSMutableDictionary *cacheSettings=NSMutableDictionary.dictionary;
+    NSArray *fields=[settings[@"mode"] isEqual:@"rules"] ? @[@"mode",@"courseTemplate"]:@[@"mode",@"endpoint",@"model",@"modelDigest",@"courseTemplate"];
+    for(NSString *field in fields)if(settings[field])cacheSettings[field]=settings[field];
     NSString *configuration=[[NSJSONSerialization dataWithJSONObject:cacheSettings options:NSJSONWritingSortedKeys error:NULL] base64EncodedStringWithOptions:0];
-    NSString *key=[NSString stringWithFormat:@"recognition-v9|%@|%@|%@|%@|%@|%@|%@",repository,path,blob,calendar.timeZone.name,RHash(configuration ?: @""),AMCoursePromptVersion(),AMCourseValidationVersion()];
-    if (![settings[@"forceRecognition"] boolValue] && [cache[key] isKindOfClass:NSArray.class]) return cache[key];
+    return [NSString stringWithFormat:@"recognition-v10|%@|%@|%@|%@|%@|%@|%@",repository.lowercaseString,path,blob,calendar.timeZone.name,RHash(configuration ?: @""),[settings[@"mode"] isEqual:@"rules"] ? @"rules-v8":AMCoursePromptVersion(),AMCourseValidationVersion()];
+}
+NSArray *SSCachedRecognition(NSString *repository,NSString *path,NSString *blob,NSCalendar *calendar,NSDictionary *settings,NSMutableDictionary *cache) {
+    NSString *key=SSRecognitionCacheKey(repository,path,blob,calendar,settings);
+    if ([cache[key] isKindOfClass:NSArray.class]) return cache[key];
+    {
+        NSMutableDictionary *legacy=settings.mutableCopy;for(NSString *field in @[@"forceRecognition",@"manualLocal",@"localAutomatic",@"manualCloud",@"cacheOnly"])[legacy removeObjectForKey:field];
+        NSString *configuration=[[NSJSONSerialization dataWithJSONObject:legacy options:NSJSONWritingSortedKeys error:NULL] base64EncodedStringWithOptions:0];
+        NSString *old=[NSString stringWithFormat:@"recognition-v9|%@|%@|%@|%@|%@|%@|%@",repository,path,blob,calendar.timeZone.name,RHash(configuration ?: @""),AMCoursePromptVersion(),AMCourseValidationVersion()];
+        if([cache[old] isKindOfClass:NSArray.class]){cache[key]=cache[old];return cache[key];}
+    }
+    return nil;
+}
+NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings, NSMutableDictionary *cache, NSError **error) {
+    NSString *key=SSRecognitionCacheKey(repository,path,blob,calendar,settings);
+    if(![settings[@"forceRecognition"] boolValue]){NSArray *saved=SSCachedRecognition(repository,path,blob,calendar,settings,cache);if(saved)return saved;}
     NSMutableArray *found=NSMutableArray.array; for (NSDictionary *record in SSDiscoveriesFromDocument(text,repository,path,blob,NSDate.date,calendar)) [found addObject:SSEnrichDiscovery(record)];
     NSDictionary *template=settings[@"courseTemplate"];
     if ([template isKindOfClass:NSDictionary.class] && template.count && SSValidateCourseTemplate(template,NULL)) {

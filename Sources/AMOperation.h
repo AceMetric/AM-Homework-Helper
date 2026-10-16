@@ -6,4 +6,11 @@ void AMOperationProgress(NSString * _Nullable identifier,NSString *stage,NSInteg
 void AMOperationFinish(NSString * _Nullable identifier,NSString *state,NSString *message);
 void AMOperationCancel(NSString *identifier);
 NSArray<NSDictionary *> *AMOperations(void);
+/// Active requests with the same key coalesce. Start runs on a worker; finish
+/// releases resources. Queued cancellation never calls start.
+NSString *AMOperationEnqueue(NSString *key,NSString *kind,NSString *target,NSArray<NSString *> *resources,NSInteger priority,void (^start)(NSString *identifier),void (^ _Nullable cancel)(BOOL beforeStart));
+NSUInteger AMQueuedOperationCount(void);
+void AMCancelQueuedOperations(void);
+id _Nullable AMPerformResourceOperation(NSString *key,NSString *kind,NSString *target,NSArray<NSString *> *resources,NSInteger priority,BOOL (^ _Nullable cancelled)(void),id _Nullable (^perform)(NSError **error),NSError **error);
+id _Nullable AMPerformModelOperation(NSString *key,NSString *target,BOOL manual,BOOL (^ _Nullable cancelled)(void),id _Nullable (^perform)(NSError **error),NSError **error);
 NS_ASSUME_NONNULL_END

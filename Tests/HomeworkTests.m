@@ -40,16 +40,19 @@ static NSMutableDictionary *Fixture(void) {
 @property BOOL rejectPush;
 @property BOOL wrongAccount;
 @property NSMutableArray *pushTargets;
+@property NSMutableDictionary *commandCounts;
 @end
 @implementation FixtureGit
 - (instancetype)init {
     if ((self = [super init])) {
         self.pushTargets = NSMutableArray.array;
+        self.commandCounts=NSMutableDictionary.dictionary;
         __weak typeof(self) weakSelf = self;
         self.identityVerifier = ^NSDictionary *(NSDictionary *course, NSError **error) { return @{@"login":@"student", @"id":weakSelf.wrongAccount ? @99 : @42}; };
     } return self;
 }
 - (SSGitResult *)run:(NSArray *)args in:(NSString *)path token:(NSString *)token error:(NSError **)error {
+    for(NSString *command in @[@"fetch",@"ls-tree",@"cat-file",@"blame"])if([args containsObject:command])self.commandCounts[command]=@([self.commandCounts[command] unsignedIntegerValue]+1);
     NSMutableArray *mapped = args.mutableCopy;
     for (NSUInteger i = 0; i < args.count; i++) {
         NSString *arg = args[i], *repo = SSCanonicalRepository(arg);
@@ -278,7 +281,7 @@ static void GitTests(void) {
     NSString *oldKey = [NSString stringWithFormat:@"v2|teacher/course|README.md|%@|Asia/Shanghai", Git(f[@"seed"], @[@"rev-parse", @"HEAD:README.md"])];
     cache[oldKey] = @[];
     NSDictionary *scan = [service scanCourse:f cache:cache error:&error]; Check([scan[@"candidates"] count] == 1, @"scan teacher main");
-    BOOL newCache = NO; for (NSString *key in cache) if ([key hasPrefix:@"recognition-v9|"] && [cache[key] isKindOfClass:NSArray.class] && [cache[key] count] == 1) newCache = YES;
+    BOOL newCache = NO; for (NSString *key in cache) if ([key hasPrefix:@"recognition-v10|"] && [cache[key] isKindOfClass:NSArray.class] && [cache[key] count] == 1) newCache = YES;
     Check(newCache && [cache[oldKey] count] == 0, @"new parser does not reuse empty results cached by older parser");
     NSUInteger cacheCount = cache.count;
     Check([[service scanCourse:f cache:cache error:&error][@"candidates"] firstObject] != nil && cache.count == cacheCount, @"scan cache reuse");
@@ -371,4 +374,26 @@ static void GitTests(void) {
     Check([Git(path, @[@"rev-parse", @"HEAD"]) isEqual:before], @"divergence preserves local commit"); Cleanup(f);
 
 }
-int main(void) { @autoreleasepool { ParserTests(); SecurityTests(); APITests(); OAuthTests(); GitTests(); DateReferenceTests(); printf("PASS: %lu homework/API/Git/security assertions\n", (unsigned long)assertions); } return 0; }
+static void IncrementalTests(void){
+    NSMutableDictionary *f=Fixture();FixtureGit *service=Service(f);NSMutableDictionary *cache=NSMutableDictionary.dictionary;NSError *error=nil;__block NSUInteger parses=0;
+    service.progress=^(NSString *phase){if([phase hasPrefix:@"正在识别新材料"])parses++;};
+    NSDictionary *first=[service scanCourse:f cache:cache error:&error];Check(first!=nil && parses>0,@"cold scan discovers and records source versions");
+    NSData *stored=[NSPropertyListSerialization dataWithPropertyList:cache format:NSPropertyListBinaryFormat_v1_0 options:0 error:&error];
+    cache=[[NSPropertyListSerialization propertyListWithData:stored options:NSPropertyListImmutable format:NULL error:&error] mutableCopy];
+    parses=0;[service.commandCounts removeAllObjects];NSDictionary *warm=[service scanCourse:f cache:cache error:&error];
+    Check([warm[@"candidates"] isEqual:first[@"candidates"]] && parses==0,@"restart preserves completed recognition and identical candidates");
+    Check([service.commandCounts[@"fetch"] integerValue]>0 && ![service.commandCounts[@"ls-tree"] integerValue] && ![service.commandCounts[@"cat-file"] integerValue],@"warm scan fetches current teacher head but skips tree and document reads");
+    service.denyTeacher=YES;Check(![service scanCourse:f cache:cache error:&error],@"warm cache cannot bypass revoked teacher access");service.denyTeacher=NO;
+    NSString *seed=f[@"seed"];
+    Write([seed stringByAppendingPathComponent:@"irrelevant.bin"],@"unrelated change");Git(seed,@[@"add",@"irrelevant.bin"]);Git(seed,@[@"commit",@"-m",@"unrelated"]);Git(seed,@[@"push",f[@"teacherBare"],@"main"]);
+    [service.commandCounts removeAllObjects];parses=0;NSDictionary *unrelated=[service scanCourse:f cache:cache error:&error];
+    Check([unrelated[@"candidates"] isEqual:first[@"candidates"]] && parses==0 && ![service.commandCounts[@"cat-file"] integerValue],@"unrelated teacher commit reuses unchanged text and recognition");
+    Write([seed stringByAppendingPathComponent:@"new-homework.md"],@"# Homework 3\n截止：2027年12月20日 17:00\n完成第三次练习。\n");Git(seed,@[@"add",@"new-homework.md"]);Git(seed,@[@"commit",@"-m",@"one new source"]);Git(seed,@[@"push",f[@"teacherBare"],@"main"]);
+    [service.commandCounts removeAllObjects];parses=0;NSDictionary *changed=[service scanCourse:f cache:cache error:&error];
+    Check(changed!=nil && parses==1 && [service.commandCounts[@"cat-file"] integerValue]==1,@"one new file incurs exactly one read and one recognition");
+    Check([changed[@"scanSummary"][@"new"] integerValue]==1,@"scan summary reports only actual new source work");
+    service.scanCheckpoint=^BOOL(NSMutableDictionary *values,NSError **failure){if(failure)*failure=[NSError errorWithDomain:@"fixture" code:1 userInfo:@{NSLocalizedDescriptionKey:@"simulated storage failure"}];return NO;};
+    service.recognitionSettings=@{@"mode":@"rules",@"courseTemplate":@{@"titlePattern":@"(Homework)"}};
+    Check(![service scanCourse:f cache:cache error:&error] && [error.localizedDescription containsString:@"storage failure"],@"checkpoint write failure is visible and does not claim a completed scan");Cleanup(f);
+}
+int main(void) { @autoreleasepool { ParserTests(); SecurityTests(); APITests(); OAuthTests(); GitTests(); DateReferenceTests(); IncrementalTests(); printf("PASS: %lu homework/API/Git/security assertions\n", (unsigned long)assertions); } return 0; }
