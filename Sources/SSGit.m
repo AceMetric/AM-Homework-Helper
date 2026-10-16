@@ -322,7 +322,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
             NSString *fingerprint = candidate[@"id"];
             if ([dedup containsObject:fingerprint]) continue; [dedup addObject:fingerprint];
             NSDictionary *referenced=nil;
-            if([candidate[@"relative"] boolValue] && ![candidate[@"needsTime"] boolValue]){referenced=[self cachedDateReference:candidate head:head branch:branch path:path cache:cache];if(!referenced[@"dateBasis"])referencesComplete=NO;}
+            if([candidate[@"relative"] boolValue] && ![candidate[@"needsTime"] boolValue]){NSMutableDictionary *scopedCandidate=candidate.mutableCopy;scopedCandidate[@"timeZone"]=calendar.timeZone.name;referenced=[self cachedDateReference:scopedCandidate head:head branch:branch path:path cache:cache];if(!referenced[@"dateBasis"])referencesComplete=NO;}
             NSMutableDictionary *copy = candidate.mutableCopy;for(NSString *field in @[@"suggestedDue",@"dateBasis"])if(referenced[field])copy[field]=referenced[field]; if (!copy[@"timeZone"]) copy[@"timeZone"] = calendar.timeZone.name; [candidates addObject:copy];
         }
         if(self.scanCheckpoint && !self.scanCheckpoint(cache,error))return nil;
@@ -361,11 +361,11 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
             if(self.scanCheckpoint && !self.scanCheckpoint(cache,&failure))found=nil;
         }
         if(failure){[messages addObject:[NSString stringWithFormat:@"%@：%@",document[@"path"],failure.localizedDescription]];if([scoped[@"mode"] isEqual:@"local"] && ([failure.localizedDescription containsString:@"连接失败"] || [failure.localizedDescription containsString:@"超时"] || [failure.localizedDescription containsString:@"服务返回 HTTP"])){[messages addObject:@"其余文档暂用规则结果，可恢复服务后重试。"];break;}continue;}
-        for(NSDictionary *record in found){NSMutableDictionary *copy=record.mutableCopy;NSDictionary *old=byID[record[@"id"]];
+        for(NSDictionary *record in found){NSMutableDictionary *copy=record.mutableCopy;copy[@"timeZone"]=calendar.timeZone.name;NSDictionary *old=byID[record[@"id"]];
             if(completed[@"model"])copy[@"analysisModel"]=completed[@"model"];
             if(completed[@"prompt"])copy[@"analysisPrompt"]=completed[@"prompt"];
             if([record[@"recognizer"] hasPrefix:@"rules"] || [record[@"recognizer"] hasPrefix:@"template"])continue;
-            if([record[@"relative"] boolValue]){NSDictionary *basis=old[@"dateBasis"] ? old : [self cachedDateReference:record head:scan[@"commit"] branch:scan[@"branch"] path:course[@"path"] cache:cache];for(NSString *field in @[@"dateBasis",@"suggestedDue"])if(basis[field])copy[field]=basis[field];}
+            if([record[@"relative"] boolValue]){NSDictionary *basis=old[@"dateBasis"] ? old : [self cachedDateReference:copy head:scan[@"commit"] branch:scan[@"branch"] path:course[@"path"] cache:cache];for(NSString *field in @[@"dateBasis",@"suggestedDue"])if(basis[field])copy[field]=basis[field];}
             byID[record[@"id"]]=copy;
         }
     }

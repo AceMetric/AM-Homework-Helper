@@ -34,6 +34,7 @@ NSDictionary *AMOnlineReviewUploadSummary(void);
 BOOL AMOnlineReviewSaveSettings(BOOL enabled, NSString *key, NSError **error);
 void AMOnlineReviewCleanup(void);
 NSUInteger AMOnlineReviewPendingUploads(void);
+BOOL AMOnlineReviewRegisterWithModel(NSDictionary *context,NSDictionary *report,NSString *courseID,NSString *model,NSError **error);
 BOOL AMOnlineReviewRegister(NSDictionary *context,NSDictionary *report,NSString *courseID,NSError **error);
 void AMOnlineReviewFailed(NSString *batch);
 void AMShowOnlineReviewSettings(NSWindow * _Nullable parent);

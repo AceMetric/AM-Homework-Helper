@@ -37,7 +37,7 @@
         [owner.submission configureTasks:@[task] selected:@[identifier]];
         NSView *reportRoot=owner.submission.window.contentView;owner.submission.window=scope;scope.contentView=reportRoot;reportRoot.frame=NSMakeRect(0,0,NSWidth(scope.contentView.bounds),NSHeight(scope.contentView.bounds));reportRoot.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;scope.title=@"检查作业文件 · 检查报告";
         [owner configurePreflight:owner.submission course:course tasks:@[task]];
-        for(NSButton *check in owner.submission.checks)if(check.enabled)check.state=NSControlStateValueOn;
+        for(NSButton *check in owner.submission.checks)if(check.enabled)check.state=NSControlStateValueOn;owner.submission.draftBaseline=[owner.submission draftValues];
         owner.submission.finished=^{owner.submission=nil;[owner closeCheckScope];};
         owner.submission.backToScope=^{SSSubmissionController *report=owner.submission;report.finished=nil;[report cancel:nil];owner.submission=nil;((AMCheckWindow *)scope).onConfirm=nil;((AMCheckWindow *)scope).onCancel=^{[owner closeCheckScope];};scope.contentViewController=scopeController;scope.title=@"检查作业文件 · 文件范围";[scope makeKeyAndOrderFront:nil];};
         owner.submission.readPreview=^(NSString *path,void(^ready)(NSString *)){ready(@"当前本机文件，只读检查；不创建提交或推送。");};

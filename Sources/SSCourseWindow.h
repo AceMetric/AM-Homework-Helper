@@ -3,6 +3,7 @@
 NS_ASSUME_NONNULL_BEGIN
 @interface SSCourseController : NSViewController <NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate>
 @property(readonly) BOOL hasCheckWorkspace;
+@property(readonly) NSSegmentedControl *navigationControl;
 @property (copy) NSArray<NSDictionary *> * (^tasksProvider)(void);
 @property (copy) void (^reviewCandidate)(NSDictionary *candidate);
 @property (copy, nullable) void (^restoreTaskNotes)(NSString *identifier);
@@ -14,6 +15,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (copy, nullable) BOOL (^localSkillAction)(NSString *action, NSString *batch);
 @property (readonly) BOOL hasUnsavedReview;
 - (BOOL)resolveUnsavedReview;
+- (BOOL)saveConfigurationDraftForExit;
 - (void)discardReview;
 - (BOOL)deferAutomaticImportOfTasks:(NSArray *)tasks error:(NSError **)error;
 @property (nonatomic) BOOL inbox;
