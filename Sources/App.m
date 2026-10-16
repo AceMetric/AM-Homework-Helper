@@ -158,7 +158,8 @@ static NSColor *EventFill(NSDictionary *task) {
 - (void)invoke:(id)sender { if (self.onClick) self.onClick(); }
 - (void)drawRect:(NSRect)rect {
     BOOL done = [self.task[@"completed"] boolValue]; NSColor *ink = EventColor(self.task);
-    [[[NSGradient alloc] initWithStartingColor:EventFill(self.task) endingColor:Card()] drawInBezierPath:[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 0, 1) xRadius:5 yRadius:5] angle:-70];
+    [EventFill(self.task) setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 0, 1) xRadius:5 yRadius:5] fill];
     CGFloat textY = (self.bounds.size.height - 16) / 2;
     DrawText(done ? @"✓" : ([self.task[@"due"] timeIntervalSinceNow] < 0 ? @"!" : @"○"), NSMakeRect(5, textY, 15, 16), 11, NSFontWeightSemibold, ink, NSTextAlignmentCenter);
     NSMutableParagraphStyle *style = [NSMutableParagraphStyle new]; style.lineBreakMode = NSLineBreakByTruncatingTail;
@@ -175,6 +176,7 @@ static NSColor *EventFill(NSDictionary *task) {
 @property BOOL weekend;
 @property NSString *dayKind;
 @property BOOL hovered;
+@property BOOL selected;
 @property NSTrackingArea *hoverArea;
 - (void)syncHoverAtWindowPoint:(NSPoint)point;
 @end
@@ -193,18 +195,23 @@ static NSColor *EventFill(NSDictionary *task) {
 - (void)mouseExited:(NSEvent *)event { [self syncHoverAtWindowPoint:event.locationInWindow]; }
 - (void)drawRect:(NSRect)dirtyRect {
     NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 0.5, 0.5) xRadius:self.radius yRadius:self.radius];
-    NSColor *start = self.hovered ? [self.fill blendedColorWithFraction:0.14 ofColor:Emphasis()] : self.fill;
-    NSColor *end = self.hovered ? [self.gradientEnd blendedColorWithFraction:0.14 ofColor:Emphasis()] : self.gradientEnd;
-    [[[NSGradient alloc] initWithStartingColor:start endingColor:end] drawInBezierPath:path angle:-70];
-    [self.stroke setStroke]; [path stroke];
+    [self.fill setFill]; [path fill];
+    if (self.selected || self.hovered) {
+        [[Accent() colorWithAlphaComponent:self.selected ? .12 : .05] setFill]; [path fill];
+    }
+    BOOL contrast=NSWorkspace.sharedWorkspace.accessibilityDisplayShouldIncreaseContrast;
+    [(contrast && !self.selected ? NSColor.secondaryLabelColor:self.stroke) setStroke];
+    path.lineWidth=contrast ? 1.5:1; [path stroke];
 }
 @end
 
 static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
-    if (selected) { cell.fill = Emphasis(); cell.gradientEnd = Tint(); cell.stroke = Accent(); }
-    else if (!cell.inMonth) { cell.fill = [Panel() blendedColorWithFraction:0.48 ofColor:Line()]; cell.gradientEnd = [Panel() blendedColorWithFraction:0.24 ofColor:Line()]; cell.stroke = Line(); }
-    else if (cell.weekend) { cell.fill=[cell.dayKind isEqual:@"holiday"] ? [Canvas() blendedColorWithFraction:0.07 ofColor:Accent()]:[Canvas() blendedColorWithFraction:0.08 ofColor:Ink()];cell.gradientEnd=cell.fill;cell.stroke=Line(); }
-    else { cell.fill = Card(); cell.gradientEnd = Canvas(); cell.stroke = Line(); }
+    // Blending semantic colors here resolves them immediately, before the cell
+    // necessarily belongs to its window. Keep an adaptive color until drawing.
+    if (!cell.inMonth) cell.fill=Adaptive(0xF3F3F4,0x252628);
+    else if (cell.weekend) cell.fill=[cell.dayKind isEqual:@"holiday"] ? Adaptive(0xEDF3FA,0x253447):Adaptive(0xF1F2F4,0x292B2E);
+    else cell.fill=Card();
+    cell.selected=selected;cell.gradientEnd=nil;cell.stroke=selected ? Accent():Line();
     cell.needsDisplay = YES;
 }
 
@@ -366,6 +373,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSScrollView *scroll;
 @property NSSearchField *search;
 @property NSSegmentedControl *calendarStatus;
+@property NSSegmentedControl *overviewModeControl;
 @property NSScrollView *calendarScroll;
 @property Surface *calendarDocument;
 @property NSDate *calendarBaseMonth;
@@ -462,7 +470,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @implementation EditorController
 #include "AMTaskEditor.inc"
 - (NSArray *)formValues {
-    return [[NSArray alloc] initWithArray:@[self.titleField.stringValue ?: @"", self.subjectField.stringValue ?: @"", self.selectedDate ?: NSNull.null, self.notesField.string ?: @"", DDLParseReminderOffsets(self.reminderField.stringValue) ?: self.reminderField.stringValue, @(self.priority.indexOfSelectedItem),[self recurrenceRule] ?: @{},@(self.seriesScope.indexOfSelectedItem)] copyItems:YES];
+    return [[NSArray alloc] initWithArray:@[self.titleField.stringValue ?: @"", self.subjectField.stringValue ?: @"", self.nativeDeadlinePicker.dateValue ?: self.selectedDate ?: NSNull.null, self.notesField.string ?: @"", DDLParseReminderOffsets(self.reminderField.stringValue) ?: self.reminderField.stringValue, @(self.priority.indexOfSelectedItem),[self recurrenceRule] ?: @{},@(self.seriesScope.indexOfSelectedItem)] copyItems:YES];
 }
 - (BOOL)hasUnsavedChanges { return ![self.initialValues isEqual:[self formValues]]; }
 - (BOOL)saveForExit { [self save:nil]; return self.appDelegate.editor != self; }
@@ -692,7 +700,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.taskDetails = Box(Card(), 10); self.taskDetails.stroke = Line(); self.taskDetails.hidden=YES; [self.root addSubview:self.taskDetails];
     self.header = GradientBox(Canvas(), Panel(), 0); [self.root addSubview:self.header];
     self.search = [[NSSearchField alloc] initWithFrame:NSZeroRect]; self.search.placeholderString = @"搜索任务、学科、备注"; self.search.delegate = self; self.search.sendsSearchStringImmediately = YES; self.search.font = [NSFont systemFontOfSize:12];
-    self.calendarStatus = Segments(@[@"全部", @"待完成", @"已完成"], self, @selector(changeCalendarStatus:)); [self.root addSubview:self.calendarStatus];
+    self.calendarStatus = FilterSegments(@[@"全部", @"待完成", @"已完成"], self, @selector(changeCalendarStatus:));
     self.sortMenu = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.sortMenu addItemsWithTitles:@[@"按截止时间", @"按优先级"]]; self.sortMenu.target = self; self.sortMenu.action = @selector(sortChanged:);
     self.scroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; self.scroll.hasVerticalScroller = YES; self.scroll.autohidesScrollers = YES; self.scroll.drawsBackground = NO;
     self.document = GradientBox(Canvas(), Panel(), 0); self.scroll.documentView = self.document; [self.root addSubview:self.scroll];
@@ -870,9 +878,9 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.scroll.hidden = coursePage || self.calendarMode;
     self.calendarScroll.hidden = coursePage || !self.calendarMode;
     self.agenda.hidden = coursePage || !self.calendarMode;
-    self.calendarStatus.hidden = coursePage || !self.calendarMode;
+    self.calendarStatus.hidden = NO;
     // Toolbar owns the frames and visibility of search and filter controls.
-    [self.calendarStatus sizeToFit];self.calendarStatus.frame = NSMakeRect(x,140,MAX(240,NSWidth(self.calendarStatus.frame)),NSHeight(self.calendarStatus.frame));
+
     [self layoutTaskArea];
     self.courseWindow.view.hidden = !coursePage || self.page==5;
     self.helpController.view.hidden=self.page!=5;self.helpController.view.frame=NSMakeRect(x,112,content,h-136);
@@ -885,8 +893,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     CGFloat w=NSWidth(self.root.bounds),h=NSHeight(self.root.bounds),x=24,content=w-x-24;
     self.taskDetails.hidden=self.page>=3 || self.calendarMode || !self.selectedTaskID;
     if(self.calendarMode){
-        if(w>=988){self.calendarScroll.frame=NSMakeRect(x,188,content-304,h-212);self.agenda.frame=NSMakeRect(w-304,188,280,h-212);}
-        else {CGFloat agendaHeight=self.selectedTaskID ? 280:176;self.calendarScroll.frame=NSMakeRect(x,188,content,h-228-agendaHeight);self.agenda.frame=NSMakeRect(x,h-24-agendaHeight,content,agendaHeight);}
+        if(w>=988){self.calendarScroll.frame=NSMakeRect(x,156,content-304,h-180);self.agenda.frame=NSMakeRect(w-304,156,280,h-180);}
+        else {CGFloat agendaHeight=self.selectedTaskID ? 280:176;self.calendarScroll.frame=NSMakeRect(x,156,content,h-196-agendaHeight);self.agenda.frame=NSMakeRect(x,h-24-agendaHeight,content,agendaHeight);}
     }else{
         CGFloat inspector=self.selectedTaskID && self.page<3 ? 320:0;
         if(inspector && content<760){CGFloat detailHeight=MIN(240,(h-164)*0.52);self.scroll.frame=NSMakeRect(x,140,content,MAX(120,h-180-detailHeight));self.taskDetails.frame=NSMakeRect(x,h-24-detailHeight,content,detailHeight);}
@@ -1388,10 +1396,12 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)dismissSearchAtWindowPoint:(NSPoint)point {if(self.search.currentEditor && !NSPointInRect([self.search convertPoint:point fromView:nil],self.search.bounds))[self endSearchEditing];}
 - (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)command {if(control==self.search && command==@selector(cancelOperation:)){[self endSearchEditing];return YES;}return NO;}
 - (void)showWindow { [self.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES]; }
-- (NSArray *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar{return @[@"AMOverviewMode",@"AMTaskFilter",@"AMSort",@"AMSearch",@"AMNewTask",NSToolbarFlexibleSpaceItemIdentifier,NSToolbarSpaceItemIdentifier];}
+- (NSArray *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar{return @[@"AMOverviewMode",@"AMCalendarStatus",@"AMCourseSections",@"AMTaskFilter",@"AMSort",@"AMSearch",@"AMNewTask",NSToolbarFlexibleSpaceItemIdentifier,NSToolbarSpaceItemIdentifier];}
 - (NSArray *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar{return @[NSToolbarFlexibleSpaceItemIdentifier];}
 - (NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSString *)identifier willBeInsertedIntoToolbar:(BOOL)flag {
-    if([identifier isEqual:@"AMOverviewMode"]){NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];NSSegmentedControl *control=Segments(@[@"今日",@"本周"],self,@selector(changeOverviewMode:));control.controlSize=NSControlSizeLarge;control.selectedSegment=self.weeklyMode ? 1:0;control.accessibilityLabel=@"总览显示方式";[control sizeToFit];item.view=control;item.label=@"总览显示方式";return item;}
+    if([identifier isEqual:@"AMOverviewMode"]){if(!self.overviewModeControl)self.overviewModeControl=Segments(@[@"今日",@"本周"],self,@selector(changeOverviewMode:));self.overviewModeControl.selectedSegment=self.weeklyMode ? 1:0;return SegmentToolbarItem(identifier,@"总览显示方式",self.overviewModeControl);}
+    if([identifier isEqual:@"AMCalendarStatus"])return SegmentToolbarItem(identifier,@"日历任务状态",self.calendarStatus);
+    if([identifier isEqual:@"AMCourseSections"])return SegmentToolbarItem(identifier,@"课程分区",self.courseWindow.navigationControl);
     if([identifier isEqual:@"AMSearch"]){NSSearchToolbarItem *item=[[NSSearchToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"搜索任务";item.searchField=self.search;item.preferredWidthForSearchField=240;return item;}
     if([identifier isEqual:@"AMNewTask"]){NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"快速录入作业";item.toolTip=@"快速录入作业（⌘⇧N）；完整新建可用 ⌘N";item.image=[NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:item.label];item.target=self;item.action=@selector(quickEntry:);item.bordered=YES;
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
@@ -1403,7 +1413,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     return nil;
 }
 - (void)refreshPageToolbar {
-    NSMutableArray *desired=NSMutableArray.array;if(self.page==0)[desired addObject:@"AMOverviewMode"];if(self.page==2)[desired addObjectsFromArray:@[@"AMTaskFilter",@"AMSort"]];[desired addObject:NSToolbarFlexibleSpaceItemIdentifier];if(self.page<3)[desired addObjectsFromArray:@[@"AMSearch",@"AMNewTask"]];
+    NSMutableArray *desired=NSMutableArray.array;if(self.page==0)[desired addObject:@"AMOverviewMode"];if(self.page==1)[desired addObject:@"AMCalendarStatus"];if(self.page==4)[desired addObject:@"AMCourseSections"];if(self.page==2)[desired addObjectsFromArray:@[@"AMTaskFilter",@"AMSort"]];[desired addObject:NSToolbarFlexibleSpaceItemIdentifier];if(self.page<3)[desired addObjectsFromArray:@[@"AMSearch",@"AMNewTask"]];
     NSToolbar *toolbar=self.window.toolbar;
     for(NSInteger index=(NSInteger)toolbar.items.count-1;index>=0;index--)if(![desired containsObject:toolbar.items[index].itemIdentifier])[toolbar removeItemAtIndex:index];
     for(NSUInteger index=0;index<desired.count;index++){if(index<toolbar.items.count && [toolbar.items[index].itemIdentifier isEqual:desired[index]])continue;[toolbar insertItemWithItemIdentifier:desired[index] atIndex:index];}

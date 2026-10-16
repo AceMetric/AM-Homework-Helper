@@ -179,7 +179,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.moreButton = SSButton(@"更多", self, @selector(more:), NSZeroRect); [root addSubview:self.moreButton];
     self.assistantButton=SSButton(@"助手识别",self,@selector(exportSkillContext:),NSZeroRect);[root addSubview:self.assistantButton];
     self.assistantImportButton=SSButton(@"导入助手结果…",self,@selector(importSkillResults:),NSZeroRect);[root addSubview:self.assistantImportButton];
-    self.sections = Segments(@[@"课程内容", @"已加入任务", @"仓库信息", @"提交记录"], self, @selector(sectionChanged:)); [root addSubview:self.sections];
+    self.sections = Segments(@[@"课程内容", @"已加入任务", @"仓库信息", @"提交记录"], self, @selector(sectionChanged:));
     self.typeFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.typeFilter addItemsWithTitles:@[@"全部类型", @"作业", @"课上任务", @"考试", @"待确认类型"]]; self.typeFilter.target = self; self.typeFilter.action = @selector(sectionChanged:); [root addSubview:self.typeFilter];
     self.reviewFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.reviewFilter addItemsWithTitles:@[@"全部待审核", @"新作业", @"更新建议", @"已删除"]]; self.reviewFilter.target = self; self.reviewFilter.action = @selector(sectionChanged:); [root addSubview:self.reviewFilter];
     self.search = [[NSSearchField alloc] initWithFrame:NSZeroRect]; self.search.placeholderString = @"搜索作业或来源文件"; self.search.delegate = self; self.search.sendsSearchStringImmediately = YES; [root addSubview:self.search];
@@ -250,7 +250,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.skillJobsController.actionHandler=^(NSString *action,NSString *batch){[owner skillJobAction:action batch:batch];};
     self.cancelReadButton=SSButton(@"取消检查",self,@selector(cancelReadOperation:),NSZeroRect);[root addSubview:self.cancelReadButton];self.cancelReadButton.hidden=YES;
     self.nativeHeader=NSStackView.new;self.nativeHeader.orientation=NSUserInterfaceLayoutOrientationVertical;self.nativeHeader.alignment=NSLayoutAttributeLeading;self.nativeHeader.spacing=8;self.nativeHeader.translatesAutoresizingMaskIntoConstraints=NO;[root addSubview:self.nativeHeader];
-    for(NSArray *controls in @[@[self.accountLabel,self.setupButton],@[self.scanButton,self.syncButton,self.commitButton,self.assistantButton,self.moreButton],@[self.sections,self.reviewFilter,self.typeFilter,self.search]]){
+    for(NSArray *controls in @[@[self.accountLabel,self.setupButton],@[self.scanButton,self.syncButton,self.commitButton,self.assistantButton,self.moreButton],@[self.reviewFilter,self.typeFilter,self.search]]){
         NSStackView *row=[NSStackView stackViewWithViews:controls];row.orientation=NSUserInterfaceLayoutOrientationHorizontal;row.spacing=8;row.alignment=NSLayoutAttributeCenterY;row.detachesHiddenViews=YES;[self.nativeHeader addArrangedSubview:row];row.translatesAutoresizingMaskIntoConstraints=NO;[row.widthAnchor constraintEqualToAnchor:self.nativeHeader.widthAnchor].active=YES;
     }
     [NSLayoutConstraint activateConstraints:@[[self.nativeHeader.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[self.nativeHeader.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[self.nativeHeader.topAnchor constraintEqualToAnchor:root.safeAreaLayoutGuide.topAnchor]]];
@@ -277,7 +277,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)layoutContent {
     CGFloat w = NSWidth(self.view.bounds), h = NSHeight(self.view.bounds);
-    self.sections.hidden=self.inbox;self.typeFilter.hidden=self.inbox || self.sections.selectedSegment!=0;self.reviewFilter.hidden=!self.inbox;self.search.hidden=self.inbox;self.assistantButton.hidden=self.inbox;self.assistantImportButton.hidden=YES;self.assistantButton.enabled=self.assistantImportButton.enabled=!self.operationsPaused;BOOL modelConfigured=![SSRecognitionSettings()[@"mode"] isEqual:@"rules"];self.assistantButton.hidden=self.inbox || !modelConfigured;self.assistantButton.title=modelConfigured ? @"AI增强识别…":@"Skill识别…";self.assistantButton.action=modelConfigured ? @selector(enhanceRecognition:):@selector(exportSkillContext:);
+    self.sections.hidden=NO;self.typeFilter.hidden=self.inbox || self.sections.selectedSegment!=0;self.reviewFilter.hidden=!self.inbox;self.search.hidden=self.inbox;self.assistantButton.hidden=self.inbox;self.assistantImportButton.hidden=YES;self.assistantButton.enabled=self.assistantImportButton.enabled=!self.operationsPaused;BOOL modelConfigured=![SSRecognitionSettings()[@"mode"] isEqual:@"rules"];self.assistantButton.hidden=self.inbox || !modelConfigured;self.assistantButton.title=modelConfigured ? @"AI增强识别…":@"Skill识别…";self.assistantButton.action=modelConfigured ? @selector(enhanceRecognition:):@selector(exportSkillContext:);
     self.syncButton.hidden=self.inbox || ![self course];self.commitButton.hidden=self.syncButton.hidden;
     self.cancelReadButton.hidden=!self.busy || !self.git.readsCancellable;self.progress.hidden=!self.busy;self.progressRow.hidden=!self.busy;
     self.operationStatus.hidden=!self.statusLabel.stringValue.length && !self.busy && self.recoveryButton.hidden;
