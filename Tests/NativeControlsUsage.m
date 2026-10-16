@@ -44,8 +44,22 @@ int main(){@autoreleasepool{
     app.page=4;[app refreshPageToolbar];NSToolbarItem *courseItem=nil;for(NSToolbarItem *item in app.window.toolbar.items)if([item.itemIdentifier isEqual:@"AMCourseSections"])courseItem=item;
     Check(courseItem.view==app.courseWindow.sections && app.courseWindow.sections.superview!=app.courseWindow.view,@"course navigation is owned by the page toolbar");
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 270000
-    if(@available(macOS 27.0,*)){Check(tabs.role==NSSegmentedControlRoleTabs && app.calendarStatus.role==NSSegmentedControlRoleValueSelection,@"public roles distinguish navigation from value selection");}
+    if(@available(macOS 27.0,*)){ThemeSegmentedControl *values=FilterSegments(@[@"低",@"高"],nil,NULL);Check(tabs.role==NSSegmentedControlRoleTabs && app.calendarStatus.role==NSSegmentedControlRoleTabs && values.role==NSSegmentedControlRoleValueSelection,@"calendar content and page navigation use Tabs while form values use ValueSelection");}
 #endif
+    [app openCalendar:nil];NSSegmentedControl *calendar=app.calendarStatus;NSStackView *header=app.calendarHeader;
+    Check(calendar.controlSize==NSControlSizeRegular && calendar.segmentDistribution==NSSegmentDistributionFit,@"toolbar calendar uses standard sizing and natural segment widths");
+    for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua,NSAppearanceNameAccessibilityHighContrastAqua,NSAppearanceNameAccessibilityHighContrastDarkAqua])for(NSValue *size in @[[NSValue valueWithSize:NSMakeSize(960,640)],[NSValue valueWithSize:NSMakeSize(1180,790)],[NSValue valueWithSize:NSMakeSize(1500,1000)]]){
+        app.window.appearance=[NSAppearance appearanceNamed:appearance];[app.window setContentSize:size.sizeValue];[app layout];
+        for(NSInteger index=0;index<3;index++){calendar.selectedSegment=index;[app changeCalendarStatus:calendar];[app layout];
+            NSRect safe=app.root.safeAreaRect;
+            Check(NSMinY(app.header.frame)>=NSMinY(safe)+15,@"calendar title stays below toolbar safe area");
+            Check(NSHeight(app.header.frame)>=header.fittingSize.height && NSMinY(app.calendarScroll.frame)>=NSMaxY(app.header.frame)+15,@"grid follows actual header height without clipping or overlap");
+            Check(NSContainsRect(app.root.bounds,app.calendarScroll.frame) && NSContainsRect(app.root.bounds,app.agenda.frame),@"calendar and agenda fit at minimum and intermediate widths");
+            Check(app.calendarStatus==calendar && app.calendarHeader==header && calendar.selectedSegment==index,@"appearance, layout and filtering retain native controls and selected value");
+        }
+    }
+    app.window.appearance=nil;calendar.selectedSegment=0;[app changeCalendarStatus:calendar];[app.window setContentSize:NSMakeSize(1280,840)];[app layout];
+    app.page=4;[app refreshPageToolbar];
     NSSegmentedControl *sameSections=app.courseWindow.sections;[app refreshPageToolbar];Check(sameSections==app.courseWindow.navigationControl,@"refresh reuses navigation and current selection");
     [app.courseWindow selectCourseID:@""];app.courseWindow.inbox=NO;[app.courseWindow.view setFrameSize:NSMakeSize(692,520)];[app.courseWindow layoutContent];
 

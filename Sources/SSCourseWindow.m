@@ -534,8 +534,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         [reviewRecords addObject:copy];
     }
     NSMutableArray *jobs=NSMutableArray.array;for(NSString *key in self.skillJobs){NSMutableDictionary *row=[self.skillJobs[key] mutableCopy];row[@"id"]=key;[jobs addObject:row];}if(self.localSkillJobsProvider)[jobs addObjectsFromArray:self.localSkillJobsProvider()];[jobs addObjectsFromArray:AMPreflightJobs()];[jobs sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [b[@"date"] compare:a[@"date"]];}];[self.skillJobsController updateRecords:jobs busy:self.operationsPaused];
-    self.scanButton.toolTip=self.busy ? @"点击加入队列；相同请求会合并，可在窗口菜单查看或取消。":(!local && !anyLocal ? @"先关联或下载课程文件夹，再检查新作业。":@"只读取老师内容，不合并或推送。");
-    self.syncButton.toolTip=self.connected && local ? @"合并老师更新，再安全更新个人 fork。":@"需要登录并关联本地课程文件夹。";self.commitButton.toolTip=self.syncButton.toolTip;
+    self.scanButton.toolTip=self.busy ? @"排队检查":(!local && !anyLocal ? @"尚未关联本地课程文件夹":@"检查新作业");
+    self.syncButton.toolTip=self.connected && local ? @"同步课程文件":@"需要登录并关联本地课程文件夹。";self.commitButton.toolTip=self.connected && local ? @"提交作业":@"需要登录并关联本地课程文件夹。";
     self.reviewWorkspace.paused = self.operationsPaused;
     if (self.inbox) [self.reviewWorkspace updateRecords:reviewRecords];
     NSString *selectedID = self.selectedCandidateID; NSPoint scrollPosition = self.table.enclosingScrollView.contentView.bounds.origin;
@@ -545,7 +545,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     BOOL info = !self.inbox && self.sections.selectedSegment == 2;
     self.table.enclosingScrollView.hidden = info || !visible.count;
     self.emptyLabel.hidden = info || visible.count > 0;
-    self.emptyLabel.stringValue = !self.courses.count ? @"连接 GitHub，然后添加你的课程仓库" : (course && !local ? @"这门课尚未关联本地文件夹\n点击“关联文件夹…”继续" : (self.query.length ? @"没有匹配的作业，试试其他关键词" : (self.inbox ? @"暂无待审核作业，检查课程后会在这里显示" : @"暂无待审核作业，点击“检查新作业”刷新")));
+    self.emptyLabel.stringValue = !self.courses.count ? @"尚未添加课程" : (course && !local ? @"这门课尚未关联本地文件夹" : (self.query.length ? @"没有匹配的作业" : (self.inbox ? @"暂无待审核作业" : @"暂无待审核作业")));
     self.emptyLabel.maximumNumberOfLines = 2; self.emptyLabel.lineBreakMode = NSLineBreakByWordWrapping;
     self.table.backgroundColor = Card(); self.detail.textColor = Ink(); ThemeEditor(self.detail);
     if (info) [self report:nil]; else [self candidateSelected:nil];
@@ -820,7 +820,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         if (!files) { [self showError:error]; return; }
         if (![course[@"pendingMergeTip"] length]) { [self status:@"没有本应用记录的上游合并。请自行处理现有 Git 状态。"] ; return; }
         NSAlert *alert = NSAlert.new; alert.messageText = @"上游合并冲突引导";
-        alert.informativeText = files.count ? @"在编辑器中打开文件，保留需要的内容并删除冲突标记。保存后勾选文件，点击“标记已解决”；全部解决后再完成合并。" : @"冲突文件已经标记解决。可以完成合并，然后检查并推送到自己的 fork。";
+        alert.informativeText = files.count ? @"仍有未解决的冲突文件。" : @"所有冲突已解决，可以完成合并。";
         NSView *list = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 550, MAX(30, files.count * 26))];
         NSMutableArray<NSButton *> *checks = NSMutableArray.array;
         for (NSUInteger i = 0; i < files.count; i++) {
@@ -945,7 +945,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     BOOL assignment = !candidate[@"kind"] || [candidate[@"kind"] isEqual:@"assignment"];
     if(candidate)self.selectedCandidateID = candidate[@"id"]; BOOL canStart = self.inbox && !candidate && self.pendingReviewCandidates.count > 0;
     self.reviewButton.enabled = canStart || (candidate != nil && (assignment || [candidate[@"confirmed"] boolValue])); self.reviewButton.title = canStart ? @"开始审核…" : ([candidate[@"confirmed"] boolValue] ? @"编辑任务…" : @"审核作业…");
-    self.reviewButton.toolTip = @"按当前课程和搜索筛选逐项审核；Return 保存并下一项";
+    self.reviewButton.toolTip = @"审核作业（Return 保存并下一项）";
     self.typeButton.enabled = candidate != nil && ![candidate[@"confirmed"] boolValue] && !self.operationsPaused;
     NSMutableString *preview = NSMutableString.string;
     if (candidate) {

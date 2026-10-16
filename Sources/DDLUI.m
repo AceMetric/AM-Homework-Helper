@@ -127,7 +127,7 @@ void AMConfigureSingleLineField(NSTextField *field) {
 static ThemeSegmentedControl *AMSegments(NSArray<NSString *> *labels,id target,SEL action,BOOL navigation) {
     ThemeSegmentedControl *control=[[ThemeSegmentedControl alloc] initWithFrame:NSZeroRect];control.segmentCount=labels.count;
     for(NSInteger index=0;index<(NSInteger)labels.count;index++)[control setLabel:labels[index] forSegment:index];
-    control.segmentStyle=NSSegmentStyleAutomatic;control.controlSize=NSControlSizeLarge;
+    control.segmentStyle=NSSegmentStyleAutomatic;control.controlSize=NSControlSizeRegular;control.segmentDistribution=NSSegmentDistributionFit;
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
     if(@available(macOS 26.0,*))control.borderShape=NSControlBorderShapeCapsule;
 #endif

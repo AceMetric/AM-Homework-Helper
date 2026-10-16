@@ -283,7 +283,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
             NSDictionary *task = tasks[j]; CalendarTaskButton *event = [[CalendarTaskButton alloc] initWithFrame:NSZeroRect]; event.task = task; event.title = task[@"title"];
             NSString *state = [task[@"completed"] boolValue] ? @"已完成" : ([task[@"due"] timeIntervalSinceNow] < 0 ? @"已逾期" : @"待完成");
             event.accessibilityLabel = [NSString stringWithFormat:@"%@：%@，%@", state, task[@"title"], DDLFormatDate(task[@"due"], @"M月d日 HH:mm")];
-            event.toolTip = [NSString stringWithFormat:@"%@ · %@\n[%@] %@\n点击查看详情", state, task[@"title"], task[@"subject"], DDLFormatDate(task[@"due"], @"yyyy-MM-dd HH:mm")];
+            event.toolTip = [NSString stringWithFormat:@"%@ · %@\n[%@] %@", state, task[@"title"], task[@"subject"], DDLFormatDate(task[@"due"], @"yyyy-MM-dd HH:mm")];
             event.onClick = ^{ if (weakSelf.onSelect) weakSelf.onSelect(date, task[@"id"]); };
             Put(cell, event, 6, eventStart + j * step, cellW - 16, eventHeight);
         }
@@ -369,6 +369,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSString *detailsAppearance;
 @property NSSize detailsSize;
 @property Surface *header;
+@property NSLayoutConstraint *headerHeight;
 @property Surface *document;
 @property NSScrollView *scroll;
 @property NSSearchField *search;
@@ -698,9 +699,11 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.window.contentViewController=self.mainSplit;
     NSToolbar *toolbar=[[NSToolbar alloc] initWithIdentifier:@"AMMainToolbar"];toolbar.delegate=self;toolbar.displayMode=NSToolbarDisplayModeIconOnly;self.window.toolbar=toolbar;self.window.toolbarStyle=NSWindowToolbarStyleUnifiedCompact;
     self.taskDetails = Box(Card(), 10); self.taskDetails.stroke = Line(); self.taskDetails.hidden=YES; [self.root addSubview:self.taskDetails];
-    self.header = GradientBox(Canvas(), Panel(), 0); [self.root addSubview:self.header];
+    self.header = Box(nil, 0);self.header.translatesAutoresizingMaskIntoConstraints=NO;[self.root addSubview:self.header];
+    self.headerHeight=[self.header.heightAnchor constraintEqualToConstant:76];
+    [NSLayoutConstraint activateConstraints:@[[self.header.leadingAnchor constraintEqualToAnchor:self.root.leadingAnchor constant:24],[self.header.trailingAnchor constraintEqualToAnchor:self.root.trailingAnchor constant:-24],[self.header.topAnchor constraintEqualToAnchor:self.root.safeAreaLayoutGuide.topAnchor constant:16],self.headerHeight]];
     self.search = [[NSSearchField alloc] initWithFrame:NSZeroRect]; self.search.placeholderString = @"搜索任务、学科、备注"; self.search.delegate = self; self.search.sendsSearchStringImmediately = YES; self.search.font = [NSFont systemFontOfSize:12];
-    self.calendarStatus = FilterSegments(@[@"全部", @"待完成", @"已完成"], self, @selector(changeCalendarStatus:));
+    self.calendarStatus = Segments(@[@"全部", @"待完成", @"已完成"], self, @selector(changeCalendarStatus:));
     self.sortMenu = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.sortMenu addItemsWithTitles:@[@"按截止时间", @"按优先级"]]; self.sortMenu.target = self; self.sortMenu.action = @selector(sortChanged:);
     self.scroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; self.scroll.hasVerticalScroller = YES; self.scroll.autohidesScrollers = YES; self.scroll.drawsBackground = NO;
     self.document = GradientBox(Canvas(), Panel(), 0); self.scroll.documentView = self.document; [self.root addSubview:self.scroll];
@@ -757,7 +760,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.helpController.actionHandler=^(NSString *action){
         if([action isEqual:@"setup"]){[weakSelf.courseWindow setup:nil];return;}
         if([action isEqual:@"quick"]){[weakSelf quickEntry:nil];return;}
-        NSButton *route=NSButton.new;route.tag=[action isEqual:@"tasks"] ? 2:([action isEqual:@"review"] ? 3:4);[weakSelf navigate:route];if([action isEqual:@"skill"])[weakSelf.courseWindow showSkillJobs:nil];
+        if([action isEqual:@"settings"]){[weakSelf showSettings:nil];return;}
+        NSButton *route=NSButton.new;route.tag=[action isEqual:@"calendar"] ? 1:([action isEqual:@"tasks"] ? 2:([action isEqual:@"review"] ? 3:4));[weakSelf navigate:route];if([action isEqual:@"skill"])[weakSelf.courseWindow showSkillJobs:nil];
     };
     self.courseWindow.onboardingNavigation=^(BOOL review){NSButton *route=NSButton.new;route.tag=review ? 3:4;[weakSelf navigate:route];};
     self.courseWindow.operationStateChanged = ^{ [weakSelf.exitCoordinator operationStateChanged]; };
@@ -871,34 +875,38 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)layoutContent {
     if(!self.scroll || self.layingOutMain)return;
     self.layingOutMain=YES;
-    CGFloat w = NSWidth(self.root.bounds), fullHeight=NSHeight(self.root.bounds),h=fullHeight, x = 24, content = w - x - 24;
     self.sidebar.hidden = NO;
-    self.header.frame = NSMakeRect(x, 48, content, self.page>=3 ? 64:88);
     BOOL coursePage = self.page >= 3;
     self.scroll.hidden = coursePage || self.calendarMode;
     self.calendarScroll.hidden = coursePage || !self.calendarMode;
     self.agenda.hidden = coursePage || !self.calendarMode;
     self.calendarStatus.hidden = NO;
-    // Toolbar owns the frames and visibility of search and filter controls.
-
-    [self layoutTaskArea];
-    self.courseWindow.view.hidden = !coursePage || self.page==5;
-    self.helpController.view.hidden=self.page!=5;self.helpController.view.frame=NSMakeRect(x,112,content,h-136);
-    if (self.courseWindow) { self.courseWindow.view.frame = NSMakeRect(x, 112, content, h - 136); [self.courseWindow layoutContent]; }
+    // The toolbar and safe-area anchors own chrome sizing; page content follows below.
     [self render];
     self.layingOutMain=NO;
 }
+- (void)layoutHeaderAndPages {
+    CGFloat headerHeight=self.calendarMode ? self.calendarHeader.fittingSize.height+4:((self.page==0 || (self.page<3 && self.notice.length)) ? 76:40);
+    self.headerHeight.constant=MAX(40,ceil(headerHeight));
+    [self.root layoutSubtreeIfNeeded];
+    CGFloat top=NSMaxY(self.header.frame)+16,w=NSWidth(self.root.bounds),h=NSHeight(self.root.bounds);
+    NSRect frame=NSMakeRect(24,top,MAX(0,w-48),MAX(0,h-top-24));
+    self.courseWindow.view.hidden=self.page<3 || self.page==5;self.helpController.view.hidden=self.page!=5;
+    self.helpController.view.frame=frame;
+    if(self.courseWindow){self.courseWindow.view.frame=frame;[self.courseWindow layoutContent];}
+    [self layoutTaskArea];
+}
 - (void)layoutTaskArea {
     BOOL weekly=self.page==0 && self.weeklyMode;self.weeklyController.view.hidden=!weekly;self.scroll.hidden=self.page>=2 || self.calendarMode || weekly || self.page==2;self.nativeTasks.view.hidden=!(self.page==2 || (self.page==0 && !weekly));self.scroll.hidden=YES;
-    CGFloat w=NSWidth(self.root.bounds),h=NSHeight(self.root.bounds),x=24,content=w-x-24;
+    CGFloat w=NSWidth(self.root.bounds),h=NSHeight(self.root.bounds),x=24,content=w-x-24,top=NSMaxY(self.header.frame)+16,available=MAX(0,h-top-24);
     self.taskDetails.hidden=self.page>=3 || self.calendarMode || !self.selectedTaskID;
     if(self.calendarMode){
-        if(w>=988){self.calendarScroll.frame=NSMakeRect(x,156,content-304,h-180);self.agenda.frame=NSMakeRect(w-304,156,280,h-180);}
-        else {CGFloat agendaHeight=self.selectedTaskID ? 280:176;self.calendarScroll.frame=NSMakeRect(x,156,content,h-196-agendaHeight);self.agenda.frame=NSMakeRect(x,h-24-agendaHeight,content,agendaHeight);}
+        if(w>=988){self.calendarScroll.frame=NSMakeRect(x,top,content-304,available);self.agenda.frame=NSMakeRect(w-304,top,280,available);}
+        else {CGFloat agendaHeight=MIN(self.selectedTaskID ? 280:176,available*.5);self.calendarScroll.frame=NSMakeRect(x,top,content,MAX(0,available-agendaHeight-16));self.agenda.frame=NSMakeRect(x,h-24-agendaHeight,content,agendaHeight);}
     }else{
         CGFloat inspector=self.selectedTaskID && self.page<3 ? 320:0;
-        if(inspector && content<760){CGFloat detailHeight=MIN(240,(h-164)*0.52);self.scroll.frame=NSMakeRect(x,140,content,MAX(120,h-180-detailHeight));self.taskDetails.frame=NSMakeRect(x,h-24-detailHeight,content,detailHeight);}
-        else {self.scroll.frame=NSMakeRect(x,140,content-(inspector ? inspector+16:0),h-164);self.taskDetails.frame=NSMakeRect(w-24-inspector,140,inspector,h-164);}
+        if(inspector && content<760){CGFloat detailHeight=MIN(240,available*0.52);self.scroll.frame=NSMakeRect(x,top,content,MAX(0,available-16-detailHeight));self.taskDetails.frame=NSMakeRect(x,h-24-detailHeight,content,detailHeight);}
+        else {self.scroll.frame=NSMakeRect(x,top,content-(inspector ? inspector+16:0),available);self.taskDetails.frame=NSMakeRect(w-24-inspector,top,inspector,available);}
     }
     self.nativeTasks.view.frame=self.scroll.frame;
 }
@@ -1017,7 +1025,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (self.renderBusy || !self.document) return; self.renderBusy = YES;
     [self renderSidebar];
     [self renderHeader]; [self renderTaskContent];
-    NSInteger pending = [self countFilter:0]; self.statusItem.button.title = pending ? [NSString stringWithFormat:@" %ld", (long)pending] : @""; self.statusItem.button.toolTip = [NSString stringWithFormat:@"%ld 项待完成 · 点击打开 / 右键菜单", (long)pending];
+    NSInteger pending = [self countFilter:0]; self.statusItem.button.title = pending ? [NSString stringWithFormat:@" %ld", (long)pending] : @""; self.statusItem.button.toolTip = [NSString stringWithFormat:@"%ld 项待完成", (long)pending];
     self.renderBusy = NO;
 }
 - (void)renderTaskContent {
@@ -1131,16 +1139,18 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)renderHeader {
     [self refreshPageToolbar];
+    [self.root layoutSubtreeIfNeeded];
     CGFloat w=NSWidth(self.header.bounds);
-    if(self.calendarMode){if(self.calendarHeader.superview!=self.header){Clear(self.header);[self renderCalendarHeader];}else [self updateCalendarHeaderState];return;}
+    if(self.calendarMode){if(self.calendarHeader.superview!=self.header){Clear(self.header);[self renderCalendarHeader];}else [self updateCalendarHeaderState];[self layoutHeaderAndPages];return;}
     Clear(self.header);
     NSString *title = @[@"今日与近期安排", @"日历", @"任务", @"待审核作业", @"课程", @"开始使用"][self.page];
     if(self.page==0 && self.weeklyMode)title=@"每周安排";
     if(self.page==4)title=self.courseWindow.selectedCourseID.lastPathComponent ?: @"所有课程";
     Put(self.header, Text(title, 22, NSFontWeightSemibold, Ink()), 0, 4, w - 152, 32);
-    NSString *subtitle = (self.notice.length && self.page < 3) ? self.notice : (self.page == 0 ? DDLFormatDate(NSDate.date, @"M月d日 EEEE") : (self.page == 3 ? @"核对老师原文后，将作业加入日历与提醒" : (self.page == 4 ? @"先检查新作业，需要时再同步课程文件" : @"按截止时间安排任务")));
+    NSString *subtitle=(self.notice.length && self.page<3) ? self.notice:(self.page==0 ? DDLFormatDate(NSDate.date,@"M月d日 EEEE"):@"");
     if(self.page==0 && self.courseWindow.pendingCount){NSButton *pending=Button([NSString stringWithFormat:@"%lu 项待审核",(unsigned long)self.courseWindow.pendingCount],self,@selector(navigate:),0);pending.tag=3;Put(self.header,pending,w-148,4,148,32);}
-    if(self.page<3)Put(self.header, Text(subtitle, 13, NSFontWeightRegular, Muted()), 0, 48, w, 24);
+    if(subtitle.length)Put(self.header, Text(subtitle, 13, NSFontWeightRegular, Muted()), 0, 48, w, 24);
+    [self layoutHeaderAndPages];
 }
 #include "AMPlanningUI.inc"
 
@@ -1290,8 +1300,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         NSTextField *mark = Text(@"☀", 32, NSFontWeightLight, Accent()); mark.alignment = NSTextAlignmentCenter; Put(self.agendaDocument, mark, 0, 42, w, 48);
         NSString *message = self.query.length || self.calendarStatus.selectedSegment != 0 ? @"这一天没有匹配的任务" : @"这一天暂无任务";
         NSTextField *title = Text(message, 13, NSFontWeightMedium, Ink()); title.alignment = NSTextAlignmentCenter; Put(self.agendaDocument, title, 0, 100, w, 23);
-        NSTextField *hint = Text(self.query.length || self.calendarStatus.selectedSegment != 0 ? @"试试切换到「全部」或清空搜索。" : @"也可以点 +，为这一天安排新任务。", 10, NSFontWeightRegular, Muted()); hint.alignment = NSTextAlignmentCenter; Put(self.agendaDocument, hint, 0, 137, w, 36);
-        y = 185;
+        y = 140;
     }
     self.agendaDocument.frame = NSMakeRect(0, 0, self.agendaScroll.contentSize.width, MAX(y, self.agendaScroll.contentSize.height));
     if (focusY >= 0) position.y = focusY;
@@ -1403,7 +1412,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if([identifier isEqual:@"AMCalendarStatus"])return SegmentToolbarItem(identifier,@"日历任务状态",self.calendarStatus);
     if([identifier isEqual:@"AMCourseSections"])return SegmentToolbarItem(identifier,@"课程分区",self.courseWindow.navigationControl);
     if([identifier isEqual:@"AMSearch"]){NSSearchToolbarItem *item=[[NSSearchToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"搜索任务";item.searchField=self.search;item.preferredWidthForSearchField=240;return item;}
-    if([identifier isEqual:@"AMNewTask"]){NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"快速录入作业";item.toolTip=@"快速录入作业（⌘⇧N）；完整新建可用 ⌘N";item.image=[NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:item.label];item.target=self;item.action=@selector(quickEntry:);item.bordered=YES;
+    if([identifier isEqual:@"AMNewTask"]){NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"快速录入作业";item.toolTip=@"快速录入作业（⌘⇧N）";item.image=[NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:item.label];item.target=self;item.action=@selector(quickEntry:);item.bordered=YES;
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
         if(@available(macOS 26.0,*))item.style=NSToolbarItemStyleProminent;
 #endif
@@ -1769,19 +1778,19 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.notificationGeneration++;[self.reminderScheduler schedule:[self snapshot]];
 }
 - (void)notificationHelp:(id)sender {
-    NSAlert *alert=NSAlert.new;alert.messageText=@"测试提醒收到了吗？";alert.informativeText=@"请先在提醒设置发送测试，等待约5秒。通知已经交给系统后，是否展示仍取决于权限、专注模式和系统状态。";[alert addButtonWithTitle:@"我收到了"];[alert addButtonWithTitle:@"没有收到"];[alert addButtonWithTitle:@"取消"];
-    NSInteger answer=[alert runModal];if(answer==NSAlertSecondButtonReturn){NSAlert *help=NSAlert.new;help.messageText=@"检查系统通知设置";help.informativeText=@"1. 允许 AM Helper 通知、横幅和声音。\n2. 检查专注模式是否静音。\n3. 确认应用在通知设置中的身份为当前安装版本。\n4. 回到提醒设置重试；任务保存不依赖通知成功。";[help addButtonWithTitle:@"打开系统设置"];[help addButtonWithTitle:@"稍后"];if([help runModal]==NSAlertFirstButtonReturn)[self openSystemNotifications];}
+    NSAlert *alert=NSAlert.new;alert.messageText=@"测试提醒收到了吗？";alert.informativeText=@"测试提醒约5秒送达，可能受通知权限或专注模式影响。";[alert addButtonWithTitle:@"我收到了"];[alert addButtonWithTitle:@"没有收到"];[alert addButtonWithTitle:@"取消"];
+    NSInteger answer=[alert runModal];if(answer==NSAlertSecondButtonReturn){NSAlert *help=NSAlert.new;help.messageText=@"检查系统通知设置";help.informativeText=@"系统通知权限或专注模式可能阻止提醒。";[help addButtonWithTitle:@"打开系统设置"];[help addButtonWithTitle:@"稍后"];if([help runModal]==NSAlertFirstButtonReturn)[self openSystemNotifications];}
 }
 - (void)showNotificationSettings:(id)sender {
     [self showWindow]; if (self.window.attachedSheet) return;
     NSAlert *alert = [NSAlert new]; alert.messageText = @"提醒设置";
     if (self.preview) {
-        alert.informativeText = @"当前是界面预览，任务只存在内存中，系统通知未注册。正常启动后，可以在这里开启通知、发送测试提醒。"; [alert addButtonWithTitle:@"知道了"];
+        alert.informativeText = @"预览不发送系统通知。"; [alert addButtonWithTitle:@"知道了"];
         [alert beginSheetModalForWindow:self.window completionHandler:nil]; return;
     }
     BOOL notDetermined = self.authorization == UNAuthorizationStatusNotDetermined;
     BOOL denied = self.authorization == UNAuthorizationStatusDenied;
-    alert.informativeText = [NSString stringWithFormat:@"%@\n\n每个任务可以设置最多 10 个提醒点，例如「5小时、1小时、到期」。点击测试后，约 5 秒会出现系统通知。\n\n请在系统通知设置中允许 AM's Homework Helper 的横幅和声音。专注模式可能使提醒静音；电脑关机时不显示提醒。关闭窗口后应用仍在菜单栏运行。", self.notificationStatus];
+    alert.informativeText = [NSString stringWithFormat:@"%@\n测试提醒约5秒送达，可能受专注模式影响。", self.notificationStatus];
     [alert addButtonWithTitle:notDetermined ? @"允许电脑提醒" : (denied ? @"打开系统设置" : @"发送测试提醒")];
     [alert addButtonWithTitle:@"完成"]; if (!denied) [alert addButtonWithTitle:@"系统通知设置"];
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {

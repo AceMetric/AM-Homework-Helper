@@ -17,7 +17,7 @@
     self.repeatPreview=Text(@"",12,NSFontWeightRegular,Muted());self.repeatPreview.maximumNumberOfLines=0;self.repeatPreview.selectable=YES;add(self.repeatPreview);
     for(NSPopUpButton *p in @[self.repeatMode,self.repeatUnit,self.holidayPolicy,self.repeatEnd,self.seriesScope]){p.target=self;p.action=@selector(recurrenceChanged:);}
     self.allowedUnknownYears=saved[@"allowedUnknownYears"] ?: @[];
-    if(self.candidate || self.task[@"sourceID"] || self.task[@"sourceRepository"]){self.repeatMode.enabled=NO;add(Text(@"老师原作业保持截止时间。可从任务菜单另建周期安排。",12,NSFontWeightRegular,Muted()));}
+    if(self.candidate || self.task[@"sourceID"] || self.task[@"sourceRepository"]){self.repeatMode.enabled=NO;add(Text(@"老师作业不直接重复。",12,NSFontWeightRegular,Muted()));}
     [self recurrenceChanged:nil];
 }
 - (NSDictionary *)recurrenceRule {

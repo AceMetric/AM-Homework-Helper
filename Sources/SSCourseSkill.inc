@@ -5,7 +5,7 @@
 }
 - (NSDictionary *)discoveryEnvelope {return [self discoveryEnvelope:self.candidates materials:self.materials progress:self.skillProgress batches:self.skillBatches];}
 - (NSArray *)chooseSkillCourses:(BOOL *)all {
-    NSAlert *alert=NSAlert.new;alert.messageText=@"选择助手识别的课程";alert.informativeText=@"只准备老师文档，不含个人答案、任务或凭据。将指令交给云端助手后，所选文档会由该服务处理。所有课程共用一个 Skill。";
+    NSAlert *alert=NSAlert.new;alert.messageText=@"选择助手识别的课程";alert.informativeText=@"只准备所选老师文档，不含个人答案、任务或凭据。交给云端助手后，材料由该服务处理。";
     NSStackView *rows=NSStackView.new;rows.orientation=NSUserInterfaceLayoutOrientationVertical;rows.alignment=NSLayoutAttributeLeading;rows.spacing=8;
     NSArray *remembered=SSReadPlist(@"skill-selection.plist");if(![remembered isKindOfClass:NSArray.class])remembered=nil;NSMutableArray *checks=NSMutableArray.array;
     for(NSDictionary *course in self.courses){NSButton *check=[NSButton checkboxWithTitle:[course[@"fork"] lastPathComponent] target:nil action:nil];check.identifier=course[@"fork"];check.enabled=[course[@"path"] length]>0;check.state=check.enabled && (remembered ? [remembered containsObject:course[@"fork"]]:![course[@"enabled"] isEqual:@NO]) ? NSControlStateValueOn:NSControlStateValueOff;check.toolTip=check.enabled ? course[@"fork"] : @"先关联本地文件夹";[rows addArrangedSubview:check];[checks addObject:check];}
@@ -93,8 +93,8 @@
         jobs[batch]=@{@"state":@"等待助手",@"date":NSDate.date,@"courses":ids,@"count":@([exported[@"context"][@"documents"] count]),@"prepareSeconds":@(-started.timeIntervalSinceNow),@"message":[issues componentsJoinedByString:@"；"]};
         NSMutableDictionary *envelope=self.discoveryEnvelope.mutableCopy;envelope[@"skillBatches"]=batches;envelope[@"skillJobs"]=jobs;
         if(!SSWritePlist(@"discoveries.plist",envelope,&failure)){[self showError:failure];return;}self.skillBatches=batches;self.skillJobs=jobs;
-        [self startSkillReception];[self watchSkillBatch:batch];[self status:[NSString stringWithFormat:@"已准备 %lu 份文档（%.1f 秒）· 等待助手识别；结果会自动接回。",(unsigned long)[exported[@"context"][@"documents"] count],-started.timeIntervalSinceNow]];
-        NSAlert *ready=NSAlert.new;ready.messageText=@"材料已就绪";ready.informativeText=@"复制指令交给助手即可。结果会自动接回，无需选择文件导入；可在“更多 → 识别批次与进度”查看。";[ready addButtonWithTitle:@"复制指令"];[ready addButtonWithTitle:@"稍后"];if([ready runModal]==NSAlertFirstButtonReturn)[self copySkillBatch:batch];
+        [self startSkillReception];[self watchSkillBatch:batch];[self status:[NSString stringWithFormat:@"已准备 %lu 份文档（%.1f 秒）· 等待助手识别",(unsigned long)[exported[@"context"][@"documents"] count],-started.timeIntervalSinceNow]];
+        NSAlert *ready=NSAlert.new;ready.messageText=@"材料已就绪";ready.informativeText=@"所选课程材料已准备好。";[ready addButtonWithTitle:@"复制指令"];[ready addButtonWithTitle:@"稍后"];if([ready runModal]==NSAlertFirstButtonReturn)[self copySkillBatch:batch];
     }];
 }
 - (void)copySkillBatch:(NSString *)batch {
