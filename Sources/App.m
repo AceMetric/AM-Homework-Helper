@@ -462,9 +462,9 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @implementation EditorController
 #include "AMTaskEditor.inc"
 - (NSArray *)formValues {
-    return [[NSArray alloc] initWithArray:@[self.titleField.stringValue ?: @"", self.subjectField.stringValue ?: @"", self.deadlineField.stringValue ?: @"", self.timePicker.stringValue ?: @"", self.notesField.string ?: @"", self.reminderField.stringValue ?: @"", @(self.priority.indexOfSelectedItem),[self recurrenceRule] ?: @{},@(self.seriesScope.indexOfSelectedItem)] copyItems:YES];
+    return [[NSArray alloc] initWithArray:@[self.titleField.stringValue ?: @"", self.subjectField.stringValue ?: @"", self.selectedDate ?: NSNull.null, self.notesField.string ?: @"", DDLParseReminderOffsets(self.reminderField.stringValue) ?: self.reminderField.stringValue, @(self.priority.indexOfSelectedItem),[self recurrenceRule] ?: @{},@(self.seriesScope.indexOfSelectedItem)] copyItems:YES];
 }
-- (BOOL)hasUnsavedChanges { [self.window makeFirstResponder:nil]; return ![self.initialValues isEqual:[self formValues]]; }
+- (BOOL)hasUnsavedChanges { return ![self.initialValues isEqual:[self formValues]]; }
 - (BOOL)saveForExit { [self save:nil]; return self.appDelegate.editor != self; }
 - (void)updateReviewProgress { self.reviewProgress.stringValue = [NSString stringWithFormat:@"本轮剩余 %lu 项", (unsigned long)self.reviewQueue.count]; }
 - (void)saveAndReviewNext:(id)sender {
@@ -733,7 +733,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.courseWindow.editTask = ^(NSString *identifier) { NSMenuItem *item = NSMenuItem.new; item.representedObject = identifier; [weakSelf editTask:item]; };
     self.courseWindow.stateChanged = ^{ [weakSelf renderSidebar]; if(weakSelf.page==4)[weakSelf renderHeader]; if (weakSelf.page == 0) [weakSelf renderTaskContent]; };
     self.exitCoordinator = SSExitCoordinator.new;
-    self.exitCoordinator.operationBusy = ^BOOL { return weakSelf.courseWindow.operationBusy || weakSelf.backgroundSaveCount>0; };
+    self.exitCoordinator.operationBusy = ^BOOL { for(NSDictionary *row in AMOperations())if([@[@"running",@"queued"] containsObject:row[@"state"]])return YES;return weakSelf.courseWindow.operationBusy || weakSelf.backgroundSaveCount>0; };
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(backgroundOperationsChanged:) name:AMOperationsChanged object:nil];
     self.exitCoordinator.pauseOperations = ^(BOOL paused) { weakSelf.courseWindow.operationsPaused = paused; };
     self.exitCoordinator.cancelLogin = ^{ [weakSelf.courseWindow cancelPendingLogin]; };
     self.exitCoordinator.resolveEdits = ^BOOL(BOOL updating) { return [weakSelf resolveEditsForExit:updating]; };
@@ -1075,7 +1076,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
             NSError *failure=nil;SSRecognitionClient *client=SSRecognitionClient.new;NSDictionary *result=nil;
             if([action isEqual:@"models"]){NSArray *models=[client localModels:configuration error:&failure];result=models ? @{@"models":models,@"message":models.count ? @"本地服务已连接，请选择模型后测试识别。":@"服务已连接，但没有已安装模型。请在 Ollama 中准备模型后再次检测。"}:@{@"message":failure.localizedDescription ?: @"无法检测本地服务。"};}
             else {NSString *sample=@"# 作业：实验报告\n截止：2027年4月14日21:00 UTC+8\n完成运动实验分析，提交一份 Markdown 报告。";
-                id extracted=[client extract:sample settings:configuration error:&failure];NSArray *validated=extracted ? SSValidatedModelResults(extracted,sample,@"example/course",@"homework.md",@"synthetic",Cal(),&failure):nil;
+                id extracted=AMPerformModelOperation([@"probe|" stringByAppendingString:configuration.description],@"模拟作业测试",YES,nil,^id(NSError **problem){return [client extract:sample settings:configuration error:problem];},&failure);NSArray *validated=extracted ? SSValidatedModelResults(extracted,sample,@"example/course",@"homework.md",@"synthetic",Cal(),&failure):nil;
                 result=@{@"message":validated.count==1 ? @"测试通过：本地模型返回了可核验的作业与截止原文。":(failure.localizedDescription ?: @"模型未识别模拟作业，请换模型或检查服务。")};}
             dispatch_async(dispatch_get_main_queue(),^{ready(result);});
         });
@@ -1443,12 +1444,19 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
             else [self.courseWindow discardSubmission];
         } else [self.courseWindow discardSubmission];
     }
+    if(![self.courseWindow saveConfigurationDraftForExit])return NO;
     // Open import/file/other sheets must be completed by the user first.
     if (self.window.attachedSheet) { self.notice = @"请先完成或关闭当前弹窗，再退出或更新。"; [self render]; return NO; }
     return YES;
 }
+- (void)backgroundOperationsChanged:(NSNotification *)notification {[self.exitCoordinator operationStateChanged];}
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
     if (!self.exitCoordinator) return NSTerminateNow;
+    if(!self.exitCoordinator.pending && AMQueuedOperationCount()){
+        NSAlert *alert=NSAlert.new;alert.messageText=@"还有排队中的操作";alert.informativeText=@"可以等待完成，或取消尚未开始的操作后退出。已执行的写入会安全结束；重启后不会自动发送模型请求。";
+        [alert addButtonWithTitle:@"等待完成后退出"];[alert addButtonWithTitle:@"取消排队并退出"];[alert addButtonWithTitle:@"继续使用"];
+        NSInteger choice=[alert runModal];if(choice==NSAlertThirdButtonReturn)return NSTerminateCancel;if(choice==NSAlertSecondButtonReturn)AMCancelQueuedOperations();
+    }
     if (self.exitCoordinator.pending) return NSTerminateLater;
     if (self.courseWindow.operationBusy) { self.notice = @"正在等待当前课程操作完成，再退出或更新…"; [self render]; }
     __weak typeof(self) weakSelf = self;
@@ -1577,18 +1585,20 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         [events addObject:@{@"date":NSDate.date,@"stage":stage,@"outcome":outcome}];while(events.count>64)[events removeObjectAtIndex:0];SSWritePlist(@"review-diagnostics.plist",events,NULL);
     };
     trace(@"click",@"started");
+    NSError *decisionError=nil;if(!AMReviewDecisions(&decisionError))return decisionError.localizedDescription ?: @"审核删除记录无法读取，未更改任务。";
     if(![items isKindOfClass:NSArray.class] || !items.count){trace(@"validation",@"missing-items");return @"没有可保存的作业，请重新选择。";}
     NSMutableArray *next=[[self snapshot] mutableCopy], *added=NSMutableArray.array; NSMutableSet *seen=NSMutableSet.set;NSUInteger savedCount=0;
     for (NSDictionary *item in items) {
         NSDictionary *record=item[@"record"]; NSDictionary *draft=item[@"draft"] ?: @{};
         if (![record isKindOfClass:NSDictionary.class] || ![record[@"id"] isKindOfClass:NSString.class] || ![record[@"id"] length] || [seen containsObject:record[@"id"]]) {trace(@"validation",@"invalid-items");return @"所选作业重复或格式无效，请重新选择。";}
         [seen addObject:record[@"id"]];
+        if(AMReviewIsDeleted(record))return @"该审核建议已删除；可在已删除列表恢复。";
         NSDictionary *live=[self.courseWindow reviewSourceWithID:record[@"id"]];
         if (!live || ![live[@"blobSHA"] isEqual:record[@"blobSHA"]]) {trace(@"source",@"changed");return @"老师原文已变化，整批未保存。填写内容已保留，请刷新来源并重新核对。";}
         if (![live[@"kind"] ?: @"assignment" isEqual:@"assignment"]) {trace(@"source",@"classification");return @"材料类型已变化，整批未保存。请先确认属于作业。";}
         for(NSString *key in @[@"dateText",@"due",@"suggestedDue",@"needsDate",@"needsTime"]){if(![(live[key] ?: NSNull.null) isEqual:(record[key] ?: NSNull.null)]){trace(@"source",@"recognition-changed");return @"截止时间识别结果已变化，整批未保存。请刷新来源并重新核对。";}}
         if([live[@"sourceType"] isEqual:@"local"]){
-            if(automatic)continue;NSMutableDictionary *entry=live.mutableCopy;
+            if(automatic)continue;BOOL alreadySaved=NO;for(NSDictionary *task in next)if([task[@"entryID"] isEqual:live[@"id"]])alreadySaved=YES;if(alreadySaved)continue;NSMutableDictionary *entry=live.mutableCopy;
             for(NSString *key in @[@"title",@"subject",@"notes",@"reminderOffsets"])if(draft[key])entry[key]=draft[key];
             if([draft[@"assignmentDue"] isKindOfClass:NSDate.class])entry[@"dateText"]=AMQuickDateText(draft[@"assignmentDue"],entry[@"timeZone"]);entry[@"edited"]=@YES;
             NSError *error=nil;NSDictionary *task=AMQuickTask(entry,&error);if(!task)return error.localizedDescription;

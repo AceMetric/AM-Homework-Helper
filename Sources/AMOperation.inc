@@ -11,7 +11,7 @@ static void AMOperationPump(void){
             NSMutableDictionary *row=AMOperationRows[job[@"id"]];if(![row[@"state"] isEqual:@"queued"])continue;
             BOOL available=YES;for(NSString *resource in job[@"resources"])if(AMResourceOwners[resource]){available=NO;break;}if(!available)continue;
             for(NSString *resource in job[@"resources"])AMResourceOwners[resource]=job[@"id"];
-            row[@"state"]=@"running";row[@"stage"]=row[@"kind"];row[@"started"]=NSDate.date;row[@"cancellable"]=@(job[@"cancel"]!=nil);[launch addObject:job];
+            row[@"state"]=@"running";row[@"stage"]=row[@"kind"];row[@"started"]=NSDate.date;row[@"cancellable"]=@(job[@"cancel"]!=nil && [job[@"cancellableWhileRunning"] boolValue]);[launch addObject:job];
         }
     }
     for(NSDictionary *job in launch)dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{@autoreleasepool{
@@ -27,13 +27,14 @@ NSString *AMOperationBegin(NSString *kind,NSString *target,BOOL cancellable,void
         if(AMOperationRows.count>80){NSArray *sorted=[AMOperationRows.allValues sortedArrayUsingComparator:^NSComparisonResult(id a,id b){return [a[@"started"] compare:b[@"started"]];}];for(NSDictionary *row in sorted)if(AMOperationRows.count>80 && ![@[@"running",@"queued"] containsObject:row[@"state"]])[AMOperationRows removeObjectForKey:row[@"id"]];}
     }AMOperationNotify();return key;
 }
-NSString *AMOperationEnqueue(NSString *key,NSString *kind,NSString *target,NSArray *resources,NSInteger priority,void (^start)(NSString *),void (^cancel)(BOOL)){
+NSString *AMOperationEnqueue(NSString *key,NSString *kind,NSString *target,NSArray *resources,NSInteger priority,void (^start)(NSString *),void (^cancel)(BOOL)){return AMOperationSchedule(key,kind,target,resources,priority,cancel!=nil,start,cancel);}
+NSString *AMOperationSchedule(NSString *key,NSString *kind,NSString *target,NSArray *resources,NSInteger priority,BOOL cancellableWhileRunning,void (^start)(NSString *),void (^cancel)(BOOL)){
     NSString *identifier;
     @synchronized(AMOperationLock()){
         for(NSMutableDictionary *job in AMScheduledJobs.allValues)if([job[@"key"] isEqual:key]){if(priority>[job[@"priority"] integerValue])job[@"priority"]=@(priority);return job[@"id"];}
         identifier=AMOperationBegin(kind,target,NO,nil);
-        NSMutableDictionary *job=[@{@"id":identifier,@"key":key,@"resources":resources.copy,@"priority":@(priority),@"sequence":@(AMJobSequence++),@"start":[start copy]} mutableCopy];if(cancel)job[@"cancel"]=[cancel copy];AMScheduledJobs[identifier]=job;
-        NSMutableDictionary *row=AMOperationRows[identifier];row[@"state"]=@"queued";row[@"stage"]=@"排队中，等待当前操作安全结束";row[@"cancellable"]=@YES;
+        NSMutableDictionary *job=[@{@"id":identifier,@"key":key,@"resources":resources.copy,@"priority":@(priority),@"cancellableWhileRunning":@(cancellableWhileRunning),@"sequence":@(AMJobSequence++),@"start":[start copy]} mutableCopy];if(cancel)job[@"cancel"]=[cancel copy];AMScheduledJobs[identifier]=job;
+        NSMutableDictionary *row=AMOperationRows[identifier];row[@"resources"]=resources.copy;row[@"state"]=@"queued";row[@"stage"]=@"排队中，等待当前操作安全结束";row[@"cancellable"]=@YES;
     }AMOperationNotify();AMOperationPump();return identifier;
 }
 void AMOperationProgress(NSString *identifier,NSString *stage,NSInteger completed,NSInteger total){if(!identifier)return;@synchronized(AMOperationLock()){NSMutableDictionary *row=AMOperationRows[identifier];if(![row[@"state"] isEqual:@"running"])return;row[@"stage"]=stage ?: @"";row[@"completed"]=@(MAX(0,completed));row[@"total"]=@(MAX(0,total));}AMOperationNotify();}
@@ -46,6 +47,7 @@ void AMOperationCancel(NSString *identifier){
     void(^cancel)(void)=nil;void(^scheduledCancel)(BOOL)=nil;BOOL queued=NO;
     @synchronized(AMOperationLock()){
         NSMutableDictionary *row=AMOperationRows[identifier];queued=[row[@"state"] isEqual:@"queued"];
+        if(!queued && (![row[@"state"] isEqual:@"running"] || ![row[@"cancellable"] boolValue]))return;
         scheduledCancel=AMScheduledJobs[identifier][@"cancel"];
         if(queued){ // Finish under the same lock so a competing pump cannot launch it.
             AMOperationFinish(identifier,@"cancelled",@"已取消排队，未执行操作");
@@ -57,7 +59,15 @@ void AMOperationCancel(NSString *identifier){
     if(scheduledCancel)scheduledCancel(queued);else if(cancel)cancel();AMOperationNotify();
 }
 NSUInteger AMQueuedOperationCount(void){NSUInteger count=0;@synchronized(AMOperationLock()){for(NSDictionary *row in AMOperationRows.allValues)if([row[@"state"] isEqual:@"queued"])count++;}return count;}
-void AMCancelQueuedOperations(void){NSMutableArray *keys=NSMutableArray.array;@synchronized(AMOperationLock()){for(NSDictionary *row in AMOperationRows.allValues)if([row[@"state"] isEqual:@"queued"])[keys addObject:row[@"id"]];}for(NSString *key in keys)AMOperationCancel(key);}
+void AMCancelQueuedOperations(void){
+    NSMutableArray *callbacks=NSMutableArray.array;
+    @synchronized(AMOperationLock()){
+        // Mark the whole batch before releasing resources; cancelling one at a
+        // time would allow the pump to start another item being cancelled.
+        for(NSMutableDictionary *row in AMOperationRows.allValues)if([row[@"state"] isEqual:@"queued"]){NSString *key=row[@"id"];id cancel=AMScheduledJobs[key][@"cancel"];if(cancel)[callbacks addObject:cancel];[AMScheduledJobs removeObjectForKey:key];[AMOperationCancels removeObjectForKey:key];row[@"state"]=@"cancelled";row[@"stage"]=@"已取消排队，未执行操作";row[@"finished"]=NSDate.date;row[@"cancellable"]=@NO;}
+    }
+    for(void(^cancel)(BOOL) in callbacks)cancel(YES);AMOperationNotify();AMOperationPump();
+}
 NSArray *AMOperations(void){@synchronized(AMOperationLock()){NSMutableArray *rows=NSMutableArray.array;for(NSDictionary *row in AMOperationRows.allValues)[rows addObject:row.copy];return [rows sortedArrayUsingComparator:^NSComparisonResult(id a,id b){return [b[@"started"] compare:a[@"started"]];}];}}
 static NSMutableDictionary *AMModelWaiters;
 id AMPerformModelOperation(NSString *key,NSString *target,BOOL manual,BOOL (^cancelled)(void),id (^perform)(NSError **),NSError **error){return AMPerformResourceOperation([@"model|" stringByAppendingString:key],@"分析材料",target,@[@"model-service"],manual ? 100:0,cancelled,perform,error);}

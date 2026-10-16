@@ -21,14 +21,14 @@
     // selection is only changed through Adjust Courses.
     for(NSDictionary *course in self.courses)if((current ? [course[@"fork"] isEqual:current[@"fork"]]:[remembered containsObject:course[@"fork"]]) && [course[@"path"] length])[courses addObject:course.copy];return courses;
 }
-- (void)adjustSkillCourses:(id)sender {if(self.preview || self.busy || self.operationsPaused)return;BOOL all=NO;[self chooseSkillCourses:&all];}
+- (void)adjustSkillCourses:(id)sender {if(self.preview || self.operationsPaused)return;BOOL all=NO;[self chooseSkillCourses:&all];}
 - (NSArray *)retainingSkill:(NSArray *)previous current:(NSArray *)current documents:(NSArray *)documents {
     NSMutableDictionary *byID=NSMutableDictionary.dictionary;for(NSDictionary *record in SSReconcileDiscoveryIDs(previous,current))if(record[@"id"])byID[record[@"id"]]=record;
     for(NSDictionary *record in previous)if([record[@"recognizer"] isEqual:@"skill-v1"])for(NSDictionary *document in documents)if([record[@"path"] isEqual:document[@"path"]] && [record[@"repository"] isEqual:document[@"repository"]] && [record[@"blobSHA"] isEqual:document[@"blobSHA"]]){byID[record[@"id"]]=record;break;}
     return [byID.allValues sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"id"] compare:b[@"id"]];}];
 }
 - (NSDictionary *)readSkillCourses:(NSArray *)courses result:(NSDictionary *)result {
-    id cached=SSReadPlist(@"scan-cache.plist");NSMutableDictionary *cache=[cached isKindOfClass:NSDictionary.class] ? [cached mutableCopy]:NSMutableDictionary.dictionary;
+    NSError *cacheError=nil;NSMutableDictionary *cache=AMScanCacheLoad(&cacheError);if(!cache){NSMutableDictionary *failed=NSMutableDictionary.dictionary;for(NSDictionary *course in courses)failed[course[@"fork"]]=@{@"error":cacheError.localizedDescription ?: @"检查记录读取失败"};return failed;}
     NSMutableDictionary *scans=NSMutableDictionary.dictionary;
     for(NSDictionary *course in courses){
         NSMutableArray *paths=result ? NSMutableArray.array:nil;
@@ -42,7 +42,7 @@
         if(scan){NSMutableDictionary *withReferences=scan.mutableCopy;withReferences[@"candidates"]=self.candidates[course[@"fork"]] ?: @[];withReferences[@"materials"]=self.materials[course[@"fork"]] ?: @[];scan=withReferences;}
         scans[course[@"fork"]]=scan ?: @{@"error":failure.localizedDescription ?: @"无法读取老师内容"};
     }
-    SSWritePlist(@"scan-cache.plist",cache,NULL);return scans;
+    if(!AMScanCacheSave(cache,&cacheError))for(NSDictionary *course in courses)scans[course[@"fork"]]=@{@"error":cacheError.localizedDescription ?: @"检查记录保存失败"};return scans;
 }
 - (NSURL *)skillFolder:(NSString *)batch {
     if(![[NSUUID alloc] initWithUUIDString:batch])return nil;
@@ -67,13 +67,13 @@
 - (void)exportSkillContext:(id)sender {[self prepareSkill:NO];}
 - (void)exportAllSkillContext:(id)sender {[self prepareSkill:YES];}
 - (void)prepareSkill:(BOOL)all {
-    if(self.preview || self.busy || self.operationsPaused)return;NSArray *courses=[self selectedSkillCourses];if(!courses)return;if(!courses.count){[self status:@"没有已就绪课程，请在“更多 → 调整助手课程”中选择。"];return;}
+    if(self.preview || self.operationsPaused)return;NSArray *courses=[self selectedSkillCourses];if(!courses)return;if(!courses.count){[self status:@"没有已就绪课程，请在“更多 → 调整助手课程”中选择。"];return;}
     [self prepareSkillCourses:courses all:all manifest:nil];
 }
 - (void)prepareSkillCourses:(NSArray *)courses all:(BOOL)all manifest:(NSDictionary *)manifest {
-    if(!courses.count || self.busy || self.operationsPaused)return;
+    if(!courses.count || self.operationsPaused)return;
     NSDictionary *progress=self.skillProgress.copy;NSDate *started=NSDate.date;
-    [self work:@"准备中 · 正在读取新增老师材料…" forCourse:nil operation:^id(NSError **error){NSDictionary *scans=[self readSkillCourses:courses result:nil];if(manifest){NSMutableDictionary *limited=NSMutableDictionary.dictionary;for(NSDictionary *course in courses){NSString *fork=course[@"fork"];NSMutableDictionary *scan=[scans[fork] mutableCopy];NSMutableArray *documents=NSMutableArray.array;for(NSDictionary *doc in scan[@"documents"])if(manifest[SSSkillProgressKey(fork,doc)])[documents addObject:doc];scan[@"documents"]=documents;if(scan)limited[fork]=scan;}scans=limited;}NSMutableDictionary *exported=[SSSkillExport(courses,scans,progress,all) mutableCopy];exported[@"scans"]=scans;return exported;} completion:^(NSDictionary *exported,NSError *error){
+    [self work:@"准备中 · 正在读取新增老师材料…" forCourse:nil requestKey:[NSString stringWithFormat:@"%@|%d|%@",courses,all,manifest ?: @{}] priority:100 operation:^id(NSError **error){NSDictionary *scans=[self readSkillCourses:courses result:nil];if(manifest){NSMutableDictionary *limited=NSMutableDictionary.dictionary;for(NSDictionary *course in courses){NSString *fork=course[@"fork"];NSMutableDictionary *scan=[scans[fork] mutableCopy];NSMutableArray *documents=NSMutableArray.array;for(NSDictionary *doc in scan[@"documents"])if(manifest[SSSkillProgressKey(fork,doc)])[documents addObject:doc];scan[@"documents"]=documents;if(scan)limited[fork]=scan;}scans=limited;}NSMutableDictionary *exported=[SSSkillExport(courses,scans,progress,all) mutableCopy];exported[@"scans"]=scans;return exported;} completion:^(NSDictionary *exported,NSError *error){
         if(!exported){[self showError:error];return;}NSMutableArray *issues=NSMutableArray.array;for(NSDictionary *course in courses)if(exported[@"scans"][course[@"fork"]][@"error"])[issues addObject:[NSString stringWithFormat:@"%@：%@",[course[@"fork"] lastPathComponent],exported[@"scans"][course[@"fork"]][@"error"]]];
         if(![exported[@"context"][@"documents"] count]){[self status:issues.count ? [issues componentsJoinedByString:@"；"]:@"没有尚未识别的新增材料，无需交给助手。可在“更多”重新分析全部。"];return;}
         NSMutableDictionary *reports=self.reports.mutableCopy ?: NSMutableDictionary.dictionary;[reports addEntriesFromDictionary:exported[@"scans"]];self.reports=reports;
@@ -107,12 +107,12 @@
     if(changed)[self writeSkillState:NULL];
 }
 - (void)skillJobAction:(NSString *)action batch:(NSString *)batch {
-    if([action isEqual:@"view-report"]){if(self.checkScopeWindow){[self showCheckWorkspace];return;}if(self.window.attachedSheet || self.busy)return;for(NSDictionary *job in AMPreflightJobs())if([job[@"id"] isEqual:batch] && ![job[@"cleaned"] boolValue]){self.submission=[[SSSubmissionController alloc] initWithCourse:@{@"fork":[job[@"courses"] firstObject] ?: @"本机作业",@"branch":@"历史检查"} changes:@[]];self.submission.checkOnly=YES;NSView *reportRoot=self.submission.window.contentView;self.checkScopeWindow=AMMakeCheckWorkspace(self.window);self.submission.window=self.checkScopeWindow;self.checkScopeWindow.contentView=reportRoot;reportRoot.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;__weak typeof(self) owner=self;self.submission.finished=^{owner.submission=nil;[owner closeCheckScope];};((AMCheckWindow *)self.checkScopeWindow).onCancel=^{[owner.submission cancel:nil];};((AMCheckWindow *)self.checkScopeWindow).onConfirm=^{[owner.submission save:nil];};[self.submission buildCheckPage];self.submission.report=job[@"report"];self.submission.snapshot=AMPreflightSavedSnapshot(batch);[self.submission refreshReport];self.submission.assistantButton.enabled=NO;self.submission.onlineButton.enabled=NO;self.submission.supplement.editable=NO;self.submission.validation.stringValue=@"历史检查仅供参考，不代表当前文件已检查；本窗口不会提交。";[self.checkScopeWindow makeKeyAndOrderFront:nil];return;}}
+    if([action isEqual:@"view-report"]){if(self.checkScopeWindow){[self showCheckWorkspace];return;}if(self.window.attachedSheet)return;for(NSDictionary *job in AMPreflightJobs())if([job[@"id"] isEqual:batch] && ![job[@"cleaned"] boolValue]){self.submission=[[SSSubmissionController alloc] initWithCourse:@{@"fork":[job[@"courses"] firstObject] ?: @"本机作业",@"branch":@"历史检查"} changes:@[]];self.submission.checkOnly=YES;NSView *reportRoot=self.submission.window.contentView;self.checkScopeWindow=AMMakeCheckWorkspace(self.window);self.submission.window=self.checkScopeWindow;self.checkScopeWindow.contentView=reportRoot;reportRoot.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;__weak typeof(self) owner=self;self.submission.finished=^{owner.submission=nil;[owner closeCheckScope];};((AMCheckWindow *)self.checkScopeWindow).onCancel=^{[owner.submission cancel:nil];};((AMCheckWindow *)self.checkScopeWindow).onConfirm=^{[owner.submission save:nil];};[self.submission buildCheckPage];self.submission.report=job[@"report"];self.submission.snapshot=AMPreflightSavedSnapshot(batch);[self.submission refreshReport];self.submission.assistantButton.enabled=NO;self.submission.onlineButton.enabled=NO;self.submission.supplement.editable=NO;self.submission.validation.stringValue=@"历史检查仅供参考，不代表当前文件已检查；本窗口不会提交。";[self.checkScopeWindow makeKeyAndOrderFront:nil];return;}}
 
     if(AMPreflightJobAction(action,batch) && ![action isEqual:@"clean"]){[self refreshPresentation];return;}
     if([action isEqual:@"clean"])AMPreflightJobAction(action,batch);
     if(self.localSkillAction && self.localSkillAction(action,batch))return;
-    if([action isEqual:@"close"]){self.showingSkillJobs=NO;[self refreshPresentation];return;}if(self.busy || self.operationsPaused)return;
+    if([action isEqual:@"close"]){self.showingSkillJobs=NO;[self refreshPresentation];return;}if(self.operationsPaused)return;
     if([action isEqual:@"copy"])[self copySkillBatch:batch];
     else if([action isEqual:@"reveal"]){NSURL *folder=[self skillFolder:batch];if(folder)[NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[folder]];}
     else if([action isEqual:@"clean"]){[self cleanSkillJobs:YES];[self refreshPresentation];}
@@ -133,10 +133,10 @@
     }
 }
 - (void)receiveSkillResult:(NSDictionary *)result batch:(NSString *)batch fingerprint:(NSString *)fingerprint legacy:(NSString *)legacy automatic:(BOOL)automatic {
-    if(self.busy || self.operationsPaused)return;NSMutableArray *courses=NSMutableArray.array;
+    if(self.operationsPaused)return;NSMutableArray *courses=NSMutableArray.array;
     for(NSDictionary *course in self.courses){BOOL relevant=NO;for(id document in result[@"documents"])if([document isKindOfClass:NSDictionary.class] && (legacy ? [course[@"fork"] isEqual:legacy]:[document[@"courseID"] isEqual:course[@"fork"]]))relevant=YES;if(relevant)[courses addObject:course.copy];}
     NSDictionary *batches=self.skillBatches.copy;NSDate *started=NSDate.date;if(batch)[self setSkillJob:batch state:@"核验中" message:@"正在核对本批来源与版本…"];
-    [self work:@"核验中 · 正在接回助手结果…" forCourse:nil operation:^id(NSError **error){NSDictionary *scans=[self readSkillCourses:courses result:result];NSDictionary *validated=SSSkillValidateBatch(result,courses,scans,batches,legacy,error);return validated ? [self.git resolveSkillDates:validated scans:scans courses:courses]:nil;} completion:^(NSDictionary *validated,NSError *error){
+    [self work:@"核验中 · 正在接回助手结果…" forCourse:nil requestKey:[NSString stringWithFormat:@"%@|%@|%@",batch ?: @"",fingerprint ?: @"",legacy ?: @""] priority:100 operation:^id(NSError **error){NSDictionary *scans=[self readSkillCourses:courses result:result];NSDictionary *validated=SSSkillValidateBatch(result,courses,scans,batches,legacy,error);return validated ? [self.git resolveSkillDates:validated scans:scans courses:courses]:nil;} completion:^(NSDictionary *validated,NSError *error){
         // A verification read is scoped to returned files. Invalidate old full
         // preparation snapshots rather than replacing them with a partial scan.
         NSMutableDictionary *reports=self.reports.mutableCopy ?: NSMutableDictionary.dictionary;for(NSDictionary *course in courses)[reports removeObjectForKey:course[@"fork"]];self.reports=reports;
@@ -152,7 +152,7 @@
     }];
 }
 - (void)importSkillResults:(id)sender {
-    if(self.preview || self.busy || self.operationsPaused)return;if(self.hasUnsavedReview && ![self resolveUnsavedReview])return;
+    if(self.preview || self.operationsPaused)return;if(self.hasUnsavedReview && ![self resolveUnsavedReview])return;
     NSOpenPanel *panel=NSOpenPanel.openPanel;panel.title=@"手动导入助手结果";panel.canChooseDirectories=NO;panel.allowsMultipleSelection=NO;
     [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse answer){if(answer!=NSModalResponseOK)return;NSError *error=nil;NSDictionary *read=SSSkillReadResult(panel.URL,&error),*result=read[@"result"];if(!result){[self showError:error];return;}NSString *legacy=nil;
         if([result[@"format"] isEqual:@"am-course-results-v1"]){NSMutableArray *matches=NSMutableArray.array;for(NSDictionary *course in self.courses){BOOL compatible=[result[@"documents"] count]>0;for(id doc in result[@"documents"])if(![doc isKindOfClass:NSDictionary.class] || ![doc[@"repository"] isEqual:course[@"upstream"]])compatible=NO;if(compatible && [course[@"path"] length])[matches addObject:course[@"fork"]];}

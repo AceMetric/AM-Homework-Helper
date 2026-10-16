@@ -392,6 +392,17 @@ static void IncrementalTests(void){
     [service.commandCounts removeAllObjects];parses=0;NSDictionary *changed=[service scanCourse:f cache:cache error:&error];
     Check(changed!=nil && parses==1 && [service.commandCounts[@"cat-file"] integerValue]==1,@"one new file incurs exactly one read and one recognition");
     Check([changed[@"scanSummary"][@"new"] integerValue]==1,@"scan summary reports only actual new source work");
+    Write([seed stringByAppendingPathComponent:@"relative.md"],@"# Relative homework\n截止：本周日 21:00\n完成推导。\n");Git(seed,@[@"add",@"relative.md"]);
+    setenv("GIT_COMMITTER_DATE","2027-04-12T00:30:00+08:00",1);Git(seed,@[@"commit",@"-m",@"relative date anchor"]);unsetenv("GIT_COMMITTER_DATE");Git(seed,@[@"push",f[@"teacherBare"],@"main"]);
+    NSTimeZone *machineZone=NSTimeZone.defaultTimeZone;NSTimeZone.defaultTimeZone=[NSTimeZone timeZoneForSecondsFromGMT:0];
+    NSDictionary *relativeScan=[service scanCourse:f cache:cache error:&error];NSDictionary *relative=nil;for(NSDictionary *row in relativeScan[@"candidates"])if([row[@"path"] isEqual:@"relative.md"])relative=row;
+    NSCalendar *china=NSCalendar.currentCalendar.copy;china.timeZone=[NSTimeZone timeZoneWithName:@"Asia/Shanghai"];
+    Check([relative[@"suggestedDue"] isEqual:DDLParseDate(@"2027-04-18 21:00",NSDate.date,china)],@"relative date uses course timezone even when the machine is in UTC");
+    Write([seed stringByAppendingPathComponent:@"unrelated.bin"],@"another unrelated change");Git(seed,@[@"add",@"unrelated.bin"]);Git(seed,@[@"commit",@"-m",@"unrelated to date"]);Git(seed,@[@"push",f[@"teacherBare"],@"main"]);[service.commandCounts removeAllObjects];
+    [service scanCourse:f cache:cache error:&error];Check(![service.commandCounts[@"blame"] integerValue],@"unrelated commits do not repeat relative-date blame");
+    [service.commandCounts removeAllObjects];[service cachedDateReference:relative head:relativeScan[@"commit"] branch:@"another-default" path:f[@"path"] cache:cache];Check([service.commandCounts[@"blame"] integerValue]==1,@"switching branch identities rechecks the source date anchor");
+    NSString *tree=Git(seed,@[@"rev-parse",@"HEAD^{tree}"]),*rewritten=Git(seed,@[@"commit-tree",tree,@"-m",@"synthetic history rewrite"]);Git(seed,@[@"reset",@"--hard",rewritten]);Git(seed,@[@"push",@"--force",f[@"teacherBare"],@"main"]);[service.commandCounts removeAllObjects];
+    [service scanCourse:f cache:cache error:&error];Check([service.commandCounts[@"blame"] integerValue]==1 && ![service.commandCounts[@"cat-file"] integerValue],@"history rewrite revalidates dates while retaining unchanged file content");NSTimeZone.defaultTimeZone=machineZone;
     service.scanCheckpoint=^BOOL(NSMutableDictionary *values,NSError **failure){if(failure)*failure=[NSError errorWithDomain:@"fixture" code:1 userInfo:@{NSLocalizedDescriptionKey:@"simulated storage failure"}];return NO;};
     service.recognitionSettings=@{@"mode":@"rules",@"courseTemplate":@{@"titlePattern":@"(Homework)"}};
     Check(![service scanCourse:f cache:cache error:&error] && [error.localizedDescription containsString:@"storage failure"],@"checkpoint write failure is visible and does not claim a completed scan");Cleanup(f);

@@ -10,6 +10,21 @@ import AppKit
         let repeatKey=NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:.command,timestamp:0,windowNumber:0,context:nil,characters:"\r",charactersIgnoringModifiers:"\r",isARepeat:true,keyCode:36)
         check(isRepeatedWorkspaceEvent(repeatKey),"held save shortcut cannot confirm successive items")
         let record:[String:Any]=["id":"source-1","title":"作业","suggestedTitle":"报告","repository":"teacher/course","path":"homework.md","blobSHA":"v1","kind":"assignment","due":Date(timeIntervalSince1970:2_000_000_000),"needsDate":false,"needsTime":false,"summary":"内容摘要"]
+        let dirtyState=ReviewState();dirtyState.load(record as NSDictionary)
+        check(!dirtyState.dirty,"opening prefilled review is clean")
+        dirtyState.title=dirtyState.title;dirtyState.dirty=true;check(!dirtyState.dirty,"same-value callbacks cannot dirty review")
+        let original=dirtyState.notes;dirtyState.notes="user edit";check(dirtyState.dirty,"editing value is detected without callback hints")
+        dirtyState.notes=original;check(!dirtyState.dirty,"reverting original clears dirty state")
+        let cleanSettings=SettingsState();cleanSettings.apply(["mode":"local","endpoint":"http://localhost:11434","model":"fixture","automaticImport":true] as NSDictionary)
+        cleanSettings.modelDigest="detected-new-digest";cleanSettings.dirty=true;check(!cleanSettings.dirty,"detected model metadata is not user editing")
+        cleanSettings.model="another";check(cleanSettings.dirty,"model choice is an effective setting change");cleanSettings.model="fixture";check(!cleanSettings.dirty,"reverted setting is clean")
+        let deletion=ReviewState();deletion.refresh([record as NSDictionary]);deletion.checked=["source-1"]
+        deletion.decision={_,_ in "disk failure"};deletion.delete();check(deletion.records.count==1 && deletion.checked.count==1,"failed deletion retains proposal and selection")
+        deletion.decision={rows,deleted in check(rows.count==1 && deleted,"delete is scoped to selected proposals");deletion.refresh([]);return ""};deletion.delete()
+        check(deletion.records.isEmpty && deletion.current==nil && deletion.checked.isEmpty && deletion.lastDeleted.count==1,"deletion reconciles current selection and preserves undo")
+        deletion.decision={_,deleted in check(!deleted,"undo restores instead of deleting");return ""};deletion.restore(deletion.lastDeleted);check(deletion.lastDeleted.isEmpty,"successful undo clears the undo slot")
+        let undoDraft=ReviewState();undoDraft.load(record as NSDictionary);undoDraft.records=[record as NSDictionary];undoDraft.notes="unsaved draft";var restored=record;restored["id"]="restored-source"
+        undoDraft.decision={_,_ in undoDraft.refresh([record as NSDictionary,restored as NSDictionary]);return ""};undoDraft.restore([restored as NSDictionary]);check(undoDraft.notes=="unsaved draft" && undoDraft.dirty && undoDraft.visible.count==2,"restoring another source preserves current draft and restored visibility")
         let state=ReviewState();state.refresh([record as NSDictionary])
         check(state.title=="报告" && state.hasDate && state.dateConfirmed,"initial complete proposal")
         check(state.notes=="作业内容\n内容摘要","new review prefills visible editable notes")
@@ -21,15 +36,15 @@ import AppKit
         var captured:[NSDictionary]=[];state.save={items in captured=items;state.refresh([]);return ""}
         check(state.saveCurrent(advance:true) && !state.dirty && state.current==nil,"successful save advances without reopening a sheet")
         check(captured.count==1 && (captured[0]["draft"] as? NSDictionary)?["notes"] as? String=="自己的备注","save uses edited draft")
-        state.refresh([record as NSDictionary]);state.dateConfirmed=false;check(state.payload(record as NSDictionary,editing:true)==nil,"unconfirmed manual date blocks save")
-        var ambiguous=record;ambiguous["needsTime"]=true;ambiguous.removeValue(forKey:"due");state.refresh([ambiguous as NSDictionary]);check(!state.hasDate && !state.dateConfirmed,"missing time not silently filled")
+        state.refresh([record as NSDictionary]);state.dateConfirmed=false;check(state.payload(record as NSDictionary,editing:true)==nil,"unconfirmed manual date blocks save");check(state.dirty,"explicit date confirmation changes are protected");state.dirty=false
+        var ambiguous=record;ambiguous["needsTime"]=true;ambiguous.removeValue(forKey:"due");state.load(ambiguous as NSDictionary);check(!state.hasDate && !state.dateConfirmed,"missing time not silently filled")
         check(state.payload(ambiguous as NSDictionary,editing:false)==nil,"batch cannot adopt incomplete deadline")
         var relative=record;relative["relative"]=true;check(state.payload(relative as NSDictionary,editing:false)==nil,"batch cannot silently adopt relative suggestion")
         state.checked=["source-1","removed"];state.refresh([record as NSDictionary]);check(state.checked==["source-1"],"refresh removes stale checked ids")
         state.query="nothing";check(state.visible.isEmpty,"filter stays local to review state");state.query="报告";check(state.visible.count==1,"search includes suggested title")
         var updated=record;updated["existingTask"]=["title":"手动标题","notes":"手动备注","leadDays":-1,"due":Date(timeIntervalSince1970:1_900_000_000)] as NSDictionary
         check((state.payload(updated as NSDictionary,editing:false)?["draft"] as? NSDictionary)?["title"] as? String=="手动标题","batch update preserves user title")
-        state.refresh([updated as NSDictionary]);check(state.date==Date(timeIntervalSince1970:1_900_000_000) && state.dateConfirmed,"existing deadline remains canonical even with legacy lead metadata")
+        state.load(updated as NSDictionary);check(state.date==Date(timeIntervalSince1970:1_900_000_000) && state.dateConfirmed,"existing deadline remains canonical even with legacy lead metadata")
         let draft=state.payload(updated as NSDictionary,editing:true)?["draft"] as? NSDictionary
         check(draft?["assignmentDue"] as? Date==state.date && draft?["teacherDue"]==nil && draft?["personalDue"]==nil && draft?["leadDays"]==nil,"one deadline in review payload")
         state.load(record as NSDictionary)

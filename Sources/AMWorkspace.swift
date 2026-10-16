@@ -144,23 +144,31 @@ final class ReviewState: ObservableObject {
     @Published var dateConfirmed = false
     @Published var reminders = true
     @Published var reminderOffsets: Set<Int> = [10080,4320,1440,60,0]
-    @Published var dirty = false
+    private var baseline:NSDictionary=[:]
+    private var savedValues:NSDictionary {
+        ["title":title.trimmingCharacters(in:.whitespacesAndNewlines),"notes":notes,"date":hasDate ? date as Any:NSNull(),"hasDate":hasDate,"dateConfirmed":dateConfirmed,"reminders":reminders ? reminderOffsets.sorted():[]] as NSDictionary
+    }
+    var dirty:Bool {get{!savedValues.isEqual(baseline)}set{if !newValue {baseline=savedValues}}}
     @Published var message = ""
     @Published var failed = false
     @Published var saving = false
     @Published var paused = false
     @Published var batchPreview: [ReviewBatchItem]?
     var activeRecord: NSDictionary?
+    var decision:(([NSDictionary],Bool)->String)?
+    @Published var lastDeleted:[NSDictionary]=[]
     var save: (([NSDictionary]) -> String)?
     var sourceResolver: ((String)->NSDictionary?)?
     var didSave: (() -> Void)?
     var originalTitle = "", originalNotes = ""
+    init(){baseline=savedValues}
     var current: NSDictionary? { activeRecord }
     var visible: [NSDictionary] {
         records.filter { string($0,"reviewStatus") != "已导入" && (query.isEmpty || [string($0,"suggestedTitle"),string($0,"title"),string($0,"repository"),string($0,"path")].joined(separator:" ").localizedCaseInsensitiveContains(query)) }
     }
     var disabledReason: String {
-        saving ? "正在保存，请稍候…" : paused ? "课程操作正在进行，请等待结束后保存。" : current == nil ? "请先选择一项待审核作业。" : ""
+        if let current,flag(current,"reviewDeleted") {return "该建议已删除，可恢复后再审核。"}
+        return saving ? "正在保存，请稍候…" : paused ? "课程操作正在进行，请等待结束后保存。" : current == nil ? "请先选择一项待审核作业。" : ""
     }
     var sourceChanged: Bool {
         guard let current else {return false}
@@ -168,6 +176,31 @@ final class ReviewState: ObservableObject {
         return ["blobSHA","kind","dateText","due","suggestedDue","needsDate","needsTime"].contains { key in
             !NSDictionary(dictionary:["value":current[key] ?? NSNull()]).isEqual(to:["value":latest[key] ?? NSNull()])
         }
+    }
+    func delete(_ ids:Set<String> = []) {
+        guard !isRepeatedWorkspaceEvent(NSApp?.currentEvent) else{return}
+        let targets=ids.isEmpty ? (checked.isEmpty ? Set([selected]):checked):ids
+        let rows=records.filter{targets.contains(identifier($0)) && !flag($0,"reviewDeleted") && string($0,"reviewStatus") != "已导入"}
+        guard !rows.isEmpty,!saving,!paused else{return}
+        if targets.contains(selected),!resolve(){return}
+        saving=true
+        let problem=decision?(rows,true) ?? "删除接口不可用，请重试。"
+        saving=false
+        guard problem.isEmpty else{reject(problem);return}
+        lastDeleted=workspaceRecords(rows);checked.subtract(targets);batchPreview=nil
+        if targets.contains(selected){clearDraft()}
+        records.removeAll{targets.contains(identifier($0))}
+        if current==nil,let next=visible.first{load(next)}
+        failed=false;message="已删除 \(rows.count) 项审核建议。";didSave?()
+    }
+    func restore(_ rows:[NSDictionary]) {
+        guard !rows.isEmpty,!saving,!paused else{return}
+        saving=true;let problem=decision?(rows,false) ?? "恢复接口不可用，请重试。";saving=false
+        guard problem.isEmpty else{reject(problem);return}
+        lastDeleted=[];if !dirty {clearDraft()};checked=[];batchPreview=nil
+        records.removeAll{row in flag(row,"reviewDeleted") && rows.contains{identifier($0)==identifier(row)}}
+        if current==nil,let next=visible.first{load(next)}
+        failed=false;message="已恢复审核建议。";didSave?()
     }
     func latestSource(_ id:String)->NSDictionary? {sourceResolver != nil ? sourceResolver?(id) : records.first{identifier($0)==id}}
     func pruneChecks(){checked.formIntersection(Set(visible.map(identifier)))}
@@ -229,6 +262,7 @@ final class ReviewState: ObservableObject {
     }
     func select(_ record: NSDictionary) { guard !saving,identifier(record) != selected, resolve() else { return };message="";failed=false;load(record) }
     func validation(_ record:NSDictionary, editing:Bool)->String {
+        if flag(record,"reviewDeleted"){return "该审核建议已删除，请先恢复。"}
         let kind=string(record,"kind")
         if !kind.isEmpty && kind != "assignment" {return "请先将材料类型确认为作业。"}
         let task=record["existingTask"] as? NSDictionary
@@ -427,15 +461,18 @@ private struct WorkspaceButton:NSViewRepresentable {
 private struct ReviewSaveBar:View {
     @ObservedObject var state:ReviewState
     let advance:Bool
-    var body:some View {
+    private var status:some View {Text(state.disabledReason.isEmpty ? (state.dirty ? "有未保存修改":"核对后保存至任务"):state.disabledReason).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}
+    private var actions:some View {
         HStack {
-            if state.saving {ProgressView().progressViewStyle(.linear).frame(width:160)}
-            Text(state.disabledReason.isEmpty ? (state.dirty ? "有未保存修改" : "核对后保存至任务") : state.disabledReason).font(.caption).foregroundStyle(.secondary)
-            Spacer()
-            WorkspaceButton(title:advance ? "保存并下一项" : (state.current?["existingTask"] == nil ? "确认作业":"保存修改"),enabled:state.disabledReason.isEmpty,prominent:true,identity:"review-save",saveShortcut:true){state.saveCurrent(advance:advance)}.fixedSize().help(state.disabledReason)
+            if state.saving {ProgressView().progressViewStyle(.linear).frame(width:80)}
+            if let record=state.current,!flag(record,"reviewDeleted"),string(record,"reviewStatus") != "已导入" {Button("删除建议",role:.destructive){state.delete(Set([identifier(record)]))}.disabled(state.saving || state.paused)}
+            if !state.lastDeleted.isEmpty {Button("撤销删除"){state.restore(state.lastDeleted)}}
+            WorkspaceButton(title:advance ? "保存并下一项":(state.current?["existingTask"] == nil ? "确认作业":"保存修改"),enabled:state.disabledReason.isEmpty,prominent:true,identity:"review-save",saveShortcut:true){state.saveCurrent(advance:advance)}.fixedSize().help(state.disabledReason)
         }
     }
+    var body:some View {ViewThatFits(in:.horizontal){HStack{status;Spacer();actions};VStack(alignment:.leading,spacing:8){status;HStack{Spacer();actions}}}}
 }
+
 private struct ReviewWorkspace: View {
     @ObservedObject var state: ReviewState
     @FocusState private var searchFocused:Bool
@@ -447,15 +484,21 @@ private struct ReviewWorkspace: View {
             ForEach(workspaceRows(state.visible)){row in let record=row.record
                 HStack(alignment:.top,spacing:8){
                     WorkspaceCheck(title:"选择\(string(record,"title"))",checked:Binding(get:{state.checked.contains(identifier(record))},set:{if $0{state.checked.insert(identifier(record))}else{state.checked.remove(identifier(record))}}),enabled:!state.saving && string(record,"reviewStatus") != "已导入").frame(width:36,height:36)
-                    VStack(alignment:.leading,spacing:5){Text(string(record,"suggestedTitle").isEmpty ? string(record,"title"):string(record,"suggestedTitle")).font(.system(size:13,weight:.medium)).lineLimit(2);Text(string(record,"repository")).font(.caption).foregroundStyle(.secondary);Label(record["existingTask"]==nil ? "新作业":"更新建议",systemImage:record["existingTask"]==nil ? "tray":"arrow.triangle.2.circlepath").font(.caption).foregroundStyle(.secondary)}
-                }.padding(.vertical,4).tag(identifier(record))
+                    VStack(alignment:.leading,spacing:5){Text(string(record,"suggestedTitle").isEmpty ? string(record,"title"):string(record,"suggestedTitle")).font(.system(size:13,weight:.medium)).lineLimit(2);Text(string(record,"repository")).font(.caption).foregroundStyle(.secondary);Label(flag(record,"reviewDeleted") ? "已删除":(record["existingTask"]==nil ? "新作业":"更新建议"),systemImage:flag(record,"reviewDeleted") ? "trash":(record["existingTask"]==nil ? "tray":"arrow.triangle.2.circlepath")).font(.caption).foregroundStyle(.secondary)}
+                }.padding(.vertical,4).tag(identifier(record)).contextMenu {
+                    if flag(record,"reviewDeleted"){Button("恢复建议"){state.restore([record])}}
+                    else {Button("删除审核建议",role:.destructive){state.delete(Set([identifier(record)]))}}
+                }
             }
         }.listStyle(.inset).focused($listFocused)
+        .onDeleteCommand {if listFocused,!(NSApp?.keyWindow?.firstResponder is NSText) {state.delete()}}
         .overlay(Button("全选"){state.selectAll()}.keyboardShortcut("a",modifiers:.command).disabled(!listFocused).frame(width:0,height:0).clipped().accessibilityHidden(true))
     }
     private var details:some View {
                 ScrollView {
-                    if let record=state.current {
+                    if let record=state.current,flag(record,"reviewDeleted") {
+                        VStack(alignment:.leading,spacing:12){Text(string(record,"title")).font(.headline);Text(string(record,"snippet")).textSelection(.enabled);Button("恢复审核建议"){state.restore([record])}}.padding(16)
+                    } else if let record=state.current {
                         ReviewDetails(state:state,record:record)
                     } else {
                         VStack(spacing:12){Image(systemName:"tray").font(.largeTitle).foregroundStyle(.secondary);Text("暂无待审核作业");Text("检查课程后，需确认的作业会显示在这里。").foregroundStyle(.secondary)}.frame(maxWidth:.infinity,minHeight:240)
@@ -463,12 +506,17 @@ private struct ReviewWorkspace: View {
                 }.frame(minWidth:300)    }
     var body: some View {
         VStack(spacing:12) {
-            HStack {
-                TextField("搜索名称、课程或文件",text:$state.query).textFieldStyle(.roundedBorder).focused($searchFocused)
-                Text("已选 \(state.checked.count) / \(state.visible.count) 项").foregroundStyle(.secondary)
+            VStack(alignment:.leading,spacing:8) {
+                HStack{TextField("搜索名称、课程或文件",text:$state.query).textFieldStyle(.roundedBorder).focused($searchFocused)
+                Text("已选 \(state.checked.count) / \(state.visible.count) 项").foregroundStyle(.secondary)}
+                HStack {
+                if state.visible.contains(where:{flag($0,"reviewDeleted")}) {Button("恢复所选"){state.restore(state.visible.filter{state.checked.contains(identifier($0))})}.disabled(state.checked.isEmpty)}
+                else {Button("删除所选",role:.destructive){state.delete()}.disabled(state.checked.isEmpty || state.saving)}
+                Spacer()
                 WorkspaceButton(title:"全选当前结果",enabled:!state.saving && !state.visible.isEmpty,identity:"review-select-all"){state.selectAll()}.fixedSize()
                 Button("取消选择"){state.clearChecks()}.disabled(state.checked.isEmpty || state.saving)
-                WorkspaceButton(title:"确认所选 \(state.checked.count) 项",enabled:!state.checked.isEmpty && !state.paused && !state.saving,identity:"review-preview-batch"){state.saveChecked()}.fixedSize()
+                WorkspaceButton(title:"确认所选 \(state.checked.count) 项",enabled:!state.checked.isEmpty && !state.paused && !state.saving && !state.visible.contains{flag($0,"reviewDeleted")},identity:"review-preview-batch"){state.saveChecked()}.fixedSize()
+                }
             }
             if state.batchPreview==nil {ReviewFeedback(state:state)}
             if let preview=state.batchPreview {
@@ -511,6 +559,7 @@ private struct ReviewBatchPreview:View {
 @MainActor public final class AMReviewController: NSViewController {
     private let state=ReviewState()
     @objc public var saveHandler: (([NSDictionary]) -> String)? { get{state.save} set{state.save=newValue} }
+    @objc public var decisionHandler:(([NSDictionary],Bool)->String)? {get{state.decision}set{state.decision=newValue}}
     @objc public var sourceHandler: ((String)->NSDictionary?)? {get{state.sourceResolver}set{state.sourceResolver=newValue}}
     @objc public var hasUnsavedChanges: Bool {state.dirty}
     @objc public var paused: Bool {get{state.paused}set{state.paused=newValue}}
@@ -540,7 +589,15 @@ private struct ReviewBatchPreview:View {
     var modeProfiles:[String:(String,String,String)]=[:]
     @Published var cloudCourses:Set<String>=[]
     var availableCourses:[String]=[]
-    @Published var dirty=false
+    private var baseline:NSDictionary=[:]
+    private var savedValues:NSDictionary {
+        var values:[String:Any]=["mode":mode,"automatic":automatic]
+        if mode != "rules" {values["endpoint"]=endpoint.trimmingCharacters(in:.whitespacesAndNewlines);values["model"]=model.trimmingCharacters(in:.whitespacesAndNewlines)}
+        if mode == "cloud" {values["courses"]=cloudCourses.sorted()}
+        if mode == "local" {values["localAutomatic"]=localAutomatic}
+        return values as NSDictionary
+    }
+    var dirty:Bool {get{!key.isEmpty || !savedValues.isEqual(baseline)}set{if !newValue {baseline=savedValues}}}
     var save:((NSDictionary,String)->String)?
     var action:((String)->Void)?
     func apply(_ settings:NSDictionary) {mode=string(settings,"mode");endpoint=string(settings,"endpoint");model=string(settings,"model");automatic=flag(settings,"automaticImport");localAutomatic=settings["localAutomatic"] as? Bool ?? true;modelDigest=string(settings,"modelDigest");cloudCourses=Set(settings["cloudCourses"] as? [String] ?? []);availableCourses=settings["availableCourses"] as? [String] ?? [];localStatus=string(settings,"localStatus");lastMode=mode;modeProfiles[mode]=(endpoint,model,modelDigest);key="";dirty=false}
@@ -694,6 +751,7 @@ private struct CourseReviewPane:View {
 }
 private struct CourseWorkspace:View {
     @ObservedObject var state:CourseState
+    @FocusState private var listFocused:Bool
     private func kind(_ record:NSDictionary)->String {flag(record,"confirmed") ? (flag(record,"completed") ? "已完成":"待完成") : string(record,"reviewStatus")=="有更新" ? "有更新，待审核" : ["assignment":"作业","exam":"考试","classroom":"课上任务","unknown":"待确认类型"][string(record,"kind")] ?? "作业"}
     private var entries:some View {
         List(selection:Binding(get:{state.listSelection},set:{if let id=$0, id != state.selected {DispatchQueue.main.async{if state.records.contains(where:{identifier($0)==id}){state.select(id)}}}})) {
@@ -704,9 +762,11 @@ private struct CourseWorkspace:View {
                     HStack {Label(kind(record),systemImage:string(record,"kind")=="exam" ? "doc.text" : "checklist");Spacer();if let due=record["due"] as? Date {Text(due,format:.dateTime.month().day().hour().minute())}}
                         .font(.caption).foregroundStyle(.secondary)
                     Text(string(record,"path")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                }.padding(.vertical,5).tag(identifier(record))
+                }.padding(.vertical,5).tag(identifier(record)).contextMenu {
+                    if !flag(record,"confirmed") && string(record,"kind")=="assignment" {Button("删除审核建议",role:.destructive){if state.select(identifier(record)){state.review.delete(Set([identifier(record)]))}}}
+                }
             }
-        }.listStyle(.inset).frame(minWidth:240)
+        }.listStyle(.inset).frame(minWidth:240).focused($listFocused).onDeleteCommand{if listFocused,!(NSApp?.keyWindow?.firstResponder is NSText),let record=state.current,!flag(record,"confirmed"),string(record,"kind")=="assignment" {state.review.delete()}}
     }
     private var details:some View {
         ScrollView {
@@ -763,6 +823,7 @@ private struct CourseWorkspace:View {
     @objc public var saveHandler:(([NSDictionary])->String)? {get{state.review.save}set{state.review.save=newValue}}
     @objc public var sourceHandler:((String)->NSDictionary?)? {get{state.review.sourceResolver}set{state.review.sourceResolver=newValue}}
     @objc public var paused:Bool {get{state.review.paused}set{state.review.paused=newValue;state.paused=newValue}}
+    @objc public var decisionHandler:(([NSDictionary],Bool)->String)? {get{state.review.decision}set{state.review.decision=newValue}}
     @objc public var hasUnsavedChanges:Bool {state.review.dirty}
     @objc public func resolveUnsavedChanges()->Bool {state.review.resolve()}
     @objc public func discardChanges(){state.review.dirty=false;state.review.refresh(state.review.records)}
@@ -887,6 +948,7 @@ private struct SetupWorkspace:View {
     private let state=SetupState()
     @objc public var actionHandler:((NSDictionary)->Void)?{get{state.action}set{state.action=newValue}}
     @objc public func updateRecords(_ records:[NSDictionary],step:Int,busy:Bool,message:String){state.update(records,step:step,busy:busy,message:message)}
+    @objc public func requestCloseSavingDraft(){state.send("close")}
     @objc public func updateContext(_ context:NSDictionary){state.context=context;if let selected=context["selected"] as? [String]{state.selected=Set(selected)}}
     public override func loadView(){view=NSHostingView(rootView:SetupWorkspace(state:state))}
 }
@@ -1139,6 +1201,7 @@ private final class CheckScopeState:ObservableObject {
     @Published var notice="正在整理文件夹…"
     @Published var preview:NSView?
     var initialized=false
+    var initialSelection=Set<String>()
     var action:((NSDictionary)->Void)?
     var visible:[NSDictionary]{records.filter{query.isEmpty || string($0,"path").localizedCaseInsensitiveContains(query)}}
     var valid:[NSDictionary]{records.filter{flag($0,"selectable") && selected.contains(string($0,"path"))}}
@@ -1216,10 +1279,11 @@ private struct WorkspaceHeading:View {
     private let state=CheckScopeState()
     @objc public var actionHandler:((NSDictionary)->Void)?{get{state.action}set{state.action=newValue}}
     public override func loadView(){view=NSHostingView(rootView:CheckScopeWorkspace(state:state))}
-    @objc public func update(_ records:[NSDictionary],busy:Bool,notice:String){state.records=records;state.busy=busy;state.notice=notice;if !busy && !state.initialized {state.initialized=true;state.selected=Set(records.filter{flag($0,"selectable")}.map{string($0,"path")});state.chosen=records.first(where:{flag($0,"selectable") && !flag($0,"image")}).map{string($0,"path")} ?? "";state.send("preview")}}
+    @objc public func update(_ records:[NSDictionary],busy:Bool,notice:String){state.records=records;state.busy=busy;state.notice=notice;if !busy && !state.initialized {state.initialized=true;state.selected=Set(records.filter{flag($0,"selectable")}.map{string($0,"path")});state.initialSelection=state.selected;state.chosen=records.first(where:{flag($0,"selectable") && !flag($0,"image")}).map{string($0,"path")} ?? "";state.send("preview")}}
     @objc public func setProgress(_ notice:String){state.notice=notice}
     @objc public func setPreview(_ preview:NSView){state.preview=preview}
     @objc public var previewView:NSView?{state.preview}
+    @objc public var hasUnsavedChanges:Bool{state.initialized && state.selected != state.initialSelection}
     @objc public var preparing:Bool{state.busy}
     @objc public func requestCheck(){if state.canStart{state.send("check")}}
 }

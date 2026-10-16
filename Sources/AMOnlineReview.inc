@@ -65,8 +65,9 @@ static NSArray *ORUploads(void){id rows=SSReadPlist(@"online-review-uploads.plis
 static BOOL ORStoreUpload(NSDictionary *record,BOOL remove,NSError **error){
     @synchronized(AMOnlineReviewClient.class){NSMutableArray *next=ORUploads().mutableCopy;NSIndexSet *old=[next indexesOfObjectsPassingTest:^BOOL(id row,NSUInteger i,BOOL *stop){return [row[@"name"] isEqual:record[@"name"]];}];[next removeObjectsAtIndexes:old];if(!remove)[next addObject:record];return SSWritePlist(@"online-review-uploads.plist",next,error);}
 }
-BOOL AMOnlineReviewRegister(NSDictionary *context,NSDictionary *report,NSString *courseID,NSError **error){
-    @synchronized(NSSpellChecker.class){if(!AMPreflightRegister(context,report,courseID,error))return NO;NSMutableArray *jobs=PFJobsRead().mutableCopy;NSMutableDictionary *last=[jobs.lastObject mutableCopy];last[@"provider"]=@"Gemini";last[@"model"]=AMOnlineReviewCurrentModel();last[@"state"]=@"在线复核中";last[@"message"]=@"Gemini：准备／等待在线复核";jobs[jobs.count-1]=last;return SSWritePlist(@"preflight-jobs.plist",jobs,error);}
+BOOL AMOnlineReviewRegister(NSDictionary *context,NSDictionary *report,NSString *courseID,NSError **error){return AMOnlineReviewRegisterWithModel(context,report,courseID,AMOnlineReviewCurrentModel(),error);}
+BOOL AMOnlineReviewRegisterWithModel(NSDictionary *context,NSDictionary *report,NSString *courseID,NSString *model,NSError **error){
+    @synchronized(NSSpellChecker.class){if(!AMPreflightRegister(context,report,courseID,error))return NO;NSMutableArray *jobs=PFJobsRead().mutableCopy;NSMutableDictionary *last=[jobs.lastObject mutableCopy];last[@"provider"]=@"Gemini";last[@"model"]=model;last[@"state"]=@"在线复核中";last[@"message"]=@"Gemini：准备／等待在线复核";jobs[jobs.count-1]=last;return SSWritePlist(@"preflight-jobs.plist",jobs,error);}
 }
 void AMOnlineReviewFailed(NSString *batch){@synchronized(NSSpellChecker.class){NSArray *old=PFJobsRead();if(!old)return;NSMutableArray *jobs=NSMutableArray.array;for(NSDictionary *row in old){NSMutableDictionary *job=row.mutableCopy;if([job[@"id"] isEqual:batch] && !job[@"result"]){job[@"state"]=@"需处理";job[@"message"]=@"Gemini 复核未完成，可在检查报告中重试；保留本机报告。";}[jobs addObject:job];}SSWritePlist(@"preflight-jobs.plist",jobs,NULL);}}
 BOOL AMOnlineReviewSelectModel(NSString *model,NSError **error){

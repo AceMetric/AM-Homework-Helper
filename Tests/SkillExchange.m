@@ -6,7 +6,7 @@
 #import "../Sources/SSCourseWindow.m"
 static NSUInteger checks;
 static void Check(BOOL value,NSString *label){checks++;if(!value){fprintf(stderr,"FAIL: %s\n",label.UTF8String);exit(1);}}
-static void Finish(SSCourseController *controller){NSDate *until=[NSDate dateWithTimeIntervalSinceNow:5];while(controller.busy && until.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];Check(!controller.busy,@"background receive completes");}
+static void Finish(SSCourseController *controller){NSDate *until=[NSDate dateWithTimeIntervalSinceNow:5];while(controller.operationBusy && until.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];Check(!controller.operationBusy,@"background receive completes");}
 @interface ExchangeGit:SSGit
 @property NSMutableDictionary *reads;
 @property NSDictionary *sources;
