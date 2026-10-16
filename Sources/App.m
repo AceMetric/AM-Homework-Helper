@@ -741,7 +741,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.courseWindow.editTask = ^(NSString *identifier) { NSMenuItem *item = NSMenuItem.new; item.representedObject = identifier; [weakSelf editTask:item]; };
     self.courseWindow.stateChanged = ^{ [weakSelf renderSidebar]; if(weakSelf.page==4)[weakSelf renderHeader]; if (weakSelf.page == 0) [weakSelf renderTaskContent]; };
     self.exitCoordinator = SSExitCoordinator.new;
-    self.exitCoordinator.operationBusy = ^BOOL { for(NSDictionary *row in AMOperations())if([@[@"running",@"queued"] containsObject:row[@"state"]])return YES;return weakSelf.courseWindow.operationBusy || weakSelf.backgroundSaveCount>0; };
+    self.exitCoordinator.operationBusy = ^BOOL { return AMExitBlockingOperations().count>0 || weakSelf.courseWindow.operationBusy || weakSelf.backgroundSaveCount>0; };
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(backgroundOperationsChanged:) name:AMOperationsChanged object:nil];
     self.exitCoordinator.pauseOperations = ^(BOOL paused) { weakSelf.courseWindow.operationsPaused = paused; };
     self.exitCoordinator.cancelLogin = ^{ [weakSelf.courseWindow cancelPendingLogin]; };
@@ -1462,10 +1462,21 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)backgroundOperationsChanged:(NSNotification *)notification {[self.exitCoordinator operationStateChanged];}
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
     if (!self.exitCoordinator) return NSTerminateNow;
-    if(!self.exitCoordinator.pending && AMQueuedOperationCount()){
-        NSAlert *alert=NSAlert.new;alert.messageText=@"还有排队中的操作";alert.informativeText=@"可以等待完成，或取消尚未开始的操作后退出。已执行的写入会安全结束；重启后不会自动发送模型请求。";
-        [alert addButtonWithTitle:@"等待完成后退出"];[alert addButtonWithTitle:@"取消排队并退出"];[alert addButtonWithTitle:@"继续使用"];
-        NSInteger choice=[alert runModal];if(choice==NSAlertThirdButtonReturn)return NSTerminateCancel;if(choice==NSAlertSecondButtonReturn)AMCancelQueuedOperations();
+    NSArray *blocking=AMExitBlockingOperations();
+    if(!self.exitCoordinator.pending && (blocking.count || self.courseWindow.operationBusy || self.backgroundSaveCount)){
+        NSMutableArray *details=NSMutableArray.array;BOOL cancellable=NO;
+        for(NSDictionary *row in blocking){
+            BOOL queued=[row[@"state"] isEqual:@"queued"];cancellable=cancellable || queued || [row[@"cancellable"] boolValue];
+            if(details.count<5){NSTimeInterval elapsed=MAX(0,-[row[@"started"] timeIntervalSinceNow]);NSString *progress=[row[@"total"] integerValue]>0 ? [NSString stringWithFormat:@" · %@／%@",row[@"completed"],row[@"total"]]:@"";[details addObject:[NSString stringWithFormat:@"%@：%@%@ · %@ %.0f 秒",row[@"target"],row[@"stage"],progress,queued ? @"已等待":@"已用",elapsed]];}
+        }
+        if(!details.count)[details addObject:@"正在完成本机保存或课程操作。"];
+        [details addObject:@"可等待完成，或取消能安全中断的任务。已开始的文件写入会继续完成；尚未发送的排队请求可以取消。"];
+        NSAlert *alert=NSAlert.new;alert.messageText=self.updates.installing ? @"安装更新前，后台操作尚未结束":@"退出前，后台操作尚未结束";alert.informativeText=[details componentsJoinedByString:@"\n\n"];
+        [alert addButtonWithTitle:self.updates.installing ? @"等待完成后安装":@"等待完成后退出"];
+        [alert addButtonWithTitle:@"取消可中断任务并继续"].enabled=cancellable;
+        [alert addButtonWithTitle:self.updates.installing ? @"稍后安装":@"继续使用"];
+        NSInteger choice=[alert runModal];if(choice==NSAlertThirdButtonReturn){[self.updates terminationCancelled];return NSTerminateCancel;}
+        if(choice==NSAlertSecondButtonReturn){AMCancelQueuedOperations();for(NSDictionary *row in blocking)if([row[@"state"] isEqual:@"running"] && [row[@"cancellable"] boolValue])AMOperationCancel(row[@"id"]);}
     }
     if (self.exitCoordinator.pending) return NSTerminateLater;
     if (self.courseWindow.operationBusy) { self.notice = @"正在等待当前课程操作完成，再退出或更新…"; [self render]; }

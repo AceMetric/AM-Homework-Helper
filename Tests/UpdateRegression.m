@@ -108,6 +108,32 @@ static void FeedChecks(void) {
 - (NSDictionary *)user:(NSError **)error { return @{@"login":@"student", @"id":@1}; }
 - (NSString *)accessToken:(NSError **)error { return @"synthetic"; }
 @end
+static void ApplicationExitChecks(AppDelegate *app){
+    SSUpdateController *original=app.updates;FeedController *update=[[FeedController alloc] initWithPreview:YES];[update setValue:@YES forKey:@"available"];update.testURL=[NSURL URLWithString:@"https://updates.example.invalid/appcast.xml"];feedStatus=200;feedError=0;feedDelay=0;[update checkForUpdates:nil];WaitForFeed(update);app.updates=update;
+    [update setValue:@YES forKey:@"installing"];
+    Check(!app.exitCoordinator.operationBusy(),@"the actual application exit gate excludes the live updater row, preventing Sparkle self-wait");
+    __block NSUInteger replies=0;__block BOOL ready=NO;__block NSString *message=nil;__block BOOL offeredCancel=NO;
+    IMP oldReply=class_getMethodImplementation(NSApplication.class,@selector(replyToApplicationShouldTerminate:));
+    AMQuietReplace(NSApplication.class,@selector(replyToApplicationShouldTerminate:),imp_implementationWithBlock(^(id sender,BOOL value){replies++;ready=value;}));
+    IMP oldModal=class_getMethodImplementation(NSAlert.class,@selector(runModal));
+    AMQuietReplace(NSAlert.class,@selector(runModal),imp_implementationWithBlock(^NSModalResponse(NSAlert *alert){message=alert.informativeText;offeredCancel=alert.buttons.count>1 && alert.buttons[1].enabled;return ((NSModalResponse(*)(id,SEL))oldModal)(alert,@selector(runModal));}));
+    Check([app applicationShouldTerminate:NSApp]==NSTerminateLater,@"real app delegate accepts install-and-restart while the update row is still running");Drain();
+    Check(replies==1 && ready && !app.exitCoordinator.pending,@"real host exit completes without relying on Sparkle finishing first");app.courseWindow.operationsPaused=NO;
+    __block BOOL cancelled=NO;__block NSString *readID=nil;readID=AMOperationBegin(@"检查课程材料",@"模拟课程",YES,^{cancelled=YES;AMOperationFinish(readID,@"cancelled",@"检查已取消");});AMOperationProgress(readID,@"核验第 2 个文件",2,5);
+    [AMQuietDialogChoices addObject:@(NSAlertThirdButtonReturn)];
+    Check([app applicationShouldTerminate:NSApp]==NSTerminateCancel && !cancelled && !app.exitCoordinator.pending,@"postponing update leaves the current background check intact");
+    Check([message containsString:@"模拟课程"] && [message containsString:@"核验第 2 个文件"] && [message containsString:@"2／5"] && [message containsString:@"秒"] && offeredCancel,@"restart wait identifies the target, phase, count, elapsed time and safe cancellation choice");
+    [update setValue:@YES forKey:@"installing"];[AMQuietDialogChoices addObject:@(NSAlertSecondButtonReturn)];
+    Check([app applicationShouldTerminate:NSApp]==NSTerminateLater,@"cancel-and-continue still uses normal draft and persistence checks");Drain();
+    Check(cancelled && replies==2 && ready,@"cancelling a safe background read releases the actual update exit gate");app.courseWindow.operationsPaused=NO;
+    NSString *writeID=AMOperationBegin(@"保存课程文件",@"模拟写入",NO,nil);[AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];
+    Check([app applicationShouldTerminate:NSApp]==NSTerminateLater,@"active writes remain protected while waiting for restart");Drain();
+    Check(replies==2 && app.exitCoordinator.pending && !offeredCancel,@"non-interruptible writes are not offered a cancellation shortcut");
+    AMOperationFinish(writeID,@"success",@"安全写入完成");Drain();
+    Check(replies==3 && ready && !app.exitCoordinator.pending,@"restart resumes after the protected write finishes");app.courseWindow.operationsPaused=NO;
+    [update updater:nil didAbortWithError:[NSError errorWithDomain:SUSparkleErrorDomain code:SUInstallationCanceledError userInfo:nil]];
+    app.updates=original;AMQuietReplace(NSApplication.class,@selector(replyToApplicationShouldTerminate:),oldReply);AMQuietReplace(NSAlert.class,@selector(runModal),oldModal);
+}
 int main(int argc, char **argv) { @autoreleasepool {
     [NSApplication sharedApplication];
     FeedChecks();
@@ -147,6 +173,7 @@ int main(int argc, char **argv) { @autoreleasepool {
     busy = NO; [gate operationStateChanged]; Check(called && result, @"submission completion resumes waiting exit");
 
     AppDelegate *app = AppDelegate.new; [app applicationDidFinishLaunching:[NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification object:NSApp]];
+    ApplicationExitChecks(app);
     EditorController *editor = [[EditorController alloc] initWithTask:nil owner:app]; app.editor = editor;
     Check(!editor.hasUnsavedChanges, @"untouched task sheet is not dirty");
     editor.notesField.string = @"synthetic unsaved notes"; Check(editor.hasUnsavedChanges, @"notes edits detected even without a delegate event");

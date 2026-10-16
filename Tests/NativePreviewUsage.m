@@ -15,6 +15,20 @@ int main(){@autoreleasepool{
     [sheet.checks[0] performClick:nil];Check([sheet.preview.string containsString:@"完整预览结束"] && sheet.preview.string.length>7000,@"file button displays the entire synthetic diff");[sheet.expandPreviewButton performClick:nil];Check(sheet.expandedText.selectable && [sheet.expandedText.string isEqual:sheet.preview.string],@"expand button opens the complete selectable preview");
     sheet.message.stringValue=@"模拟提交草稿";[sheet.filesPrimary performClick:nil];NSDate *limit=[NSDate dateWithTimeIntervalSinceNow:5];while(sheet.checking && limit.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];Check(sheet.report && !sheet.checkPage.hidden,@"check button produces a local report without Git or network");[sheet backToFiles:nil];Check([sheet.message.stringValue isEqual:@"模拟提交草稿"] && sheet.checks[0].state==NSControlStateValueOn,@"returning to file step preserves simulated draft and choices");[sheet cancel:nil];
     Menu(app,@selector(showTasksSample:));Check(app.page==2,@"task page can be restored through the actual menu");
+    Check([app applicationShouldTerminateAfterLastWindowClosed:NSApp],@"closing the last preview window requests exit instead of leaving a hidden app");
+    Menu(app,@selector(showCourseProgressSample:));Menu(app,@selector(showEditorSample:));app.editor.notesField.string=@"保留尚未保存的模拟备注";
+    Check(app.exitCoordinator.operationBusy() && [(ChromePreviewCourse *)app.courseWindow showingProgressSample],@"exit regression starts with both indefinitely running preview samples");
+    __block NSUInteger replies=0;__block BOOL ready=NO;
+    AMQuietReplace(NSApplication.class,@selector(replyToApplicationShouldTerminate:),imp_implementationWithBlock(^(id sender,BOOL value){replies++;ready=value;}));
+    [AMQuietDialogChoices addObject:@(NSAlertThirdButtonReturn)];
+    Check([app applicationShouldTerminate:NSApp]==NSTerminateLater,@"preview still coordinates unsaved drafts asynchronously");
+    limit=[NSDate dateWithTimeIntervalSinceNow:3];while(!replies && limit.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    Check(replies==1 && !ready && !app.exitCoordinator.pending && app.editor && [app.editor.notesField.string isEqual:@"保留尚未保存的模拟备注"],@"preview exits the simulated wait but preserves an unsaved draft when exit is cancelled");
+    Check(!app.exitCoordinator.operationBusy() && ![(ChromePreviewCourse *)app.courseWindow showingProgressSample],@"both simulated progress samples are stopped without bypassing normal exit protection");
+    [AMQuietDialogChoices addObject:@(NSAlertSecondButtonReturn)];
+    Check([app applicationShouldTerminate:NSApp]==NSTerminateLater,@"retrying preview quit uses the normal exit coordinator");
+    limit=[NSDate dateWithTimeIntervalSinceNow:3];while(replies<2 && limit.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+    Check(replies==2 && ready && !app.editor,@"explicitly discarded preview draft permits quit without waiting forever");
     for(NSDictionary *operation in AMOperations())if([operation[@"state"] isEqual:@"running"])AMOperationCancel(operation[@"id"]);[app.ticker invalidate];[app.window orderOut:nil];[app.gallery.window orderOut:nil];[NSStatusBar.systemStatusBar removeStatusItem:app.statusItem];
     printf("PASS: %lu isolated three-page preview and native gallery assertions; visual appearance awaits user screenshots\n",(unsigned long)checks);
 }return 0;}
