@@ -38,7 +38,9 @@
     }
     NSURL *url = [self updateFeedURL];
     if (![SSUpdateController secureFeedURL:url]) { [self showCheckProblem:@{@"title":@"更新配置需要修复", @"message":@"更新地址配置不正确，请安装维护者提供的新版应用。", @"retry":@NO}]; return; }
-    self.operationID=AMOperationBegin(@"检查更新",@"AM Helper",NO,nil);self.checking = YES; NSUInteger generation = ++self.checkGeneration;
+    // Sparkle owns its download/install lifecycle. Waiting for this row while
+    // Sparkle is waiting for the host to quit would make an exit cycle.
+    self.operationID=AMOperationBeginWithExitPolicy(@"检查更新",@"AM Helper",NO,NO,nil);self.checking = YES; NSUInteger generation = ++self.checkGeneration;
     [self showCheckProgress];
     if (self.statusChanged) self.statusChanged(@"正在检查软件更新…");
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:12];

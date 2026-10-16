@@ -31,6 +31,7 @@
 @end
 @interface ChromePreviewApp:AppDelegate
 @property AMNativeControlGallery *gallery;
+@property NSString *progressSampleOperationID;
 @end
 @implementation ChromePreviewApp
 - (BOOL)preview{return YES;}
@@ -47,9 +48,18 @@
     NSMenu *menu=NSApp.windowsMenu;
     for(NSArray *spec in @[@[@"任务编辑表单…",@"showEditorSample:"],@[@"原生控件样例…",@"showGallery:"],@[@"任务页样例",@"showTasksSample:"],@[@"课程页样例",@"showCourseSample:"],@[@"课程检查进度样例",@"showCourseProgressSample:"],@[@"提交与预览样例…",@"showSubmissionSample:"]]){NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:spec[0] action:NSSelectorFromString(spec[1]) keyEquivalent:@""];item.target=self;[menu addItem:item];}
 
-    __block NSString *operation;operation=AMOperationBegin(@"检查文件",@"模拟作业项目",YES,^{AMOperationFinish(operation,@"cancelled",@"模拟检查已取消");});AMOperationProgress(operation,@"检查文件与图片",12,37);
+    __block NSString *operation;operation=AMOperationBegin(@"检查文件",@"模拟作业项目",YES,^{AMOperationFinish(operation,@"cancelled",@"模拟检查已取消");});self.progressSampleOperationID=operation;AMOperationProgress(operation,@"检查文件与图片",12,37);
     NSString *finished=AMOperationBegin(@"检查所有课程",@"模拟课程",NO,nil);AMOperationFinish(finished,@"success",@"检查完成，发现 3 项待审核作业");
 }
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    // These samples intentionally never finish on their own. Stop only the
+    // simulated work before using the normal draft and real-operation checks.
+    AMOperationCancel(self.progressSampleOperationID);
+    ChromePreviewCourse *course=(ChromePreviewCourse *)self.courseWindow;
+    if(course.showingProgressSample)[course cancelReadOperation:nil];
+    return [super applicationShouldTerminate:sender];
+}
+- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender {return YES;}
 - (void)showGallery:(id)sender{if(!self.gallery)self.gallery=AMNativeControlGallery.new;[self.gallery.window makeKeyAndOrderFront:nil];}
 - (void)showEditorSample:(id)sender{if(self.editor)return;self.editor=[[EditorController alloc] initWithTask:self.tasks.firstObject owner:self];[self.window beginSheet:self.editor.window completionHandler:nil];}
 - (void)showTasksSample:(id)sender{[self openList:nil];}

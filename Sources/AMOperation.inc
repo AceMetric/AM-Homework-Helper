@@ -20,9 +20,10 @@ static void AMOperationPump(void){
     }});
     if(launch.count)AMOperationNotify();
 }
-NSString *AMOperationBegin(NSString *kind,NSString *target,BOOL cancellable,void (^cancel)(void)){
+NSString *AMOperationBegin(NSString *kind,NSString *target,BOOL cancellable,void (^cancel)(void)){return AMOperationBeginWithExitPolicy(kind,target,cancellable,YES,cancel);}
+NSString *AMOperationBeginWithExitPolicy(NSString *kind,NSString *target,BOOL cancellable,BOOL blocksExit,void (^cancel)(void)){
     NSString *key=NSUUID.UUID.UUIDString;@synchronized(AMOperationLock()){
-        AMOperationRows[key]=[@{@"id":key,@"kind":kind,@"target":target ?: @"",@"stage":kind,@"started":NSDate.date,@"state":@"running",@"completed":@0,@"total":@0,@"cancellable":@(cancellable)} mutableCopy];
+        AMOperationRows[key]=[@{@"id":key,@"kind":kind,@"target":target ?: @"",@"stage":kind,@"started":NSDate.date,@"state":@"running",@"completed":@0,@"total":@0,@"cancellable":@(cancellable),@"blocksExit":@(blocksExit)} mutableCopy];
         if(cancel && cancellable)AMOperationCancels[key]=[cancel copy];
         if(AMOperationRows.count>80){NSArray *sorted=[AMOperationRows.allValues sortedArrayUsingComparator:^NSComparisonResult(id a,id b){return [a[@"started"] compare:b[@"started"]];}];for(NSDictionary *row in sorted)if(AMOperationRows.count>80 && ![@[@"running",@"queued"] containsObject:row[@"state"]])[AMOperationRows removeObjectForKey:row[@"id"]];}
     }AMOperationNotify();return key;
@@ -69,6 +70,7 @@ void AMCancelQueuedOperations(void){
     for(void(^cancel)(BOOL) in callbacks)cancel(YES);AMOperationNotify();AMOperationPump();
 }
 NSArray *AMOperations(void){@synchronized(AMOperationLock()){NSMutableArray *rows=NSMutableArray.array;for(NSDictionary *row in AMOperationRows.allValues)[rows addObject:row.copy];return [rows sortedArrayUsingComparator:^NSComparisonResult(id a,id b){return [b[@"started"] compare:a[@"started"]];}];}}
+NSArray *AMExitBlockingOperations(void){NSMutableArray *rows=NSMutableArray.array;for(NSDictionary *row in AMOperations())if([@[@"running",@"queued"] containsObject:row[@"state"]] && (!row[@"blocksExit"] || [row[@"blocksExit"] boolValue]))[rows addObject:row];return rows;}
 static NSMutableDictionary *AMModelWaiters;
 id AMPerformModelOperation(NSString *key,NSString *target,BOOL manual,BOOL (^cancelled)(void),id (^perform)(NSError **),NSError **error){return AMPerformResourceOperation([@"model|" stringByAppendingString:key],@"分析材料",target,@[@"model-service"],manual ? 100:0,cancelled,perform,error);}
 id AMPerformResourceOperation(NSString *key,NSString *kind,NSString *target,NSArray *resources,NSInteger priority,BOOL (^cancelled)(void),id (^perform)(NSError **),NSError **error){
