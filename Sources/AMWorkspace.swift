@@ -804,7 +804,7 @@ private struct CourseWorkspace:View {
     }
     private var summaries:some View {
         List{ForEach(workspaceRows(state.summaries)){row in let r=row.record
-            HStack(spacing:12){VStack(alignment:.leading,spacing:6){Label(string(r,"name"),systemImage:"books.vertical").fontWeight(.medium);Text("新作业 \((r["newCount"] as? NSNumber)?.intValue ?? 0) · 更新建议 \((r["updateCount"] as? NSNumber)?.intValue ?? 0)").font(.caption);Text(string(r,"status")).font(.caption).foregroundStyle(flag(r,"failed") ? Color.orange:Color.secondary).fixedSize(horizontal:false,vertical:true)};Spacer();WorkspaceButton(title:"\((r["pending"] as? NSNumber)?.intValue ?? 0) 项待审核 · 查看结果",enabled:true,prominent:false,identity:"course-summary-"+identifier(r)){DispatchQueue.main.async{state.action?("course-result",identifier(r))}}.fixedSize()}.padding(.vertical,8)
+            HStack(spacing:12){VStack(alignment:.leading,spacing:6){Label(string(r,"name"),systemImage:"books.vertical").fontWeight(.medium);Text("新作业 \((r["newCount"] as? NSNumber)?.intValue ?? 0) · 更新建议 \((r["updateCount"] as? NSNumber)?.intValue ?? 0)").font(.caption);Text(string(r,"status")).font(.caption).foregroundStyle(flag(r,"failed") ? Color.orange:Color.secondary).fixedSize(horizontal:false,vertical:true)};Spacer();WorkspaceButton(title:"\((r["pending"] as? NSNumber)?.intValue ?? 0) 项待审核",enabled:true,prominent:false,identity:"course-summary-"+identifier(r)){DispatchQueue.main.async{state.action?("course-result",identifier(r))}}.fixedSize()}.padding(.vertical,8)
         }}.listStyle(.inset)
     }
     var body:some View {

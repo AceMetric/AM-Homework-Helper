@@ -708,7 +708,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.scroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; self.scroll.hasVerticalScroller = YES; self.scroll.autohidesScrollers = YES; self.scroll.drawsBackground = NO;
     self.document = GradientBox(Canvas(), Panel(), 0); self.scroll.documentView = self.document; [self.root addSubview:self.scroll];
     self.scroll.contentView.postsBoundsChangedNotifications=YES;[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(taskScrolled:) name:NSViewBoundsDidChangeNotification object:self.scroll.contentView];
-    self.calendarScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; self.calendarScroll.hasVerticalScroller = YES; self.calendarScroll.autohidesScrollers = NO; self.calendarScroll.drawsBackground = NO; self.calendarScroll.borderType = NSNoBorder;
+    self.calendarScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect]; self.calendarScroll.hasVerticalScroller = NO; self.calendarScroll.hasHorizontalScroller = NO; self.calendarScroll.drawsBackground = NO; self.calendarScroll.borderType = NSNoBorder;
     self.calendarDocument = GradientBox(Panel(), Canvas(), 0); self.calendarScroll.documentView = self.calendarDocument; [self.root addSubview:self.calendarScroll]; self.calendarBaseMonth = self.month; self.calendarNeedsCenter = YES;
     self.calendarScroll.contentView.postsBoundsChangedNotifications = YES; [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(calendarScrolled:) name:NSViewBoundsDidChangeNotification object:self.calendarScroll.contentView];
     self.agenda = GradientBox(Panel(), Canvas(), 14); [self.root addSubview:self.agenda];
