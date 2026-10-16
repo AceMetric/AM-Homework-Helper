@@ -123,7 +123,7 @@
 }
 - (void)showSettings:(id)sender {
     NSAlert *alert = NSAlert.new; alert.messageText = @"软件更新";
-    alert.informativeText = self.available ? @"每天检查新版本。发现更新后展示说明，由你决定是否下载与安装；安装需要重新打开应用。" : @"界面预览不联网检查更新。";
+    alert.informativeText = self.available ? @"每天检查新版本，下载及安装需确认。" : @"界面预览不联网检查更新。";
     NSButton *check = [NSButton checkboxWithTitle:@"自动检查更新" target:nil action:NULL]; check.frame = NSMakeRect(0, 0, 320, 28); check.state = self.automaticallyChecks ? NSControlStateValueOn : NSControlStateValueOff; check.enabled = self.available;
     alert.accessoryView = check; [alert addButtonWithTitle:@"完成"]; [alert addButtonWithTitle:@"检查更新…"].enabled = self.available && !self.checking && self.controller.updater.canCheckForUpdates;
     NSModalResponse answer = [alert runModal];

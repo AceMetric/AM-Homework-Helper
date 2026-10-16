@@ -62,7 +62,7 @@
         Surface *card=Box(nil,0);Put(body,card,16,8+i*96,width-32,88);card.autoresizingMask=NSViewWidthSizable;
         AMOperationView *progress=[[AMOperationView alloc] initWithFrame:NSMakeRect(12,10,width-56,68)];progress.autoresizingMask=NSViewWidthSizable;progress.operationID=rows[i][@"id"];[card addSubview:progress];[progress layoutSubtreeIfNeeded];
     }
-    if(!rows.count)Put(body,Text(@"暂无进行中的操作。已完成记录可以在上方展开。",13,NSFontWeightRegular,Muted()),20,24,width-40,32);
+    if(!rows.count)Put(body,Text(@"暂无进行中的操作",13,NSFontWeightRegular,Muted()),20,24,width-40,32);
     scroll.documentView=body;[scroll.contentView scrollToPoint:position];[scroll reflectScrolledClipView:scroll.contentView];
 }
 - (void)toggleHistory:(id)sender{self.showsHistory=!self.showsHistory;self.identifiers=nil;[self refreshRows];}

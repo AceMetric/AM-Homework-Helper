@@ -90,7 +90,7 @@ int main(void) { @autoreleasepool {
     app.tasks=tasksBeforeCheck.mutableCopy;app.filter=0;Route(app,pageBeforeCheck);[courses selectCourseID:course[@"fork"]];
     course[@"path"] = @"/synthetic/physics"; course[@"lastScan"] = NSDate.date; [courses refreshCourses];
     Check(courses.syncButton.enabled && courses.commitButton.enabled && [courses.accountLabel.stringValue containsString:@"上次成功检查"], @"linked course displays readiness and last check");
-    Check([courses.emptyLabel.stringValue containsString:@"检查新作业"], @"no-results state gives refresh action");
+    Check([courses.emptyLabel.stringValue isEqual:@"暂无待审核作业"] && courses.scanButton.enabled && !courses.scanButton.hidden && courses.scanButton.action==@selector(scan:), @"empty result keeps a direct working check action without a tutorial sentence");
     NSDate *due = DDLParseDate(@"2026-10-08 23:59", NSDate.date, Cal());
     NSDictionary *candidate = @{@"id":@"teacher/physics|README.md|作业一|1", @"title":@"作业一 · 实验报告", @"due":due, @"repository":@"teacher/physics", @"path":@"README.md", @"line":@12, @"blobSHA":@"version1", @"timeZone":@"Asia/Shanghai", @"needsDate":@NO, @"needsTime":@NO, @"snippet":@"## 作业一 · 实验报告\n截止时间：2026-10-08 23:59\n提交实验报告和源代码。"};
     NSMutableDictionary *math = candidate.mutableCopy; math[@"id"] = @"math-homework"; math[@"repository"] = @"teacher/math"; math[@"title"] = @"数学 · 习题练习";

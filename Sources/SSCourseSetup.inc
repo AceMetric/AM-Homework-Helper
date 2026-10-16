@@ -29,7 +29,7 @@
         NSDictionary *scan=result[row[@"fork"]];BOOL failed=!scan || [scan[@"error"] length]>0;row[@"checkFailed"]=@(failed);
         row[@"status"]=failed ? [@"未完成检查：" stringByAppendingString:scan[@"error"] ?: error.localizedDescription ?: @"本次检查未完成，可重试"]:(self.statuses[row[@"fork"]] ?: @"检查已完成");row[@"detail"]=scan[@"detail"] ?: error.localizedDescription ?: @"";
     }
-    [self updateCourseSetup:@"首次检查结束。可重试未完成课程，或完成配置后查看结果。"];
+    [self updateCourseSetup:@"首次检查已结束。"];
 }
 - (void)handleSetupAction:(NSDictionary *)request {
     NSString *action=request[@"action"];
@@ -46,13 +46,13 @@
     if(self.setupStep==2){NSDictionary *paths=request[@"paths"];for(NSMutableDictionary *row in self.setupRecords)if(paths[row[@"fork"]] && ![paths[row[@"fork"]] isEqual:row[@"path"]]){row[@"path"]=paths[row[@"fork"]];row[@"ready"]=@NO;}}
     if([action isEqual:@"close"] && self.setupStep==4){if(!self.preview){NSMutableDictionary *progress=[SSReadPlist(@"onboarding.plist") mutableCopy] ?: NSMutableDictionary.dictionary;progress[@"tipsCompleted"]=@YES;SSWritePlist(@"onboarding.plist",progress,NULL);}[self closeCourseSetup];return;}
     if([action isEqual:@"login"]){[self login:nil];return;}
-    if([action isEqual:@"back"]){self.setupStep=MAX(0,self.setupStep-1);if(self.setupStep==1){[self addFork:nil];return;}[self updateCourseSetup:@"返回不会删除已保存的课程和任务。"];return;}
+    if([action isEqual:@"back"]){self.setupStep=MAX(0,self.setupStep-1);if(self.setupStep==1){[self addFork:nil];return;}[self updateCourseSetup:@""];return;}
     if([action isEqual:@"finish"]){if(!self.preview){NSError *error=nil;NSMutableDictionary *progress=[SSReadPlist(@"onboarding.plist") mutableCopy] ?: NSMutableDictionary.dictionary;progress[@"completed"]=@YES;if(!SSWritePlist(@"onboarding.plist",progress,&error)){[self updateCourseSetup:error.localizedDescription];return;}}self.setupStep=4;[self updateCourseSetup:@"配置完成，未就绪课程可稍后继续。"];return;}
     if([action isEqual:@"result"]){NSString *fork=request[@"course"];[self closeCourseSetup];[self selectCourseID:fork];if(self.onboardingNavigation)self.onboardingNavigation(NO);return;}
     if([action isEqual:@"restart"]){self.setupStep=self.connected ? 1:0;[self updateCourseSetup:@""];if(self.connected)[self addFork:nil];return;}
     if([action isEqual:@"courses"] || [action isEqual:@"review"]){if(!self.preview){NSMutableDictionary *progress=[SSReadPlist(@"onboarding.plist") mutableCopy] ?: NSMutableDictionary.dictionary;progress[@"tipsCompleted"]=@YES;SSWritePlist(@"onboarding.plist",progress,NULL);}[self closeCourseSetup];if(self.onboardingNavigation)self.onboardingNavigation([action isEqual:@"review"]);return;}
     if([action isEqual:@"reload"]){[self closeCourseSetup];[self addFork:nil];return;}
-    if([action isEqual:@"check"] || [action isEqual:@"retry-check"]){NSMutableArray *ready=NSMutableArray.array;for(NSDictionary *row in self.setupRecords){NSDictionary *course=[self savedCourse:row];if([row[@"ready"] boolValue] && [course[@"path"] length] && (![action isEqual:@"retry-check"] || [row[@"checkFailed"] boolValue]))[ready addObject:course.copy];}if(!ready.count){[self updateCourseSetup:@"请先关联至少一门可读取的课程。"];return;}self.setupStep=3;self.firstCheckRunning=YES;[self scanCourses:ready];[self updateCourseSetup:@"首次检查中，请等待；不会重复启动检查。"];return;}
+    if([action isEqual:@"check"] || [action isEqual:@"retry-check"]){NSMutableArray *ready=NSMutableArray.array;for(NSDictionary *row in self.setupRecords){NSDictionary *course=[self savedCourse:row];if([row[@"ready"] boolValue] && [course[@"path"] length] && (![action isEqual:@"retry-check"] || [row[@"checkFailed"] boolValue]))[ready addObject:course.copy];}if(!ready.count){[self updateCourseSetup:@"请先关联至少一门可读取的课程。"];return;}self.setupStep=3;self.firstCheckRunning=YES;[self scanCourses:ready];[self updateCourseSetup:@"首次检查中…"];return;}
     if([action isEqual:@"select"] || [action isEqual:@"retry"]){
         NSArray *ids=request[@"selected"];if([action isEqual:@"retry"])ids=[self.setupRecords valueForKey:@"fork"];if(!ids.count)return;
         NSMutableArray *chosen=NSMutableArray.array;for(NSDictionary *fork in self.availableForks)if([ids containsObject:fork[@"full_name"]])[chosen addObject:fork];
@@ -71,14 +71,14 @@
         } completion:^(NSArray *rows,NSError *error){
             self.setupRecords=[rows mutableCopy] ?: NSMutableArray.array;self.setupStep=2;
             for(NSMutableDictionary *row in self.setupRecords)if(row[@"course"]){NSError *saveError=nil;if(![self saveConfiguredCourse:row[@"course"] error:&saveError]){row[@"invalid"]=@YES;row[@"ready"]=@NO;row[@"status"]=@"配置保存失败，请重试；原课程配置已保留。";}}
-            [self refreshCourses];[self updateCourseSetup:@"选择课程总文件夹可批量匹配；权限失败可处理后重新检测。"];
+            [self refreshCourses];[self updateCourseSetup:@"课程权限核验完成。"];
         }];[self updateCourseSetup:@"正在核验所选课程…"];return;
     }
     if([action isEqual:@"find"]){
         NSOpenPanel *panel=NSOpenPanel.openPanel;panel.canChooseFiles=NO;panel.canChooseDirectories=YES;panel.message=@"选择课程总文件夹；仅检查该目录和下两层的 Git 身份。";if([panel runModal]!=NSModalResponseOK)return;NSString *root=panel.URL.path;NSArray *courses=self.setupRecords.copy;
-        [self work:@"正在匹配已有课程目录…" forCourse:nil operation:^id(NSError **error){return [self.git matchingDirectories:root courses:courses];} completion:^(NSDictionary *matches,NSError *error){for(NSMutableDictionary *row in self.setupRecords){NSArray *paths=matches[row[@"fork"]] ?: @[];row[@"matches"]=paths;if(paths.count==1){if(![row[@"path"] isEqual:paths.firstObject])row[@"ready"]=@NO;row[@"path"]=paths.firstObject;}else if(paths.count>1){row[@"path"]=@"";row[@"ready"]=@NO;row[@"status"]=@"找到多个对应仓库，请选择使用的目录。";}}[self updateCourseSetup:@"匹配完成。核对目录后，点“确认并开始检查”即可。"]; }];[self updateCourseSetup:@"正在检查目录身份…"];return;
+        [self work:@"正在匹配已有课程目录…" forCourse:nil operation:^id(NSError **error){return [self.git matchingDirectories:root courses:courses];} completion:^(NSDictionary *matches,NSError *error){for(NSMutableDictionary *row in self.setupRecords){NSArray *paths=matches[row[@"fork"]] ?: @[];row[@"matches"]=paths;if(paths.count==1){if(![row[@"path"] isEqual:paths.firstObject])row[@"ready"]=@NO;row[@"path"]=paths.firstObject;}else if(paths.count>1){row[@"path"]=@"";row[@"ready"]=@NO;row[@"status"]=@"找到多个对应仓库，请选择使用的目录。";}}[self updateCourseSetup:@"课程目录匹配完成。"]; }];[self updateCourseSetup:@"正在检查目录身份…"];return;
     }
-    if([action isEqual:@"folder"]){NSOpenPanel *panel=NSOpenPanel.openPanel;panel.canChooseFiles=NO;panel.canChooseDirectories=YES;if([panel runModal]!=NSModalResponseOK)return;for(NSMutableDictionary *row in self.setupRecords)if([row[@"fork"] isEqual:request[@"course"]]){row[@"path"]=panel.URL.path;row[@"ready"]=@NO;row[@"matches"]=@[panel.URL.path];}[self updateCourseSetup:@"目录已选中，关联前将核验仓库身份。"];return;}
+    if([action isEqual:@"folder"]){NSOpenPanel *panel=NSOpenPanel.openPanel;panel.canChooseFiles=NO;panel.canChooseDirectories=YES;if([panel runModal]!=NSModalResponseOK)return;for(NSMutableDictionary *row in self.setupRecords)if([row[@"fork"] isEqual:request[@"course"]]){row[@"path"]=panel.URL.path;row[@"ready"]=@NO;row[@"matches"]=@[panel.URL.path];}[self updateCourseSetup:@"目录已选中，待核验。"];return;}
     if([action isEqual:@"link"] || [action isEqual:@"download"] || [action isEqual:@"link-check"]){
         BOOL startCheck=[action isEqual:@"link-check"];BOOL downloading=[action isEqual:@"download"];NSString *root=nil;
         if(downloading){NSOpenPanel *panel=NSOpenPanel.openPanel;panel.canChooseFiles=NO;panel.canChooseDirectories=YES;panel.message=@"为未关联课程选择一次下载位置；已有文件夹不会被覆盖。";if([panel runModal]!=NSModalResponseOK)return;root=panel.URL.path;}
