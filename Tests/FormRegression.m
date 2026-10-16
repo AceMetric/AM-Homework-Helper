@@ -27,6 +27,12 @@ int main(int argc, const char *argv[]) {
         for (NSString *appearance in @[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]) {
             NSApp.appearance = [NSAppearance appearanceNamed:appearance];
             EditorController *editor = [[EditorController alloc] initWithTask:nil owner:app];
+            Check(!editor.hasUnsavedChanges,@"opening a prefilled task form is not an edit");
+            NSDate *initialDate=editor.nativeDeadlinePicker.dateValue;
+            editor.nativeDeadlinePicker.dateValue=[initialDate dateByAddingTimeInterval:3600];
+            Check(editor.hasUnsavedChanges,@"dirty comparison reads the actual native date control before its action callback");
+            editor.nativeDeadlinePicker.dateValue=initialDate;
+            Check(!editor.hasUnsavedChanges,@"restoring the native deadline clears the edit without moving focus");
             Check(editor.titleField.isBezeled && !editor.titleField.isBordered && editor.titleField.bezelStyle == NSTextFieldRoundedBezel, @"final shared field state retains rounded bezel instead of square border");
             Check(editor.nativeDeadlinePicker.superview != nil && editor.timePicker.superview == nil && editor.deadlineField.superview == nil, @"ordinary task shows one native date and time control without duplicate text inputs");
             Check([DDLParseReminderOffsets(editor.reminderField.stringValue) isEqual:DDLDefaultReminderOffsets()] && !editor.notesField.string.length, @"new form has five default reminders and blank notes");

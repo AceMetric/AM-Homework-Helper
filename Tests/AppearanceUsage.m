@@ -4,7 +4,26 @@
 #import "../Sources/SSCourseWindow.m"
 static NSUInteger checks;
 static void Check(BOOL ok,NSString *message){checks++;if(!ok){fprintf(stderr,"FAIL: %s\n",message.UTF8String);exit(1);}}
-int main(){@autoreleasepool{[NSApplication sharedApplication];[NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];AppDelegate *app=AppDelegate.new;NSApp.delegate=app;[app applicationDidFinishLaunching:[NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification object:NSApp]];Check(NSApp.appearance==nil && app.window.appearance==nil,@"production launch inherits system appearance");
+static CGFloat Luminance(NSColor *color){NSColor *rgb=[color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];return .2126*rgb.redComponent+.7152*rgb.greenComponent+.0722*rgb.blueComponent;}
+static CGFloat EventBackgroundLuminance(NSDictionary *task){NSColor *color=EventFill(task);CGFloat alpha=color.alphaComponent;return alpha*Luminance(color)+(1-alpha)*Luminance(Card());}
+static void CheckCalendarPalette(void){
+ CalendarDayCell *weekend=CalendarDayCell.new,*holiday=CalendarDayCell.new,*outside=CalendarDayCell.new,*weekday=CalendarDayCell.new;
+ weekend.inMonth=holiday.inMonth=weekday.inMonth=YES;weekend.weekend=holiday.weekend=YES;holiday.dayKind=@"holiday";
+ NSArray *cells=@[weekend,holiday,outside,weekday];
+ // Configure under the opposite appearance before attaching to any window.
+ [[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua] performAsCurrentDrawingAppearance:^{for(CalendarDayCell *cell in cells)ConfigureCalendarCell(cell,NO);}];
+ for(NSString *name in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua,NSAppearanceNameAqua]){
+  [[NSAppearance appearanceNamed:name] performAsCurrentDrawingAppearance:^{
+   BOOL dark=[name isEqual:NSAppearanceNameDarkAqua];CGFloat ink=Luminance(Ink());
+   for(CalendarDayCell *cell in cells){CGFloat fill=Luminance(cell.fill);Check(dark ? fill<.32:fill>.90,@"calendar background follows drawing appearance even when created in the opposite theme");Check(fabs(fill-ink)>.65,@"date labels retain clear contrast on every day background");Check(cell.gradientEnd==nil,@"calendar backgrounds do not retain a gradient with stale resolved colors");}
+   NSColor *rest=[weekend.fill colorUsingColorSpace:NSColorSpace.sRGBColorSpace],*festival=[holiday.fill colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+   Check(festival.blueComponent-festival.redComponent>rest.blueComponent-rest.redComponent+.02,@"holiday blue tint is distinct from neutral weekend shading");
+   for(NSDictionary *task in @[@{@"completed":@YES},@{@"due":[NSDate dateWithTimeIntervalSinceNow:86400]},@{@"due":[NSDate dateWithTimeIntervalSinceNow:-86400]}])Check(dark ? EventBackgroundLuminance(task)<.4:EventBackgroundLuminance(task)>.85,@"completed, upcoming and overdue task fills follow the active appearance");
+  }];
+ }
+ ConfigureCalendarCell(holiday,YES);Check(holiday.selected && [holiday.stroke isEqual:Accent()],@"selection preserves the holiday background and adds a separate accent outline");
+}
+int main(){@autoreleasepool{[NSApplication sharedApplication];[NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];CheckCalendarPalette();AppDelegate *app=AppDelegate.new;NSApp.delegate=app;[app applicationDidFinishLaunching:[NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification object:NSApp]];Check(NSApp.appearance==nil && app.window.appearance==nil,@"production launch inherits system appearance");
  NSButton *route=NSButton.new;route.tag=2;[app navigate:route];NSDictionary *task=app.tasks.firstObject;NSButton *selection=NSButton.new;selection.identifier=task[@"id"];[app selectTask:selection];[app editTask:selection];Check(app.editor!=nil,@"task editor opens while no course operation owns the task");EditorController *editor=app.editor;editor.notesField.string=@"Draft must survive style changes\\nSecond line";[editor.window makeFirstResponder:editor.notesField];editor.notesField.selectedRange=NSMakeRange(6,4);NSView *content=app.root;NSString *selected=app.selectedTaskID;NSPoint scroll=app.scroll.contentView.bounds.origin;
  NSWindow *systemSurface=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,160,24) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];systemSurface.backgroundColor=NSColor.clearColor;systemSurface.opaque=NO;
  NSWindow *statusWindow=app.statusItem.button.window;NSColor *statusBackground=statusWindow.backgroundColor;

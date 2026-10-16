@@ -118,11 +118,13 @@ void AMConfigureSingleLineField(NSTextField *field) {
 
 
 @implementation ThemeSegmentedControl
+- (void)chooseToolbarSegment:(NSMenuItem *)sender {NSInteger index=sender.tag;if(index<0 || index>=self.segmentCount)return;self.selectedSegment=index;[NSApp sendAction:self.action to:self.target from:self];}
+- (BOOL)validateMenuItem:(NSMenuItem *)item {item.state=self.selectedSegment==item.tag ? NSControlStateValueOn:NSControlStateValueOff;return self.enabled;}
 - (void)drawRect:(NSRect)dirtyRect { [super drawRect:dirtyRect]; }
 - (void)mouseDown:(NSEvent *)event { [super mouseDown:event]; self.needsDisplay = YES; }
 - (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay = YES; }
 @end
-ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL action) {
+static ThemeSegmentedControl *AMSegments(NSArray<NSString *> *labels,id target,SEL action,BOOL navigation) {
     ThemeSegmentedControl *control=[[ThemeSegmentedControl alloc] initWithFrame:NSZeroRect];control.segmentCount=labels.count;
     for(NSInteger index=0;index<(NSInteger)labels.count;index++)[control setLabel:labels[index] forSegment:index];
     control.segmentStyle=NSSegmentStyleAutomatic;control.controlSize=NSControlSizeLarge;
@@ -130,9 +132,17 @@ ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL acti
     if(@available(macOS 26.0,*))control.borderShape=NSControlBorderShapeCapsule;
 #endif
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 270000
-    if(@available(macOS 27.0,*))control.role=NSSegmentedControlRoleTabs;
+    if(@available(macOS 27.0,*))control.role=navigation ? NSSegmentedControlRoleTabs:NSSegmentedControlRoleValueSelection;
 #endif
     control.focusRingType=NSFocusRingTypeDefault;control.trackingMode=NSSegmentSwitchTrackingSelectOne;control.target=target;control.action=action;control.selectedSegment=0;return control;
+}
+ThemeSegmentedControl *Segments(NSArray<NSString *> *labels,id target,SEL action){return AMSegments(labels,target,action,YES);}
+ThemeSegmentedControl *FilterSegments(NSArray<NSString *> *labels,id target,SEL action){return AMSegments(labels,target,action,NO);}
+NSToolbarItem *SegmentToolbarItem(NSString *identifier,NSString *label,NSSegmentedControl *control){
+    NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=label;control.accessibilityLabel=label;[control sizeToFit];item.view=control;
+    NSMenuItem *overflow=[[NSMenuItem alloc] initWithTitle:label action:nil keyEquivalent:@""];NSMenu *menu=[[NSMenu alloc] initWithTitle:label];
+    for(NSInteger index=0;index<control.segmentCount;index++){NSMenuItem *choice=[menu addItemWithTitle:[control labelForSegment:index] action:@selector(chooseToolbarSegment:) keyEquivalent:@""];choice.tag=index;choice.target=control;}
+    overflow.submenu=menu;item.menuFormRepresentation=overflow;return item;
 }
 #import "AMNativeUI.inc"
 #import "AMProgressUI.inc"

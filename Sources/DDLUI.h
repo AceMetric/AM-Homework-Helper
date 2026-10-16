@@ -52,6 +52,8 @@ void AMConfigureSingleLineField(NSTextField *field);
 ActionButton *Button(NSString *title, id target, SEL action, NSInteger tone);
 Surface *Box(NSColor *fill, CGFloat radius);
 Surface *GradientBox(NSColor *start, NSColor *end, CGFloat radius);
+NSToolbarItem *SegmentToolbarItem(NSString *identifier, NSString *label, NSSegmentedControl *control);
+ThemeSegmentedControl *FilterSegments(NSArray<NSString *> *labels, id target, SEL action);
 ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL action);
 @interface AMOperationView : NSView
 @property(nonatomic,copy) NSString *operationID;
