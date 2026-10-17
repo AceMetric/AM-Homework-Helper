@@ -36,6 +36,6 @@ int main(void){@autoreleasepool{
     Check(AMRestoreBackup(@[],@[task],savedRecords,&error),@"task and record backup restores together");Check([AMBackupEnvelope(@[task],NULL)[@"submissions"] count]==savedRecords.count,@"backup contains journal without credential fields");
     Check(SSWritePlist(@"backup-transaction.plist",@{@"tasks":@[],@"submissions":savedRecords},NULL),@"simulate interrupted restore intent");Check(SSLoadTasks(NULL).count==0 && AMSubmissionRecords(NULL).count==savedRecords.count,@"startup completes restore intent without Git writes");
     NSMutableDictionary *tainted=record.mutableCopy;tainted[@"token"]=@"synthetic-not-a-token";Check(!AMDecodeBackup(@{@"format":@"am-helper-backup-v2",@"tasks":@[task],@"submissions":@[tainted]},NULL),@"unknown credential fields rejected in backup");
-    CompletionAssertions();CompletionGitAssertions(f,service);
+    CompletionAssertions();CompletionGitAssertions(f,service);FreshTeacherAssertions();
     Cleanup(f);printf("PASS: %lu submission record and Git safety assertions\n",(unsigned long)assertions);
 }return 0;}
