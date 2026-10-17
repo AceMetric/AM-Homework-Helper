@@ -8,6 +8,8 @@ int main(){@autoreleasepool{
     Check(NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"]!=nil,@"preview fixture uses isolated data");
     [NSApplication sharedApplication];[NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];ChromePreviewApp *app=ChromePreviewApp.new;NSApp.delegate=app;[app applicationDidFinishLaunching:[NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification object:NSApp]];
     Check(app.page==2 && app.nativeTasks.table.numberOfRows>0 && app.courseWindow.courses.count==3,@"preview starts with native task page and three synthetic courses");
+    NSPredicate *weekly=[NSPredicate predicateWithFormat:@"seriesID == %@",@"preview-weekly-review"];
+    Check([app.tasks filteredArrayUsingPredicate:weekly].count==8 && [[app visibleTasks] filteredArrayUsingPredicate:weekly].count==2,@"preview presents two of eight real materialized synthetic recurring tasks");
     Menu(app,@selector(showGallery:));Check(app.gallery!=nil,@"native control gallery opens from menu");
     Menu(app,@selector(showCourseSample:));Check(app.page==4 && [app.courseWindow.selectedCourseID isEqual:@"demo/physics"],@"course sample is attached to synthetic course only");
     for(NSInteger index=0;index<4;index++){app.courseWindow.sections.selectedSegment=index;[NSApp sendAction:app.courseWindow.sections.action to:app.courseWindow.sections.target from:app.courseWindow.sections];Check(app.courseWindow.sections.selectedSegment==index,@"each actual course segment remains selectable");}

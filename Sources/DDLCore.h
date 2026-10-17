@@ -12,6 +12,8 @@ NSArray<NSNumber *> *DDLDefaultReminderOffsets(void);
 NSArray<NSMutableDictionary *> *DDLNormalizeTasks(NSArray *items);
 NSArray<NSMutableDictionary *> *DDLMergeTasks(NSArray *existing, NSArray *incoming);
 BOOL DDLMatchesFilter(NSDictionary *task, NSInteger filter, NSString *query, NSDate *now, NSCalendar *calendar);
+// Presentation only: retain history and the next two pending occurrences per series.
+NSArray<NSDictionary *> *DDLTaskListItems(NSArray<NSDictionary *> *items, NSDate *now);
 NSDictionary<NSDate *, NSArray<NSDictionary *> *> *DDLTasksByDay(NSArray<NSDictionary *> *items, NSCalendar *calendar);
 NSArray<NSDate *> *DDLMonthGrid(NSDate *month, NSCalendar *calendar);
 NSArray<NSDictionary *> *DDLCalendarTasks(NSArray *items, NSInteger status, NSString *query);
