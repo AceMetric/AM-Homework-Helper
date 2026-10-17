@@ -30,6 +30,7 @@ static NSError *GHError(NSString *message) { return [NSError errorWithDomain:@"S
 }
 
 - (id)requestURL:(NSURL *)url form:(NSDictionary *)form token:(NSString *)token error:(NSError **)error {
+    if(self.requestsCancelled){if(error)*error=GHError(@"GitHub 请求已终止。");return nil;}
     if (![url.scheme isEqual:@"https"] || ![@[@"github.com", @"api.github.com"] containsObject:url.host]) { if (error) *error = GHError(@"拒绝向非 GitHub 地址发送授权请求"); return nil; }
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
     request.timeoutInterval = 30;
@@ -52,9 +53,8 @@ static NSError *GHError(NSString *message) { return [NSError errorWithDomain:@"S
     NSURLSessionDataTask *task = [session dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *res, NSError *err) {
         responseData = data; response = res; networkError = err; dispatch_semaphore_signal(done);
     }]; [task resume];
-    if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 35 * NSEC_PER_SEC)) != 0) {
-        [session invalidateAndCancel]; if (error) *error = GHError(@"GitHub 请求超时，请稍后重试"); return nil;
-    }
+    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:35];
+    while(dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC))!=0){if(self.requestsCancelled || deadline.timeIntervalSinceNow<=0){[session invalidateAndCancel];if(error)*error=GHError(self.requestsCancelled ? @"GitHub 请求已终止。":@"GitHub 请求超时，请稍后重试");return nil;}}
     [session finishTasksAndInvalidate];
     if (networkError) { if (error) *error = GHError(networkError.localizedDescription); return nil; }
     id object = responseData ? [NSJSONSerialization JSONObjectWithData:responseData options:0 error:NULL] : nil;

@@ -51,6 +51,8 @@ NSData *data=nil;NSString *mime=@"text/plain";
 - (void)changeMode:(id)sender{[self showSource:self.mode.selectedSegment==1];}
 - (void)highlightRegion:(NSArray *)region{if(region.count!=4)return;NSMutableDictionary *payload=self.payload.mutableCopy;payload[@"region"]=region;self.payload=payload;self.generation++;if(self.ready)[self renderPayload];}
 - (void)showSource:(BOOL)source{self.mode.selectedSegment=source ? 1:0;self.web.hidden=source;self.sourceScroll.hidden=!source;}
+- (NSString *)markdown{return self.sourceText.string;}
+- (void)setMarkdown:(NSString *)markdown{[self loadSnapshot:@{@"files":@{@"report.md":@{@"text":markdown ?: @""}}} path:@"report.md"];}
 - (void)zoomIn:(id)sender{self.web.pageZoom=MIN(3,self.web.pageZoom+.25);}
 - (void)zoomOut:(id)sender{self.web.pageZoom=MAX(.5,self.web.pageZoom-.25);}
 - (void)loadSnapshot:(NSDictionary *)snapshot path:(NSString *)path{NSString *text=snapshot[@"files"][path][@"text"] ?: @"";self.sourceText.string=text;NSMutableDictionary *images=NSMutableDictionary.dictionary,*references=NSMutableDictionary.dictionary;NSUInteger index=0;

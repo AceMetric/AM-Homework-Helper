@@ -15,6 +15,9 @@ NSDictionary *AMPreflightCheckWithProgress(NSDictionary *snapshot,NSString *requ
 NSDictionary *AMPreflightCheck(NSDictionary *snapshot, NSString *requirements, NSMutableDictionary *cache, BOOL (^ _Nullable cancelled)(void));
 NSDictionary * _Nullable AMPreflightExport(NSDictionary *report, NSDictionary *snapshot, NSString *requirements, NSArray *images, NSURL *folder, NSError **error);
 NSDictionary * _Nullable AMPreflightValidateResult(id result, NSDictionary *context, NSError **error);
+NSString *AMPreflightFindingMarkdown(NSDictionary *issue, NSDictionary *snapshot);
+NSDictionary *AMPreflightReviewScope(NSDictionary * _Nullable review);
+NSString *AMPreflightReportMarkdown(NSDictionary *report, NSDictionary *snapshot, NSDictionary * _Nullable review);
 NS_ASSUME_NONNULL_END
 NS_ASSUME_NONNULL_BEGIN
 NSArray *AMPreflightJobs(void);
@@ -43,6 +46,7 @@ void AMShowOnlineReviewSettings(NSWindow * _Nullable parent);
 @property BOOL forceCleanup;
 @property(nullable) NSString *operationID;
 @property(nullable) NSString *model;
+- (void)cancelImmediately;
 #ifdef DDL_TESTING
 @property(copy,nullable) NSString * _Nullable (^credentialProvider)(void);
 @property(copy,nullable) BOOL (^waitForRetry)(NSTimeInterval seconds);

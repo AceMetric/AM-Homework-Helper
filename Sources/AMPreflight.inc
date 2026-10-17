@@ -215,9 +215,9 @@ NSDictionary *AMPreflightExport(NSDictionary *report,NSDictionary *snapshot,NSSt
         NSString *resource=[NSString stringWithFormat:@"image-%lu.png",(unsigned long)++index];if(!PFWrite(png,[folder URLByAppendingPathComponent:resource],error))return nil;
         [assets addObject:@{@"id":resource,@"path":path,@"document":image[@"document"],@"line":image[@"line"],@"version":source[@"version"],@"resource":resource,@"resourceHash":AMPreflightHash(png)}];
     }
-    NSMutableArray *excluded=NSMutableArray.array;for(NSDictionary *image in report[@"images"])if(![seen containsObject:image[@"path"]])[excluded addObject:[NSString stringWithFormat:@"%@：用户排除的图片未交给助手",image[@"path"]]];
-    for(NSDictionary *row in report[@"coverage"]){NSString *path=row[@"path"];if(snapshot[@"files"][path][@"text"] && ![snapshot[@"paths"] containsObject:path])[excluded addObject:[NSString stringWithFormat:@"%@：用户排除的文档未交给助手",path]];}
-    NSDictionary *context=@{@"unverifiedImages":excluded,@"format":@"am-preflight-context-v1",@"batchID":folder.lastPathComponent,@"reportVersion":report[@"version"],@"snapshotVersion":snapshot[@"version"],@"requirements":requirements ?: @"",@"documents":documents,@"images":assets};
+    NSMutableOrderedSet *excluded=NSMutableOrderedSet.orderedSet;for(NSDictionary *image in report[@"images"])if(![seen containsObject:image[@"path"]])[excluded addObject:[NSString stringWithFormat:@"%@：未选择发送图片",image[@"path"]]];
+    for(NSDictionary *row in report[@"coverage"]){NSString *path=row[@"path"];if(snapshot[@"files"][path][@"text"] && ![snapshot[@"paths"] containsObject:path])[excluded addObject:[NSString stringWithFormat:@"%@：未选择发送文档",path]];}
+    NSDictionary *context=@{@"excluded":excluded.array,@"unverifiedImages":@[],@"format":@"am-preflight-context-v1",@"batchID":folder.lastPathComponent,@"reportVersion":report[@"version"],@"snapshotVersion":snapshot[@"version"],@"requirements":requirements ?: @"",@"documents":documents,@"images":assets};
     NSData *json=[NSJSONSerialization dataWithJSONObject:context options:NSJSONWritingPrettyPrinted error:error];if(!json || !PFWrite(json,[folder URLByAppendingPathComponent:@"context.local.json"],error))return nil;
     NSString *skill=[NSString stringWithContentsOfFile:[NSBundle.mainBundle pathForResource:@"am-homework-extract" ofType:@"md"] ?: @"Skills/am-homework-extract/SKILL.md" encoding:NSUTF8StringEncoding error:NULL];if(!skill.length || !PFWrite([skill dataUsingEncoding:NSUTF8StringEncoding],[folder URLByAppendingPathComponent:@"SKILL.md"],error))return nil;
     return context;
@@ -235,10 +235,13 @@ NSDictionary *AMPreflightValidateResult(id result,NSDictionary *context,NSError 
         NSData *encoded=[NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingSortedKeys error:NULL];if(SSContainsSecret(encoded)){[invalid addObject:@"一条建议含疑似凭据，已排除"];continue;}NSString *identity=AMPreflightHash(encoded);if([seen containsObject:identity])continue;[seen addObject:identity];NSMutableDictionary *copy=[value mutableCopy];if([copy[@"category"] isEqual:@"unreadable"] || ![copy[@"message"] hasPrefix:@"明确问题"]){if([copy[@"severity"] isEqual:@"error"])copy[@"severity"]=@"warning";}if([copy[@"message"] hasPrefix:@"表达建议"])copy[@"severity"]=@"info";copy[@"id"]=identity;copy[@"provider"]=@"assistant";[issues addObject:copy];
     }
     NSMutableSet *checked=NSMutableSet.set;for(id item in result[@"checked"])if([item isKindOfClass:NSDictionary.class] && [item[@"path"] isKindOfClass:NSString.class] && [sources[item[@"path"]][@"version"] isEqual:item[@"version"]])[checked addObject:item[@"path"]];
-    NSMutableArray *unverified=NSMutableArray.array;for(NSString *path in sources)if(![checked containsObject:path])[unverified addObject:[NSString stringWithFormat:@"%@：助手未完成检查",path]];
+    NSMutableOrderedSet *unverified=NSMutableOrderedSet.orderedSet,*excluded=[NSMutableOrderedSet orderedSetWithArray:context[@"excluded"] ?: @[]];
+    [excluded addObjectsFromArray:context[@"unverifiedImages"] ?: @[]];
     for(id reason in result[@"unverified"])if([reason isKindOfClass:NSString.class] && [reason length]<1000 && !SSContainsSecret([reason dataUsingEncoding:NSUTF8StringEncoding]))[unverified addObject:reason];
-    [unverified addObjectsFromArray:context[@"unverifiedImages"] ?: @[]];[unverified addObjectsFromArray:invalid];return @{@"issues":issues,@"unverified":unverified,@"checked":checked.allObjects,@"partial":@(unverified.count>0),@"reportVersion":context[@"reportVersion"]};
+    for(NSString *path in [[sources allKeys] sortedArrayUsingSelector:@selector(compare:)])if(![checked containsObject:path]){BOOL explained=NO;for(NSString *reason in unverified)if([reason hasPrefix:[path stringByAppendingString:@"："]] || [reason hasPrefix:[path stringByAppendingString:@":"]]){explained=YES;break;}if(!explained)[unverified addObject:[NSString stringWithFormat:@"%@：未返回检查结果",path]];}
+    [unverified addObjectsFromArray:invalid];return @{@"issues":issues,@"unverified":unverified.array,@"excluded":excluded.array,@"checked":[checked.allObjects sortedArrayUsingSelector:@selector(compare:)],@"partial":@(unverified.count>0),@"reportVersion":context[@"reportVersion"]};
 }
+#include "AMReportMarkdown.inc"
 static NSData *PFRead(NSURL *url,NSUInteger limit){
     if(!url || ![url.path isEqual:url.URLByResolvingSymlinksInPath.path])return nil;
     int fd=open(url.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_NONBLOCK);if(fd<0)return nil;struct stat st;NSMutableData *data=NSMutableData.data;
@@ -262,7 +265,7 @@ void AMPreflightPoll(void){@synchronized(NSSpellChecker.class){NSArray *old=PFJo
         BOOL intact=[AMPreflightHash(data ?: NSData.data) isEqual:job[@"contextHash"]];
         if(intact)for(NSDictionary *image in context[@"images"]){NSString *resource=image[@"resource"];if(![resource isEqual:resource.lastPathComponent] || ![AMPreflightHash(PFRead([folder URLByAppendingPathComponent:resource],64*1024*1024) ?: NSData.data) isEqual:image[@"resourceHash"]]){intact=NO;break;}}
         NSDictionary *result=read && intact ? AMPreflightValidateResult(read[@"result"],context,&failure):nil;
-        if(result){job[@"result"]=result;job[@"state"]=[result[@"partial"] boolValue] ? @"需处理":@"已接回";job[@"message"]=[NSString stringWithFormat:@"提交前复核：%lu 条建议%@；仅适用于导出版本",(unsigned long)[result[@"issues"] count],[result[@"partial"] boolValue] ? @"，部分未完成":@""];}
+        if(result){job[@"result"]=result;job[@"state"]=[result[@"partial"] boolValue] ? @"需处理":@"已接回";job[@"message"]=[NSString stringWithFormat:@"提交前复核：%lu 条建议%@",(unsigned long)[result[@"issues"] count],[result[@"partial"] boolValue] ? @"，部分范围未覆盖":@""];}
         else {job[@"state"]=@"需处理";job[@"message"]=failure.localizedDescription ?: @"复核材料版本变化，请重新准备材料。";}
         if([job[@"provider"] isEqual:@"Gemini"])job[@"message"]=[@"Gemini · " stringByAppendingString:job[@"message"]];
         if(fingerprint)job[@"fingerprint"]=fingerprint;dirty=YES;[operations addObject:@{@"id":operation,@"state":result ? @"success":@"failed",@"message":job[@"message"]}];
@@ -299,7 +302,7 @@ NSURL *AMPreflightAttachmentArchive(NSString *batch,NSError **error){
     if(![NSFileManager.defaultManager createDirectoryAtURL:stage withIntermediateDirectories:NO attributes:@{NSFilePosixPermissions:@0700} error:error])return nil;
     @try {
         for(NSString *name in names){NSData *data=PFRead([folder URLByAppendingPathComponent:name],64*1024*1024);BOOL valid=data!=nil;
-            if([name isEqual:@"context.local.json"])valid=valid && [[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] isEqual:context];
+            if([name isEqual:@"context.local.json"]){valid=valid && [[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] isEqual:context];if(valid){NSMutableDictionary *shared=context.mutableCopy;[shared removeObjectForKey:@"excluded"];[shared removeObjectForKey:@"unverifiedImages"];data=[NSJSONSerialization dataWithJSONObject:shared options:NSJSONWritingPrettyPrinted error:error];valid=data!=nil;}}
             for(NSDictionary *image in context[@"images"])if([image[@"resource"] isEqual:name])valid=valid && [AMPreflightHash(data ?: NSData.data) isEqual:image[@"resourceHash"]];
             if(![name hasPrefix:@"image-"] && SSContainsSecret(data))valid=NO;
             if(!valid || !PFWrite(data,[stage URLByAppendingPathComponent:name],error)){if(error && !*error)*error=RError(@"材料已变化或含疑似凭据，未创建附件包。");return nil;}

@@ -72,6 +72,8 @@ void AMCancelQueuedOperations(void){
 NSArray *AMOperations(void){@synchronized(AMOperationLock()){NSMutableArray *rows=NSMutableArray.array;for(NSDictionary *row in AMOperationRows.allValues)[rows addObject:row.copy];return [rows sortedArrayUsingComparator:^NSComparisonResult(id a,id b){return [b[@"started"] compare:a[@"started"]];}];}}
 NSArray *AMExitBlockingOperations(void){NSMutableArray *rows=NSMutableArray.array;for(NSDictionary *row in AMOperations())if([@[@"running",@"queued"] containsObject:row[@"state"]] && (!row[@"blocksExit"] || [row[@"blocksExit"] boolValue]))[rows addObject:row];return rows;}
 static NSMutableDictionary *AMModelWaiters;
+AMCancellationCheck AMCurrentCancellationCheck(void){return NSThread.currentThread.threadDictionary[@"AMOperationCancellation"];}
+BOOL AMCurrentOperationCancelled(void){AMCancellationCheck stop=AMCurrentCancellationCheck();return stop && stop();}
 id AMPerformModelOperation(NSString *key,NSString *target,BOOL manual,BOOL (^cancelled)(void),id (^perform)(NSError **),NSError **error){return AMPerformResourceOperation([@"model|" stringByAppendingString:key],@"分析材料",target,@[@"model-service"],manual ? 100:0,cancelled,perform,error);}
 id AMPerformResourceOperation(NSString *key,NSString *kind,NSString *target,NSArray *resources,NSInteger priority,BOOL (^cancelled)(void),id (^perform)(NSError **),NSError **error){
     dispatch_semaphore_t done=dispatch_semaphore_create(0);__block id result=nil;__block NSError *failure=nil;BOOL create=NO;__block NSMutableDictionary *request;
@@ -87,7 +89,7 @@ id AMPerformResourceOperation(NSString *key,NSString *kind,NSString *target,NSAr
         NSString *operation=AMOperationEnqueue(key,kind,target,resources,priority,^(NSString *identifier){
             NSError *problem=nil;id value=nil;BOOL stop=NO;@synchronized(AMOperationLock()){stop=[request[@"cancelRequested"] boolValue];}
             if(stop || (cancelled && cancelled()))problem=[NSError errorWithDomain:@"AMOperation" code:NSUserCancelledError userInfo:@{NSLocalizedDescriptionKey:@"分析已取消"}];
-            else {@try{value=perform(&problem);}@catch(NSException *exception){problem=[NSError errorWithDomain:@"AMOperation" code:1 userInfo:@{NSLocalizedDescriptionKey:SSRedactedText(exception.reason ?: @"模型分析未完成")}];}}
+            else {NSMutableDictionary *thread=NSThread.currentThread.threadDictionary;id previous=thread[@"AMOperationCancellation"];thread[@"AMOperationCancellation"]=[^BOOL{BOOL requested;@synchronized(AMOperationLock()){requested=[request[@"cancelRequested"] boolValue];}return requested || (cancelled && cancelled());} copy];@try{value=perform(&problem);}@catch(NSException *exception){problem=[NSError errorWithDomain:@"AMOperation" code:1 userInfo:@{NSLocalizedDescriptionKey:SSRedactedText(exception.reason ?: @"模型分析未完成")}];}@finally{if(previous)thread[@"AMOperationCancellation"]=previous;else [thread removeObjectForKey:@"AMOperationCancellation"];}}
             @synchronized(AMOperationLock()){stop=[request[@"cancelRequested"] boolValue];}
             if(stop && !problem)problem=[NSError errorWithDomain:@"AMOperation" code:NSUserCancelledError userInfo:@{NSLocalizedDescriptionKey:@"分析已取消，服务已发出的请求可能消耗额度"}];
             AMOperationFinish(identifier,problem.code==NSUserCancelledError ? @"cancelled":(problem ? @"failed":@"success"),problem.localizedDescription ?: @"材料分析完成");deliver(problem ? nil:value,problem);

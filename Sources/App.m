@@ -1466,10 +1466,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
             else [self closeEditor];
         } else [self closeEditor];
     }
-    if (self.courseWindow.hasSubmissionSheet) {
+    if (self.courseWindow.hasSubmissionSheet || self.courseWindow.hasUnsavedSubmission) {
         if (self.courseWindow.hasUnsavedSubmission) {
-            NSAlert *alert = NSAlert.new; alert.messageText = @"作业检查或提交尚未完成";
-            alert.informativeText = @"请返回提交窗口，完成检查并明确提交；也可放弃本次输入后退出。退出或更新不会替你提交。";
+            NSAlert *alert = NSAlert.new; alert.messageText = @"提交草稿尚未提交";
+            alert.informativeText = @"本次文件选择和提交说明尚未提交。可返回窗口，或放弃草稿后退出。";
             [alert addButtonWithTitle:@"返回作业窗口"];
             [alert addButtonWithTitle:updating ? @"放弃填写并更新" : @"放弃填写并退出"];
             [alert addButtonWithTitle:updating ? @"稍后更新" : @"取消退出"];
