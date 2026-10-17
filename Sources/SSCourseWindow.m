@@ -96,6 +96,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property BOOL discoveringExternal;
 @property NSDate *lastExternalDiscovery;
 @property NSMutableDictionary *externalOffsets;
+@property NSMutableDictionary *completionReverifyTimes;
 #ifdef DDL_TESTING
 @property(copy) NSArray * (^recognitionScopeSelector)(PFMaterials *materials);
 #endif
@@ -150,6 +151,9 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (BOOL)operationBusy {if(self.busy)return YES;for(NSDictionary *row in AMOperations())if([@[@"queued",@"running"] containsObject:row[@"state"]] && [row[@"resources"] containsObject:@"course-controller"])return YES;return NO;}
 - (NSSegmentedControl *)navigationControl {return self.sections;}
 - (BOOL)hasCheckWorkspace {return self.checkScopeWindow!=nil;}
+- (NSArray *)submissionCourses {NSMutableArray *rows=NSMutableArray.array;for(NSDictionary *course in self.courses)if([course[@"fork"] length] && [course[@"branch"] length] && [course[@"upstream"] length])[rows addObject:@{@"fork":course[@"fork"],@"branch":course[@"branch"],@"upstream":course[@"upstream"]}];return rows;}
+- (NSSet *)editingTaskIDs {NSMutableSet *ids=NSMutableSet.set;BOOL visible=!self.view.hidden && self.view.window!=nil;if(((visible && !self.reviewWorkspace.view.hidden) || self.reviewWorkspace.hasUnsavedChanges) && self.reviewWorkspace.editingTaskID)[ids addObject:self.reviewWorkspace.editingTaskID];if(((visible && !self.courseWorkspace.view.hidden) || self.courseWorkspace.hasUnsavedChanges) && self.courseWorkspace.editingTaskID)[ids addObject:self.courseWorkspace.editingTaskID];return ids;}
+- (void)showSubmissionCompletion:(NSUInteger)count {[self status:[NSString stringWithFormat:@"已完成 %lu 项",(unsigned long)count]];}
 - (BOOL)hasUnsavedReview { return self.reviewWorkspace.hasUnsavedChanges || self.courseWorkspace.hasUnsavedChanges; }
 - (BOOL)resolveUnsavedReview { if(self.setupWindow.sheetParent){NSAlert *alert=NSAlert.new;alert.messageText=@"课程配置尚未关闭";alert.informativeText=@"已成功关联的课程已经保存；尚未关联的目录选择会被放弃。";[alert addButtonWithTitle:@"继续配置"];[alert addButtonWithTitle:@"放弃未关联选择并继续"];if([alert runModal]!=NSAlertSecondButtonReturn)return NO;[self closeCourseSetup];} self.resolvingReview=YES; self.reviewWorkspace.paused=NO; self.courseWorkspace.paused=NO; BOOL ok=[self.reviewWorkspace resolveUnsavedChanges] && [self.courseWorkspace resolveUnsavedChanges]; self.resolvingReview=NO; self.reviewWorkspace.paused=self.operationsPaused; self.courseWorkspace.paused=self.operationsPaused; return ok; }
 - (BOOL)saveConfigurationDraftForExit {if(!self.setupWindow)return YES;[self.setupWorkspace requestCloseSavingDraft];return self.setupWindow==nil;}
@@ -610,7 +614,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
                     NSError *failure=cancelled ? [NSError errorWithDomain:@"AMOperation" code:NSUserCancelledError userInfo:@{NSLocalizedDescriptionKey:@"已取消读取；已完成结果保留，可稍后重试。"}]:error;
                     completion(cancelled ? nil:value,failure);
                     if(self.workGeneration==generation){self.statusFork=nil;self.operationFork=nil;}
-                    [self refreshPresentation];AMOperationFinish(identifier,cancelled ? @"cancelled":(error ? @"failed":@"success"),failure.localizedDescription ?: @"操作完成");
+                    [self refreshPresentation];if(self.verifiedSubmissionsChanged)self.verifiedSubmissionsChanged();AMOperationFinish(identifier,cancelled ? @"cancelled":(error ? @"failed":@"success"),failure.localizedDescription ?: @"操作完成");
                     if(self.operationStateChanged)self.operationStateChanged();
                 });
             });

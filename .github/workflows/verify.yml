@@ -58,6 +58,7 @@ jobs:
           AM_UI_TEST=PlanningUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=AIEnhancementUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=ReminderUsage zsh verify-hybrid-ui.sh
+          AM_UI_TEST=SubmissionCompletionUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=PreflightUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=OnlineReviewUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=QuickUsage zsh verify-hybrid-ui.sh

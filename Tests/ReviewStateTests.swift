@@ -106,6 +106,9 @@ import AppKit
         let changedBatch=ReviewState();changedBatch.refresh([record as NSDictionary]);changedBatch.selectAll();changedBatch.saveChecked()
         changedBatch.save={_ in "来源变化"};check(!changedBatch.confirmBatch() && changedBatch.checked.count==1 && changedBatch.batchPreview != nil,"batch source race preserves preview and checks")
         let settings=SettingsState();settings.apply(["mode":"rules","endpoint":"http://localhost:11434","model":"","automaticImport":true] as NSDictionary)
+        check(settings.autoCompleteSubmittedAssignments,"submission completion defaults on")
+        settings.autoCompleteSubmittedAssignments=false;check(settings.dirty,"completion preference counts as a real settings edit")
+        settings.autoCompleteSubmittedAssignments=true;check(!settings.dirty,"restoring completion preference clears dirty state")
         settings.key="temporary input";settings.dirty=true;settings.save={_,_ in "失败"};check(!settings.persist() && settings.dirty && !settings.key.isEmpty,"failed settings save preserves draft")
         settings.save={config,key in check(config["key"]==nil && key=="temporary input","credential separated from settings dictionary");return ""}
         check(settings.persist() && !settings.dirty && settings.key.isEmpty,"successful settings save clears secret input")

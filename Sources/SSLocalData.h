@@ -31,7 +31,17 @@ NSDictionary *SSCalendarOverrides(void);
 BOOL SSSaveScheduledTasks(NSArray *previous, NSArray *tasks, NSArray *series, NSDictionary *overrides, NSError **error);
 BOOL AMRestoreScheduledBackup(NSArray *previous, NSDictionary *decoded, NSError **error);
 BOOL AMStoreSubmission(NSDictionary *record, NSError **error);
+BOOL AMAssociateSubmission(NSString *identifier, NSArray *taskIDs, NSError **error);
 NSString *AMSubmissionStateLabel(NSDictionary *record);
+NSDictionary * _Nullable AMSubmissionAutomation(NSError **error);
+BOOL AMSubmissionAutoCompletionEnabled(void);
+BOOL AMSetSubmissionAutoCompletionEnabled(BOOL enabled,NSError **error);
+NSDictionary * _Nullable AMSubmissionBaseline(NSDictionary *course,NSError **error);
+BOOL AMStoreSubmissionBaseline(NSDictionary *course,NSDictionary *baseline,NSDictionary *expected,NSError **error);
+BOOL AMResetSubmissionBaselines(NSError **error);
+NSDictionary *AMSubmissionCompletionPlan(NSArray *tasks,NSArray *records,NSArray *courses,NSSet *deferred);
+NSDictionary * _Nullable AMApplySubmissionCompletions(NSArray *previous,NSArray *courses,NSSet *deferred,NSArray *series,NSDictionary *overrides,NSError **error);
+BOOL AMSaveTasksWithSubmissionDecisions(NSArray *previous,NSArray *tasks,NSArray *series,NSDictionary *overrides,NSError **error);
 void SSDiagnostic(NSString *stage, NSString *outcome, NSTimeInterval seconds);
 NSArray<NSDictionary *> *SSDiagnostics(void);
 

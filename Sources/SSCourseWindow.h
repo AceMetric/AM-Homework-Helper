@@ -9,11 +9,15 @@ NS_ASSUME_NONNULL_BEGIN
 @property (copy, nullable) void (^restoreTaskNotes)(NSString *identifier);
 @property (copy) void (^editTask)(NSString *identifier);
 @property (copy) void (^stateChanged)(void);
+@property (copy, nullable) void (^verifiedSubmissionsChanged)(void);
 @property (copy, nullable) NSString * (^saveReviewItems)(NSArray<NSDictionary *> *items, BOOL automatic);
 @property (copy, nullable) NSArray * (^localReviewProvider)(void);
 @property (copy, nullable) NSArray * (^localSkillJobsProvider)(void);
 @property (copy, nullable) BOOL (^localSkillAction)(NSString *action, NSString *batch);
 @property (readonly) BOOL hasUnsavedReview;
+@property (readonly) NSArray<NSDictionary *> *submissionCourses;
+@property (readonly) NSSet<NSString *> *editingTaskIDs;
+- (void)showSubmissionCompletion:(NSUInteger)count;
 - (BOOL)resolveUnsavedReview;
 - (BOOL)saveConfigurationDraftForExit;
 - (void)discardReview;
@@ -26,6 +30,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readonly, nullable) NSString *selectedCourseID;
 - (BOOL)selectCourseID:(nullable NSString *)identifier;
 - (void)recoverSubmissionRecords;
+- (void)reverifyDeferredSubmissionsExcept:(NSSet<NSString *> *)editing;
 - (void)discoverExternalSubmissions:(BOOL)loadMore;
 - (void)showCheckWorkspace;
 - (void)checkTask:(NSString *)identifier;

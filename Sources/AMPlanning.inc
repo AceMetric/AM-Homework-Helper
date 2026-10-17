@@ -13,12 +13,15 @@ BOOL DDLPlanningValid(NSDictionary *task) {
     if(task[@"plannedDate"] && !DDLPlanDate(task[@"plannedDate"],calendar))return NO;
     for(NSString *key in @[@"seriesID",@"occurrenceKey"])if(task[key] && ![task[key] isKindOfClass:NSString.class])return NO;
     for(NSString *key in @[@"completedAt",@"nominalDue"])if(task[key] && ![task[key] isKindOfClass:NSDate.class])return NO;
+    if(task[@"completionEvidence"]){id evidence=task[@"completionEvidence"];if(![evidence isKindOfClass:NSDictionary.class] || [evidence count]!=5 || ![evidence[@"verifiedAt"] isKindOfClass:NSDate.class])return NO;for(NSString *key in @[@"recordID",@"repository",@"branch",@"commit"])if(![evidence[key] isKindOfClass:NSString.class] || ![evidence[key] length])return NO;
+        if(![[NSUUID alloc] initWithUUIDString:evidence[@"recordID"]] || [evidence[@"commit"] rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location==NSNotFound)return NO;}
     id children=task[@"subtasks"];if(!children)return YES;if(![children isKindOfClass:NSArray.class] || [children count]>500)return NO;
     NSMutableSet *seen=NSMutableSet.set;
     for(id sub in children){if(![sub isKindOfClass:NSDictionary.class] || ![sub[@"id"] isKindOfClass:NSString.class] || ![sub[@"id"] length] || [seen containsObject:sub[@"id"]] || ![sub[@"title"] isKindOfClass:NSString.class] || ![[sub[@"title"] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] length] || ![sub[@"completed"] isKindOfClass:NSNumber.class])return NO;if(sub[@"plannedDate"] && !DDLPlanDate(sub[@"plannedDate"],calendar))return NO;[seen addObject:sub[@"id"]];}return YES;
 }
 NSDictionary *DDLTaskCompletion(NSDictionary *task,BOOL complete) {
     NSMutableDictionary *result=task.mutableCopy;result[@"completed"]=@(complete);
+    if(!complete)[result removeObjectForKey:@"completionEvidence"];
     if(complete && ![task[@"completed"] boolValue])result[@"completedAt"]=NSDate.date;
     if(complete && task[@"subtasks"]){NSMutableArray *children=NSMutableArray.array;for(NSDictionary *sub in task[@"subtasks"]){NSMutableDictionary *copy=sub.mutableCopy;copy[@"completed"]=@YES;[children addObject:copy];}result[@"subtasks"]=children;}
     return result;

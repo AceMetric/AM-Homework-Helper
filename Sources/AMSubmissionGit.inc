@@ -25,19 +25,41 @@
         NSArray *parents=NonemptyParts(p[2],@" ");[rows addObject:@{@"commit":p[0],@"message":SSRedactedText(p[3]),@"date":[NSDate dateWithTimeIntervalSince1970:[p[1] doubleValue]],@"files":[NSOrderedSet orderedSetWithArray:safe].array,@"kind":parents.count>1 ? @"merge":@"existing",@"origin":@"external",@"teacherHistoryKnown":@(upstreamTip.status==0)}];
     }return rows;
 }
+// Only additions and modifications can provide completion evidence; deleted answers cannot.
+- (NSArray *)completionFiles:(NSDictionary *)course commit:(NSString *)commit error:(NSError **)error {
+    SSGitResult *result=[self checked:@[@"diff-tree",@"--root",@"--no-commit-id",@"--name-only",@"-r",@"-z",@"--diff-filter=AMRT",commit,@"--"] in:course[@"path"] token:nil error:error];if(!result)return nil;
+    NSMutableArray *safe=NSMutableArray.array;for(NSString *path in NonemptyParts([self string:result],@"\0"))if(!SSSensitivePath(path) && ![path hasPrefix:@"/"] && ![[path componentsSeparatedByString:@"/"] containsObject:@".."]) [safe addObject:path];return [NSOrderedSet orderedSetWithArray:safe].array;
+}
+// A user association never turns a teacher commit or merge into an answer submission.
+- (void)classifyCompletionOwnership:(NSMutableDictionary *)record course:(NSDictionary *)course {
+    NSString *teacher=course[@"teacherCommit"];
+    if(![teacher isKindOfClass:NSString.class] || [teacher rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location==NSNotFound){NSString *ref=[@"refs/remotes/upstream/" stringByAppendingString:course[@"upstreamBranch"] ?: course[@"branch"]];SSGitResult *tip=[self run:@[@"rev-parse",@"--verify",ref] in:course[@"path"] token:nil error:NULL];teacher=tip.status==0 ? Trim([self string:tip]):nil;}
+    SSGitResult *parents=[self run:@[@"rev-list",@"--parents",@"-n",@"1",record[@"commit"],@"--"] in:course[@"path"] token:nil error:NULL];BOOL merge=parents.status!=0 || NonemptyParts(Trim([self string:parents]),@" ").count>2;
+    SSGitResult *ancestor=teacher ? [self run:@[@"merge-base",@"--is-ancestor",record[@"commit"],teacher] in:course[@"path"] token:nil error:NULL]:nil;
+    record[@"teacherHistoryKnown"]=@(ancestor && ancestor.status<=1);record[@"teacherHistoryExcluded"]=@(merge || (ancestor && ancestor.status==0));
+}
 - (NSArray *)verifyExternalRecords:(NSArray *)records course:(NSDictionary *)course token:(NSString *)token error:(NSError **)error {
     if(![self authorize:course error:error] || ![self validateCourse:course error:error])return nil;
     NSString *remote=[self fetch:[NSString stringWithFormat:@"https://github.com/%@.git",course[@"fork"]] branch:course[@"branch"] path:course[@"path"] token:token error:error];if(!remote)return nil;
+    NSDictionary *automation=AMSubmissionAutomation(error),*baseline=AMSubmissionBaseline(course,error);if(!automation || !baseline)return nil;NSString *epoch=automation[@"epoch"] ?: @"initial";
+    BOOL reset=!baseline.count;
+    if(!reset){SSGitResult *ancestry=[self run:@[@"merge-base",@"--is-ancestor",baseline[@"tip"],remote] in:course[@"path"] token:nil error:NULL];reset=!ancestry || ancestry.status!=0;}
+    NSString *anchor=reset ? remote:baseline[@"anchor"];
     NSMutableArray *verified=NSMutableArray.array;
     for(NSDictionary *record in records){if(![record[@"repository"] isEqual:course[@"fork"]] || ![record[@"branch"] isEqual:course[@"branch"]])continue;NSString *commit=record[@"commit"];if(![commit isKindOfClass:NSString.class] || [commit rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location==NSNotFound)continue;
-        SSGitResult *contains=[self run:@[@"merge-base",@"--is-ancestor",commit,remote] in:course[@"path"] token:nil error:error];if(!contains || contains.status>1)return nil;NSMutableDictionary *next=record.mutableCopy;next[@"checkedAt"]=NSDate.date;next[@"remoteCommit"]=remote;next[@"state"]=contains.status==0 ? @"confirmed":@"local";
+        SSGitResult *contains=[self run:@[@"merge-base",@"--is-ancestor",commit,remote] in:course[@"path"] token:nil error:error];if(!contains || contains.status>1)return nil;NSMutableDictionary *next=record.mutableCopy;next[@"checkedAt"]=NSDate.date;next[@"remoteCommit"]=remote;next[@"completionAnchor"]=anchor;next[@"completionEpoch"]=[record[@"completionEligibility"] isEqual:@"associated"] ? (record[@"completionEpoch"] ?: @"initial"):epoch;[self classifyCompletionOwnership:next course:course];next[@"state"]=contains.status==0 ? @"confirmed":@"local";
+        if(![record[@"completionEligibility"] isEqual:@"associated"]){
+            SSGitResult *historical=[self run:@[@"merge-base",@"--is-ancestor",commit,anchor] in:course[@"path"] token:nil error:error];if(!historical || historical.status>1)return nil;
+            next[@"completionEligibility"]=AMSubmissionAutoCompletionEnabled() && historical.status==1 ? @"new":@"historical";
+        }
+        NSArray *completion=[self completionFiles:course commit:commit error:error];if(!completion)return nil;next[@"completionFiles"]=[completion filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSString *file,NSDictionary *bindings){return [record[@"files"] containsObject:file];}]];
         if(contains.status==0){next[@"confirmedAt"]=record[@"confirmedAt"] ?: NSDate.date;[next removeObjectForKey:@"issue"];}else next[@"issue"]=record[@"confirmedAt"] ? @"remote-changed":@"not-on-remote";[verified addObject:next];
-    }return verified;
+    }if(!AMStoreSubmissionBaseline(course,@{@"anchor":anchor,@"tip":remote},baseline,error))return nil;return verified;
 }
 - (NSArray *)classifyExternalRecords:(NSArray *)records course:(NSDictionary *)course {
     NSString *teacher=course[@"teacherCommit"];if(![self validateCourse:course error:NULL] || ![teacher isKindOfClass:NSString.class] || [teacher rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location==NSNotFound)return @[];
     NSMutableArray *result=NSMutableArray.array;for(NSDictionary *record in records)if([record[@"origin"] isEqual:@"external"] && ![record[@"teacherHistoryKnown"] boolValue] && [record[@"repository"] isEqual:course[@"fork"]] && [record[@"branch"] isEqual:course[@"branch"]]){
-        SSGitResult *ancestor=[self run:@[@"merge-base",@"--is-ancestor",record[@"commit"],teacher] in:course[@"path"] token:nil error:NULL];if(!ancestor || ancestor.status>1)continue;NSMutableDictionary *copy=record.mutableCopy;copy[@"teacherHistoryKnown"]=@YES;copy[@"teacherHistoryExcluded"]=@(ancestor.status==0 && ![record[@"taskIDs"] count]);[result addObject:copy];
+        SSGitResult *ancestor=[self run:@[@"merge-base",@"--is-ancestor",record[@"commit"],teacher] in:course[@"path"] token:nil error:NULL];if(!ancestor || ancestor.status>1)continue;NSMutableDictionary *copy=record.mutableCopy;copy[@"teacherHistoryKnown"]=@YES;copy[@"teacherHistoryExcluded"]=@(ancestor.status==0);[result addObject:copy];
     }
     return result;
 }
@@ -57,6 +79,8 @@
     if([commit rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location==NSNotFound)return nil;
     NSString *url=[NSString stringWithFormat:@"https://github.com/%@.git",course[@"fork"]];NSString *remote=[self fetch:url branch:course[@"branch"] path:course[@"path"] token:token error:error];if(!remote)return nil;
     SSGitResult *contains=[self run:@[@"merge-base",@"--is-ancestor",commit,remote] in:course[@"path"] token:nil error:error];if(!contains || contains.status>1)return nil;
+    NSArray *completion=[self completionFiles:course commit:commit error:error];if(!completion)return nil;next[@"completionFiles"]=[completion filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSString *file,NSDictionary *bindings){return [record[@"files"] containsObject:file];}]];
+    [self classifyCompletionOwnership:next course:course];
     next[@"checkedAt"]=NSDate.date;next[@"remoteCommit"]=remote;
     if(contains.status==0){next[@"state"]=@"confirmed";next[@"confirmedAt"]=record[@"confirmedAt"] ?: NSDate.date;[next removeObjectForKey:@"issue"];}
     else if(retry){
@@ -69,6 +93,8 @@
 - (NSDictionary *)performRecordedCourse:(NSDictionary *)course kind:(NSString *)kind taskIDs:(NSArray *)taskIDs paths:(NSArray *)paths message:(NSString *)message token:(NSString *)token login:(NSString *)login userID:(NSNumber *)userID error:(NSError **)error {
     if(![course[@"fork"] isKindOfClass:NSString.class] || ![course[@"branch"] isKindOfClass:NSString.class]){if(error)*error=GitError(@"课程目标不完整，请重新关联课程。");return nil;}
     NSMutableDictionary *record=[@{@"id":NSUUID.UUID.UUIDString,@"repository":course[@"fork"],@"branch":course[@"branch"],@"kind":kind,@"state":@"running",@"message":message ?: @"",@"date":NSDate.date,@"files":paths ?: @[],@"taskIDs":taskIDs ?: @[]} mutableCopy];
+    record[@"completionEpoch"]=AMSubmissionAutomation(NULL)[@"epoch"] ?: @"initial";
+    record[@"completionEligibility"]=[kind isEqual:@"submission"] && AMSubmissionAutoCompletionEnabled() ? @"new":@"historical";
     if([kind isEqual:@"submission"] && self.submissionReviewSummary)record[@"review"]=self.submissionReviewSummary;
     if(!AMStoreSubmission(record,error))return nil;
     self.submissionCheckpoint=^BOOL(NSDictionary *fields,NSError **failure){[record addEntriesFromDictionary:fields];return AMStoreSubmission(record,failure);};
