@@ -15,8 +15,8 @@ BOOL AMSetSubmissionAutoCompletionEnabled(BOOL enabled,NSError **error){
     @synchronized(NSFileManager.defaultManager){NSDictionary *old=AMSubmissionAutomation(error);if(!old)return NO;if([old[@"enabled"] boolValue]==enabled)return YES;return SSWritePlist(@"submission-automation.plist",@{@"enabled":@(enabled),@"baselines":@{},@"epoch":NSUUID.UUID.UUIDString},error);}
 }
 NSDictionary *AMSubmissionBaseline(NSDictionary *course,NSError **error){NSDictionary *state=AMSubmissionAutomation(error);return state ? (state[@"baselines"][AMCompletionCourseKey(course)] ?: @{}):nil;}
-BOOL AMStoreSubmissionBaseline(NSDictionary *course,NSDictionary *baseline,NSDictionary *expected,NSError **error){
-    @synchronized(NSFileManager.defaultManager){NSDictionary *state=AMSubmissionAutomation(error);if(!state)return NO;NSString *key=AMCompletionCourseKey(course);if(![(state[@"baselines"][key] ?: @{}) isEqual:expected]){if(error)*error=StoreError(@"提交核验状态已更新，将在下次检查重试。");return NO;}
+BOOL AMStoreSubmissionBaseline(NSDictionary *course,NSDictionary *baseline,NSDictionary *expected,NSString *epoch,NSError **error){
+    @synchronized(NSFileManager.defaultManager){NSDictionary *state=AMSubmissionAutomation(error);if(!state)return NO;NSString *key=AMCompletionCourseKey(course);if(![(state[@"epoch"] ?: @"initial") isEqual:epoch] || ![(state[@"baselines"][key] ?: @{}) isEqual:expected]){if(error)*error=StoreError(@"提交核验状态已更新，将在下次检查重试。");return NO;}
         if(!AMCompletionHash(baseline[@"anchor"]) || !AMCompletionHash(baseline[@"tip"]))return NO;NSMutableDictionary *next=state.mutableCopy,*baselines=[state[@"baselines"] mutableCopy];baselines[key]=baseline;next[@"baselines"]=baselines;return SSWritePlist(@"submission-automation.plist",next,error);}
 }
 BOOL AMResetSubmissionBaselines(NSError **error){@synchronized(NSFileManager.defaultManager){NSDictionary *old=AMSubmissionAutomation(error);return old && SSWritePlist(@"submission-automation.plist",@{@"enabled":old[@"enabled"],@"baselines":@{},@"epoch":NSUUID.UUID.UUIDString},error);}}
