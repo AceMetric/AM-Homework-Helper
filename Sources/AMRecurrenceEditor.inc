@@ -32,7 +32,7 @@
     BOOL enabled=self.repeatMode.indexOfSelectedItem>0;
     self.repeatUnit.superview.hidden=!enabled;self.repeatWeekdays.firstObject.superview.hidden=!enabled || self.repeatUnit.indexOfSelectedItem!=1 || self.repeatMode.indexOfSelectedItem!=1;self.holidayPolicy.hidden=!enabled;self.repeatEnd.hidden=!enabled;self.repeatUntil.hidden=!enabled || self.repeatEnd.indexOfSelectedItem!=1;self.repeatCount.hidden=!enabled || self.repeatEnd.indexOfSelectedItem!=2;
     self.recurrenceSection.hidden=!enabled && !self.task[@"seriesID"];
-    if(!enabled){self.repeatPreview.stringValue=self.task[@"seriesID"] ? @"选择“本次及以后”可停止后续重复；已完成记录保留。":@"";return;}
+    if(!enabled){self.repeatPreview.stringValue=self.task[@"seriesID"] ? @"选择“本次及以后”可停止后续重复；已完成记录保留。":@"";[self layoutEditor];return;}
     NSError *error=nil;NSDictionary *r=[self recurrenceRule];NSCalendarUnit unit=[@[@(NSCalendarUnitDay),@(NSCalendarUnitWeekOfYear),@(NSCalendarUnitMonth),@(NSCalendarUnitYear)][self.repeatUnit.indexOfSelectedItem] unsignedIntegerValue];NSDate *end=[self.teacherCalendar dateByAddingUnit:unit value:MAX(1,self.repeatInterval.integerValue)*6 toDate:self.selectedDate options:0];
     // Preview completion-based schedules from the selected first deadline. Actual
     // successors are based on completion timestamps in the materializer.
@@ -40,4 +40,5 @@
     NSArray *dates=DDLRecurrenceDates(preview,self.selectedDate,end,self.appDelegate.preview ? @{}:SSCalendarOverrides(),&error);
     NSMutableArray *labels=NSMutableArray.array;for(NSDictionary *d in dates){[labels addObject:[[self formatTeacherDate:d[@"due"]] stringByAppendingString:[DDLChinaDayInfo(d[@"due"],self.teacherCalendar,@{})[@"known"] boolValue] ? @"":@"（假期安排未收录）"]];if(labels.count==5)break;}
     self.repeatPreview.stringValue=error.localizedDescription ?: [NSString stringWithFormat:@"%@%@",self.repeatMode.indexOfSelectedItem==2 ? @"示例日期（后续实际以完成时间为准）：\n":@"接下来五次：\n",[labels componentsJoinedByString:@"\n"]];self.repeatPreview.textColor=error ? NSColor.systemOrangeColor:Muted();
+    [self layoutEditor];
 }

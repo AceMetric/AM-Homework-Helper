@@ -6,9 +6,12 @@
     self.appDelegate=owner;self.task=task;self.candidate=task[@"_reviewCandidate"];
     panel.title=self.candidate ? ([task[@"_existing"] boolValue] ? @"审核更新":@"审核作业"):(task ? @"编辑任务":@"新建任务");panel.minSize=NSMakeSize(560,500);panel.releasedWhenClosed=NO;panel.delegate=owner;
     Surface *root=Box(Canvas(),0);panel.contentView=root;
-    NSScrollView *scroll=NSScrollView.new;self.editorScroll=scroll;scroll.hasVerticalScroller=YES;scroll.autohidesScrollers=YES;scroll.drawsBackground=NO;
-    NSStackView *body=[NSStackView stackViewWithViews:@[]];body.orientation=NSUserInterfaceLayoutOrientationVertical;body.alignment=NSLayoutAttributeLeading;body.spacing=10;body.edgeInsets=NSEdgeInsetsMake(16,24,16,24);self.editorBody=body;scroll.documentView=body;
-    NSStackView *(^row)(NSArray *)=^NSStackView *(NSArray *views){NSStackView *r=[NSStackView stackViewWithViews:views];r.orientation=NSUserInterfaceLayoutOrientationHorizontal;r.alignment=NSLayoutAttributeCenterY;r.spacing=12;return r;};
+    NSStackView *body=[NSStackView stackViewWithViews:@[]];body.orientation=NSUserInterfaceLayoutOrientationVertical;body.alignment=NSLayoutAttributeLeading;body.spacing=10;body.edgeInsets=NSEdgeInsetsMake(16,24,16,24);self.editorBody=body;
+    // A short, unflipped stack used directly as the document is bottom aligned
+    // by NSClipView. The shared form scroll keeps a flipped document at least
+    // as tall as the viewport and pins this natural-height stack to its top.
+    NSScrollView *scroll=AMScrollableForm(body);self.editorScroll=scroll;
+    NSStackView *(^row)(NSArray *)=^NSStackView *(NSArray *views){NSStackView *r=[NSStackView stackViewWithViews:views];r.orientation=NSUserInterfaceLayoutOrientationHorizontal;r.distribution=NSStackViewDistributionFill;r.alignment=NSLayoutAttributeCenterY;r.spacing=12;return r;};
     void (^add)(NSView *)=^(NSView *view){[body addArrangedSubview:view];view.translatesAutoresizingMaskIntoConstraints=NO;[view.widthAnchor constraintEqualToAnchor:body.widthAnchor constant:-48].active=YES;};
     NSStackView *(^field)(NSString *,NSView *)=^NSStackView *(NSString *label,NSView *control){NSStackView *v=[NSStackView stackViewWithViews:@[Text(label,12,NSFontWeightMedium,Muted()),control]];v.orientation=NSUserInterfaceLayoutOrientationVertical;v.alignment=NSLayoutAttributeLeading;v.spacing=6;control.translatesAutoresizingMaskIntoConstraints=NO;[control.widthAnchor constraintEqualToAnchor:v.widthAnchor].active=YES;return v;};
     __weak typeof(self) weak=self;panel.onConfirm=^{if(weak.candidate)[weak saveAndReviewNext:nil];else [weak save:nil];};panel.onCancel=^{[weak cancel:nil];};
@@ -51,16 +54,16 @@
     self.saveButton=Button(task ? @"保存修改":@"添加任务",self,@selector(save:),1);self.saveButton.keyEquivalent=@"\r";self.saveButton.keyEquivalentModifierMask=0;
     NSMutableArray *actions=[@[cancel] mutableCopy];if(self.candidate){[actions addObject:Button(@"稍后审核",self,@selector(deferReview:),0)];self.saveButton.title=@"保存并关闭";self.saveButton.keyEquivalentModifierMask=NSEventModifierFlagCommand;((ActionButton *)self.saveButton).tone=0;[actions addObject:self.saveButton];self.nextReviewButton=Button(@"保存并下一项",self,@selector(saveAndReviewNext:),1);self.nextReviewButton.keyEquivalent=@"\r";self.nextReviewButton.keyEquivalentModifierMask=0;[actions addObject:self.nextReviewButton];}else [actions addObject:self.saveButton];
     NSStackView *buttons=row(actions);buttons.identifier=@"task-editor-actions";NSStackView *footer=[NSStackView stackViewWithViews:@[self.validation,buttons]];footer.orientation=NSUserInterfaceLayoutOrientationVertical;footer.alignment=NSLayoutAttributeTrailing;footer.spacing=10;footer.edgeInsets=NSEdgeInsetsMake(10,24,16,24);footer.identifier=@"task-editor-footer";self.validation.translatesAutoresizingMaskIntoConstraints=NO;buttons.translatesAutoresizingMaskIntoConstraints=NO;
-    [NSLayoutConstraint activateConstraints:@[[self.validation.widthAnchor constraintEqualToAnchor:footer.widthAnchor constant:-48],[buttons.widthAnchor constraintLessThanOrEqualToAnchor:footer.widthAnchor constant:-48]]];
+    [NSLayoutConstraint activateConstraints:@[[self.validation.widthAnchor constraintEqualToAnchor:footer.widthAnchor constant:-48],[buttons.widthAnchor constraintLessThanOrEqualToAnchor:footer.widthAnchor constant:-48],[buttons.trailingAnchor constraintEqualToAnchor:footer.trailingAnchor constant:-24]]];
     [root addSubview:scroll];[root addSubview:footer];scroll.translatesAutoresizingMaskIntoConstraints=NO;body.translatesAutoresizingMaskIntoConstraints=NO;footer.translatesAutoresizingMaskIntoConstraints=NO;
-    [NSLayoutConstraint activateConstraints:@[[scroll.topAnchor constraintEqualToAnchor:root.topAnchor],[scroll.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[scroll.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[scroll.bottomAnchor constraintEqualToAnchor:footer.topAnchor],[footer.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[footer.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[footer.bottomAnchor constraintEqualToAnchor:root.bottomAnchor],[body.widthAnchor constraintEqualToAnchor:scroll.contentView.widthAnchor],[body.topAnchor constraintEqualToAnchor:scroll.contentView.topAnchor],[body.leadingAnchor constraintEqualToAnchor:scroll.contentView.leadingAnchor]]];
+    [NSLayoutConstraint activateConstraints:@[[scroll.topAnchor constraintEqualToAnchor:root.topAnchor],[scroll.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[scroll.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[scroll.bottomAnchor constraintEqualToAnchor:footer.topAnchor],[footer.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[footer.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[footer.bottomAnchor constraintEqualToAnchor:root.bottomAnchor]]];
     self.titleField.accessibilityLabel=@"任务名称";self.subjectField.accessibilityLabel=@"课程或分类";self.reminderField.accessibilityLabel=@"提醒时间";self.notesField.accessibilityLabel=@"我的备注";panel.initialFirstResponder=self.titleField;panel.defaultButtonCell=self.nextReviewButton ? self.nextReviewButton.cell:self.saveButton.cell;panel.autorecalculatesKeyViewLoop=YES;
     root.onResize=^{[weak layoutEditor];};
     NSRect available=owner.window.screen.visibleFrame;if(NSIsEmptyRect(available))available=NSScreen.mainScreen.visibleFrame;NSSize initial=NSMakeSize(MIN(720,MAX(560,NSWidth(available)-80)),MIN(640,MAX(500,NSHeight(available)-100)));if(owner.window)initial.height=MIN(initial.height,MAX(500,NSHeight(owner.window.contentLayoutRect)-32));[panel setContentSize:initial];
     [self configureRecurrence];[self validateReminders];[self validateDate];[self layoutEditor];self.initialValues=[self formValues];return self;
 }
 - (void)nativeDeadlineChanged:(NSDatePicker *)sender {[self updateDate:sender.dateValue];[self recurrenceChanged:nil];}
-- (void)toggleTeacherSource:(NSButton *)sender {self.sourceScroll.hidden=!self.sourceScroll.hidden;sender.title=self.sourceScroll.hidden ? @"显示老师原文":@"收起老师原文";}
+- (void)toggleTeacherSource:(NSButton *)sender {self.sourceScroll.hidden=!self.sourceScroll.hidden;sender.title=self.sourceScroll.hidden ? @"显示老师原文":@"收起老师原文";[self layoutEditor];}
 
 #include "AMRecurrenceEditor.inc"
 
@@ -72,5 +75,6 @@
     self.repeatModeWidth.active=wide;self.stackedDateWidth.active=!wide;self.stackedRepeatWidth.active=!wide;
     self.notesHeight.constant=MAX(80,MIN(120,NSHeight(self.window.contentView.bounds)-520));
     self.importStatus.hidden=!self.importStatus.stringValue.length;self.validation.hidden=!self.validation.stringValue.length;
+    self.editorScroll.needsLayout=YES;
     [self.window.contentView layoutSubtreeIfNeeded];self.layingOutEditor=NO;
 }
