@@ -14,8 +14,10 @@ static void Check(BOOL ok,NSString *message){assertions++;if(!ok){fprintf(stderr
 @end
 @interface CompletionCourse:SSCourseController
 @property NSUInteger queuedVerifications;
+@property NSString *submittedCourse;
 @end
 @implementation CompletionCourse
+- (void)commit:(id)sender {self.submittedCourse=self.selectedCourseID;}
 - (void)work:(NSString *)message forCourse:(NSDictionary *)course requestKey:(NSString *)scope priority:(NSInteger)priority operation:(id (^)(NSError **))operation completion:(void (^)(id,NSError *))completion {self.queuedVerifications++;}
 @end
 int main(void){@autoreleasepool{
@@ -32,5 +34,6 @@ int main(void){@autoreleasepool{
     [app undo:nil];Check(![app.tasks[0][@"completed"] boolValue] && [app.tasks[0][@"notes"] isEqual:@"Edited notes stay intact"] && app.remainingReminders>0,@"undo restores pending state and reminders while preserving edited notes");[app applyVerifiedSubmissions];Check(![app.tasks[0][@"completed"] boolValue] && [AMSubmissionRecords(NULL)[0][@"completionDecisions"][@"synthetic-completion"][@"state"] isEqual:@"dismissed"],@"undo suppression persists through controller callbacks");
     NSMutableDictionary *stale=record.mutableCopy;stale[@"id"]=NSUUID.UUID.UUIDString;stale[@"checkedAt"]=[NSDate dateWithTimeIntervalSinceNow:-301];stale[@"completionStatus"]=@"deferred";Check(AMStoreSubmission(stale,&error),@"persist stale deferred evidence");CompletionCourse *queued=[[CompletionCourse alloc] initWithPreview:YES];queued.preview=NO;queued.connected=YES;queued.courses=app.courseWindow.courses;
     [queued reverifyDeferredSubmissionsExcept:[NSSet setWithObject:@"synthetic-completion"]];Check(queued.queuedVerifications==0,@"long editing does not reverify until editor closes");[queued reverifyDeferredSubmissionsExcept:NSSet.set];Check(queued.queuedVerifications==1,@"closing long editor queues fresh remote verification");[queued reverifyDeferredSubmissionsExcept:NSSet.set];Check(queued.queuedVerifications==1,@"failed or repeated callbacks cannot create an endless verification loop");[queued.timer invalidate];
+    CompletionCourse *scope=[[CompletionCourse alloc] initWithPreview:YES];NSMutableDictionary *foreign=task.mutableCopy;foreign[@"courseRepository"]=@"student/another-course";scope.tasksProvider=^NSArray *{return @[foreign];};scope.courses=[@[[(@{@"fork":@"student/course",@"upstream":@"teacher/course",@"branch":@"main"}) mutableCopy],[(@{@"fork":@"student/another-course",@"upstream":@"teacher/course",@"branch":@"main"}) mutableCopy]] mutableCopy];[scope submitTask:task[@"id"]];Check([scope.submittedCourse isEqual:@"student/another-course"],@"task submission route respects explicit personal course binding");scope.submittedCourse=nil;[foreign removeObjectForKey:@"courseRepository"];[scope submitTask:task[@"id"]];Check(!scope.submittedCourse,@"legacy ambiguous task cannot choose an arbitrary personal push target");[scope.timer invalidate];
     [app.ticker invalidate];[app.searchTimer invalidate];[app.window orderOut:nil];[NSStatusBar.systemStatusBar removeStatusItem:app.statusItem];printf("PASS: %lu submission completion interaction assertions\n",(unsigned long)assertions);
 }return 0;}

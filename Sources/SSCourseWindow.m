@@ -443,7 +443,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (NSArray *)visible {
     NSMutableArray *result = NSMutableArray.array; NSMutableSet *seen = NSMutableSet.set;
     if (!self.inbox && self.sections.selectedSegment == 1) {
-        for (NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[]) if (![task[@"deleted"] boolValue] && ([task[@"sourceRepository"] isEqual:[self course][@"upstream"]] || [task[@"courseRepository"] isEqual:[self course][@"fork"]])) {
+        for (NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[]) if (![task[@"deleted"] boolValue] && AMTaskBelongsToCourse(task,[self course])) {
             NSMutableDictionary *copy = task.mutableCopy; copy[@"confirmed"] = @YES; copy[@"path"] = task[@"sourcePath"] ?: @""; copy[@"line"] = task[@"sourceLine"] ?: @0; [result addObject:copy];
         }
     } else {
@@ -892,7 +892,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         if (!changes.count) { [self status:@"没有需要提交的改动。"] ; return; }
         if (self.window.attachedSheet) { [self status:@"请先关闭当前编辑弹窗，再打开“提交作业”。"]; return; }
         self.submission = [[SSSubmissionController alloc] initWithCourse:course changes:changes];
-        NSMutableArray *related=NSMutableArray.array;for(NSDictionary *task in self.tasksProvider ? self.tasksProvider():@[])if(![task[@"deleted"] boolValue] && ([task[@"courseRepository"] isEqual:course[@"fork"]] || [task[@"sourceRepository"] isEqual:course[@"upstream"]]))[related addObject:task];
+        NSMutableArray *related=NSMutableArray.array;for(NSDictionary *task in self.tasksProvider ? self.tasksProvider():@[])if(![task[@"deleted"] boolValue] && AMTaskBelongsToCourse(task,course))[related addObject:task];
         [self configurePreflight:self.submission course:course tasks:related];
         [self.submission configureTasks:related selected:self.submissionTaskID ? @[self.submissionTaskID]:@[]];self.submissionTaskID=nil;
         __weak typeof(self) weakSelf = self;
