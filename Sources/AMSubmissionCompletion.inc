@@ -3,7 +3,7 @@ static NSString *AMCompletionPath(id value){
     if(![value isKindOfClass:NSString.class] || ![value length] || [value hasPrefix:@"/"] || [value containsString:@"\\"] || SSSensitivePath(value))return nil;
     for(NSString *part in [value componentsSeparatedByString:@"/"])if(!part.length || [@[@".",@".."] containsObject:part])return nil;return value;
 }
-static BOOL AMCompletionBelongs(NSDictionary *task,NSDictionary *course){return [task[@"courseRepository"] isEqual:course[@"fork"]] || [task[@"sourceRepository"] isEqual:course[@"upstream"]];}
+BOOL AMTaskBelongsToCourse(NSDictionary *task,NSDictionary *course){if([task[@"courseRepository"] length])return [task[@"courseRepository"] isEqual:course[@"fork"]];return [task[@"sourceRepository"] isEqual:course[@"upstream"]];}
 static NSString *AMCompletionIdentity(NSDictionary *record){return [NSString stringWithFormat:@"%@|%@|%@",[record[@"repository"] lowercaseString],record[@"branch"],record[@"commit"] ?: @""];}
 static BOOL AMCompletionAnswerFile(NSString *file){
     for(NSString *component in file.pathComponents)if([component hasPrefix:@"."] || [@[@"node_modules",@"build",@"dist",@"vendor",@"__pycache__"] containsObject:component.lowercaseString])return NO;
@@ -18,13 +18,13 @@ static NSString *AMCompletionFolder(NSString *source){
 }
 static NSArray *AMCompletionMatches(NSDictionary *record,NSDictionary *course,NSArray *tasks,NSArray *records){
     NSMutableSet *ids=NSMutableSet.set;
-    if([record[@"taskIDs"] count]){for(NSDictionary *task in tasks)if([record[@"taskIDs"] containsObject:task[@"id"]] && AMCompletionBelongs(task,course))[ids addObject:task[@"id"]];return ids.allObjects;}
-    NSMutableSet *sources=NSMutableSet.set;for(NSDictionary *task in tasks)if(AMCompletionBelongs(task,course) && AMCompletionPath(task[@"sourcePath"]))[sources addObject:task[@"sourcePath"]];
+    if([record[@"taskIDs"] count]){for(NSDictionary *task in tasks)if([record[@"taskIDs"] containsObject:task[@"id"]] && AMTaskBelongsToCourse(task,course))[ids addObject:task[@"id"]];return ids.allObjects;}
+    NSMutableSet *sources=NSMutableSet.set;for(NSDictionary *task in tasks)if(AMTaskBelongsToCourse(task,course) && AMCompletionPath(task[@"sourcePath"]))[sources addObject:task[@"sourcePath"]];
     for(NSString *file in record[@"completionFiles"] ?: @[]){if(!AMCompletionPath(file) || !AMCompletionAnswerFile(file) || !file.stringByDeletingLastPathComponent.length || [sources containsObject:file])continue;NSMutableSet *bound=NSMutableSet.set;
-        for(NSDictionary *old in records)if([old[@"repository"] isEqual:record[@"repository"]] && [old[@"branch"] isEqual:record[@"branch"]] && [old[@"files"] containsObject:file])for(NSDictionary *task in tasks)if(AMCompletionBelongs(task,course) && ![task[@"deleted"] boolValue] && ![task[@"archived"] boolValue] && [old[@"taskIDs"] containsObject:task[@"id"]])[bound addObject:task[@"id"]];
+        for(NSDictionary *old in records)if([old[@"repository"] isEqual:record[@"repository"]] && [old[@"branch"] isEqual:record[@"branch"]] && [old[@"files"] containsObject:file])for(NSDictionary *task in tasks)if(AMTaskBelongsToCourse(task,course) && ![task[@"deleted"] boolValue] && ![task[@"archived"] boolValue] && [old[@"taskIDs"] containsObject:task[@"id"]])[bound addObject:task[@"id"]];
         if(bound.count==1){[ids unionSet:bound];continue;}if(bound.count>1)continue;
         NSMutableSet *folderMatches=NSMutableSet.set;NSUInteger longest=0;
-        for(NSDictionary *task in tasks){if(!AMCompletionBelongs(task,course) || [task[@"deleted"] boolValue] || [task[@"archived"] boolValue])continue;NSString *source=AMCompletionPath(task[@"sourcePath"]);NSString *folder=AMCompletionFolder(source);
+        for(NSDictionary *task in tasks){if(!AMTaskBelongsToCourse(task,course) || [task[@"deleted"] boolValue] || [task[@"archived"] boolValue])continue;NSString *source=AMCompletionPath(task[@"sourcePath"]);NSString *folder=AMCompletionFolder(source);
             if(!AMCompletionAnswerFile(file) || !folder.length || [folder isEqual:@"."] || [file isEqual:source] || ![file hasPrefix:[folder stringByAppendingString:@"/"]])continue;
             if(folder.length>longest){[folderMatches removeAllObjects];longest=folder.length;}if(folder.length==longest)[folderMatches addObject:task[@"id"]];
         }if(folderMatches.count==1)[ids unionSet:folderMatches];
@@ -40,7 +40,9 @@ NSDictionary *AMSubmissionCompletionPlan(NSArray *tasks,NSArray *records,NSArray
         if([record[@"teacherHistoryExcluded"] boolValue] || (([record[@"kind"] isEqual:@"existing"] || [record[@"origin"] isEqual:@"external"]) && ![record[@"teacherHistoryKnown"] boolValue]))continue;
         if([record[@"origin"] isEqual:@"external"] && [record[@"completionEligibility"] isEqual:@"new"] && course[@"completionAnchor"] && ![record[@"completionAnchor"] isEqual:course[@"completionAnchor"]]){next[@"completionStatus"]=@"historical";continue;}
         if(![@[@"new",@"associated"] containsObject:record[@"completionEligibility"]]){next[@"completionStatus"]=@"historical";continue;}
-        NSArray *matched=AMCompletionMatches(record,course,nextTasks,records);if(!matched.count){next[@"completionStatus"]=@"waiting";continue;}
+        NSMutableArray *matched=[AMCompletionMatches(record,course,nextTasks,records) mutableCopy];
+        if(![record[@"taskIDs"] count]){NSUInteger owners=0;for(NSDictionary *c in courses)if([c[@"upstream"] isEqual:course[@"upstream"]])owners++;if(owners>1)for(NSDictionary *task in nextTasks)if(![task[@"courseRepository"] length])[matched removeObject:task[@"id"]];}
+        if(!matched.count){next[@"completionStatus"]=@"waiting";continue;}
         NSMutableDictionary *decisions=identityDecisions[AMCompletionIdentity(record)];BOOL waiting=NO,applied=NO;NSMutableOrderedSet *links=[NSMutableOrderedSet orderedSetWithArray:record[@"taskIDs"]];
         for(NSUInteger i=0;i<nextTasks.count;i++){NSDictionary *task=nextTasks[i];NSString *identifier=task[@"id"];if(![matched containsObject:identifier] || decisions[identifier])continue;
             if([task[@"completed"] boolValue] || [task[@"deleted"] boolValue] || [task[@"archived"] boolValue]){decisions[identifier]=@{@"state":@"ignored",@"date":NSDate.date};continue;}

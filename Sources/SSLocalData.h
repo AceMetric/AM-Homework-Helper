@@ -31,6 +31,7 @@ NSDictionary *SSCalendarOverrides(void);
 BOOL SSSaveScheduledTasks(NSArray *previous, NSArray *tasks, NSArray *series, NSDictionary *overrides, NSError **error);
 BOOL AMRestoreScheduledBackup(NSArray *previous, NSDictionary *decoded, NSError **error);
 BOOL AMStoreSubmission(NSDictionary *record, NSError **error);
+BOOL AMTaskBelongsToCourse(NSDictionary *task, NSDictionary *course);
 BOOL AMAssociateSubmission(NSString *identifier, NSArray *taskIDs, NSError **error);
 NSString *AMSubmissionStateLabel(NSDictionary *record);
 NSDictionary * _Nullable AMSubmissionAutomation(NSError **error);
