@@ -89,13 +89,40 @@ int main(int argc, const char *argv[]) {
         for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]){
             NSApp.appearance=[NSAppearance appearanceNamed:appearance];
             EditorController *compact=[[EditorController alloc] initWithTask:app.tasks.firstObject owner:app];
-            for(NSValue *size in @[[NSValue valueWithSize:NSMakeSize(680,620)],[NSValue valueWithSize:NSMakeSize(720,640)],[NSValue valueWithSize:NSMakeSize(560,500)]]){
+            [app.window beginSheet:compact.window completionHandler:nil];
+            for(NSValue *size in @[[NSValue valueWithSize:NSMakeSize(680,620)],[NSValue valueWithSize:NSMakeSize(720,640)],[NSValue valueWithSize:NSMakeSize(1000,800)],[NSValue valueWithSize:NSMakeSize(560,500)],[NSValue valueWithSize:NSMakeSize(680,620)]]){
                 [compact.window setContentSize:size.sizeValue];[compact layoutEditor];
+                [compact.window makeFirstResponder:compact.titleField];
+                [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.02]];
+                NSView *root=compact.window.contentView;
+                NSRect title=[compact.titleField.superview convertRect:compact.titleField.superview.bounds toView:root];
+                if(fabs(NSMinY(title)-16)>1)fprintf(stderr,"Editor top geometry: root=%s title=%s body=%s clip=%s\n",NSStringFromRect(root.bounds).UTF8String,NSStringFromRect(title).UTF8String,NSStringFromRect(compact.editorBody.frame).UTF8String,NSStringFromRect(compact.editorScroll.contentView.bounds).UTF8String);
+                Check(fabs(NSMinY(title)-16)<=1 && NSHeight(title)>30,@"short form starts at the top inset after focus and resize");
+                NSRect save=[compact.saveButton.superview convertRect:[compact.saveButton alignmentRectForFrame:compact.saveButton.frame] toView:root];
+                Check(fabs(NSMaxX(save)-(NSWidth(root.bounds)-24))<=1,@"save action is anchored to the trailing footer inset");
+                NSRect dateRow=[compact.dateRepeatRow convertRect:compact.dateRepeatRow.bounds toView:root];
+                Check(fabs(NSMinX(dateRow)-24)<=1 && fabs(NSMaxX(dateRow)-(NSWidth(root.bounds)-24))<=1,@"date and recurrence row fills the same width as the title");
+                NSRect subject=[compact.subjectField.superview convertRect:compact.subjectField.superview.bounds toView:root];
+                Check(NSWidth(subject)>NSWidth(root.bounds)/2,@"course field receives the remaining row width");
+                if(size.sizeValue.width>=640){NSRect repeat=[compact.repeatModeSection convertRect:compact.repeatModeSection.bounds toView:root];Check(fabs(NSMaxX(repeat)-NSMaxX(dateRow))<=1,@"repeat controls reach the trailing edge in a wide form");}
                 if(size.sizeValue.width>=680){BOOL fits=NSHeight(compact.editorBody.bounds)<=NSHeight(compact.editorScroll.contentView.bounds)+1;if(!fits)fprintf(stderr,"compact body=%s viewport=%s\n",NSStringFromRect(compact.editorBody.bounds).UTF8String,NSStringFromRect(compact.editorScroll.contentView.bounds).UTF8String);Check(fits,@"ordinary editor fits 680 by 620 without outer scrolling");}
                 Check(compact.notesHeight.constant>=80 && compact.notesHeight.constant<=120,@"notes retain four-line minimum and compact maximum");
                 NSRect date=[compact.dateSection convertRect:compact.dateSection.bounds toView:compact.editorBody],repeat=[compact.repeatModeSection convertRect:compact.repeatModeSection.bounds toView:compact.editorBody];Check(!NSIntersectsRect(date,repeat),@"date and recurrence remain separate through width changes");
                 NSRect footer=[compact.saveButton convertRect:compact.saveButton.bounds toView:compact.window.contentView];Check(NSMaxY(footer)<=NSHeight(compact.window.contentView.bounds),@"compact save stays visible when content overflows");
             }
+            compact.validation.stringValue=@"请检查提醒时间。";[compact layoutEditor];
+            NSRect error=[compact.validation convertRect:compact.validation.bounds toView:compact.window.contentView];
+            NSRect action=[compact.saveButton convertRect:compact.saveButton.bounds toView:compact.window.contentView];
+            Check(!compact.validation.hidden && NSMinY(error)>=NSMaxY(compact.editorScroll.frame) && NSMaxY(error)<NSMinY(action),@"current error remains in the fixed footer above actions");
+            compact.repeatMode.enabled=YES;[compact.repeatMode selectItemAtIndex:1];[NSApp sendAction:compact.repeatMode.action to:compact.repeatMode.target from:compact.repeatMode];
+            [compact.editorScroll layoutSubtreeIfNeeded];
+            NSRect notes=[compact.notesField.enclosingScrollView.superview convertRect:compact.notesField.enclosingScrollView.superview.bounds toView:compact.editorScroll.documentView];
+            Check(NSHeight(compact.editorScroll.documentView.bounds)>NSHeight(compact.editorScroll.contentView.bounds) && NSMaxY(notes)<=NSHeight(compact.editorScroll.documentView.bounds),@"expanded recurrence grows the document and keeps notes reachable");
+            [compact.repeatMode selectItemAtIndex:0];[NSApp sendAction:compact.repeatMode.action to:compact.repeatMode.target from:compact.repeatMode];[compact.editorScroll layoutSubtreeIfNeeded];
+            [compact.window makeFirstResponder:compact.titleField];
+            NSRect restored=[compact.titleField.superview convertRect:compact.titleField.superview.bounds toView:compact.window.contentView];
+            Check(fabs(NSMinY(restored)-16)<=1 && NSHeight(compact.editorScroll.documentView.bounds)<=NSHeight(compact.editorScroll.contentView.bounds)+1,@"collapsing recurrence restores the compact top aligned document");
+            [app.window endSheet:compact.window];
             [compact.window orderOut:nil];
         }
         EditorOutsideEvent *outside=EditorOutsideEvent.new;outside.window=app.window;outside.locationInWindow=NSMakePoint(NSWidth(app.window.frame)-4,4);
