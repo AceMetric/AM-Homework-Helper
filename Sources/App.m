@@ -324,7 +324,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSStackView *editorBody;
 @property NSScrollView *editorScroll;
 @property NSStackView *dateRepeatRow,*dateSection,*repeatModeSection;
-@property NSLayoutConstraint *repeatModeWidth,*stackedDateWidth,*stackedRepeatWidth,*notesHeight;
+@property NSLayoutConstraint *repeatModeWidth,*stackedDateWidth,*stackedRepeatWidth;
 @property BOOL layingOutEditor;
 @property NSStackView *recurrenceSection;
 @property NSPopUpButton *repeatMode,*repeatUnit,*holidayPolicy,*repeatEnd,*seriesScope;

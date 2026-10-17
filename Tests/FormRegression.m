@@ -90,6 +90,7 @@ int main(int argc, const char *argv[]) {
             NSApp.appearance=[NSAppearance appearanceNamed:appearance];
             EditorController *compact=[[EditorController alloc] initWithTask:app.tasks.firstObject owner:app];
             [app.window beginSheet:compact.window completionHandler:nil];
+            CGFloat titleHeight=0,regularNotesHeight=0,regularNotesTop=0;
             for(NSValue *size in @[[NSValue valueWithSize:NSMakeSize(680,620)],[NSValue valueWithSize:NSMakeSize(720,640)],[NSValue valueWithSize:NSMakeSize(1000,800)],[NSValue valueWithSize:NSMakeSize(560,500)],[NSValue valueWithSize:NSMakeSize(680,620)]]){
                 [compact.window setContentSize:size.sizeValue];[compact layoutEditor];
                 [compact.window makeFirstResponder:compact.titleField];
@@ -106,10 +107,22 @@ int main(int argc, const char *argv[]) {
                 Check(NSWidth(subject)>NSWidth(root.bounds)/2,@"course field receives the remaining row width");
                 if(size.sizeValue.width>=640){NSRect repeat=[compact.repeatModeSection convertRect:compact.repeatModeSection.bounds toView:root];Check(fabs(NSMaxX(repeat)-NSMaxX(dateRow))<=1,@"repeat controls reach the trailing edge in a wide form");}
                 if(size.sizeValue.width>=680){BOOL fits=NSHeight(compact.editorBody.bounds)<=NSHeight(compact.editorScroll.contentView.bounds)+1;if(!fits)fprintf(stderr,"compact body=%s viewport=%s\n",NSStringFromRect(compact.editorBody.bounds).UTF8String,NSStringFromRect(compact.editorScroll.contentView.bounds).UTF8String);Check(fits,@"ordinary editor fits 680 by 620 without outer scrolling");}
-                Check(compact.notesHeight.constant>=80 && compact.notesHeight.constant<=120,@"notes retain four-line minimum and compact maximum");
+                NSView *notesBox=compact.notesField.enclosingScrollView.superview;
+                NSRect notesRect=[notesBox convertRect:notesBox.bounds toView:root];
+                CGFloat bottomGap=NSMaxY(compact.editorScroll.frame)-NSMaxY(notesRect);
+                if(size.sizeValue.width>=680){if(fabs(bottomGap-16)>1)fprintf(stderr,"Adaptive form gap=%.1f body=%s notes=%s viewport=%s\n",bottomGap,NSStringFromRect(compact.editorBody.frame).UTF8String,NSStringFromRect(notesRect).UTF8String,NSStringFromRect(compact.editorScroll.contentView.bounds).UTF8String);Check(fabs(bottomGap-16)<=1,@"notes use remaining viewport height instead of leaving a blank block above the footer");}
+                Check(NSHeight(notesBox.bounds)>=80,@"notes keep their readable minimum at small window sizes");
+                Check(NSHeight(compact.notesField.bounds)>=NSHeight(compact.notesField.enclosingScrollView.contentView.bounds)-1,@"entire expanded notes area remains an editable text view");
+                if(!titleHeight){titleHeight=NSHeight(compact.titleField.bounds);regularNotesHeight=NSHeight(notesBox.bounds);regularNotesTop=NSMinY(notesRect);}
+                if(size.sizeValue.width>=680)Check(fabs(NSMinY(notesRect)-regularNotesTop)<=1,@"larger windows preserve field spacing and label positions");
+                Check(fabs(NSHeight(compact.titleField.bounds)-titleHeight)<=1,@"extra height expands notes without stretching single-line controls");
+                if(size.sizeValue.height==800)Check(NSHeight(notesBox.bounds)>regularNotesHeight+150,@"notes grow with the actual taller window without a fixed height cap");
                 NSRect date=[compact.dateSection convertRect:compact.dateSection.bounds toView:compact.editorBody],repeat=[compact.repeatModeSection convertRect:compact.repeatModeSection.bounds toView:compact.editorBody];Check(!NSIntersectsRect(date,repeat),@"date and recurrence remain separate through width changes");
                 NSRect footer=[compact.saveButton convertRect:compact.saveButton.bounds toView:compact.window.contentView];Check(NSMaxY(footer)<=NSHeight(compact.window.contentView.bounds),@"compact save stays visible when content overflows");
             }
+            Check(!compact.hasUnsavedChanges,@"resizing and focus changes do not modify saved field values");
+            compact.notesField.string=[@"这是一段用于核对长备注的中文内容。\n" stringByPaddingToLength:16000 withString:@"这是一段用于核对长备注的中文内容。\n" startingAtIndex:0];[compact.notesField didChangeText];[compact.notesField.layoutManager ensureLayoutForTextContainer:compact.notesField.textContainer];[compact layoutEditor];
+            Check(NSHeight(compact.notesField.bounds)>NSHeight(compact.notesField.enclosingScrollView.contentView.bounds) && NSHeight(compact.editorScroll.documentView.bounds)<=NSHeight(compact.editorScroll.contentView.bounds)+1,@"long notes scroll internally without creating an outer form scrollbar");
             compact.validation.stringValue=@"请检查提醒时间。";[compact layoutEditor];
             NSRect error=[compact.validation convertRect:compact.validation.bounds toView:compact.window.contentView];
             NSRect action=[compact.saveButton convertRect:compact.saveButton.bounds toView:compact.window.contentView];
