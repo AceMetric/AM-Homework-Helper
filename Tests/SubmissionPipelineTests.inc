@@ -29,9 +29,12 @@ static void PipelineAssertions(void){
     for(NSString *stage in @[@"commit",@"push",@"commit-with-staged"]){
         fixture=Fixture();root=fixture[@"path"];InterruptedGit *git=InterruptedGit.new;git.fixture=fixture;git.pauseAt=[stage hasPrefix:@"commit"] ? @"commit":stage;git.entered=dispatch_semaphore_create(0);
         Write([root stringByAppendingPathComponent:@"answer.md"],@"Keep this synthetic answer intact\n");NSString *teacher=Git(fixture[@"teacherBare"],@[@"rev-parse",@"main"]);
-        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{if(!dispatch_semaphore_wait(git.entered,dispatch_time(DISPATCH_TIME_NOW,10*NSEC_PER_SEC))){[NSThread sleepForTimeInterval:.15];[git cancelCurrentOperation];}});
-        start=NSDate.date;NSDictionary *record=[git performRecordedCourse:fixture kind:@"submission" taskIDs:@[] paths:@[@"answer.md"] message:@"Interrupted synthetic submission" token:@"test" login:@"student" userID:@42 error:&error];NSString *commit=Git(root,@[@"rev-parse",@"HEAD"]);
-        Check([record[@"state"] isEqual:@"uncertain"] && -start.timeIntervalSinceNow<5,@"interrupted commit or push retains an uncertain journal instead of hanging or reporting success");
+        __block NSDate *stopStarted=nil;NSObject *timing=NSObject.new;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{if(!dispatch_semaphore_wait(git.entered,dispatch_time(DISPATCH_TIME_NOW,30*NSEC_PER_SEC))){[NSThread sleepForTimeInterval:.15];@synchronized(timing){stopStarted=NSDate.date;}[git cancelCurrentOperation];}});
+        NSDictionary *record=[git performRecordedCourse:fixture kind:@"submission" taskIDs:@[] paths:@[@"answer.md"] message:@"Interrupted synthetic submission" token:@"test" login:@"student" userID:@42 error:&error];NSString *commit=Git(root,@[@"rev-parse",@"HEAD"]);
+        NSTimeInterval stopElapsed;@synchronized(timing){stopElapsed=stopStarted ? -stopStarted.timeIntervalSinceNow:HUGE_VAL;}
+        if(![record[@"state"] isEqual:@"uncertain"] || stopElapsed>=5)fprintf(stderr,"Interrupted stage=%s state=%s stop=%.3fs error=%s\n",stage.UTF8String,[record[@"state"] UTF8String],stopElapsed,error.localizedDescription.UTF8String);
+        Check([record[@"state"] isEqual:@"uncertain"] && stopElapsed<5,@"interrupted commit or push retains an uncertain journal and ends within five seconds after force stop");
         Check([[NSString stringWithContentsOfFile:[root stringByAppendingPathComponent:@"answer.md"] encoding:NSUTF8StringEncoding error:NULL] containsString:@"intact"],@"force stop preserves the working file");
         BOOL foreignStaged=[stage isEqual:@"commit-with-staged"];if(foreignStaged){Write([root stringByAppendingPathComponent:@"foreign.md"],@"Separate staged work\n");Git(root,@[@"add",@"foreign.md"]);}
         git.operationCancelled=NO;NSDictionary *resolved=[git verifySubmission:record course:fixture token:@"test" retry:NO error:&error];

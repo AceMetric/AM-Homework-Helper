@@ -928,7 +928,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             if (self.exitSubmissionInFlight) { self.submissionFailedDuringExit = !ok.boolValue; self.exitSubmissionInFlight = NO; }
             if (ok.boolValue || [operationRecord[@"state"] isEqual:@"confirmed"]) { submitted.submittedSuccessfully=YES;[[self savedCourse:course] removeObjectForKey:@"pushFailed"]; [self saveCourses]; [self status:@"所选文件已提交到自己的仓库"]; }
             else {
-                if([operationRecord[@"commit"] length] || ([operationRecord[@"before"] length] && [operationRecord[@"state"] isEqual:@"uncertain"])){[self savedCourse:course][@"pushFailed"]=@YES;[self saveCourses];[self status:@"本地提交已保留，请到“提交记录”核验或重试，不要再次创建提交。"];return;}
+                if([operationRecord[@"commit"] length] || ([operationRecord[@"before"] length] && [operationRecord[@"state"] isEqual:@"uncertain"])){[self savedCourse:course][@"pushFailed"]=@YES;[self saveCourses];if(innerError)[self showError:innerError];[self status:[operationRecord[@"commit"] length] ? @"本地提交已保留，请到“提交记录”核验或重试。":@"提交结果尚未确认，请到“提交记录”核验后再试。"];return;}
                 if ([innerError.userInfo[@"SSPendingPush"] boolValue]) { [self savedCourse:course][@"pushFailed"] = @YES; [self saveCourses]; }
                 else if (!self.window.attachedSheet && self.submission==submitted && innerError.code!=NSUserCancelledError) {
                     [submitted resumeAfterSubmissionFailure:innerError];
