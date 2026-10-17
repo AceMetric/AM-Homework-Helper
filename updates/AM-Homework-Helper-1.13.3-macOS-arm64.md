@@ -1,0 +1,21 @@
+<!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires updating signatures in appcasts that reference this file! This will involve re-running generate_appcast or sign_update.
+-->
+# AM Helper 1.13.3
+
+版本 1.13.3／构建35，适用于 Apple 芯片 Mac、macOS 13 及以上。
+
+## 本次更新
+
+- 任务编辑随窗口大小适配，减少多余留白；长备注在输入框内滚动。
+- 同一周期任务在列表中只显示未来最近两次，已完成与逾期记录保留。
+- 核验作业已推送到个人远端后，自动完成明确对应的任务，支持关闭与撤销。
+- 修复已完成任务仍收到提醒的问题。
+- 检查报告支持 Markdown 预览与源码查看，合并重复提示，将未选择发送的材料单列。
+- 提交历史采用批量检查；提交、推送等步骤可终止，中断后保留记录，核验并重试原提交。
+- 文件列表过期时可刷新，提交说明与有效选择保留；修复失败后窗口无法继续操作的问题。
+- 修复日历分段控件、预览退出和更新等待提示，精简界面说明。
+
+任务、课程、本机设置、钥匙串授权和更新签名继续沿用。
+
+本轮使用隔离材料、临时仓库和模拟在线响应回归，并在 macOS 27 与 macOS 14 验证；实际在线模型质量与网络耗时不由模拟测试保证。主应用使用临时签名，未经 Apple 公证。
