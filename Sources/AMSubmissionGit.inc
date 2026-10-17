@@ -45,7 +45,7 @@
     SSGitResult *parents=[self run:@[@"rev-list",@"--parents",@"-n",@"1",record[@"commit"],@"--"] in:course[@"path"] token:nil error:NULL];BOOL merge=parents.status!=0 || NonemptyParts(Trim([self string:parents]),@" ").count>2;
     SSGitResult *ancestor=teacher ? [self run:@[@"merge-base",@"--is-ancestor",record[@"commit"],teacher] in:course[@"path"] token:nil error:NULL]:nil;
     BOOL priorTeacher=NO;NSString *prior=course[@"completionPriorTeacherCommit"];if(prior && ![prior isEqual:teacher]){SSGitResult *old=[self run:@[@"merge-base",@"--is-ancestor",record[@"commit"],prior] in:course[@"path"] token:nil error:NULL];priorTeacher=old && old.status==0;}
-    BOOL fresh=!course[@"completionTeacherFresh"] || [course[@"completionTeacherFresh"] boolValue];record[@"teacherHistoryKnown"]=@(fresh && ancestor && ancestor.status<=1);record[@"teacherHistoryExcluded"]=@(merge || priorTeacher || (ancestor && ancestor.status==0));
+    BOOL fresh=!course[@"completionTeacherFresh"] || [course[@"completionTeacherFresh"] boolValue];record[@"teacherHistoryKnown"]=@(fresh && ancestor && ancestor.status<=1);record[@"teacherHistoryExcluded"]=@([record[@"teacherHistoryExcluded"] boolValue] || merge || priorTeacher || (ancestor && ancestor.status==0));
 }
 - (NSArray *)verifyExternalRecords:(NSArray *)records course:(NSDictionary *)course token:(NSString *)token error:(NSError **)error {
     if(![self authorize:course error:error] || ![self validateCourse:course error:error])return nil;
@@ -69,7 +69,7 @@
 - (NSArray *)classifyExternalRecords:(NSArray *)records course:(NSDictionary *)course {
     NSString *teacher=course[@"teacherCommit"];if(![self validateCourse:course error:NULL] || ![teacher isKindOfClass:NSString.class] || [teacher rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location==NSNotFound)return @[];
     NSMutableArray *result=NSMutableArray.array;for(NSDictionary *record in records)if([record[@"origin"] isEqual:@"external"] && ![record[@"teacherHistoryKnown"] boolValue] && [record[@"repository"] isEqual:course[@"fork"]] && [record[@"branch"] isEqual:course[@"branch"]]){
-        SSGitResult *ancestor=[self run:@[@"merge-base",@"--is-ancestor",record[@"commit"],teacher] in:course[@"path"] token:nil error:NULL];if(!ancestor || ancestor.status>1)continue;NSMutableDictionary *copy=record.mutableCopy;copy[@"teacherHistoryKnown"]=@YES;copy[@"teacherHistoryExcluded"]=@(ancestor.status==0);[result addObject:copy];
+        SSGitResult *ancestor=[self run:@[@"merge-base",@"--is-ancestor",record[@"commit"],teacher] in:course[@"path"] token:nil error:NULL];if(!ancestor || ancestor.status>1)continue;NSMutableDictionary *copy=record.mutableCopy;copy[@"teacherHistoryKnown"]=@YES;copy[@"teacherHistoryExcluded"]=@([record[@"teacherHistoryExcluded"] boolValue] || ancestor.status==0);[result addObject:copy];
     }
     return result;
 }
