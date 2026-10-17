@@ -6,6 +6,9 @@ NSString *AMOperationBeginWithExitPolicy(NSString *kind,NSString *target,BOOL ca
 void AMOperationProgress(NSString * _Nullable identifier,NSString *stage,NSInteger completed,NSInteger total);
 void AMOperationFinish(NSString * _Nullable identifier,NSString *state,NSString *message);
 void AMOperationCancel(NSString *identifier);
+BOOL AMCurrentOperationCancelled(void);
+typedef BOOL (^AMCancellationCheck)(void);
+AMCancellationCheck _Nullable AMCurrentCancellationCheck(void);
 NSArray<NSDictionary *> *AMOperations(void);
 NSArray<NSDictionary *> *AMExitBlockingOperations(void);
 /// Active requests with the same key coalesce. Start runs on a worker; finish

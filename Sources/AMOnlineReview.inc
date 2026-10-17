@@ -86,6 +86,7 @@ static void ORRelease(void){@synchronized(AMOnlineReviewClient.class){ORBusy=NO;
 @end
 NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
 @implementation AMOnlineReviewClient
+- (void)cancelImmediately{self.cancelled=YES;[self.session invalidateAndCancel];}
 - (NSString *)credential {
 #ifdef DDL_TESTING
     if(self.credentialProvider)return ORNormalizedKey(self.credentialProvider());
@@ -212,7 +213,7 @@ NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
         if([cache isKindOfClass:NSDictionary.class] && [cache[@"result"] isKindOfClass:NSDictionary.class]){NSMutableDictionary *raw=[cache[@"result"] mutableCopy];raw[@"batchID"]=context[@"batchID"];raw[@"reportVersion"]=context[@"reportVersion"];NSDictionary *validated=AMPreflightValidateResult(raw,context,error);if(validated){if(!PFWrite([NSJSONSerialization dataWithJSONObject:raw options:0 error:error],[folder URLByAppendingPathComponent:@"results.local.json"],error))return nil;complete=YES;NSMutableDictionary *answer=validated.mutableCopy;answer[@"cached"]=@YES;answer[@"model"]=self.model ?: AMOnlineReviewCurrentModel();return answer;}}
         if(![self hasBudget:error])return nil;
         if(progress)progress(@"准备整份项目与图片快照…");NSMutableArray *parts=NSMutableArray.array;
-        NSMutableDictionary *metadata=context.mutableCopy;[metadata removeObjectForKey:@"images"];NSMutableArray *images=NSMutableArray.array;
+        NSMutableDictionary *metadata=context.mutableCopy;[metadata removeObjectForKey:@"images"];[metadata removeObjectForKey:@"excluded"];[metadata removeObjectForKey:@"unverifiedImages"];NSMutableArray *images=NSMutableArray.array;
         for(NSDictionary *asset in context[@"images"]){NSMutableDictionary *row=asset.mutableCopy;[row removeObjectForKey:@"resourceHash"];[images addObject:row];}metadata[@"images"]=images;
         NSData *text=[NSJSONSerialization dataWithJSONObject:metadata options:NSJSONWritingPrettyPrinted error:error];if(!text)return nil;
         [parts addObject:@{@"text":[[NSString alloc] initWithData:text encoding:NSUTF8StringEncoding]}];
@@ -249,7 +250,7 @@ NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
                 NSDictionary *part=[self generateParts:sectionParts context:validationContext instruction:instruction progress:progress error:error];if(!part){retryable=YES;return nil;}[allIssues addObjectsFromArray:part[@"issues"]];[allChecked addObjectsFromArray:part[@"checked"]];[unverified addObjectsFromArray:part[@"unverified"]];
             }
             [unverified addObject:@"材料超出整体容量，已按文档／自然章节处理；跨组推导和项目整体一致性未能完整核对。"];
-            validated=@{@"issues":allIssues,@"checked":[NSOrderedSet orderedSetWithArray:allChecked].array,@"unverified":[NSOrderedSet orderedSetWithArray:unverified].array,@"partial":@YES,@"reportVersion":context[@"reportVersion"]};
+            validated=@{@"issues":allIssues,@"checked":[NSOrderedSet orderedSetWithArray:allChecked].array,@"unverified":[NSOrderedSet orderedSetWithArray:unverified].array,@"excluded":context[@"excluded"] ?: @[],@"partial":@YES,@"reportVersion":context[@"reportVersion"]};
         }
         if(!validated){retryable=YES;return nil;}if(progress)progress(@"核验位置、原文证据与图片区域…");
         // Only validated evidence is persisted; discard invalid or secret-bearing provider fields.
@@ -260,14 +261,14 @@ NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
         if(!PFWrite([NSJSONSerialization dataWithJSONObject:safe options:0 error:error],[folder URLByAppendingPathComponent:@"results.local.json"],error))return nil;
         complete=YES;NSMutableDictionary *answer=validated.mutableCopy;answer[@"model"]=self.model ?: AMOnlineReviewCurrentModel();answer[@"cached"]=@NO;return answer;
     }@finally {
-        BOOL cancelled=self.cancelled;self.cancelled=NO;self.cleaning=YES;BOOL cleanupFailed=NO;NSDate *cleanupDeadline=[NSDate dateWithTimeIntervalSinceNow:15];
+        BOOL cancelled=self.cancelled;self.cleaning=YES;BOOL cleanupFailed=NO;NSDate *cleanupDeadline=[NSDate dateWithTimeIntervalSinceNow:15];
         AMOperationProgress(self.operationID,@"清理／保留可复用上传副本",0,0);
         for(NSDictionary *record in ORUploads())if(fingerprint && [record[@"fingerprint"] isEqual:fingerprint]){
             NSMutableDictionary *next=record.mutableCopy;if(!complete && !cancelled && retryable){next[@"keepUntil"]=[NSDate dateWithTimeIntervalSinceNow:3600];ORStoreUpload(next,NO,NULL);continue;}
             [next removeObjectForKey:@"keepUntil"];ORStoreUpload(next,NO,NULL);NSError *cleanupError=nil;
-            if(!cleanupFailed && cleanupDeadline.timeIntervalSinceNow>0){if([self json:@"DELETE" path:[@"/v1beta/" stringByAppendingString:record[@"name"]] body:nil error:&cleanupError] || cleanupError.code==404)ORStoreUpload(record,YES,NULL);else cleanupFailed=YES;}
+            if(!cancelled && !self.cancelled && !cleanupFailed && cleanupDeadline.timeIntervalSinceNow>0){if([self json:@"DELETE" path:[@"/v1beta/" stringByAppendingString:record[@"name"]] body:nil error:&cleanupError] || cleanupError.code==404)ORStoreUpload(record,YES,NULL);else cleanupFailed=YES;}
         }
-        [self.session invalidateAndCancel];self.session=nil;self.key=nil;self.cancelled=cancelled;ORRelease();
+        [self.session invalidateAndCancel];self.session=nil;self.key=nil;ORRelease();
     }
 }
 @end

@@ -1,4 +1,5 @@
 #import "AMPrompts.h"
+#import "AMOperation.h"
 #import "SSRecognition.h"
 #import "SSAssignments.h"
 #import "SSLocalData.h"
@@ -233,7 +234,7 @@ NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repositor
     if(self.transport)data=self.transport(request,&failure);else {
         NSURLSessionConfiguration *configuration=NSURLSessionConfiguration.ephemeralSessionConfiguration;configuration.URLCache=nil;configuration.URLCredentialStorage=nil;configuration.HTTPCookieStorage=nil;configuration.timeoutIntervalForResource=8;
         NSURLSession *session=[NSURLSession sessionWithConfiguration:configuration delegate:self delegateQueue:nil];dispatch_semaphore_t done=dispatch_semaphore_create(0);
-        NSURLSessionDataTask *task=[session dataTaskWithRequest:request completionHandler:^(NSData *response,NSURLResponse *metadata,NSError *networkError){if(networkError || [(NSHTTPURLResponse *)metadata statusCode]!=200)failure=RError(@"无法连接本地模型服务。请启动 Ollama，或检查高级设置中的地址。");else data=response;dispatch_semaphore_signal(done);}];[task resume];if(dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,10*NSEC_PER_SEC))){[task cancel];failure=RError(@"本地服务检测超时，请检查 Ollama 是否运行。");}[session invalidateAndCancel];
+        NSURLSessionDataTask *task=[session dataTaskWithRequest:request completionHandler:^(NSData *response,NSURLResponse *metadata,NSError *networkError){if(networkError || [(NSHTTPURLResponse *)metadata statusCode]!=200)failure=RError(@"无法连接本地模型服务。请启动 Ollama，或检查高级设置中的地址。");else data=response;dispatch_semaphore_signal(done);}];[task resume];NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:10];while(dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC))){if(AMCurrentOperationCancelled() || deadline.timeIntervalSinceNow<=0){[task cancel];failure=RError(AMCurrentOperationCancelled() ? @"本地服务检测已终止。":@"本地服务检测超时，请检查 Ollama 是否运行。");break;}}[session invalidateAndCancel];
     }
     if(failure || !data || data.length>1024*1024){if(error)*error=failure ?: RError(@"本地服务返回无效模型列表。");return nil;}
     id object=[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];id models=[object isKindOfClass:NSDictionary.class] ? object[@"models"] : nil;
@@ -288,7 +289,9 @@ NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repositor
                 else {data=response;failure=nil;}
                 dispatch_semaphore_signal(done);
             }];
-            [task resume]; if (dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,70*NSEC_PER_SEC))) { [task cancel]; failure=RError(@"模型请求超时，继续使用规则。"); break; }
+            [task resume];NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:70];BOOL stopped=NO;
+            while(dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC))){if(AMCurrentOperationCancelled() || deadline.timeIntervalSinceNow<=0){[task cancel];failure=RError(AMCurrentOperationCancelled() ? @"模型请求已终止，保留规则结果。":@"模型请求超时，继续使用规则。");stopped=YES;break;}}
+            if(stopped)break;
             if (!unsupported) break;
             [body removeObjectForKey:@"format"]; request.HTTPBody=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
         }

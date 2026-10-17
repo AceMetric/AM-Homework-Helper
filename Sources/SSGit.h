@@ -17,6 +17,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSArray *)classifyExternalRecords:(NSArray *)records course:(NSDictionary *)course;
 @property(atomic) BOOL readsCancellable;
 @property(atomic) BOOL cancelledReads;
+@property(atomic) BOOL operationCancelled;
+@property NSTimeInterval commandTimeout;
+/// Stop the current owned Git process group; never reset files or remove shared locks.
+- (void)cancelCurrentOperation;
 /// Required before cloning, committing, merging or pushing. Rechecks GitHub ownership.
 @property (copy, nullable) void (^progress)(NSString *phase);
 /// Non-nil only for OAuth. Called after target validation; never used for legacy SSH.

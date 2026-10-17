@@ -159,7 +159,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (BOOL)saveConfigurationDraftForExit {if(!self.setupWindow)return YES;[self.setupWorkspace requestCloseSavingDraft];return self.setupWindow==nil;}
 - (void)discardReview { [self.reviewWorkspace discardChanges];[self.courseWorkspace discardChanges];[self closeCourseSetup]; }
 - (BOOL)hasSubmissionSheet { return self.submission.window.sheetParent != nil || self.checkScopeWindow != nil; }
-- (BOOL)hasUnsavedSubmission { return (self.checkScopeWindow && self.checkScope.hasUnsavedChanges) || (self.hasSubmissionSheet && self.submission.hasUnsavedChanges); }
+- (BOOL)hasUnsavedSubmission { return (self.checkScopeWindow && self.checkScope.hasUnsavedChanges) || (self.submission && (!self.submission.closed || self.submission.preserveClosedDraft) && !self.submission.submittedSuccessfully && self.submission.hasUnsavedChanges); }
 - (void)setOperationsPaused:(BOOL)paused { _operationsPaused = paused; [self refreshPresentation]; }
 - (void)cancelPendingLogin { [self cancelLogin:nil]; }
 - (void)discardSubmission { [self closeCheckScope];[self.submission cancel:nil]; self.submission = nil; }
@@ -167,6 +167,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (BOOL)persistForExit:(NSError **)error { return self.preview || SSWritePlist(@"courses.plist", self.courses, error); }
 - (BOOL)saveSubmissionForExit {
     if(self.checkScopeWindow){[self.checkScope setProgress:@"请完成或取消文件范围选择，再退出。"];return NO;}
+    if(self.submission.closed && !self.window.attachedSheet){[self.submission resumeAfterSubmissionFailure:nil];[self.window beginSheet:self.submission.window completionHandler:nil];}
     self.allowingExitSubmission = YES; self.exitSubmissionInFlight = YES;
     BOOL saved = [self.submission saveForExit]; self.allowingExitSubmission = NO;
     if (!saved) self.exitSubmissionInFlight = NO;
@@ -252,7 +253,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     __weak typeof(self) historyOwner=self;self.submissionHistory.actionHandler=^(NSString *action,NSString *identifier){[historyOwner submissionAction:action identifier:identifier];};
     self.skillJobsController=AMSkillJobsController.new;[self addChildViewController:self.skillJobsController];[root addSubview:self.skillJobsController.view];self.skillJobsController.view.hidden=YES;
     self.skillJobsController.actionHandler=^(NSString *action,NSString *batch){[owner skillJobAction:action batch:batch];};
-    self.cancelReadButton=SSButton(@"取消检查",self,@selector(cancelReadOperation:),NSZeroRect);[root addSubview:self.cancelReadButton];self.cancelReadButton.hidden=YES;
+    self.cancelReadButton=SSButton(@"终止当前步骤",self,@selector(cancelReadOperation:),NSZeroRect);[root addSubview:self.cancelReadButton];self.cancelReadButton.hidden=YES;
     self.nativeHeader=NSStackView.new;self.nativeHeader.orientation=NSUserInterfaceLayoutOrientationVertical;self.nativeHeader.alignment=NSLayoutAttributeLeading;self.nativeHeader.spacing=8;self.nativeHeader.translatesAutoresizingMaskIntoConstraints=NO;[root addSubview:self.nativeHeader];
     for(NSArray *controls in @[@[self.accountLabel,self.setupButton],@[self.scanButton,self.syncButton,self.commitButton,self.assistantButton,self.moreButton],@[self.reviewFilter,self.typeFilter,self.search]]){
         NSStackView *row=[NSStackView stackViewWithViews:controls];row.orientation=NSUserInterfaceLayoutOrientationHorizontal;row.spacing=8;row.alignment=NSLayoutAttributeCenterY;row.detachesHiddenViews=YES;[self.nativeHeader addArrangedSubview:row];row.translatesAutoresizingMaskIntoConstraints=NO;[row.widthAnchor constraintEqualToAnchor:self.nativeHeader.widthAnchor].active=YES;
@@ -283,7 +284,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     CGFloat w = NSWidth(self.view.bounds), h = NSHeight(self.view.bounds);
     self.sections.hidden=NO;self.typeFilter.hidden=self.inbox || self.sections.selectedSegment!=0;self.reviewFilter.hidden=!self.inbox;self.search.hidden=self.inbox;self.assistantButton.hidden=self.inbox;self.assistantImportButton.hidden=YES;self.assistantButton.enabled=self.assistantImportButton.enabled=!self.operationsPaused;BOOL modelConfigured=![SSRecognitionSettings()[@"mode"] isEqual:@"rules"];self.assistantButton.hidden=self.inbox || !modelConfigured;self.assistantButton.title=modelConfigured ? @"AI增强识别…":@"Skill识别…";self.assistantButton.action=modelConfigured ? @selector(enhanceRecognition:):@selector(exportSkillContext:);
     self.syncButton.hidden=self.inbox || ![self course];self.commitButton.hidden=self.syncButton.hidden;
-    self.cancelReadButton.hidden=!self.busy || !self.git.readsCancellable;self.progress.hidden=!self.busy;self.progressRow.hidden=!self.busy;
+    self.cancelReadButton.hidden=!self.busy;self.progress.hidden=!self.busy;self.progressRow.hidden=!self.busy;
     self.operationStatus.hidden=!self.statusLabel.stringValue.length && !self.busy && self.recoveryButton.hidden;
     [self.view layoutSubtreeIfNeeded];CGFloat workspaceTop=self.operationStatus.hidden ? NSMaxY(self.nativeHeader.frame)+8:NSMaxY(self.operationStatus.frame)+8;
     self.table.enclosingScrollView.frame = NSMakeRect(0, 184, w, MAX(112, h - 348));
@@ -579,7 +580,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     [self layoutContent]; self.refreshing = NO;
     if (self.stateChanged) self.stateChanged();
 }
-- (void)cancelReadOperation:(id)sender {if(self.busy && self.git.readsCancellable){self.git.cancelledReads=YES;self.cancelReadButton.enabled=NO;[self status:@"正在取消检查；等待当前安全读取结束…"];} }
+- (void)cancelReadOperation:(id)sender {if(self.busy){self.git.cancelledReads=YES;[self.git cancelCurrentOperation];self.github.requestsCancelled=YES;self.cancelReadButton.enabled=NO;[self status:@"正在终止当前步骤；本机文件和提交记录保留…"];} }
 - (void)status:(NSString *)message { if(self.busy){self.operationPhase=message;AMOperationProgress(self.operationID,message,0,0);} self.statuses[self.statusFork ?: self.selectedFork ?: @"all"] = message ?: @""; [self refreshPresentation]; }
 - (void)showError:(NSError *)error { if (error) {self.errorDetails[self.statusFork ?: self.selectedFork ?: @"all"]=SSRedactedText(error.userInfo[@"SSDetail"] ?: error.localizedDescription);[self status:[@"⚠ " stringByAppendingString:error.localizedDescription]];} }
 - (void)work:(NSString *)message operation:(id (^)(NSError **))operation completion:(void (^)(id, NSError *))completion {
@@ -596,22 +597,22 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     BOOL readable=[message containsString:@"扫描"] || [message containsString:@"准备"] || [message containsString:@"识别"] || [message containsString:@"核验"] || [message containsString:@"读取"];
     readable=readable && ![message containsString:@"推送"] && ![message containsString:@"合并"] && ![message containsString:@"标记"] && ![message containsString:@"提交"];
     __weak typeof(self) owner=self;
-    AMOperationSchedule(key,message,target ?: @"所有课程",readable ? @[@"course-controller"]:@[@"course-controller",@"git-write"],priority,readable,^(NSString *identifier){
+    AMOperationSchedule(key,message,target ?: @"所有课程",readable ? @[@"course-controller"]:@[@"course-controller",@"git-write"],priority,YES,^(NSString *identifier){
         dispatch_async(dispatch_get_main_queue(),^{
             NSDictionary *current=targetCourse ? [self savedCourse:targetCourse]:nil;
             BOOL sourceChanged=NO;for(NSString *field in @[@"path",@"branch",@"upstream",@"forkID",@"upstreamID",@"ownerID"])
                 if(targetCourse && ![(targetCourse[field] ?: NSNull.null) isEqual:(current[field] ?: NSNull.null)])sourceChanged=YES;
             if(sourceChanged){NSError *error=[NSError errorWithDomain:@"AMOperation" code:1 userInfo:@{NSLocalizedDescriptionKey:@"课程关联已变化，原请求未执行；请在当前课程重新操作。"}];completion(nil,error);AMOperationFinish(identifier,@"failed",error.localizedDescription);return;}
-            NSDate *started=NSDate.date;self.git.cancelledReads=NO;self.git.readsCancellable=readable;self.cancelReadButton.enabled=YES;
+            NSDate *started=NSDate.date;self.git.cancelledReads=NO;self.git.operationCancelled=NO;self.github.requestsCancelled=NO;self.git.readsCancellable=readable;self.cancelReadButton.enabled=YES;
             SSDiagnostic(@"operation",@"started",0);self.operationID=identifier;self.busy=YES;self.operationKind=message;self.operationPhase=message;
             self.workGeneration++;NSUInteger generation=self.workGeneration;self.operationFork=target;self.statusFork=target;[self.progress startAnimation:nil];[self status:message];
             dispatch_async(self.queue,^{
                 NSError *error=nil;id value=operation(&error);
                 dispatch_async(dispatch_get_main_queue(),^{
-                    BOOL cancelled=self.git.cancelledReads;self.git.readsCancellable=NO;self.git.cancelledReads=NO;
+                    BOOL cancelled=self.git.operationCancelled || self.git.cancelledReads;self.git.readsCancellable=NO;self.git.cancelledReads=NO;self.git.operationCancelled=NO;self.github.requestsCancelled=NO;
                     SSDiagnostic(@"operation",cancelled ? @"cancelled":(error ? @"failed":@"success"),-started.timeIntervalSinceNow);
                     self.operationID=nil;self.busy=NO;[self.progress stopAnimation:nil];self.statusFork=target;
-                    NSError *failure=cancelled ? [NSError errorWithDomain:@"AMOperation" code:NSUserCancelledError userInfo:@{NSLocalizedDescriptionKey:@"已取消读取；已完成结果保留，可稍后重试。"}]:error;
+                    NSError *failure=cancelled ? [NSError errorWithDomain:@"AMOperation" code:NSUserCancelledError userInfo:@{NSLocalizedDescriptionKey:@"当前步骤已终止；文件和本地提交保留，远端结果请核验后再试。"}]:error;
                     completion(cancelled ? nil:value,failure);
                     if(self.workGeneration==generation){self.statusFork=nil;self.operationFork=nil;}
                     [self refreshPresentation];if(self.verifiedSubmissionsChanged)self.verifiedSubmissionsChanged();AMOperationFinish(identifier,cancelled ? @"cancelled":(error ? @"failed":@"success"),failure.localizedDescription ?: @"操作完成");
@@ -886,23 +887,38 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (void)commit:(id)sender {
     if(self.checkScopeWindow){[self showCheckWorkspace];[self status:@"请先完成或取消当前文件检查，再打开提交界面。"];return;}
     NSDictionary *course = [[self course] copy]; if (!course) return;
+    SSSubmissionController *previous=self.submission.closed && self.submission.preserveClosedDraft && !self.submission.checkOnly && !self.submission.submittedSuccessfully && [self.submission.course[@"fork"] isEqual:course[@"fork"]] ? self.submission:nil;
+    [self openSubmissionForCourse:course preserving:previous];
+}
+- (void)openSubmissionForCourse:(NSDictionary *)course preserving:(SSSubmissionController *)previous {
+    if(previous){[previous cancel:nil];previous.preserveClosedDraft=YES;}
     [self work:@"正在读取本地修改…" forCourse:course operation:^id(NSError **error) { return [self.git changesForCourse:course error:error]; } completion:^(NSArray *changes, NSError *error) {
         if (!changes) { [self showError:error]; return; }
         if (self.operationsPaused) return;
-        if (!changes.count) { [self status:@"没有需要提交的改动。"] ; return; }
+        if (!changes.count && !previous) { [self status:@"没有需要提交的改动。"] ; return; }
         if (self.window.attachedSheet) { [self status:@"请先关闭当前编辑弹窗，再打开“提交作业”。"]; return; }
+        if(previous && self.submission!=previous)return;
         self.submission = [[SSSubmissionController alloc] initWithCourse:course changes:changes];
         NSMutableArray *related=NSMutableArray.array;for(NSDictionary *task in self.tasksProvider ? self.tasksProvider():@[])if(![task[@"deleted"] boolValue] && AMTaskBelongsToCourse(task,course))[related addObject:task];
         [self configurePreflight:self.submission course:course tasks:related];
-        [self.submission configureTasks:related selected:self.submissionTaskID ? @[self.submissionTaskID]:@[]];self.submissionTaskID=nil;
-        __weak typeof(self) weakSelf = self;
+        [self.submission configureTasks:related selected:previous ? [previous chosenTasks]:(self.submissionTaskID ? @[self.submissionTaskID]:@[])];self.submissionTaskID=nil;
+        if(previous){self.submission.message.stringValue=previous.message.stringValue;self.submission.pendingSupplement=previous.supplement.string ?: previous.pendingSupplement;NSSet *chosen=[NSSet setWithArray:[previous chosenPaths]];for(NSButton *check in self.submission.checks)check.state=check.enabled && [chosen containsObject:changes[check.tag][@"path"]] ? NSControlStateValueOn:NSControlStateValueOff;self.submission.filesValidation.stringValue=changes.count ? @"文件列表已刷新。":@"没有待提交修改，请核验提交记录。";}
+        __weak typeof(self) weakSelf = self;__weak SSSubmissionController *originalSheet=self.submission;
+        self.submission.refreshFiles=^{SSCourseController *owner=weakSelf;SSSubmissionController *sheet=originalSheet;if(owner && sheet && owner.submission==sheet)[owner openSubmissionForCourse:course preserving:sheet];};
         self.submission.readPreview = ^(NSString *file, void (^ready)(NSString *)) {
-            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{ NSError *previewError = nil; NSString *text=AMPerformResourceOperation(NSUUID.UUID.UUIDString,@"读取预览",file,@[@"git-write"],100,nil,^id(NSError **issue){return [SSGit.new previewForCourse:course path:file error:issue];},&previewError);dispatch_async(dispatch_get_main_queue(), ^{ ready(text ?: previewError.localizedDescription); }); });
+            SSSubmissionController *sheet=originalSheet;if(!sheet)return;NSUInteger generation=sheet.previewGeneration;SSGit *reader=SSGit.new;reader.readsCancellable=YES;
+            NSString *operation=AMOperationBegin(@"读取变更预览",file,YES,^{[reader cancelCurrentOperation];});sheet.previewCancellation=^{AMOperationCancel(operation);};
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{NSError *problem=nil;
+                NSString *text=AMPerformResourceOperation(NSUUID.UUID.UUIDString,@"读取预览",file,@[@"git-write"],100,^BOOL{return reader.operationCancelled || !originalSheet || originalSheet.closed || originalSheet.previewGeneration!=generation;},^id(NSError **issue){return [reader previewForCourse:course path:file error:issue];},&problem);
+                AMOperationFinish(operation,reader.operationCancelled ? @"cancelled":(problem ? @"failed":@"success"),problem.localizedDescription ?: @"预览读取完成");
+                dispatch_async(dispatch_get_main_queue(),^{ready(text ?: problem.localizedDescription);});
+            });
         };
         self.submission.submit = ^(NSArray *paths, NSString *message) {
-            SSCourseController *self = weakSelf; if (!self) return;
-        __block NSDictionary *operationRecord=nil;NSArray *taskIDs=self.submission.taskIDs.copy;NSDictionary *snapshot=self.submission.snapshot.copy,*review=self.submission.reviewSummary.copy;
+            SSCourseController *self = weakSelf;SSSubmissionController *submitted=originalSheet;if (!self || !submitted) return;
+        __block NSDictionary *operationRecord=nil;NSArray *taskIDs=submitted.taskIDs.copy;NSDictionary *snapshot=submitted.snapshot.copy,*review=submitted.reviewSummary.copy;
         [self work:@"正在检查、提交并推送到自己的 fork…" forCourse:course requestKey:[NSString stringWithFormat:@"%@|%@|%@|%@",paths,message,snapshot[@"version"],taskIDs] priority:100 operation:^id(NSError **innerError) {
+            if(self.git.progress)self.git.progress(@"核验 GitHub 登录…");
             NSDictionary *user = [self.github user:innerError]; if (!user) return @NO;
             NSString *token = [self.github accessToken:innerError]; if (!token) return @NO;
             self.git.expectedSubmissionSnapshot=snapshot;self.git.submissionReviewSummary=review;
@@ -910,14 +926,13 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             operationRecord=result;return @([result[@"state"] isEqual:@"confirmed"]);
         } completion:^(NSNumber *ok, NSError *innerError) {
             if (self.exitSubmissionInFlight) { self.submissionFailedDuringExit = !ok.boolValue; self.exitSubmissionInFlight = NO; }
-            if (ok.boolValue) { [[self savedCourse:course] removeObjectForKey:@"pushFailed"]; [self saveCourses]; [self status:@"所选文件已提交到自己的仓库"]; }
+            if (ok.boolValue || [operationRecord[@"state"] isEqual:@"confirmed"]) { submitted.submittedSuccessfully=YES;[[self savedCourse:course] removeObjectForKey:@"pushFailed"]; [self saveCourses]; [self status:@"所选文件已提交到自己的仓库"]; }
             else {
-                if([operationRecord[@"commit"] length]){[self savedCourse:course][@"pushFailed"]=@YES;[self saveCourses];[self status:@"本地提交已保留，请到“提交记录”核验或重试，不要再次创建提交。"];return;}
+                if([operationRecord[@"commit"] length] || ([operationRecord[@"before"] length] && [operationRecord[@"state"] isEqual:@"uncertain"])){[self savedCourse:course][@"pushFailed"]=@YES;[self saveCourses];[self status:@"本地提交已保留，请到“提交记录”核验或重试，不要再次创建提交。"];return;}
                 if ([innerError.userInfo[@"SSPendingPush"] boolValue]) { [self savedCourse:course][@"pushFailed"] = @YES; [self saveCourses]; }
-                else if (!self.window.attachedSheet) {
-                    self.submission.validation.stringValue = innerError.localizedDescription ?: @"提交未完成，请检查后重试。";
-                    self.submission.validation.textColor = NSColor.systemRedColor;
-                    [self.window beginSheet:self.submission.window completionHandler:nil];
+                else if (!self.window.attachedSheet && self.submission==submitted && innerError.code!=NSUserCancelledError) {
+                    [submitted resumeAfterSubmissionFailure:innerError];
+                    [self.window beginSheet:submitted.window completionHandler:nil];
                 }
                 [self showError:innerError];
             }
