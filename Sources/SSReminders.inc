@@ -13,8 +13,23 @@
 @end
 @implementation AMReminderScheduler
 - (void)publish {if(self.changed)self.changed(self.scheduled,self.error,self.notice);}
+- (BOOL)isTaskActive:(NSString *)identifier {
+    for(NSDictionary *task in self.latestTasks)if([task[@"id"] isEqual:identifier])return ![task[@"completed"] boolValue] && ![task[@"archived"] boolValue] && ![task[@"deleted"] boolValue];return NO;
+}
+- (NSString *)taskIDForRequest:(UNNotificationRequest *)request {
+    NSString *taskID=request.content.userInfo[@"taskID"] ?: request.content.threadIdentifier;if(taskID.length)return taskID;
+    NSString *key=request.identifier;if(![key hasPrefix:@"ddl."] || [key isEqual:@"ddl.test"])return nil;NSRange offset=[key rangeOfString:@".offset." options:NSBackwardsSearch];return offset.location!=NSNotFound && offset.location>4 ? [key substringWithRange:NSMakeRange(4,offset.location-4)]:nil;
+}
+- (void)removeInactiveNotifications {
+    id center=self.center ?: UNUserNotificationCenter.currentNotificationCenter;
+    [center getPendingNotificationRequestsWithCompletionHandler:^(NSArray *pending){dispatch_async(dispatch_get_main_queue(),^{NSMutableArray *ids=NSMutableArray.array;for(UNNotificationRequest *r in pending){NSString *taskID=[self taskIDForRequest:r];if(taskID.length && ![self isTaskActive:taskID])[ids addObject:r.identifier];}if(ids.count)[center removePendingNotificationRequestsWithIdentifiers:ids];});}];
+    [center getDeliveredNotificationsWithCompletionHandler:^(NSArray *delivered){dispatch_async(dispatch_get_main_queue(),^{NSMutableArray *ids=NSMutableArray.array;for(UNNotification *n in delivered){NSString *taskID=[self taskIDForRequest:n.request];if(taskID.length && ![self isTaskActive:taskID])[ids addObject:n.request.identifier];}if(ids.count)[center removeDeliveredNotificationsWithIdentifiers:ids];});}];
+}
 - (void)schedule:(NSArray *)tasks {
-    self.latestTasks=tasks;self.generation++;
+    NSArray *previous=self.latestTasks;self.latestTasks=[[NSArray alloc] initWithArray:tasks copyItems:YES];self.generation++;
+    NSMutableSet *remove=NSMutableSet.set;for(NSDictionary *task in [previous ?: @[] arrayByAddingObjectsFromArray:tasks])if(![self isTaskActive:task[@"id"]])for(NSNumber *offset in DDLReminderOffsetsForTask(task))[remove addObject:[NSString stringWithFormat:@"ddl.%@.offset.%ld",task[@"id"],(long)offset.integerValue]];
+    id center=self.center ?: UNUserNotificationCenter.currentNotificationCenter;if(remove.count)[center removePendingNotificationRequestsWithIdentifiers:remove.allObjects];
+    [self removeInactiveNotifications];
     if(!self.running)[self startSchedule];
 }
 - (void)finishSchedule:(NSInteger)generation {
@@ -47,8 +62,10 @@
                 UNCalendarNotificationTrigger *trigger = [UNCalendarNotificationTrigger triggerWithDateMatchingComponents:parts repeats:NO];
                 UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:identifier content:content trigger:trigger];
                 dispatch_group_enter(scheduled);
+                __weak UNUserNotificationCenter *registrationCenter=center;
                 [center addNotificationRequest:request withCompletionHandler:^(NSError *error) {
                     dispatch_async(dispatch_get_main_queue(), ^{
+                        if(generation!=self.generation || ![self isTaskActive:task[@"id"]]){[registrationCenter removePendingNotificationRequestsWithIdentifiers:@[identifier]];[registrationCenter removeDeliveredNotificationsWithIdentifiers:@[identifier]];}
                         if (error && generation == self.generation) { self.error = error.localizedDescription; self.notice = @"任务已保存，但提醒安排失败。请在设置中查看通知权限并重试。"; [self publish]; }
                         dispatch_group_leave(scheduled);
                     });
@@ -71,7 +88,7 @@
             [center getDeliveredNotificationsWithCompletionHandler:^(NSArray<UNNotification *> *notifications) {
                 dispatch_async(dispatch_get_main_queue(), ^{
                     if (generation != self.generation) return;
-                    NSMutableArray *finished = [NSMutableArray array]; for (UNNotification *n in notifications) { NSString *taskID = n.request.content.userInfo[@"taskID"]; if (taskID && ![activeIDs containsObject:taskID]) [finished addObject:n.request.identifier]; }
+                    NSMutableArray *finished = [NSMutableArray array]; for (UNNotification *n in notifications) { NSString *taskID = [self taskIDForRequest:n.request]; if (taskID && ![activeIDs containsObject:taskID]) [finished addObject:n.request.identifier]; }
                     if (finished.count) [center removeDeliveredNotificationsWithIdentifiers:finished];
                 });
             }];

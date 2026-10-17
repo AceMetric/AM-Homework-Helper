@@ -2,8 +2,8 @@
     NSDictionary *saved=nil;for(NSDictionary *s in self.appDelegate.recurrenceSeries)if([s[@"id"] isEqual:self.task[@"seriesID"]])saved=s[@"rule"];
     NSStackView *stack=self.recurrenceSection;stack.spacing=8;
     void (^add)(NSView *)=^(NSView *view){[stack addArrangedSubview:view];view.translatesAutoresizingMaskIntoConstraints=NO;[view.widthAnchor constraintEqualToAnchor:stack.widthAnchor].active=YES;};
-    add(Text(@"重复",12,NSFontWeightMedium,Muted()));
-    self.repeatMode=[[NSPopUpButton alloc] initWithFrame:NSZeroRect];[self.repeatMode addItemsWithTitles:@[@"不重复",@"按固定日历",@"完成后重复"]];[self.repeatMode selectItemAtIndex:[saved[@"mode"] isEqual:@"fixed"] ? 1:([saved[@"mode"] isEqual:@"completion"] ? 2:0)];add(self.repeatMode);
+    [self.repeatModeSection addArrangedSubview:Text(@"重复",12,NSFontWeightMedium,Muted())];
+    self.repeatMode=[[NSPopUpButton alloc] initWithFrame:NSZeroRect];[self.repeatMode addItemsWithTitles:@[@"不重复",@"按固定日历",@"完成后重复"]];[self.repeatMode selectItemAtIndex:[saved[@"mode"] isEqual:@"fixed"] ? 1:([saved[@"mode"] isEqual:@"completion"] ? 2:0)];[self.repeatModeSection addArrangedSubview:self.repeatMode];[self.repeatMode.widthAnchor constraintEqualToAnchor:self.repeatModeSection.widthAnchor].active=YES;
     self.repeatUnit=[[NSPopUpButton alloc] initWithFrame:NSZeroRect];[self.repeatUnit addItemsWithTitles:@[@"天",@"周",@"月",@"年"]];NSInteger unit=[@[@"day",@"week",@"month",@"year"] indexOfObject:saved[@"unit"] ?: @"week"];[self.repeatUnit selectItemAtIndex:unit==NSNotFound ? 1:unit];
     self.repeatInterval=[[PastelTextField alloc] initWithFrame:NSZeroRect];self.repeatInterval.stringValue=[saved[@"interval"] stringValue] ?: @"1";self.repeatInterval.delegate=self;self.repeatInterval.accessibilityLabel=@"重复间隔";
     NSStackView *frequency=[NSStackView stackViewWithViews:@[Text(@"每",13,NSFontWeightRegular,Ink()),self.repeatInterval,self.repeatUnit]];frequency.spacing=8;[self.repeatInterval.widthAnchor constraintEqualToConstant:72].active=YES;add(frequency);
@@ -31,6 +31,7 @@
 - (void)recurrenceChanged:(id)sender {
     BOOL enabled=self.repeatMode.indexOfSelectedItem>0;
     self.repeatUnit.superview.hidden=!enabled;self.repeatWeekdays.firstObject.superview.hidden=!enabled || self.repeatUnit.indexOfSelectedItem!=1 || self.repeatMode.indexOfSelectedItem!=1;self.holidayPolicy.hidden=!enabled;self.repeatEnd.hidden=!enabled;self.repeatUntil.hidden=!enabled || self.repeatEnd.indexOfSelectedItem!=1;self.repeatCount.hidden=!enabled || self.repeatEnd.indexOfSelectedItem!=2;
+    self.recurrenceSection.hidden=!enabled && !self.task[@"seriesID"];
     if(!enabled){self.repeatPreview.stringValue=self.task[@"seriesID"] ? @"选择“本次及以后”可停止后续重复；已完成记录保留。":@"";return;}
     NSError *error=nil;NSDictionary *r=[self recurrenceRule];NSCalendarUnit unit=[@[@(NSCalendarUnitDay),@(NSCalendarUnitWeekOfYear),@(NSCalendarUnitMonth),@(NSCalendarUnitYear)][self.repeatUnit.indexOfSelectedItem] unsignedIntegerValue];NSDate *end=[self.teacherCalendar dateByAddingUnit:unit value:MAX(1,self.repeatInterval.integerValue)*6 toDate:self.selectedDate options:0];
     // Preview completion-based schedules from the selected first deadline. Actual

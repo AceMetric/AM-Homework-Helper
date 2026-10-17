@@ -86,6 +86,18 @@ int main(int argc, const char *argv[]) {
             Check(NSMaxY(editor.notesField.enclosingScrollView.superview.frame) <= NSHeight(editor.notesField.enclosingScrollView.superview.superview.frame), @"long form fits its scrolling document");
             [editor.window orderOut:nil]; app.editor = nil;
         }
+        for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]){
+            NSApp.appearance=[NSAppearance appearanceNamed:appearance];
+            EditorController *compact=[[EditorController alloc] initWithTask:app.tasks.firstObject owner:app];
+            for(NSValue *size in @[[NSValue valueWithSize:NSMakeSize(680,620)],[NSValue valueWithSize:NSMakeSize(720,640)],[NSValue valueWithSize:NSMakeSize(560,500)]]){
+                [compact.window setContentSize:size.sizeValue];[compact layoutEditor];
+                if(size.sizeValue.width>=680){BOOL fits=NSHeight(compact.editorBody.bounds)<=NSHeight(compact.editorScroll.contentView.bounds)+1;if(!fits)fprintf(stderr,"compact body=%s viewport=%s\n",NSStringFromRect(compact.editorBody.bounds).UTF8String,NSStringFromRect(compact.editorScroll.contentView.bounds).UTF8String);Check(fits,@"ordinary editor fits 680 by 620 without outer scrolling");}
+                Check(compact.notesHeight.constant>=80 && compact.notesHeight.constant<=120,@"notes retain four-line minimum and compact maximum");
+                NSRect date=[compact.dateSection convertRect:compact.dateSection.bounds toView:compact.editorBody],repeat=[compact.repeatModeSection convertRect:compact.repeatModeSection.bounds toView:compact.editorBody];Check(!NSIntersectsRect(date,repeat),@"date and recurrence remain separate through width changes");
+                NSRect footer=[compact.saveButton convertRect:compact.saveButton.bounds toView:compact.window.contentView];Check(NSMaxY(footer)<=NSHeight(compact.window.contentView.bounds),@"compact save stays visible when content overflows");
+            }
+            [compact.window orderOut:nil];
+        }
         EditorOutsideEvent *outside=EditorOutsideEvent.new;outside.window=app.window;outside.locationInWindow=NSMakePoint(NSWidth(app.window.frame)-4,4);
         for(NSUInteger attempt=0;attempt<2;attempt++){
             app.editor=[[EditorController alloc] initWithTask:app.tasks.firstObject owner:app];NSWindow *sheet=app.editor.window;[sheet setFrame:NSMakeRect(NSMinX(app.window.frame)+40,NSMinY(app.window.frame)+40,560,500) display:NO];[app.window beginSheet:sheet completionHandler:nil];

@@ -82,5 +82,7 @@ void SSDeleteSecret(NSString *account) { SecItemDelete((__bridge CFDictionaryRef
 
 #import "AMSubmissionStore.inc"
 
+#import "AMSubmissionSettings.inc"
 #import "AMBackup.inc"
+#import "AMSubmissionCompletion.inc"
 #import "AMOperation.inc"

@@ -322,6 +322,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSDatePicker *nativeDeadlinePicker;
 @property NSTextField *calendarHint;
 @property NSStackView *editorBody;
+@property NSScrollView *editorScroll;
+@property NSStackView *dateRepeatRow,*dateSection,*repeatModeSection;
+@property NSLayoutConstraint *repeatModeWidth,*stackedDateWidth,*stackedRepeatWidth,*notesHeight;
+@property BOOL layingOutEditor;
 @property NSStackView *recurrenceSection;
 @property NSPopUpButton *repeatMode,*repeatUnit,*holidayPolicy,*repeatEnd,*seriesScope;
 @property NSTextField *repeatInterval,*repeatCount,*repeatPreview;
@@ -423,6 +427,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSInteger scheduledCount;
 @property NSInteger notificationGeneration;
 @property AMReminderScheduler *reminderScheduler;
+@property BOOL applyingSubmissionCompletions;
+@property NSSet *lastSubmissionEditingIDs;
+@property BOOL submissionCompletionUndoAvailable;
+- (void)applyVerifiedSubmissions;
 @property BOOL preview;
 @property BOOL loading;
 @property BOOL taskStoreBlocked;
@@ -523,8 +531,9 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)validateDate {
     NSDate *date = DDLParseDate(self.deadlineField.stringValue, NSDate.date, self.teacherCalendar);
     if (!date) { self.validation.stringValue = @"请输入有效日期，例如：明天 20:00、下周五、2026-10-01 23:59"; self.validation.textColor = NSColor.systemRedColor; }
-    else if (date.timeIntervalSinceNow <= 0) { self.validation.stringValue = @"这个时间已经过去，保存后会标记为逾期；不会补发过去的提醒。"; self.validation.textColor = NSColor.systemOrangeColor; }
+    else if (date.timeIntervalSinceNow <= 0) { self.validation.stringValue = @"已逾期，不补发提醒"; self.validation.textColor = NSColor.systemOrangeColor; }
     else { self.validation.stringValue = [NSString stringWithFormat:@"%@ · %@", DDLFormatDate(date, @"M月d日 EEEE HH:mm"), DDLRemaining(date, NSDate.date, NO)]; self.validation.textColor = Accent(); }
+    [self layoutEditor];
 }
 - (void)updateDate:(NSDate *)date {
     if (!date) return; self.nativeDeadlinePicker.dateValue=date; NSDictionary *dayInfo=DDLChinaDayInfo(date,self.teacherCalendar,self.appDelegate.preview ? @{}:SSCalendarOverrides());self.calendarHint.stringValue=([dayInfo[@"known"] boolValue] ? dayInfo[@"name"]:[NSString stringWithFormat:@"%@ · %@",dayInfo[@"name"],dayInfo[@"source"]]); self.selectedDate = date; self.deadlineField.stringValue = [self formatTeacherDate:date]; self.calendar.selection = date; self.calendar.month = date; self.timePicker.stringValue = [self timeString:date]; [self.calendar reload]; [self validateDate];
@@ -742,7 +751,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.courseWindow.reviewCandidate = ^(NSDictionary *candidate) { [weakSelf reviewGitHubCandidate:candidate]; };
     self.courseWindow.restoreTaskNotes=^(NSString *identifier){NSButton *button=NSButton.new;button.identifier=identifier;[weakSelf restoreTaskNotes:button];};
     self.courseWindow.editTask = ^(NSString *identifier) { NSMenuItem *item = NSMenuItem.new; item.representedObject = identifier; [weakSelf editTask:item]; };
-    self.courseWindow.stateChanged = ^{ [weakSelf renderSidebar]; if(weakSelf.page==4)[weakSelf renderHeader]; if (weakSelf.page == 0) [weakSelf renderTaskContent]; };
+    self.courseWindow.stateChanged = ^{ [weakSelf renderSidebar]; if(weakSelf.page==4)[weakSelf renderHeader]; if (weakSelf.page == 0) [weakSelf renderTaskContent]; dispatch_async(dispatch_get_main_queue(),^{NSSet *editing=weakSelf.courseWindow.editingTaskIDs;if(![weakSelf.lastSubmissionEditingIDs isEqual:editing]){weakSelf.lastSubmissionEditingIDs=editing;[weakSelf applyVerifiedSubmissions];}}); };
+    self.courseWindow.verifiedSubmissionsChanged=^{[weakSelf applyVerifiedSubmissions];};
     self.exitCoordinator = SSExitCoordinator.new;
     self.exitCoordinator.operationBusy = ^BOOL { return AMExitBlockingOperations().count>0 || weakSelf.courseWindow.operationBusy || weakSelf.backgroundSaveCount>0; };
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(backgroundOperationsChanged:) name:AMOperationsChanged object:nil];
@@ -891,7 +901,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     [self.root layoutSubtreeIfNeeded];
     CGFloat top=NSMaxY(self.header.frame)+16,w=NSWidth(self.root.bounds),h=NSHeight(self.root.bounds);
     NSRect frame=NSMakeRect(24,top,MAX(0,w-48),MAX(0,h-top-24));
-    self.courseWindow.view.hidden=self.page<3 || self.page==5;self.helpController.view.hidden=self.page!=5;
+    BOOL courseWasHidden=self.courseWindow.view.hidden;self.courseWindow.view.hidden=self.page<3 || self.page==5;if(courseWasHidden!=self.courseWindow.view.hidden)dispatch_async(dispatch_get_main_queue(),^{[self applyVerifiedSubmissions];});self.helpController.view.hidden=self.page!=5;
     self.helpController.view.frame=frame;
     if(self.courseWindow){self.courseWindow.view.frame=frame;[self.courseWindow layoutContent];}
     [self layoutTaskArea];
@@ -967,6 +977,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     Put(detailDocument,Text([NSString stringWithFormat:@"截止：%@",DDLFormatDate(task[@"due"],@"yyyy年M月d日 HH:mm")],12,NSFontWeightRegular,Muted()),12,52,w-48,22);
     Put(detailDocument,Text([task[@"archived"] boolValue] ? @"已归档":([task[@"completed"] boolValue] ? @"已完成":@"待完成"),12,NSFontWeightRegular,Muted()),12,76,w-48,20);
     Put(detailDocument,text,0,100,w-24,textHeight);Put(detailDocument,planner.view,0,100+textHeight,w-24,plannerHeight);NSString *lastLabel=@"尚无关联提交";for(NSDictionary *record in AMSubmissionRecords(NULL) ?: @[])if([record[@"taskIDs"] containsObject:task[@"id"]])lastLabel=AMSubmissionStateLabel(record);
+    if([task[@"completed"] boolValue] && [task[@"completionEvidence"] isKindOfClass:NSDictionary.class])lastLabel=[@"自动完成 · " stringByAppendingString:[task[@"completionEvidence"][@"commit"] substringToIndex:12]];
     CGFloat sy=100+textHeight+plannerHeight;Put(detailDocument,Text([@"提交：" stringByAppendingString:lastLabel],12,NSFontWeightRegular,Muted()),12,sy,w-48,24);
     ActionButton *history=Button(@"提交记录",self,@selector(taskSubmissionHistory:),0);history.identifier=task[@"id"];Put(detailDocument,history,12,sy+32,120,32);
     if([task[@"sourceRepository"] length] || [task[@"courseRepository"] length]){ActionButton *submit=Button(@"提交作业…",self,@selector(submitSelectedTask:),0);submit.identifier=task[@"id"];Put(detailDocument,submit,144,sy+32,120,32);}
@@ -1084,7 +1095,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)showSettings:(id)sender {
     [self showWindow]; if (self.window.attachedSheet) return;
     self.settingsController = AMSettingsController.new;
-    NSMutableDictionary *displaySettings=[self.preview ? @{@"mode":@"rules",@"endpoint":@"http://localhost:11434",@"model":@"",@"automaticImport":@YES} : SSRecognitionSettings() mutableCopy];NSMutableArray *available=NSMutableArray.array;[available addObjectsFromArray:self.courseWindow.courseRepositoryNames];displaySettings[@"availableCourses"]=available;NSDictionary *lastLocal=self.preview ? nil:SSReadPlist(@"recognition-last-result.plist");if(lastLocal[@"date"])[displaySettings setObject:[NSString stringWithFormat:@"最近本地分析：%@ · %@ · %@",lastLocal[@"course"],DDLFormatDate(lastLocal[@"date"],@"M/d HH:mm"),[lastLocal[@"success"] boolValue] ? @"完成":@"部分失败，规则可用"] forKey:@"localStatus"];[self.settingsController updateSettings:displaySettings];
+    NSMutableDictionary *displaySettings=[self.preview ? @{@"mode":@"rules",@"endpoint":@"http://localhost:11434",@"model":@"",@"automaticImport":@YES} : SSRecognitionSettings() mutableCopy];NSMutableArray *available=NSMutableArray.array;[available addObjectsFromArray:self.courseWindow.courseRepositoryNames];displaySettings[@"availableCourses"]=available;displaySettings[@"autoCompleteSubmittedAssignments"]=@(self.preview || AMSubmissionAutoCompletionEnabled());NSDictionary *lastLocal=self.preview ? nil:SSReadPlist(@"recognition-last-result.plist");if(lastLocal[@"date"])[displaySettings setObject:[NSString stringWithFormat:@"最近本地分析：%@ · %@ · %@",lastLocal[@"course"],DDLFormatDate(lastLocal[@"date"],@"M/d HH:mm"),[lastLocal[@"success"] boolValue] ? @"完成":@"部分失败，规则可用"] forKey:@"localStatus"];[self.settingsController updateSettings:displaySettings];
     __weak typeof(self) owner = self;
     self.settingsController.localHandler=^(NSDictionary *configuration,NSString *action,void (^ready)(NSDictionary *)) {
         if(owner.preview){ready(@{@"models":@[@{@"name":@"示例本地模型",@"digest":@"synthetic"}],@"message":@"模拟预览：不会连接真实模型服务。"});return;}
@@ -1112,7 +1123,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         }
         if ([settings[@"mode"] isEqual:@"cloud"] && key.length && !SSWriteSecret(@"recognition-api",@{@"key":key,@"endpoint":settings[@"endpoint"]})) return @"密钥未能存入钥匙串，设置尚未保存。";
         NSMutableDictionary *next=settings.mutableCopy; next[@"cloudConsent"]=@([settings[@"mode"] isEqual:@"cloud"]);
-        return SSWritePlist(@"recognition-settings.plist",next,&error) ? @"" : (error.localizedDescription ?: @"设置保存失败。");
+        [next removeObjectForKey:@"autoCompleteSubmittedAssignments"];
+        if(!SSWritePlist(@"recognition-settings.plist",next,&error))return error.localizedDescription ?: @"设置保存失败。";
+        if(!AMSetSubmissionAutoCompletionEnabled([settings[@"autoCompleteSubmittedAssignments"] boolValue],&error)){SSWritePlist(@"recognition-settings.plist",previous,NULL);return error.localizedDescription ?: @"设置保存失败。";}
+        return @"";
     };
     self.settingsController.actionHandler = ^(NSString *action) {
 
@@ -1405,12 +1419,13 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)dismissSearchAtWindowPoint:(NSPoint)point {if(self.search.currentEditor && !NSPointInRect([self.search convertPoint:point fromView:nil],self.search.bounds))[self endSearchEditing];}
 - (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)command {if(control==self.search && command==@selector(cancelOperation:)){[self endSearchEditing];return YES;}return NO;}
 - (void)showWindow { [self.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES]; }
-- (NSArray *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar{return @[@"AMOverviewMode",@"AMCalendarStatus",@"AMCourseSections",@"AMTaskFilter",@"AMSort",@"AMSearch",@"AMNewTask",NSToolbarFlexibleSpaceItemIdentifier,NSToolbarSpaceItemIdentifier];}
+- (NSArray *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar{return @[@"AMOverviewMode",@"AMCalendarStatus",@"AMCourseSections",@"AMTaskFilter",@"AMSort",@"AMSearch",@"AMNewTask",@"AMUndoSubmissionCompletion",NSToolbarFlexibleSpaceItemIdentifier,NSToolbarSpaceItemIdentifier];}
 - (NSArray *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar{return @[NSToolbarFlexibleSpaceItemIdentifier];}
 - (NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSString *)identifier willBeInsertedIntoToolbar:(BOOL)flag {
     if([identifier isEqual:@"AMOverviewMode"]){if(!self.overviewModeControl)self.overviewModeControl=Segments(@[@"今日",@"本周"],self,@selector(changeOverviewMode:));self.overviewModeControl.selectedSegment=self.weeklyMode ? 1:0;return SegmentToolbarItem(identifier,@"总览显示方式",self.overviewModeControl);}
     if([identifier isEqual:@"AMCalendarStatus"])return SegmentToolbarItem(identifier,@"日历任务状态",self.calendarStatus);
     if([identifier isEqual:@"AMCourseSections"])return SegmentToolbarItem(identifier,@"课程分区",self.courseWindow.navigationControl);
+    if([identifier isEqual:@"AMUndoSubmissionCompletion"]){NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"撤销自动完成";item.toolTip=@"撤销自动完成（⌘Z）";item.image=[NSImage imageWithSystemSymbolName:@"arrow.uturn.backward" accessibilityDescription:item.label];item.target=self;item.action=@selector(undo:);item.bordered=YES;return item;}
     if([identifier isEqual:@"AMSearch"]){NSSearchToolbarItem *item=[[NSSearchToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"搜索任务";item.searchField=self.search;item.preferredWidthForSearchField=240;return item;}
     if([identifier isEqual:@"AMNewTask"]){NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"快速录入作业";item.toolTip=@"快速录入作业（⌘⇧N）";item.image=[NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:item.label];item.target=self;item.action=@selector(quickEntry:);item.bordered=YES;
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
@@ -1422,7 +1437,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     return nil;
 }
 - (void)refreshPageToolbar {
-    NSMutableArray *desired=NSMutableArray.array;if(self.page==0)[desired addObject:@"AMOverviewMode"];if(self.page==1)[desired addObject:@"AMCalendarStatus"];if(self.page==4)[desired addObject:@"AMCourseSections"];if(self.page==2)[desired addObjectsFromArray:@[@"AMTaskFilter",@"AMSort"]];[desired addObject:NSToolbarFlexibleSpaceItemIdentifier];if(self.page<3)[desired addObjectsFromArray:@[@"AMSearch",@"AMNewTask"]];
+    NSMutableArray *desired=NSMutableArray.array;if(self.page==0)[desired addObject:@"AMOverviewMode"];if(self.page==1)[desired addObject:@"AMCalendarStatus"];if(self.page==4)[desired addObject:@"AMCourseSections"];if(self.page==2)[desired addObjectsFromArray:@[@"AMTaskFilter",@"AMSort"]];[desired addObject:NSToolbarFlexibleSpaceItemIdentifier];if(self.submissionCompletionUndoAvailable)[desired addObject:@"AMUndoSubmissionCompletion"];if(self.page<3)[desired addObjectsFromArray:@[@"AMSearch",@"AMNewTask"]];
     NSToolbar *toolbar=self.window.toolbar;
     for(NSInteger index=(NSInteger)toolbar.items.count-1;index>=0;index--)if(![desired containsObject:toolbar.items[index].itemIdentifier])[toolbar removeItemAtIndex:index];
     for(NSUInteger index=0;index<desired.count;index++){if(index<toolbar.items.count && [toolbar.items[index].itemIdentifier isEqual:desired[index]])continue;[toolbar insertItemWithItemIdentifier:desired[index] atIndex:index];}
@@ -1594,18 +1609,35 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (self.window.attachedSheet) return; NSDictionary *task = [self taskWithID:[self identifierForSender:sender]]; if (!task) return;
     self.editor = [[EditorController alloc] initWithTask:task owner:self]; [self.window beginSheet:self.editor.window completionHandler:nil];
 }
-- (void)closeEditor { [self.window endSheet:self.editor.window]; [self.editor.window orderOut:nil]; self.editor = nil; }
+- (void)closeEditor { [self.window endSheet:self.editor.window]; [self.editor.window orderOut:nil]; self.editor = nil; [self applyVerifiedSubmissions]; }
 - (NSArray *)snapshot {NSMutableArray *result=NSMutableArray.array;for(NSDictionary *task in self.tasks){NSMutableDictionary *copy=task.mutableCopy;if(task[@"subtasks"])copy[@"subtasks"]=[[NSArray alloc] initWithArray:task[@"subtasks"] copyItems:YES];[result addObject:copy.copy];}return result.copy;}
 - (BOOL)replaceTasks:(NSArray *)tasks action:(NSString *)action error:(NSError **)error {
     NSArray *expanded=self.recurrenceSeries ? DDLMaterializeRecurringTasks(tasks,self.recurrenceSeries,[Cal() startOfDayForDate:NSDate.date],[Cal() dateByAddingUnit:NSCalendarUnitDay value:90 toDate:NSDate.date options:0],self.preview ? @{}:SSCalendarOverrides(),error):tasks;if(!expanded)return NO;
     NSArray *normalized=DDLNormalizeTasks(expanded); if (normalized.count!=expanded.count) {if(error)*error=[NSError errorWithDomain:@"AMReview" code:1 userInfo:@{NSLocalizedDescriptionKey:@"部分任务格式无效，未写入任何修改。请核对名称和截止时间后重试。"}];return NO;}
     if (!self.preview) {
         if(self.taskStoreBlocked){if(error)*error=[NSError errorWithDomain:@"AMTaskStore" code:2 userInfo:@{NSLocalizedDescriptionKey:@"原任务文件损坏。请先预览恢复点，恢复后再保存任务。"}];return NO;}
-        NSDate *start=NSDate.date;BOOL saved=(self.recurrenceSeries ? SSSaveScheduledTasks([self snapshot],normalized,self.recurrenceSeries,SSCalendarOverrides(),error):SSSaveTasks([self snapshot],normalized,error));SSDiagnostic(@"save",saved ? @"success":@"failed",-start.timeIntervalSinceNow);if(!saved)return NO;
+        NSDate *start=NSDate.date;BOOL saved=AMSaveTasksWithSubmissionDecisions([self snapshot],normalized,self.recurrenceSeries ?: @[],SSCalendarOverrides(),error);SSDiagnostic(@"save",saved ? @"success":@"failed",-start.timeIntervalSinceNow);if(!saved)return NO;
     }
     [self prepareUndo:action]; self.tasks=[normalized mutableCopy];
     if (!self.preview) [self refreshReminders];
     [self.courseWindow refreshPresentation]; [self render]; return YES;
+}
+- (void)applyVerifiedSubmissions {
+    if(self.preview || self.taskStoreBlocked || self.applyingSubmissionCompletions || !self.courseWindow)return;
+    self.applyingSubmissionCompletions=YES;
+    NSMutableSet *deferred=[self.courseWindow.editingTaskIDs mutableCopy];if(!deferred)deferred=NSMutableSet.set;if(self.editor.task[@"id"])[deferred addObject:self.editor.task[@"id"]];
+    NSError *error=nil;NSDictionary *result=AMApplySubmissionCompletions([self snapshot],self.courseWindow.submissionCourses,deferred,self.recurrenceSeries ?: @[],SSCalendarOverrides(),&error);
+    if(!result){NSString *message=error.localizedDescription ?: @"自动完成未保存，请在提交记录中重试。";if(![self.notice isEqual:message]){self.notice=message;[self render];}}
+    else if([result[@"completedIDs"] count]){
+        // A completion callback can follow editor Save in the same event.
+        // Keep its undo separate so edited fields survive undoing completion.
+        while(self.taskUndo.groupingLevel>0 && !self.taskUndo.isUndoing && !self.taskUndo.isRedoing)[self.taskUndo endUndoGrouping];
+        [self.taskUndo beginUndoGrouping];[self prepareUndo:@"提交后自动完成"];[self.taskUndo endUndoGrouping];self.tasks=[DDLNormalizeTasks(result[@"tasks"]) mutableCopy];self.submissionCompletionUndoAvailable=YES;
+        self.notice=[NSString stringWithFormat:@"已完成 %lu 项",(unsigned long)[result[@"completedIDs"] count]];
+        [self refreshReminders];[self.courseWindow showSubmissionCompletion:[result[@"completedIDs"] count]];[self render];
+    }
+    self.applyingSubmissionCompletions=NO;
+    if(result)[self.courseWindow reverifyDeferredSubmissionsExcept:deferred];
 }
 - (NSString *)saveReviewItems:(NSArray *)items automatic:(BOOL)automatic {
     // A bounded local trace contains only stages/outcomes, never course content,
@@ -1665,6 +1697,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSError *error=nil;self.notice=[self replaceTasks:next action:@"批量完成" error:&error] ? @"已批量完成，可按 ⌘Z 撤销。" : (error.localizedDescription ?: @"保存失败。");[self render];
 }
 - (void)prepareUndo:(NSString *)name {
+    self.submissionCompletionUndoAvailable=NO;
     NSArray *snapshot=[self snapshot],*series=self.undoSeriesOverride ?: self.recurrenceSeries;self.undoSeriesOverride=nil;
     [self.taskUndo registerUndoWithTarget:self handler:^(AppDelegate *target){[target restoreTaskSnapshot:snapshot series:series];}];[self.taskUndo setActionName:name];
 }
@@ -1738,7 +1771,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         NSMutableArray *records=[AMSubmissionRecords(&error) mutableCopy];if(!records){self.notice=error.localizedDescription;[self render];return;}
         NSMutableDictionary *mapping=NSMutableDictionary.dictionary;
         for(NSDictionary *item in valid){NSMutableDictionary *content=item.mutableCopy;[content removeObjectForKey:@"id"];for(NSDictionary *target in merged){NSMutableDictionary *other=target.mutableCopy;[other removeObjectForKey:@"id"];if([other isEqual:content]){mapping[item[@"id"]]=target[@"id"];break;}}}
-        for(NSDictionary *record in envelope[@"submissions"]){NSMutableDictionary *copy=record.mutableCopy;NSMutableArray *links=NSMutableArray.array;for(NSString *oldID in record[@"taskIDs"])if(mapping[oldID])[links addObject:mapping[oldID]];copy[@"taskIDs"]=links;
+        for(NSDictionary *record in envelope[@"submissions"]){NSMutableDictionary *copy=record.mutableCopy;NSMutableArray *links=NSMutableArray.array;for(NSString *oldID in record[@"taskIDs"])if(mapping[oldID])[links addObject:mapping[oldID]];copy[@"taskIDs"]=links;NSMutableDictionary *decisions=NSMutableDictionary.dictionary;for(NSString *oldID in record[@"completionDecisions"])if(mapping[oldID])decisions[mapping[oldID]]=record[@"completionDecisions"][oldID];if(record[@"completionDecisions"])copy[@"completionDecisions"]=decisions;
             if([records containsObject:copy])continue;for(NSDictionary *old in records)if([old[@"id"] isEqual:copy[@"id"]]){copy[@"id"]=NSUUID.UUID.UUIDString;break;}[records addObject:copy];}
         NSMutableArray *series=[self.recurrenceSeries mutableCopy] ?: NSMutableArray.array;
         for(NSDictionary *incoming in envelope[@"series"] ?: @[]){BOOL found=NO;for(NSDictionary *old in series)if([old[@"id"] isEqual:incoming[@"id"]]){found=YES;break;}if(!found)[series addObject:incoming];}
@@ -1809,9 +1842,13 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     }];
 }
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)notification withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
-    NSString *taskID=notification.request.content.userInfo[@"taskID"];
-    if(taskID){NSDictionary *task=[self taskWithID:taskID];if(!task || [task[@"completed"] boolValue] || [task[@"archived"] boolValue] || [task[@"deleted"] boolValue]){completionHandler(UNNotificationPresentationOptionNone);return;}}
-    completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionList | UNNotificationPresentationOptionSound);
+    void (^present)(void)=^{
+        AMReminderScheduler *parser=self.reminderScheduler ?: AMReminderScheduler.new;
+        NSString *taskID=[parser taskIDForRequest:notification.request];
+        if(taskID.length){NSDictionary *task=[self taskWithID:taskID];if(!task || [task[@"completed"] boolValue] || [task[@"archived"] boolValue] || [task[@"deleted"] boolValue]){completionHandler(UNNotificationPresentationOptionNone);return;}}
+        completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionList | UNNotificationPresentationOptionSound);
+    };
+    if(NSThread.isMainThread)present();else dispatch_async(dispatch_get_main_queue(),present);
 }
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center didReceiveNotificationResponse:(UNNotificationResponse *)response withCompletionHandler:(void (^)(void))completionHandler {
     dispatch_async(dispatch_get_main_queue(), ^{

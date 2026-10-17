@@ -562,6 +562,7 @@ private struct ReviewBatchPreview:View {
     @objc public var decisionHandler:(([NSDictionary],Bool)->String)? {get{state.decision}set{state.decision=newValue}}
     @objc public var sourceHandler: ((String)->NSDictionary?)? {get{state.sourceResolver}set{state.sourceResolver=newValue}}
     @objc public var hasUnsavedChanges: Bool {state.dirty}
+    @objc public var editingTaskID:String? {(state.current?["existingTask"] as? NSDictionary)?["id"] as? String}
     @objc public var paused: Bool {get{state.paused}set{state.paused=newValue}}
     @objc public func updateRecords(_ records:[NSDictionary]) {state.refresh(records)}
     @objc public func resolveUnsavedChanges() -> Bool {state.resolve()}
@@ -579,6 +580,7 @@ private struct ReviewBatchPreview:View {
     @Published var key=""
     @Published var message=""
     @Published var automatic=true
+    @Published var autoCompleteSubmittedAssignments=true
     @Published var localAutomatic=true
     @Published var modelDigest=""
     @Published var installedModels:[NSDictionary]=[]
@@ -591,7 +593,7 @@ private struct ReviewBatchPreview:View {
     var availableCourses:[String]=[]
     private var baseline:NSDictionary=[:]
     private var savedValues:NSDictionary {
-        var values:[String:Any]=["mode":mode,"automatic":automatic]
+        var values:[String:Any]=["mode":mode,"automatic":automatic,"autoCompleteSubmittedAssignments":autoCompleteSubmittedAssignments]
         if mode != "rules" {values["endpoint"]=endpoint.trimmingCharacters(in:.whitespacesAndNewlines);values["model"]=model.trimmingCharacters(in:.whitespacesAndNewlines)}
         if mode == "cloud" {values["courses"]=cloudCourses.sorted()}
         if mode == "local" {values["localAutomatic"]=localAutomatic}
@@ -600,7 +602,7 @@ private struct ReviewBatchPreview:View {
     var dirty:Bool {get{!key.isEmpty || !savedValues.isEqual(baseline)}set{if !newValue {baseline=savedValues}}}
     var save:((NSDictionary,String)->String)?
     var action:((String)->Void)?
-    func apply(_ settings:NSDictionary) {mode=string(settings,"mode");endpoint=string(settings,"endpoint");model=string(settings,"model");automatic=flag(settings,"automaticImport");localAutomatic=settings["localAutomatic"] as? Bool ?? true;modelDigest=string(settings,"modelDigest");cloudCourses=Set(settings["cloudCourses"] as? [String] ?? []);availableCourses=settings["availableCourses"] as? [String] ?? [];localStatus=string(settings,"localStatus");lastMode=mode;modeProfiles[mode]=(endpoint,model,modelDigest);key="";dirty=false}
+    func apply(_ settings:NSDictionary) {mode=string(settings,"mode");endpoint=string(settings,"endpoint");model=string(settings,"model");automatic=flag(settings,"automaticImport");autoCompleteSubmittedAssignments=settings["autoCompleteSubmittedAssignments"] as? Bool ?? true;localAutomatic=settings["localAutomatic"] as? Bool ?? true;modelDigest=string(settings,"modelDigest");cloudCourses=Set(settings["cloudCourses"] as? [String] ?? []);availableCourses=settings["availableCourses"] as? [String] ?? [];localStatus=string(settings,"localStatus");lastMode=mode;modeProfiles[mode]=(endpoint,model,modelDigest);key="";dirty=false}
     func changeMode(_ value:String) {
         guard lastMode != value else{return};modeProfiles[lastMode]=(endpoint,model,modelDigest)
         if let profile=modeProfiles[value] {endpoint=profile.0;model=profile.1;modelDigest=profile.2}
@@ -620,7 +622,7 @@ private struct ReviewBatchPreview:View {
         if localProbe==nil {localBusy=false;localStatus="本地服务检测接口不可用。"}
     }
     func persist() -> Bool {
-        let result=save?(["mode":mode,"endpoint":endpoint,"model":model,"automaticImport":automatic,"localAutomatic":localAutomatic,"modelDigest":modelDigest,"cloudCourses":Array(cloudCourses).sorted()] as NSDictionary,key) ?? "无法保存设置。"
+        let result=save?(["mode":mode,"endpoint":endpoint,"model":model,"automaticImport":automatic,"autoCompleteSubmittedAssignments":autoCompleteSubmittedAssignments,"localAutomatic":localAutomatic,"modelDigest":modelDigest,"cloudCourses":Array(cloudCourses).sorted()] as NSDictionary,key) ?? "无法保存设置。"
         message=result.isEmpty ? "设置已保存；下次检查作业时生效。" : result
         if result.isEmpty {key="";dirty=false};return result.isEmpty
     }
@@ -666,10 +668,9 @@ private struct SettingsWorkspace:View {
                         }
                         Toggle("自动加入完整明确日期的新作业",isOn:binding(\.automatic))
                         Text("相对日期、缺少时间、考试及更新建议需审核。").foregroundStyle(.secondary)
-                        Button("保存识别设置"){_ = state.persist()}.amPrimaryAction().disabled(state.localBusy)
-                        if !state.message.isEmpty {Text(state.message).textSelection(.enabled)}
                     }.padding(8).frame(maxWidth:.infinity,alignment:.leading)
                 }
+                WorkspaceSection("提交作业") {Toggle("提交后自动完成作业",isOn:binding(\.autoCompleteSubmittedAssignments))}
                 WorkspaceSection("助手识别 · Skill") {VStack(alignment:.leading,spacing:12){HStack{Button("助手识别"){state.action?("skill-export")}.amPrimaryAction();Button("批次与进度…"){state.action?("skill-status")};Spacer()};WorkspaceExpandedSection("课程与兼容操作"){HStack{Button("调整课程…"){state.action?("skill-courses")};Button("重新分析全部…"){state.action?("skill-all")};Button("手动导入…"){state.action?("skill-import")}}}}}
                 WorkspaceSection("作业文件在线复核") {VStack(alignment:.leading,spacing:10){Button("配置在线复核…"){state.action?("online-review")}}}
                 WorkspaceSection("账户与提醒") {HStack{Button("GitHub 账户…"){state.action?("account")};Button("提醒设置与测试…"){state.action?("notifications")};Button("排查提醒…"){state.action?("notification-help")};Spacer()}.padding(8)}
@@ -678,7 +679,10 @@ private struct SettingsWorkspace:View {
                 WorkspaceSection("数据与反馈"){HStack{Button("恢复任务…"){state.action?("recovery")};Button("诊断与反馈…"){state.action?("diagnostics")};Spacer()}}
                 WorkspaceExpandedSection("高级设置") {Button("GitHub 登录与兼容设置…"){state.action?("advanced")}.padding(.top,8)}
             }.padding(24)
-        }}.onChange(of:state.mode){state.changeMode($0)}.font(.system(size:13)).frame(minWidth:540,minHeight:520).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions()
+        }
+        Divider()
+        HStack {if !state.message.isEmpty {Text(state.message).font(.caption).textSelection(.enabled)};Spacer();Button("保存设置"){_ = state.persist()}.amPrimaryAction().disabled(state.localBusy)}.padding(.horizontal,24).padding(.vertical,12)
+        }.onChange(of:state.mode){state.changeMode($0)}.font(.system(size:13)).frame(minWidth:540,minHeight:520).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions()
     }
 }
 @objc(AMSettingsController)
@@ -825,6 +829,7 @@ private struct CourseWorkspace:View {
     @objc public var paused:Bool {get{state.review.paused}set{state.review.paused=newValue;state.paused=newValue}}
     @objc public var decisionHandler:(([NSDictionary],Bool)->String)? {get{state.review.decision}set{state.review.decision=newValue}}
     @objc public var hasUnsavedChanges:Bool {state.review.dirty}
+    @objc public var editingTaskID:String? {(state.review.current?["existingTask"] as? NSDictionary)?["id"] as? String}
     @objc public func resolveUnsavedChanges()->Bool {state.review.resolve()}
     @objc public func discardChanges(){state.review.dirty=false;state.review.refresh(state.review.records)}
     @objc public func saveCurrent()->Bool {state.review.saveCurrent(advance:false)}
@@ -1078,12 +1083,15 @@ private struct SubmissionHistoryView:View {
         ScrollView{VStack(alignment:.leading,spacing:16){
             Text(string(r,"label")).font(.headline)
             Text("\(string(r,"repository")) · \(string(r,"branch"))").foregroundStyle(.secondary)
-            Text(string(r,"origin")=="external" ? (string(r,"kind")=="merge" ? "外部 Git 合并":"外部 Git 提交 · 作业关联待确认"):(string(r,"kind")=="submission" || string(r,"kind")=="existing" ? "作业提交":"课程同步／合并")).font(.caption)
+            Text(string(r,"origin")=="external" ? (string(r,"kind")=="merge" ? "外部 Git 合并":((r["taskIDs"] as? [String] ?? []).isEmpty ? "外部 Git 提交":"外部 Git 提交 · 已关联")):(string(r,"kind")=="submission" || string(r,"kind")=="existing" ? "作业提交":"课程同步／合并")).font(.caption)
             if string(r,"origin")=="external" && !flag(r,"teacherHistoryKnown"){Text("上游历史尚未完整核对；此记录暂未判断是否为作业。").font(.caption).foregroundStyle(.secondary)}
             Text(string(r,"message")).textSelection(.enabled)
             if !string(r,"commit").isEmpty{WorkspaceSection("提交版本"){Text(string(r,"commit")).font(.system(.caption,design:.monospaced)).textSelection(.enabled);Button("在 GitHub 查看"){state.action?("open",identifier(r))}}}
             WorkspaceSection("操作与核验"){Text("本机操作：\((r["date"] as? Date ?? Date()).formatted())");if let checked=r["checkedAt"] as? Date{Text("最近核验：\(checked.formatted())")};if let confirmed=r["confirmedAt"] as? Date{Text("曾确认推送：\(confirmed.formatted())")}}
             if let review=r["review"] as? NSDictionary {WorkspaceSection("提交前检查"){Text("\((review["date"] as? Date ?? Date()).formatted()) · \((review["count"] as? NSNumber)?.intValue ?? 0) 条建议");Text(string(review,"coverage")=="local" ? "本机检查，用户确认继续":(string(review,"coverage")=="partial" ? "含助手复核；部分未完成，用户确认继续":"含助手复核，用户确认继续")).foregroundStyle(.secondary)}}
+            if string(r,"completionStatus")=="completed" {Label("已处理关联作业",systemImage:"checkmark.circle").foregroundStyle(.secondary)}
+            else if string(r,"completionStatus")=="waiting" {Text("待关联作业").foregroundStyle(.secondary)}
+            else if string(r,"completionStatus")=="deferred" {Text("编辑结束后完成作业").foregroundStyle(.secondary)}
             WorkspaceSection("实际文件"){ForEach(r["files"] as? [String] ?? [],id:\.self){Text($0).font(.caption).textSelection(.enabled)}}
             HStack{Button("关联作业…"){state.action?("associate",identifier(r))};Button("重新核验"){state.action?("verify",identifier(r))};if string(r,"origin") != "external" && string(r,"state") != "confirmed" && !string(r,"commit").isEmpty{Button("核验并重试推送"){state.action?("retry",identifier(r))}}}.disabled(state.busy)
         }.padding(16).frame(maxWidth:.infinity,alignment:.leading)}
