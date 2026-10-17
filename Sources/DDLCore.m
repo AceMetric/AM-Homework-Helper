@@ -216,6 +216,24 @@ BOOL DDLMatchesFilter(NSDictionary *task, NSInteger filter, NSString *query, NSD
     return query.length == 0 || [searchable localizedStandardContainsString:query];
 }
 
+NSArray<NSDictionary *> *DDLTaskListItems(NSArray<NSDictionary *> *items, NSDate *now) {
+    NSArray *upcoming=[items filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *task, NSDictionary *bindings){
+        (void)bindings;
+        return [task[@"seriesID"] isKindOfClass:NSString.class] && [task[@"seriesID"] length] &&
+            ![task[@"completed"] boolValue] && ![task[@"archived"] boolValue] && ![task[@"deleted"] boolValue] &&
+            [task[@"due"] isKindOfClass:NSDate.class] && [task[@"due"] compare:now]==NSOrderedDescending;
+    }]];
+    upcoming=[upcoming sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){
+        NSComparisonResult order=[a[@"due"] compare:b[@"due"]];
+        return order==NSOrderedSame ? [(a[@"id"] ?: @"") compare:(b[@"id"] ?: @"")]:order;
+    }];
+    NSMutableDictionary<NSString *,NSNumber *> *counts=NSMutableDictionary.dictionary;
+    NSHashTable *hidden=[NSHashTable hashTableWithOptions:NSPointerFunctionsStrongMemory|NSPointerFunctionsObjectPointerPersonality];
+    for(NSDictionary *task in upcoming){NSString *series=task[@"seriesID"];NSUInteger count=[counts[series] unsignedIntegerValue]+1;counts[series]=@(count);if(count>2)[hidden addObject:task];}
+    // Preserve the caller's order and objects. No occurrence is deleted or changed.
+    return [items filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *task,NSDictionary *bindings){(void)bindings;return ![hidden containsObject:task];}]];
+}
+
 NSArray<NSMutableDictionary *> *DDLMergeTasks(NSArray *existing, NSArray *incoming) {
     NSMutableArray *merged = [DDLNormalizeTasks(existing) mutableCopy];
     for (NSMutableDictionary *task in DDLNormalizeTasks(incoming)) {

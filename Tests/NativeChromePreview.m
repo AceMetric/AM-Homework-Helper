@@ -43,6 +43,9 @@
         [self.courseWindow.courses addObject:[@{@"fork":fork,@"name":spec[0],@"upstream":upstream,@"enabled":@YES,@"defaultBranch":@"main",@"branch":@"main",@"path":SSDataDirectory().path} mutableCopy]];
         self.courseWindow.candidates[fork]=@[@{@"id":[@"visual-review-" stringByAppendingString:spec[1]],@"title":[spec[0] stringByAppendingString:@"实验报告"],@"kind":@"assignment",@"repository":upstream,@"path":@"assignment.md",@"blobSHA":@"synthetic",@"due":[NSDate dateWithTimeIntervalSinceNow:3*86400],@"summary":@"整理实验过程，解释结果并说明误差来源。",@"submissionRequirements":@"提交 Markdown 报告和对应图片。",@"snippet":@"实验报告：整理实验过程，解释结果并说明误差来源。",@"line":@1,@"timeZone":@"Asia/Shanghai"}];
     }
+    NSDate *anchor=[Cal() dateByAddingUnit:NSCalendarUnitDay value:1 toDate:[Cal() dateBySettingHour:20 minute:0 second:0 ofDate:NSDate.date options:0] options:0];
+    NSDictionary *weekly=@{@"id":@"preview-weekly-review",@"rule":@{@"mode":@"fixed",@"unit":@"week",@"interval":@1,@"anchor":anchor,@"timeZone":@"Asia/Shanghai",@"holidayPolicy":@"keep",@"count":@8},@"template":@{@"title":@"每周复习（模拟周期任务）",@"subject":@"学习",@"due":anchor,@"completed":@NO}};
+    self.recurrenceSeries=[(self.recurrenceSeries ?: @[]) arrayByAddingObject:weekly];[self generateRecurrencesThrough:nil];
     [self.courseWindow refreshCourses];[self openList:nil];[self render];
     NSString *revision=[NSBundle.mainBundle objectForInfoDictionaryKey:@"AMPreviewRevision"];self.window.title=[@"AM Helper 界面预览 · " stringByAppendingString:revision ?: @""];
     NSMenu *menu=NSApp.windowsMenu;

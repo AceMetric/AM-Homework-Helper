@@ -93,7 +93,7 @@ static NSCalendar *Cal(void) { NSCalendar *c = [[NSCalendar alloc] initWithCalen
         b.tasks = tasksByDay[[calendar startOfDayForDate:date]] ?: @[];
         b.target = self; b.action = @selector(selectDay:);
         NSDictionary *dayInfo=DDLChinaDayInfo(date,calendar,SSCalendarOverrides());
-        b.toolTip = [NSString stringWithFormat:@"%@ · %@ · %@ · %lu 项", DDLFormatDate(date, @"yyyy年M月d日 EEEE"),dayInfo[@"name"],dayInfo[@"source"], b.tasks.count]; b.accessibilityLabel = b.toolTip;
+        b.toolTip = [NSString stringWithFormat:@"%@ · %@ · %lu 项", DDLFormatDate(date, @"yyyy年M月d日 EEEE"),dayInfo[@"name"], b.tasks.count]; b.accessibilityLabel = b.toolTip;
         Put(self, b, 8 + (i % 7) * cellW, top + (i / 7) * cellH, cellW, cellH);
     }
 }
@@ -265,7 +265,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         Put(self, cell, 8 + (i % 7) * cellW + 2, 36 + (i / 7) * cellH + 2, cellW - 4, cellH - 4);
         CallbackButton *hit = [[CallbackButton alloc] initWithFrame:cell.bounds]; hit.title = @""; hit.tone = 3; hit.allowsHoverFill = NO; hit.accessibilityLabel = [NSString stringWithFormat:@"%@，%lu 项任务", DDLFormatDate(date, @"yyyy年M月d日 EEEE"), tasks.count]; hit.onClick = ^{ if (weakSelf.onSelect) weakSelf.onSelect(date, nil); }; [cell addSubview:hit];
         CallbackButton *number = [[CallbackButton alloc] initWithFrame:NSZeroRect]; number.title = DDLFormatDate(date, @"d"); number.tone = today ? 1 : 3; number.allowsHoverFill = NO; number.font = [NSFont systemFontOfSize:12]; number.onClick = hit.onClick; number.accessibilityLabel = hit.accessibilityLabel;
-        hit.toolTip=[NSString stringWithFormat:@"%@ · %@",info[@"name"],info[@"source"]];hit.accessibilityLabel=[hit.accessibilityLabel stringByAppendingFormat:@"，%@",info[@"name"]];
+        hit.toolTip=info[@"name"];hit.accessibilityLabel=[hit.accessibilityLabel stringByAppendingFormat:@"，%@",info[@"name"]];
         BOOL showDayInfo=![info[@"kind"] isEqual:@"workday"] && ![info[@"kind"] isEqual:@"weekend"];
         CGFloat eventStart=32;
         if(showDayInfo){BOOL marked=![info[@"kind"] isEqual:@"weekend"];NSString *caption=[info[@"kind"] isEqual:@"holiday"] ? [info[@"name"] stringByAppendingString:@"（休）"]:([info[@"kind"] isEqual:@"makeup"] ? @"调休（班）":info[@"name"]);Surface *badge=Box(marked ? ([info[@"rest"] boolValue] ? Tint():Panel()):nil,6);badge.identifier=@"calendar-day-kind";badge.toolTip=hit.toolTip;Put(cell,badge,6,NSHeight(cell.bounds)-24,cellW-16,18);NSTextField *holiday=Text(caption,10,NSFontWeightMedium,marked && [info[@"rest"] boolValue] ? Accent():Muted());holiday.toolTip=hit.toolTip;CGFloat labelWidth=cellW-26;if(holiday.intrinsicContentSize.width>labelWidth)holiday.stringValue=[info[@"kind"] isEqual:@"makeup"] ? @"补班":info[@"name"];if(holiday.intrinsicContentSize.width>labelWidth && [info[@"kind"] isEqual:@"holiday"])holiday.stringValue=[info[@"name"] stringByReplacingOccurrencesOfString:@"节" withString:@""];Put(badge,holiday,5,1,labelWidth,16);}
@@ -1011,7 +1011,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (NSArray *)visibleTasks {
     NSDate *now = NSDate.date; NSCalendar *calendar = Cal();
-    NSArray *tasks = [self.tasks filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *task, NSDictionary *bindings) { return DDLMatchesFilter(task, self.filter, self.query, now, calendar); }]];
+    NSArray *tasks = [DDLTaskListItems(self.tasks,now) filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *task, NSDictionary *bindings) { return DDLMatchesFilter(task, self.filter, self.query, now, calendar); }]];
     if (self.filter == 5) {
         return [tasks sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
             NSDate *da = [a[@"deletedAt"] isKindOfClass:NSDate.class] ? a[@"deletedAt"] : [NSDate distantPast];
@@ -1030,7 +1030,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (NSInteger)countFilter:(NSInteger)filter {
     NSDate *now = NSDate.date; NSCalendar *calendar = Cal();
-    NSInteger n = 0; for (NSDictionary *task in self.tasks) if (DDLMatchesFilter(task, filter, @"", now, calendar)) n++; return n;
+    NSInteger n = 0; for (NSDictionary *task in DDLTaskListItems(self.tasks,now)) if (DDLMatchesFilter(task, filter, @"", now, calendar)) n++; return n;
 }
 - (void)render {
     if (self.renderBusy || !self.document) return; self.renderBusy = YES;
@@ -1170,10 +1170,11 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 
 - (void)renderDashboard {
     NSDate *now=NSDate.date,*tomorrow=[Cal() dateByAddingUnit:NSCalendarUnitDay value:1 toDate:[Cal() startOfDayForDate:now] options:0],*week=[Cal() dateByAddingUnit:NSCalendarUnitDay value:8 toDate:[Cal() startOfDayForDate:now] options:0];
+    NSArray *listItems=DDLTaskListItems(self.tasks,now);
     NSMutableArray *groups=NSMutableArray.array;NSUInteger count=0;NSArray *titles=@[@"已逾期",@"今天",@"未来七天"];
     for(NSUInteger section=0;section<3;section++){
         NSMutableArray *tasks=NSMutableArray.array;
-        for(NSDictionary *task in self.tasks){if([task[@"completed"] boolValue] || [task[@"archived"] boolValue] || [task[@"deleted"] boolValue])continue;NSDate *due=task[@"due"];BOOL match=section==0 ? [due compare:now]==NSOrderedAscending:section==1 ? [due compare:now]!=NSOrderedAscending && [due compare:tomorrow]==NSOrderedAscending:[due compare:tomorrow]!=NSOrderedAscending && [due compare:week]==NSOrderedAscending;
+        for(NSDictionary *task in listItems){if([task[@"completed"] boolValue] || [task[@"archived"] boolValue] || [task[@"deleted"] boolValue])continue;NSDate *due=task[@"due"];BOOL match=section==0 ? [due compare:now]==NSOrderedAscending:section==1 ? [due compare:now]!=NSOrderedAscending && [due compare:tomorrow]==NSOrderedAscending:[due compare:tomorrow]!=NSOrderedAscending && [due compare:week]==NSOrderedAscending;
             if(match && (!self.query.length || DDLMatchesFilter(task,0,self.query,now,Cal()))){NSMutableDictionary *row=task.mutableCopy;row[@"displayStatus"]=DDLRemaining(due,now,NO);[tasks addObject:row];}}
         [tasks sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"due"] compare:b[@"due"]];}];count+=tasks.count;[groups addObject:@{@"title":titles[section],@"tasks":tasks}];
     }

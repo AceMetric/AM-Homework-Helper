@@ -6,7 +6,31 @@ static void Check(BOOL value,NSString *message){assertions++;if(!value){fprintf(
 static NSCalendar *C(void){NSCalendar *c=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];c.timeZone=[NSTimeZone timeZoneWithName:@"Asia/Shanghai"];return c;}
 static NSDate *D(NSString *s){return DDLParseDate(s,NSDate.date,C());}
 static NSMutableDictionary *R(NSString *anchor,NSString *unit){return [@{@"mode":@"fixed",@"unit":unit,@"interval":@1,@"anchor":D(anchor),@"timeZone":@"Asia/Shanghai",@"holidayPolicy":@"keep"} mutableCopy];}
+static void ListPresentation(void){
+    NSDate *now=D(@"2026-10-17 12:00");NSMutableArray *items=NSMutableArray.array;
+    for(NSInteger i=5;i>=0;i--)[items addObject:[@{@"id":[NSString stringWithFormat:@"a-%ld",(long)i],@"seriesID":@"a",@"title":@"同名安排",@"due":[now dateByAddingTimeInterval:(i+1)*86400]} mutableCopy]];
+    NSMutableDictionary *done=[@{@"id":@"done",@"seriesID":@"a",@"due":[now dateByAddingTimeInterval:3600],@"completed":@YES} mutableCopy];
+    NSDictionary *late=@{@"id":@"late",@"seriesID":@"a",@"due":[now dateByAddingTimeInterval:-86400]},*boundary=@{@"id":@"now",@"seriesID":@"a",@"due":now};
+    NSDictionary *archived=@{@"id":@"archived",@"seriesID":@"a",@"due":[now dateByAddingTimeInterval:1],@"archived":@YES},*deleted=@{@"id":@"deleted",@"seriesID":@"a",@"due":[now dateByAddingTimeInterval:2],@"deleted":@YES};
+    [items addObjectsFromArray:@[done,late,boundary,archived,deleted]];
+    for(NSInteger i=0;i<3;i++){[items addObject:@{@"id":[NSString stringWithFormat:@"b-%ld",(long)i],@"seriesID":@"b",@"title":@"同名安排",@"due":[now dateByAddingTimeInterval:(i+1)*86400]}];[items addObject:@{@"id":[NSString stringWithFormat:@"plain-%ld",(long)i],@"title":@"同名安排",@"due":[now dateByAddingTimeInterval:(i+1)*86400]}];}
+    NSArray *snapshot=[[NSArray alloc] initWithArray:items copyItems:YES],*visible=DDLTaskListItems(items,now);NSArray *ids=[visible valueForKey:@"id"];
+    Check([ids containsObject:@"a-0"] && [ids containsObject:@"a-1"] && ![ids containsObject:@"a-2"] && ![ids containsObject:@"a-5"],@"list chooses nearest two dates independently of stored order");
+    Check([ids containsObject:@"done"] && [ids containsObject:@"late"] && [ids containsObject:@"now"],@"completed and overdue history does not consume upcoming slots");
+    Check([ids containsObject:@"archived"] && [ids containsObject:@"deleted"],@"archive and trash remain available to their existing filters");
+    Check([ids containsObject:@"b-0"] && [ids containsObject:@"b-1"] && ![ids containsObject:@"b-2"] && [ids containsObject:@"plain-2"],@"separate series and unrelated same-title tasks are independent");
+    Check([visible.firstObject[@"id"] isEqual:@"a-1"] && [items isEqual:snapshot],@"presentation preserves incoming order and never mutates stored occurrences");
+    NSMutableDictionary *first=items[5];first[@"completed"]=@YES;ids=[DDLTaskListItems(items,now) valueForKey:@"id"];
+    Check([ids containsObject:@"a-0"] && [ids containsObject:@"a-2"] && ![ids containsObject:@"a-3"],@"completion retains history and reveals the next occurrence");
+    first[@"completed"]=@NO;Check(![[DDLTaskListItems(items,now) valueForKey:@"id"] containsObject:@"a-2"],@"restoring pending status restores the same nearest two");
+    ids=[DDLTaskListItems(items,[now dateByAddingTimeInterval:4*86400]) valueForKey:@"id"];
+    Check([ids containsObject:@"a-0"] && [ids containsObject:@"a-3"] && [ids containsObject:@"a-4"] && [ids containsObject:@"a-5"],@"clock advancement retains every newly overdue occurrence");
+    Check(DDLCalendarTasks(items,0,@"").count==items.count-2,@"calendar retains future occurrences hidden from the task list");
+    NSArray *ties=@[@{@"id":@"c",@"seriesID":@"tie",@"due":[now dateByAddingTimeInterval:1]},@{@"id":@"b",@"seriesID":@"tie",@"due":[now dateByAddingTimeInterval:1]},@{@"id":@"a",@"seriesID":@"tie",@"due":[now dateByAddingTimeInterval:1]}];
+    Check([[DDLTaskListItems(ties,now) valueForKey:@"id"] isEqual:@[@"b",@"a"]],@"holiday collisions select stable occurrence identities without merging them");
+}
 int main(){@autoreleasepool {
+    ListPresentation();
     NSMutableDictionary *r=R(@"2026-01-31 20:00",@"month");NSArray *dates=DDLRecurrenceDates(r,D(@"2026-01-01 00:00"),D(@"2026-04-01 00:00"),@{},NULL);
     Check(dates.count==3,@"monthly range contains three dates");Check([dates[1][@"due"] isEqual:D(@"2026-02-28 20:00")] && [dates[2][@"due"] isEqual:D(@"2026-03-31 20:00")],@"month end clamps without anchor drift");
     r=R(@"2024-02-29 09:00",@"year");r[@"count"]=@5;dates=DDLRecurrenceDates(r,D(@"2024-01-01 00:00"),D(@"2029-01-01 00:00"),@{},NULL);Check([dates[4][@"due"] isEqual:D(@"2028-02-29 09:00")],@"leap anchor restores Feb 29");
