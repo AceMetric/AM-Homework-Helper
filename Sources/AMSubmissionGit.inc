@@ -64,7 +64,7 @@
         }
         NSArray *completion=[self completionFiles:course commit:commit error:error];if(!completion)return nil;next[@"completionFiles"]=[completion filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSString *file,NSDictionary *bindings){return [record[@"files"] containsObject:file];}]];
         if(contains.status==0){next[@"confirmedAt"]=record[@"confirmedAt"] ?: NSDate.date;[next removeObjectForKey:@"issue"];}else next[@"issue"]=record[@"confirmedAt"] ? @"remote-changed":@"not-on-remote";[verified addObject:next];
-    }if(!AMStoreSubmissionBaseline(course,@{@"anchor":anchor,@"tip":remote},baseline,error))return nil;return verified;
+    }if(!AMStoreSubmissionBaseline(course,@{@"anchor":anchor,@"tip":remote},baseline,epoch,error))return nil;return verified;
 }
 - (NSArray *)classifyExternalRecords:(NSArray *)records course:(NSDictionary *)course {
     NSString *teacher=course[@"teacherCommit"];if(![self validateCourse:course error:NULL] || ![teacher isKindOfClass:NSString.class] || [teacher rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location==NSNotFound)return @[];
