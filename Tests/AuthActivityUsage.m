@@ -1,0 +1,25 @@
+#import "QuietUI.h"
+#define main DDLApplicationMain
+#import "../Sources/App.m"
+#undef main
+#import "../Sources/SSCourseWindow.m"
+static NSUInteger checks;
+static void Check(BOOL ok,NSString *why){checks++;if(!ok){fprintf(stderr,"FAIL: %s\n",why.UTF8String);exit(1);}}
+int main(){@autoreleasepool{
+ Check(NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"]!=nil,@"isolated storage");[NSApplication sharedApplication];[NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+ NSArray *titles=@[@"GitHub 官方登录",@"旧 GitHub App 登录",@"撤销旧 App 安装…",@"旧 App 公开配置…",@"旧 App 安装授权…",@"旧 OAuth 登录"];
+ for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua,NSAppearanceNameAccessibilityHighContrastAqua,NSAppearanceNameAccessibilityHighContrastDarkAqua]){
+  NSAlert *alert=AMVerticalChoiceAlert(@"登录与兼容设置",@"推荐 GitHub 官方登录。旧方式可能受组织限制；切换保留任务与凭据。",titles);alert.window.appearance=[NSAppearance appearanceNamed:appearance];[alert layout];[alert.accessoryView layoutSubtreeIfNeeded];
+  Check(NSWidth(alert.window.frame)<650 && NSHeight(alert.window.frame)>NSWidth(alert.window.frame)*0.5,@"authentication chooser is bounded instead of an ultra-wide strip");
+  NSStackView *stack=(id)alert.accessoryView;Check(stack.orientation==NSUserInterfaceLayoutOrientationVertical && stack.arrangedSubviews.count==6 && alert.buttons.count==1,@"authentication actions are vertical; cancellation stays native");
+  NSRect previous=NSZeroRect;NSUInteger index=0;for(NSButton *button in stack.arrangedSubviews){Check([button.title isEqual:titles[index]] && button.tag==(NSInteger)index && NSWidth(button.frame)>=310 && NSHeight(button.frame)>=28,@"each full label has its own normal-size action row");if(index)Check(!NSIntersectsRect(previous,button.frame) && fabs(NSMinX(previous)-NSMinX(button.frame))<1,@"vertical action rows align without overlapping");previous=button.frame;index++;}
+ }
+ __block NSModalResponse captured=0;AMQuietReplace(NSApplication.class,@selector(stopModalWithCode:),imp_implementationWithBlock(^(NSApplication *app,NSModalResponse code){captured=code;}));
+ for(NSUInteger index=0;index<6;index++){NSAlert *alert=AMVerticalChoiceAlert(@"模拟选择",@"不连接真实账户",titles);NSButton *button=(id)[(NSStackView *)alert.accessoryView arrangedSubviews][index];[button performClick:nil];Check(captured==2000+(NSInteger)index,@"real vertical button dispatch carries its stable response code");[AMQuietDialogChoices addObject:@(captured)];Check(AMRunVerticalChoiceAlert(alert)==NSAlertFirstButtonReturn+(NSInteger)index,@"each vertical button preserves the existing authentication action mapping");}
+ NSAlert *cancel=AMVerticalChoiceAlert(@"模拟取消",@"不连接真实账户",titles);[AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];Check(AMRunVerticalChoiceAlert(cancel)==NSModalResponseCancel,@"native cancel never selects an authentication method");
+ for(NSDictionary *row in AMUIMessages())AMDismissUIMessage(row[@"scope"],row[@"id"]);
+ __block NSUInteger invoked=0;AMPostUIMessageWithRevision(@"fixture",@"recognition",@"v1",@"2 份材料未完成增强",AMUIMessageWarning,@"查看",^{invoked=1;});AMDismissUIMessage(@"fixture",@"recognition");AMPostUIMessageWithRevision(@"fixture",@"recognition",@"v1",@"2 份材料未完成增强",AMUIMessageWarning,@"查看",^{invoked=2;});NSDictionary *last=AMUIMessages().firstObject;Check([last[@"dismissed"] boolValue],@"same dismissed issue stays closed on refresh");void(^action)(void)=last[@"action"];action();Check(invoked==2,@"retained notification action points to the latest report");AMPostUIMessageWithRevision(@"fixture",@"recognition",@"v2",@"2 份材料未完成增强",AMUIMessageWarning,@"查看",^{invoked=3;});Check(![AMUIMessages().firstObject[@"dismissed"] boolValue] && AMUIMessages().count==1,@"new evidence failure revision reopens one summary even when the count is unchanged");
+ SSCourseController *course=SSCourseController.new;NSDictionary *issue=@{@"field":@"evidence",@"code":@"source-mismatch",@"reason":@"引用未匹配到原文"};course.reports=@{@"student/example":@{@"modelFailures":@{@"assignment-1/README.md":@{@"path":@"assignment-1/README.md",@"blobSHA":@"v1",@"issues":@[issue,issue]},@"assignment-2/README.md":@{@"path":@"assignment-2/README.md",@"blobSHA":@"v1",@"issues":@[issue]}}}};
+ Check(course.recognitionFailures.count==2,@"failed count measures files, not repeated reasons");[course postRecognitionSummary];Check([AMUIMessages().firstObject[@"text"] isEqual:@"2 份材料未完成增强"],@"one concise summary replaces per-file activity warnings");AMDismissUIMessage(@"course-recognition",@"failures");[course postRecognitionSummary];Check([AMUIMessages().firstObject[@"dismissed"] boolValue],@"ordinary course report refresh does not resurrect dismissed summary");
+ printf("PASS: %lu authentication and recognition feedback assertions\n",(unsigned long)checks);
+}return 0;}

@@ -24,6 +24,9 @@ NSDictionary *SSEnrichDiscovery(NSDictionary *record);
 BOOL SSCanAutomaticallyImport(NSDictionary *record, NSArray *tasks, NSDate *now);
 NSDictionary * _Nullable SSReviewedTask(NSDictionary *record, NSDictionary *draft, NSDictionary * _Nullable existing, NSError **error);
 NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSError **error);
+/// Internal evidence contract: records, issues (index/field/code/reason), complete.
+NSDictionary *SSModelValidationReport(id results, NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar);
+id _Nullable SSRecognitionJSONObject(NSString *content, BOOL local);
 NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings, NSMutableDictionary *cache, NSError **error);
 /// Network transport is replaceable for isolated tests; responses are never logged.
 @interface SSRecognitionClient : NSObject <NSURLSessionTaskDelegate>
@@ -31,4 +34,5 @@ NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *pat
 - (NSArray * _Nullable)localModels:(NSDictionary *)settings error:(NSError **)error;
 - (id _Nullable)extract:(NSString *)text settings:(NSDictionary *)settings error:(NSError **)error;
 @end
+NSArray *SSRecognizeDocumentWithClient(NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings, NSMutableDictionary *cache, SSRecognitionClient *client, NSError **error);
 NS_ASSUME_NONNULL_END

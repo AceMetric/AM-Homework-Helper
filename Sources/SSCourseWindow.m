@@ -1,3 +1,4 @@
+#import <objc/runtime.h>
 #import "SSCourseWindow.h"
 #import <fcntl.h>
 #import <unistd.h>
@@ -378,9 +379,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)authenticationSettings:(id)sender {
     if(self.busy || self.operationsPaused || self.preview)return;
-    NSAlert *alert=NSAlert.new;alert.messageText=@"登录与兼容设置";alert.informativeText=@"推荐内置 GitHub CLI 官方浏览器登录。旧 OAuth／GitHub App 仅供兼容，可能受组织限制。切换不删除任务或旧凭据。";
-    [alert addButtonWithTitle:@"GitHub 官方登录"];[alert addButtonWithTitle:@"旧 GitHub App 登录"];[alert addButtonWithTitle:@"撤销旧 App 安装…"];[alert addButtonWithTitle:@"旧 App 公开配置…"];[alert addButtonWithTitle:@"旧 App 安装授权…"];[alert addButtonWithTitle:@"旧 OAuth 登录"];[alert addButtonWithTitle:@"取消"];
-    NSModalResponse choice=[alert runModal];if(choice==NSAlertThirdButtonReturn){[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://github.com/settings/installations"]];return;}
+    NSAlert *alert=AMVerticalChoiceAlert(@"登录与兼容设置",@"推荐 GitHub 官方登录。旧方式可能受组织限制；切换保留任务与凭据。",@[@"GitHub 官方登录",@"旧 GitHub App 登录",@"撤销旧 App 安装…",@"旧 App 公开配置…",@"旧 App 安装授权…",@"旧 OAuth 登录"]);
+    NSModalResponse choice=AMRunVerticalChoiceAlert(alert);if(choice==NSAlertThirdButtonReturn){[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"https://github.com/settings/installations"]];return;}
     if(choice==NSAlertThirdButtonReturn+1){[self setClientID:nil];return;}if(choice==NSAlertThirdButtonReturn+2){[self installApp:nil];return;}
     if(choice!=NSAlertFirstButtonReturn && choice!=NSAlertSecondButtonReturn && choice!=NSAlertThirdButtonReturn+3)return;NSError *error=nil;
     if(![self.github selectAuthentication:choice==NSAlertFirstButtonReturn ? @"githubCLI":(choice==NSAlertSecondButtonReturn ? @"githubApp":@"oauth") error:&error]){[self showError:error];return;}
@@ -404,6 +404,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (void)more:(id)sender {
     NSMenu *menu=NSMenu.new;menu.autoenablesItems=NO;NSDictionary *course=[self course];
     void (^add)(NSMenu *,NSString *,SEL,BOOL)=^(NSMenu *target,NSString *title,SEL action,BOOL enabled){NSMenuItem *item=[target addItemWithTitle:title action:action keyEquivalent:@""];item.target=self;item.enabled=enabled && !self.operationsPaused;};
+    add(menu,@"识别问题…",@selector(showRecognitionFailures:),[self recognitionFailures].count>0);
     add(menu,@"增强识别…",@selector(enhanceRecognition:),course && ![SSRecognitionSettings()[@"mode"] isEqual:@"rules"]);
     add(menu,@"交给助手识别…",@selector(exportSkillContext:),YES);
     add(menu,@"识别批次与进度…",@selector(showSkillJobs:),YES);
@@ -658,7 +659,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             SSDiagnostic(@"operation",@"started",0);self.operationID=identifier;self.busy=YES;self.operationKind=message;self.operationPhase=message;
             self.workGeneration++;NSUInteger generation=self.workGeneration;self.operationFork=target;self.statusFork=target;[self.progress startAnimation:nil];[self status:message];
             dispatch_async(self.queue,^{
-                NSError *error=nil;id value=operation(&error);
+                NSError *error=nil;NSMutableDictionary *thread=NSThread.currentThread.threadDictionary;id parent=thread[@"AMOperationParent"];thread[@"AMOperationParent"]=identifier;id value=nil;@try{value=operation(&error);}@finally{if(parent)thread[@"AMOperationParent"]=parent;else [thread removeObjectForKey:@"AMOperationParent"];}
                 dispatch_async(dispatch_get_main_queue(),^{
                     BOOL cancelled=self.git.operationCancelled || self.git.cancelledReads;self.git.readsCancellable=NO;self.git.cancelledReads=NO;self.git.operationCancelled=NO;self.github.requestsCancelled=NO;
                     SSDiagnostic(@"operation",cancelled ? @"cancelled":(error ? @"failed":@"success"),-started.timeIntervalSinceNow);
@@ -810,7 +811,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             NSDictionary *summary=scan[@"scanSummary"];if(summary)self.statuses[course[@"fork"]]=[self.statuses[course[@"fork"]] stringByAppendingFormat:@" · 新增 %@、变化 %@、复用 %@",summary[@"new"] ?: @0,summary[@"changed"] ?: @0,summary[@"reused"] ?: @0];
             if([recognitionSettings[@"mode"] isEqual:@"local"] && scan[@"modelCompleted"]){SSWritePlist(@"recognition-last-result.plist",@{@"course":course[@"fork"],@"date":NSDate.date,@"model":recognitionSettings[@"model"] ?: @"",@"success":scan[@"modelCompleted"]},NULL);}
             if([recognitionSettings[@"mode"] isEqual:@"local"] && [scan[@"modelCompleted"] boolValue])self.statuses[course[@"fork"]]=[self.statuses[course[@"fork"]] stringByAppendingString:@" · 本地模型分析完成"];
-            if ([scan[@"recognitionMessages"] count]) self.statuses[course[@"fork"]] = [self.statuses[course[@"fork"]] stringByAppendingFormat:@" · %@",[scan[@"recognitionMessages"] firstObject]];
+            if ([scan[@"recognitionMessages"] count]) self.statuses[course[@"fork"]] = @"已保留可用结果";
             course[@"lastScan"] = scan[@"date"];if(scan[@"commit"])course[@"teacherCommit"]=scan[@"commit"];
             if (scan[@"branch"]) course[@"upstreamBranch"] = scan[@"branch"];
             [messages addObject:[NSString stringWithFormat:@"%@：%lu 项建议，%lu 个文件跳过", course[@"fork"], [scan[@"candidates"] count], [scan[@"skipped"] count]]];
@@ -822,7 +823,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             if (items.count) {NSUInteger before=self.tasksProvider ? self.tasksProvider().count : 0;NSString *message=self.saveReviewItems(items,YES); if (message.length) [messages addObject:message]; else {NSString *notice=[NSString stringWithFormat:@"自动加入 %lu 项完整日期作业；可在“任务”菜单撤销本次加入。",(unsigned long)MAX((NSInteger)0,(NSInteger)(self.tasksProvider ? self.tasksProvider().count : 0)-(NSInteger)before)];[messages addObject:notice];for(NSDictionary *course in courses)self.statuses[course[@"fork"]]=[self.statuses[course[@"fork"]] stringByAppendingFormat:@" · %@",notice];} }
         }
         [self saveCourses]; [self refreshCourses];
-        [self finishSetupScan:result error:error courses:courses];
+        [self finishSetupScan:result error:error courses:courses];[self postRecognitionSummary];
         for(NSDictionary *course in courses)if(!result[course[@"fork"]][@"error"])[self enqueueAutomaticEnhancement:result[course[@"fork"]] course:course settings:recognitionSettings];
         if (courses.count > 1) self.statuses[@"all"] = messages.count ? [messages componentsJoinedByString:@"；"] : @"尚未关联可扫描的仓库。"; else if (!messages.count) [self status:@"请先关联本地课程文件夹，再检查作业。"];
     }];

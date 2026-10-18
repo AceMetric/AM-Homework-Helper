@@ -2,6 +2,8 @@
 
 // Shared, system-adaptive presentation; no persisted theme selection.
 NSColor *RGB(unsigned value);
+NSAlert *AMVerticalChoiceAlert(NSString *title, NSString *message, NSArray<NSString *> *choices);
+NSModalResponse AMRunVerticalChoiceAlert(NSAlert *alert);
 NSColor *Adaptive(unsigned light, unsigned dark);
 NSColor *Ink(void); NSColor *Muted(void); NSColor *Accent(void);
 NSColor *Canvas(void); NSColor *Card(void); NSColor *Line(void);
@@ -66,6 +68,7 @@ void AMShowOperations(NSWindow *parent);
 typedef NS_ENUM(NSInteger, AMUIMessageSeverity) { AMUIMessageInformation, AMUIMessageSuccess, AMUIMessageWarning, AMUIMessageError };
 // Presentation only: dismissing a message never changes its operation or guard.
 void AMPostUIMessage(NSString *scope, NSString *identifier, NSString *text, AMUIMessageSeverity severity, NSString *actionTitle, void (^action)(void));
+void AMPostUIMessageWithRevision(NSString *scope,NSString *identifier,NSString *revision,NSString *text,AMUIMessageSeverity severity,NSString *actionTitle,void (^action)(void));
 NSArray<NSDictionary *> *AMUIMessages(void);
 void AMDismissUIMessage(NSString *scope, NSString *identifier);
 NSToolbarItem *AMActivityToolbarItem(NSString *identifier);

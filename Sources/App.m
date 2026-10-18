@@ -1,3 +1,4 @@
+#import "AMPrompts.h"
 #import <Cocoa/Cocoa.h>
 #import <UserNotifications/UserNotifications.h>
 #import "DDLCore.h"

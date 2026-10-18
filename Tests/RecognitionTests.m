@@ -43,7 +43,7 @@ int main(void){@autoreleasepool{
     [longText appendString:@"最后提交附件：完整计算过程。\n"];
     NSDictionary *longRecord=SSRecognizeDocument(longText,@"t/c",@"long.md",@"l",calendar,@{@"mode":@"rules"},cache,NULL).firstObject;
     Check([longRecord[@"snippet"] containsString:@"最后提交附件"] && [longRecord[@"submissionRequirements"] containsString:@"完整计算过程"],@"late requirements are not truncated");
-    NSDictionary *model=@{@"kind":@"assignment",@"title":@"运动分析与报告",@"summary":@"分析运动。",@"submissionRequirements":@"提交报告。",@"evidence":text,@"deadlineEvidence":@"截止：2027 年 4 月 14 日（星期三）21:00 UTC+8"};
+    NSDictionary *model=@{@"kind":@"assignment",@"title":@"运动分析与报告",@"summary":@"分析运动。",@"summaryEvidence":@"完成运动分析。",@"submissionRequirements":@"提交报告。",@"requirementsEvidence":@"提交报告，命名为 homework.md。",@"evidence":text,@"deadlineEvidence":@"截止：2027 年 4 月 14 日（星期三）21:00 UTC+8"};
     NSDictionary *validated=SSValidatedModelResults(@[model],text,@"teacher/course",@"homework.md",@"v1",calendar,NULL).firstObject;
     Check([validated[@"id"] isEqual:record[@"id"]] && [validated[@"suggestedTitle"] isEqual:model[@"title"]],@"generated title does not change original identity");
     NSDictionary *prefilled=SSReviewedTask(validated,@{},nil,NULL);
@@ -75,7 +75,7 @@ int main(void){@autoreleasepool{
     client.transport=^NSData *(NSURLRequest *value,NSError **failure){request=value;NSData *content=[NSJSONSerialization dataWithJSONObject:@{@"activities":@[model]} options:0 error:NULL];return [NSJSONSerialization dataWithJSONObject:@{@"message":@{@"content":[[NSString alloc] initWithData:content encoding:NSUTF8StringEncoding]}} options:0 error:NULL];};
     Check([[client extract:text settings:@{@"mode":@"local",@"endpoint":@"http://localhost:11434",@"model":@"installed-model"} error:NULL] count]==1,@"Ollama structured transport parsed");
     Check([request.URL.path isEqual:@"/api/chat"] && ![request valueForHTTPHeaderField:@"Authorization"],@"local transport receives no API credentials");
-    id body=[NSJSONSerialization JSONObjectWithData:request.HTTPBody options:0 error:NULL];Check(!body[@"tools"] && [body[@"format"] isEqual:@"json"],@"documents cannot invoke model tools");
+    id body=[NSJSONSerialization JSONObjectWithData:request.HTTPBody options:0 error:NULL];Check(!body[@"tools"] && [body[@"format"][@"type"] isEqual:@"object"],@"documents cannot invoke model tools");
     client.transport=^NSData *(NSURLRequest *value,NSError **failure){return [@"{}" dataUsingEncoding:NSUTF8StringEncoding];};error=nil;
     Check(![client extract:text settings:@{@"mode":@"local",@"endpoint":@"http://localhost:11434",@"model":@"installed-model"} error:&error] && error,@"invalid response provides fallback error");
     __block NSURLRequest *redirect=request;[client URLSession:NSURLSession.sharedSession task:[NSURLSession.sharedSession dataTaskWithRequest:request] willPerformHTTPRedirection:[[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:302 HTTPVersion:@"HTTP/1.1" headerFields:@{}] newRequest:request completionHandler:^(NSURLRequest *value){redirect=value;}];Check(!redirect,@"model requests never forward credentials across redirects");

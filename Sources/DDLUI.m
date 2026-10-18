@@ -1,6 +1,21 @@
 #import "DDLUI.h"
 #import "AMUI-Swift.h"
 #import <objc/runtime.h>
+@interface AMVerticalChoiceTarget:NSObject
+@end
+@implementation AMVerticalChoiceTarget
+- (void)choose:(NSButton *)sender {[NSApp stopModalWithCode:2000+sender.tag];}
+@end
+NSAlert *AMVerticalChoiceAlert(NSString *title,NSString *message,NSArray<NSString *> *choices){
+    NSAlert *alert=NSAlert.new;alert.messageText=title;alert.informativeText=message;
+    AMVerticalChoiceTarget *target=AMVerticalChoiceTarget.new;objc_setAssociatedObject(alert,@selector(choose:),target,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    NSStackView *stack=NSStackView.new;stack.orientation=NSUserInterfaceLayoutOrientationVertical;stack.alignment=NSLayoutAttributeLeading;stack.spacing=8;
+    CGFloat width=320;NSUInteger index=0;for(NSString *name in choices){NSButton *button=[NSButton buttonWithTitle:name target:target action:@selector(choose:)];button.tag=index++;button.bezelStyle=NSBezelStyleRounded;button.controlSize=NSControlSizeRegular;[stack addArrangedSubview:button];[button.widthAnchor constraintEqualToConstant:width].active=YES;[button.heightAnchor constraintGreaterThanOrEqualToConstant:30].active=YES;}
+    stack.frame=NSMakeRect(0,0,width,MAX(0,(NSInteger)choices.count*38-8));alert.accessoryView=stack;NSButton *cancel=[alert addButtonWithTitle:@"取消"];cancel.keyEquivalent=@"\033";
+    NSButton *primary=(id)stack.arrangedSubviews.firstObject;if(primary){primary.keyEquivalent=@"\r";alert.window.defaultButtonCell=(NSButtonCell *)primary.cell;}
+    return alert;
+}
+NSModalResponse AMRunVerticalChoiceAlert(NSAlert *alert){NSModalResponse choice=[alert runModal];return choice>=2000 ? NSAlertFirstButtonReturn+choice-2000:NSModalResponseCancel;}
 NSColor *RGB(unsigned value) { return [NSColor colorWithSRGBRed:((value >> 16) & 255) / 255.0 green:((value >> 8) & 255) / 255.0 blue:(value & 255) / 255.0 alpha:1]; }
 NSColor *Adaptive(unsigned light, unsigned dark) {
     return [NSColor colorWithName:nil dynamicProvider:^NSColor *(NSAppearance *appearance) {
