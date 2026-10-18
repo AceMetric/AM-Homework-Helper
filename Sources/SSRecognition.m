@@ -77,7 +77,7 @@ NSDictionary *SSCourseRecognitionSettings(NSDictionary *settings, NSDictionary *
 }
 NSArray *SSValidatedSkillResults(id result, NSArray *documents, NSArray *references, NSError **error) {
     if (![result isKindOfClass:NSDictionary.class] || ![result[@"format"] isEqual:@"am-course-results-v1"] || ![result[@"documents"] isKindOfClass:NSArray.class] || [result[@"documents"] count]>1000) {if(error)*error=RError(@"Skill 结果格式无效，未修改任务。");return nil;}
-    NSMutableArray *records=NSMutableArray.array;
+    NSMutableArray *records=NSMutableArray.array;NSError *partial=nil;
     for(id document in result[@"documents"]){
         if (![document isKindOfClass:NSDictionary.class] || ![document[@"activities"] isKindOfClass:NSArray.class]) {if(error)*error=RError(@"Skill 文档格式无效。");return nil;}
         NSDictionary *live=nil;
@@ -85,11 +85,12 @@ NSArray *SSValidatedSkillResults(id result, NSArray *documents, NSArray *referen
         if(!live){if(error)*error=RError(@"老师原文已变化或结果属于其他课程，请重新导出识别。");return nil;}
         NSCalendar *calendar=NSCalendar.currentCalendar.copy;calendar.timeZone=[NSTimeZone timeZoneWithName:live[@"timeZone"]] ?: NSTimeZone.localTimeZone;
         NSError *validation=nil;NSArray *found=SSValidatedModelResults(document[@"activities"],live[@"text"],live[@"repository"],live[@"path"],live[@"blobSHA"],calendar,&validation);
-        if(validation || found.count!=[document[@"activities"] count]){if(error)*error=validation ?: RError(@"Skill 结果有无效字段或原文引用，未导入。");return nil;}
+        if(validation || found.count!=[document[@"activities"] count]){partial=validation ?: RError(@"部分助手条目未通过原文核验");if(!found.count){if(error)*error=partial;return nil;}}
         for(NSDictionary *record in found){NSMutableDictionary *copy=record.mutableCopy;copy[@"recognizer"]=@"skill-v1";copy[@"modelOnly"]=@YES;
             for(NSDictionary *reference in references)if([reference[@"id"] isEqual:record[@"id"]] && [reference[@"blobSHA"] isEqual:record[@"blobSHA"]])for(NSString *field in @[@"dateBasis",@"suggestedDue"])if(reference[field])copy[field]=reference[field];
             [records addObject:copy];}
     }
+    if(partial && error)*error=partial;
     return records;
 }
 NSDictionary *SSEnrichDiscovery(NSDictionary *record) {
