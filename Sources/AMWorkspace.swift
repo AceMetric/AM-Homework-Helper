@@ -42,14 +42,7 @@ private struct WorkspaceExpandedSection<Content:View>:View {
 }
 // Use the system glass button implementations; older OS/SDK lanes retain native controls.
 private extension View {
-    @ViewBuilder func amPrimaryAction()->some View {
-        #if compiler(>=6.2)
-        if #available(macOS 26.0,*) {self.buttonStyle(.glassProminent)}
-        else {self.buttonStyle(.borderedProminent)}
-        #else
-        self.buttonStyle(.borderedProminent)
-        #endif
-    }
+    func amPrimaryAction()->some View {self.buttonStyle(.borderedProminent)}
     func amSecondaryActions()->some View {self.buttonStyle(.bordered)}
 }
 private struct WorkspaceSection<Content:View>:View {
@@ -57,7 +50,7 @@ private struct WorkspaceSection<Content:View>:View {
     let content:Content
     init(_ title:String,@ViewBuilder content:()->Content){self.title=title;self.content=content()}
     var body:some View {
-        GroupBox {content.frame(maxWidth:.infinity,alignment:.leading).padding(8)} label:{Text(title).font(.headline)}
+        GroupBox {content.frame(maxWidth:.infinity,alignment:.leading).padding(4)} label:{Text(title).font(.subheadline.weight(.medium))}
             .frame(maxWidth:.infinity,alignment:.leading)
     }
 }
@@ -138,6 +131,8 @@ final class ReviewState: ObservableObject {
     @Published var query = "" { didSet { pruneChecks(); batchPreview=nil } }
     @Published var searchToken = 0
     @Published var title = ""
+    @Published var subject = ""
+    @Published var priority = 0
     @Published var notes = ""
     @Published var date = Date()
     @Published var hasDate = false
@@ -146,7 +141,7 @@ final class ReviewState: ObservableObject {
     @Published var reminderOffsets: Set<Int> = [10080,4320,1440,60,0]
     private var baseline:NSDictionary=[:]
     private var savedValues:NSDictionary {
-        ["title":title.trimmingCharacters(in:.whitespacesAndNewlines),"notes":notes,"date":hasDate ? date as Any:NSNull(),"hasDate":hasDate,"dateConfirmed":dateConfirmed,"reminders":reminders ? reminderOffsets.sorted():[]] as NSDictionary
+        ["title":title.trimmingCharacters(in:.whitespacesAndNewlines),"notes":notes,"subject":subject.trimmingCharacters(in:.whitespacesAndNewlines),"priority":priority,"date":hasDate ? date as Any:NSNull(),"hasDate":hasDate,"dateConfirmed":dateConfirmed,"reminders":reminders ? reminderOffsets.sorted():[]] as NSDictionary
     }
     var dirty:Bool {get{!savedValues.isEqual(baseline)}set{if !newValue {baseline=savedValues}}}
     @Published var message = ""
@@ -242,6 +237,8 @@ final class ReviewState: ObservableObject {
         if task?["due"] is Date { dateConfirmed=true }
         reminders = ((task?["reminderOffsets"] as? [NSNumber])?.isEmpty == false) || task == nil
         reminderOffsets = Set((task?["reminderOffsets"] as? [NSNumber])?.map(\.intValue) ?? [10080,4320,1440,60,0])
+        subject=task?["subject"] as? String ?? (string(record,"sourceType")=="local" ? string(record,"subject"):(string(record,"repository") as NSString).lastPathComponent)
+        priority=(task?["priority"] as? NSNumber)?.intValue ?? (record["priority"] as? NSNumber)?.intValue ?? 0
         originalTitle = title; originalNotes = notes; dirty = false
     }
     // Explicit re-review preserves user edits but updates the version being reviewed.
@@ -288,7 +285,7 @@ final class ReviewState: ObservableObject {
         guard let due else{return nil}
         let proposedTitle=string(record,"suggestedTitle").isEmpty ? string(record,"title"):string(record,"suggestedTitle")
         var draft: [String:Any] = ["title":editing ? title : (task?["title"] as? String ?? proposedTitle),"assignmentDue":due,"dateConfirmed":true]
-        if editing {draft["notes"]=notes;draft["reminderOffsets"]=reminders ? reminderOffsets.sorted(by:>) : [Int]()}
+        if editing {draft["subject"]=subject;draft["priority"]=priority;draft["notes"]=notes;draft["reminderOffsets"]=reminders ? reminderOffsets.sorted(by:>) : [Int]()}
         return ["record":record,"draft":draft] as NSDictionary
     }
     func reject(_ text:String){message=text;failed=true}
@@ -348,56 +345,25 @@ private struct ReviewDetails: View {
         Binding(get:{state[keyPath:key]},set:{state[keyPath:key]=$0;state.dirty=true})
     }
     var body:some View {
-        VStack(alignment:.leading,spacing:16) {
-            Text("作业信息").font(.headline)
-            if string(record,"reviewStatus")=="已导入" {Text("已加入任务").foregroundStyle(.secondary)}
-            VStack(alignment:.leading,spacing:6){Text("名称").foregroundStyle(.secondary);TextField("作业名称",text:editing(\.title)).textFieldStyle(.roundedBorder).controlSize(.large)}
-            VStack(alignment:.leading,spacing:12) {
-                    Divider()
-                    Text("截止日期和时间").font(.headline)
-                    Text(string(record,"dateText").isEmpty ? "老师未说明完整截止时间" : "老师原文：\(string(record,"dateText"))").textSelection(.enabled)
-                    ForEach(Array(((record["warnings"] as? [String] ?? [])+(record["contentWarnings"] as? [String] ?? [])).enumerated()),id:\.offset){Text($0.element).foregroundStyle(.orange)}
-                    if let due=record["suggestedDue"] as? Date {
-                        Text("原文日期建议：\(due.formatted(date:.abbreviated,time:.shortened))")
-                        if let basis=record["dateBasis"] as? NSDictionary, let date=basis["date"] as? Date { Text("依据：\(date.formatted()) · \(String(string(basis,"commit").prefix(7)))").font(.caption).foregroundStyle(.secondary) }
-                    }
-                    DatePicker("作业 DDL",selection:Binding(get:{state.date},set:{state.date=$0;state.hasDate=true;state.dateConfirmed=true;state.dirty=true}),displayedComponents:[.date,.hourAndMinute])
-                    if !state.hasDate || !state.dateConfirmed {
-                        Text("请确认完整截止时间。").foregroundStyle(.orange)
-                        Button("确认填写的截止时间"){state.hasDate=true;state.dateConfirmed=true;state.dirty=true}
-                    }
-                    Text("课程时区：\(string(record,"timeZone"))").font(.caption).foregroundStyle(.secondary)
-                    Divider()
-                    Toggle("提醒",isOn:editing(\.reminders)).controlSize(.large).frame(minHeight:32)
-                    if state.reminders {
-                        LazyVGrid(columns:[GridItem(.adaptive(minimum:85))],alignment:.leading) {
-                            ForEach([10080,4320,1440,60,0],id:\.self){offset in
-                                Toggle([10080:"7天",4320:"3天",1440:"1天",60:"1小时",0:"到期"][offset]!,isOn:Binding(get:{state.reminderOffsets.contains(offset)},set:{if $0 {state.reminderOffsets.insert(offset)}else{state.reminderOffsets.remove(offset)};state.dirty=true})).toggleStyle(.checkbox).controlSize(.large).frame(minHeight:32)
-                            }
-                        }
-                        let custom = state.reminderOffsets.subtracting([10080,4320,1440,60,0]).sorted(by:>)
-                        if !custom.isEmpty { Text("保留自定义提醒：\(custom.map{"提前\($0)分钟"}.joined(separator:"、"))").font(.caption).foregroundStyle(.secondary) }
-                        Button("使用全部常用提醒"){state.reminderOffsets=[10080,4320,1440,60,0];state.dirty=true}
-                    }
-            }.frame(maxWidth:.infinity,alignment:.leading)
-                .environment(\.timeZone,TimeZone(identifier:string(record,"timeZone")) ?? .current)
-            VStack(alignment:.leading,spacing:6) { Text("备注").fontWeight(.medium); TextEditor(text:editing(\.notes)).frame(minHeight:140,maxHeight:180).padding(6).background(Color(nsColor:.textBackgroundColor)).clipShape(RoundedRectangle(cornerRadius:8)).overlay(RoundedRectangle(cornerRadius:8).stroke(Color(nsColor:AMAppearance.separator),lineWidth:0.5)) }
-            WorkspaceDisclosure("老师原文与来源") {
-                VStack(alignment:.leading,spacing:8) {
-                    Text("\(string(record,"repository")) / \(string(record,"path")):\((record["line"] as? NSNumber)?.intValue ?? 1)").font(.caption).foregroundStyle(.secondary)
-                    Text(string(record,"snippet")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)
-                    if let attachments=record["attachments"] as? [NSDictionary] { ForEach(workspaceRows(attachments,key:"path")){Text("附件：\(string($0.record,"path"))\n\(string($0.record,"snippet"))").textSelection(.enabled)} }
-                }.padding(4)
-            }
-        }.frame(maxWidth:720,alignment:.leading).padding(.horizontal,16).padding(.vertical,12).frame(maxWidth:.infinity,alignment:.leading)
+        Form {
+            TaskFields(title:editing(\.title),subject:editing(\.subject),date:Binding(get:{state.date},set:{state.date=$0;state.hasDate=true;state.dateConfirmed=true}),notes:editing(\.notes),offsets:Binding(get:{state.reminders ? Array(state.reminderOffsets).sorted(by:>):[]},set:{state.reminders = !$0.isEmpty;state.reminderOffsets=Set($0)}),priority:editing(\.priority),recurrence:.constant([:]),seriesScope:.constant(0),hasDate:state.hasDate && state.dateConfirmed,confirmDate:{state.hasDate=true;state.dateConfirmed=true},recurrenceEnabled:false,dateHint:string(record,"dateText"),notesHeight:120)
+            if !((record["warnings"] as? [String] ?? [])+(record["contentWarnings"] as? [String] ?? [])).isEmpty {Section("需核对"){ForEach(Array(((record["warnings"] as? [String] ?? [])+(record["contentWarnings"] as? [String] ?? [])).enumerated()),id:\.offset){Text($0.element).foregroundStyle(.orange)}}}
+            Section {WorkspaceDisclosure("老师原文与来源") {
+                Text("\(string(record,"repository")) / \(string(record,"path"))").font(.caption).foregroundStyle(.secondary)
+                Text(string(record,"snippet")).textSelection(.enabled)
+                if let attachments=record["attachments"] as? [NSDictionary] {ForEach(workspaceRows(attachments,key:"path")){Text("附件：\(string($0.record,"path"))\n\(string($0.record,"snippet"))").textSelection(.enabled)}}
+                if let basis=record["dateBasis"] as? NSDictionary,let date=basis["date"] as? Date {Text("日期依据：\(date.formatted()) · \(String(string(basis,"commit").prefix(7)))").font(.caption).foregroundStyle(.secondary)}
+            }}
+        }.formStyle(.grouped).controlSize(.regular).textFieldStyle(.roundedBorder).environment(\.timeZone,TimeZone(identifier:string(record,"timeZone")) ?? .current)
     }
 }
+
 private struct ReviewFeedback:View {
     @ObservedObject var state:ReviewState
     var body:some View {
         if !state.message.isEmpty {
             VStack(alignment:.leading,spacing:8) {
-                Label(state.message,systemImage:state.failed ? "exclamationmark.circle.fill":"checkmark.circle").textSelection(.enabled)
+                HStack(alignment:.top){Label(state.message,systemImage:state.failed ? "exclamationmark.circle.fill":"checkmark.circle").textSelection(.enabled);Spacer();Button{state.message=""}label:{Image(systemName:"xmark")}.buttonStyle(.plain).accessibilityLabel("关闭提示")}
                 if state.sourceChanged {Button("刷新来源，保留填写"){state.reviewLatest()}}
             }.padding(10).frame(maxWidth:.infinity,alignment:.leading)
                 .background((state.failed ? Color.red:Color.accentColor).opacity(0.08)).cornerRadius(6)
@@ -419,7 +385,7 @@ private struct WorkspaceCheck:NSViewRepresentable {
     func makeCoordinator()->Target {Target()}
     func makeNSView(context:Context)->NSButton {
         let button=NSButton(checkboxWithTitle:"",target:context.coordinator,action:#selector(Target.press(_:)))
-        button.controlSize = .large;button.imagePosition = .imageOnly;button.alignment = .center
+        button.controlSize = .regular;button.imagePosition = .imageOnly;button.alignment = .center
         button.setContentHuggingPriority(.defaultLow,for:.horizontal)
         return button
     }
@@ -441,9 +407,9 @@ private struct WorkspaceButton:NSViewRepresentable {
         let button=NSButton(title:title,target:context.coordinator,action:#selector(Target.press(_:)))
         button.bezelStyle = .rounded
         #if compiler(>=6.2)
-        if #available(macOS 26.0,*) {button.borderShape = .capsule}
+        if #available(macOS 26.0,*) {button.borderShape = .automatic}
         #endif
-        button.controlSize = .large
+        button.controlSize = .regular
         button.setContentHuggingPriority(.required,for:.horizontal)
         return button
     }
@@ -451,7 +417,7 @@ private struct WorkspaceButton:NSViewRepresentable {
         context.coordinator.action=action;button.title=title;button.isEnabled=enabled
         button.bezelStyle = .rounded
         #if compiler(>=6.2)
-        if #available(macOS 26.0,*) {if prominent {button.bezelStyle = .glass}}
+        if #available(macOS 26.0,*) {button.bezelStyle = .rounded}
         #endif
         button.bezelColor=prominent ? .controlAccentColor:nil
         button.setAccessibilityIdentifier(identity)
@@ -495,7 +461,7 @@ private struct ReviewWorkspace: View {
         .overlay(Button("全选"){state.selectAll()}.keyboardShortcut("a",modifiers:.command).disabled(!listFocused).frame(width:0,height:0).clipped().accessibilityHidden(true))
     }
     private var details:some View {
-                ScrollView {
+                Group {
                     if let record=state.current,flag(record,"reviewDeleted") {
                         VStack(alignment:.leading,spacing:12){Text(string(record,"title")).font(.headline);Text(string(record,"snippet")).textSelection(.enabled);Button("恢复审核建议"){state.restore([record])}}.padding(16)
                     } else if let record=state.current {
@@ -623,66 +589,70 @@ private struct ReviewBatchPreview:View {
     }
     func persist() -> Bool {
         let result=save?(["mode":mode,"endpoint":endpoint,"model":model,"automaticImport":automatic,"autoCompleteSubmittedAssignments":autoCompleteSubmittedAssignments,"localAutomatic":localAutomatic,"modelDigest":modelDigest,"cloudCourses":Array(cloudCourses).sorted()] as NSDictionary,key) ?? "无法保存设置。"
-        message=result.isEmpty ? "设置已保存；下次检查作业时生效。" : result
-        if result.isEmpty {key="";dirty=false};return result.isEmpty
+        message=result.isEmpty ? "已保存设置" : result
+        if result.isEmpty {key="";dirty=false;DispatchQueue.main.asyncAfter(deadline:.now()+4){[weak self] in if self?.message=="已保存设置" {self?.message=""}}};return result.isEmpty
     }
 }
 private struct SettingsWorkspace:View {
     @ObservedObject var state:SettingsState
+    @TaskValueState<String> private var category="通用"
+    private let categories=["通用","作业识别","在线复核","账户与提醒","软件更新","数据与反馈"]
     private func binding<T>(_ key:ReferenceWritableKeyPath<SettingsState,T>)->Binding<T>{Binding(get:{state[keyPath:key]},set:{state[keyPath:key]=$0;state.dirty=true})}
     var body:some View {
-        VStack(spacing:0) {
-            HStack {Text("设置").font(.title2.bold());Spacer();Button("完成"){state.action?("close")}.keyboardShortcut(.cancelAction).accessibilityIdentifier("settings-close")}.padding(24)
+        VStack(spacing:0){
+            HStack{Text("设置").font(.title2.bold());Spacer();Button("完成"){state.action?("close")}.keyboardShortcut(.cancelAction).accessibilityIdentifier("settings-close")}.padding(16)
             Divider()
-        ScrollView {
-            VStack(alignment:.leading,spacing:20) {
-                WorkspaceSection("作业识别") {
-                    VStack(alignment:.leading,spacing:12) {
-
-                        WorkspaceExpandedSection("本地模型与云 API") {
-                            VStack(alignment:.leading,spacing:12) {
-                        Picker("识别方式",selection:binding(\.mode)){Text("免费规则").tag("rules");Text("本地 Ollama").tag("local");Text("云端 API").tag("cloud")}
-                        if state.mode != "rules" {
-                            if state.mode=="cloud" {TextField("API 基础地址，例如 https://服务地址/v1",text:binding(\.endpoint)).textFieldStyle(.roundedBorder);TextField("模型名称",text:binding(\.model)).textFieldStyle(.roundedBorder)}
-                            else {
-                                HStack{Button("检测本地服务"){state.probe("models")}.disabled(state.localBusy);Button("测试识别"){state.probe("test")}.disabled(state.localBusy || state.model.isEmpty)}
-                                if !state.installedModels.isEmpty {Picker("已安装模型",selection:binding(\.model)){Text("请选择模型").tag("");if !state.model.isEmpty && !state.installedModels.contains(where:{string($0,"name")==state.model}){Text(state.model+"（当前配置）").tag(state.model)};ForEach(state.installedModels.indices,id:\.self){i in Text(string(state.installedModels[i],"name")).tag(string(state.installedModels[i],"name"))}}.onChange(of:state.model){name in state.modelDigest=state.installedModels.first(where:{string($0,"name")==name}).map{string($0,"digest")} ?? ""}}
-                                else {Text(state.model.isEmpty ? "尚未选择模型":"当前模型："+state.model).foregroundStyle(.secondary)}
-                                Toggle("检查新作业时自动使用本地模型",isOn:binding(\.localAutomatic))
-
-                                if !state.localStatus.isEmpty {Text(state.localStatus).textSelection(.enabled)}
-                                WorkspaceExpandedSection("服务地址与模型名称"){VStack(spacing:8){TextField("本地地址",text:binding(\.endpoint)).textFieldStyle(.roundedBorder);TextField("已安装模型名称",text:binding(\.model)).textFieldStyle(.roundedBorder)}}
+            HStack(spacing:0){
+                List(selection:$category){ForEach(categories,id:\.self){Text($0).tag($0)}}.listStyle(.sidebar).frame(width:140)
+                Divider()
+                Form {
+                    switch category {
+                    case "通用":
+                        Section("任务"){Toggle("提交后自动完成作业",isOn:binding(\.autoCompleteSubmittedAssignments))}
+                        Section("日历"){Button("设置休息日／工作日…"){state.action?("calendar-overrides")}}
+                    case "作业识别":
+                        Section("识别方式") {
+                            Picker("使用",selection:binding(\.mode)){Text("免费规则").tag("rules");Text("本地模型").tag("local");Text("云端 API").tag("cloud")}
+                            Toggle("自动加入日期明确的新作业",isOn:binding(\.automatic))
+                            if state.mode=="local" {
+                                LabeledContent("服务地址"){TextField("http://localhost:11434",text:binding(\.endpoint))}
+                                LabeledContent("模型名称"){TextField("已安装模型名称",text:binding(\.model))}
+                                if !state.installedModels.isEmpty {Picker("已安装模型",selection:binding(\.model)){Text("请选择模型").tag("");if !state.model.isEmpty && !state.installedModels.contains(where:{string($0,"name")==state.model}){Text(state.model).tag(state.model)};ForEach(state.installedModels.indices,id:\.self){i in Text(string(state.installedModels[i],"name")).tag(string(state.installedModels[i],"name"))}}.onChange(of:state.model){name in state.modelDigest=state.installedModels.first(where:{string($0,"name")==name}).map{string($0,"digest")} ?? ""}}
+                                Toggle("检查时自动使用本地模型",isOn:binding(\.localAutomatic))
+                                HStack{Button("检测服务"){state.probe("models")}.disabled(state.localBusy);Button("测试识别"){state.probe("test")}.disabled(state.localBusy || state.model.isEmpty)}
+                                if state.localBusy {ProgressView().controlSize(.small)}
+                                if !state.localStatus.isEmpty {HStack(alignment:.top){Text(state.localStatus).font(.caption).textSelection(.enabled);Spacer();Button{state.localStatus=""}label:{Image(systemName:"xmark")}.buttonStyle(.plain).accessibilityLabel("关闭检测提示")}}
                             }
-                            if state.mode == "cloud" {
-                                SecureField("此服务的 API 密钥（留空保留原值）",text:binding(\.key)).textFieldStyle(.roundedBorder)
-                                Text("仅发送勾选课程的老师文档：").font(.caption)
-                                ForEach(state.availableCourses,id:\.self) { course in
-                                    Toggle(course,isOn:Binding(get:{state.cloudCourses.contains(course)},set:{if $0 {state.cloudCourses.insert(course)}else{state.cloudCourses.remove(course)};state.dirty=true}))
-                                }
-                                if state.availableCourses.isEmpty {Text("尚未添加课程").foregroundStyle(.secondary)}
-                                Text("仅发送确认材料，不发送个人任务或凭据。每天最多20次请求（含失败），可能产生费用。").foregroundStyle(.secondary)
-                            }
-                            else {Text("模型失败时保留规则结果。").foregroundStyle(.secondary)}
-                        }
+                            if state.mode=="cloud" {
+                                LabeledContent("服务地址"){TextField("https://服务地址/v1",text:binding(\.endpoint))}
+                                LabeledContent("模型名称"){TextField("模型名称",text:binding(\.model))}
+                                LabeledContent("API 密钥"){SecureField("留空保留原值",text:binding(\.key))}
                             }
                         }
-                        Toggle("自动加入完整明确日期的新作业",isOn:binding(\.automatic))
-                        Text("相对日期、缺少时间、考试及更新建议需审核。").foregroundStyle(.secondary)
-                    }.padding(8).frame(maxWidth:.infinity,alignment:.leading)
-                }
-                WorkspaceSection("提交作业") {Toggle("提交后自动完成作业",isOn:binding(\.autoCompleteSubmittedAssignments))}
-                WorkspaceSection("助手识别 · Skill") {VStack(alignment:.leading,spacing:12){HStack{Button("助手识别"){state.action?("skill-export")}.amPrimaryAction();Button("批次与进度…"){state.action?("skill-status")};Spacer()};WorkspaceExpandedSection("课程与兼容操作"){HStack{Button("调整课程…"){state.action?("skill-courses")};Button("重新分析全部…"){state.action?("skill-all")};Button("手动导入…"){state.action?("skill-import")}}}}}
-                WorkspaceSection("作业文件在线复核") {VStack(alignment:.leading,spacing:10){Button("配置在线复核…"){state.action?("online-review")}}}
-                WorkspaceSection("账户与提醒") {HStack{Button("GitHub 账户…"){state.action?("account")};Button("提醒设置与测试…"){state.action?("notifications")};Button("排查提醒…"){state.action?("notification-help")};Spacer()}.padding(8)}
-                WorkspaceSection("软件更新") {HStack{Button("检查更新…"){state.action?("check-update")};Button("自动检查设置…"){state.action?("updates")};Spacer()}.padding(8)}
-                WorkspaceSection("日历与假期") {Button("设置本机休息日／工作日…"){state.action?("calendar-overrides")}}
-                WorkspaceSection("数据与反馈"){HStack{Button("恢复任务…"){state.action?("recovery")};Button("诊断与反馈…"){state.action?("diagnostics")};Spacer()}}
-                WorkspaceExpandedSection("高级设置") {Button("GitHub 登录与兼容设置…"){state.action?("advanced")}.padding(.top,8)}
-            }.padding(24)
-        }
-        Divider()
-        HStack {if !state.message.isEmpty {Text(state.message).font(.caption).textSelection(.enabled)};Spacer();Button("保存设置"){_ = state.persist()}.amPrimaryAction().disabled(state.localBusy)}.padding(.horizontal,24).padding(.vertical,12)
-        }.onChange(of:state.mode){state.changeMode($0)}.font(.system(size:13)).frame(minWidth:540,minHeight:520).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions()
+                        if state.mode=="cloud" {Section("允许发送的课程") {
+                            ForEach(state.availableCourses,id:\.self){course in Toggle(course,isOn:Binding(get:{state.cloudCourses.contains(course)},set:{if $0{state.cloudCourses.insert(course)}else{state.cloudCourses.remove(course)}}))}
+                            if state.availableCourses.isEmpty {Text("尚未添加课程").foregroundStyle(.secondary)}
+                            Text("仅发送确认材料，不发送个人任务或凭据。每天最多20次请求（含失败），可能产生费用。").font(.caption).foregroundStyle(.secondary)
+                        }}
+                        Section("助手识别") {
+                            Button("准备识别材料…"){state.action?("skill-export")}
+                            Button("批次与进度…"){state.action?("skill-status")}
+                            Button("调整课程…"){state.action?("skill-courses")}
+                            Button("重新分析全部…"){state.action?("skill-all")}
+                            Button("导入助手结果…"){state.action?("skill-import")}
+                        }
+                    case "在线复核":Section("作业文件"){Button("配置在线复核…"){state.action?("online-review")}}
+                    case "账户与提醒":
+                        Section("GitHub"){Button("账户设置…"){state.action?("account")};Button("登录与兼容设置…"){state.action?("advanced")}}
+                        Section("提醒"){Button("提醒设置与测试…"){state.action?("notifications")};Button("排查提醒…"){state.action?("notification-help")}}
+                    case "软件更新":Section("更新"){Button("检查更新…"){state.action?("check-update")};Button("自动检查设置…"){state.action?("updates")}}
+                    default:Section("数据"){Button("恢复任务…"){state.action?("recovery")};Button("诊断与反馈…"){state.action?("diagnostics")}}
+                    }
+                }.formStyle(.grouped).textFieldStyle(.roundedBorder).controlSize(.regular)
+            }
+            Divider()
+            HStack(alignment:.center){if !state.message.isEmpty {Text(state.message).font(.caption).textSelection(.enabled);Button{state.message=""}label:{Image(systemName:"xmark")}.buttonStyle(.plain).accessibilityLabel("关闭设置提示")};Spacer();Button("保存设置"){_ = state.persist()}.buttonStyle(.borderedProminent).disabled(!state.dirty || state.localBusy).accessibilityIdentifier("settings-save")}.padding(12)
+        }.onChange(of:state.mode){state.changeMode($0)}.font(.system(size:13)).tint(Color(nsColor:AMAppearance.accent))
     }
 }
 @objc(AMSettingsController)
@@ -1135,6 +1105,10 @@ private struct CaptureTextEditor:NSViewRepresentable {
     @Published var entries:[NSDictionary]=[]
     @Published var selected:String?
     @Published var notice=""
+    private var lastNotice=""
+    private var dismissedNotice=""
+    func presentNotice(_ text:String){if text != lastNotice {dismissedNotice=""};lastNotice=text;notice=dismissedNotice==text ? "":text}
+    func dismissNotice(){dismissedNotice=lastNotice;notice=""}
     @Published var busy=false
     @Published var showingOriginal=false
     @Published var imageScale=1.0
@@ -1159,23 +1133,21 @@ private struct QuickEntryView:View {
         }}.listStyle(.inset).onCommand(#selector(NSText.selectAll(_:))){for index in state.entries.indices{let copy=state.entries[index].mutableCopy() as! NSMutableDictionary;copy["selected"]=true;state.entries[index]=copy};state.send("draft")}
     }
     private var details:some View {
-        ScrollView{VStack(alignment:.leading,spacing:12){if let r=state.current {
-            WorkspaceSection("作业信息"){TextField("作业名称",text:state.field("title")).accessibilityIdentifier("quick-title");TextField("课程或分类",text:state.field("subject"));if !state.courses.isEmpty{Menu("关联 GitHub 课程（可选）"){Button("不关联"){state.change("courseRepository","")};ForEach(workspaceRows(state.courses)){row in Button(string(row.record,"name")){state.change("courseRepository",identifier(row.record));state.change("subject",string(row.record,"name"))}}}}}
-            WorkspaceSection("截止时间"){TextField("例如 2026-10-20 18:00",text:state.field("dateText")).accessibilityIdentifier("quick-deadline");Text(string(r,"hint")).font(.caption).foregroundStyle(.secondary);Text("时区：\(string(r,"timeZone")) · 消息／录入日期：\((r["referenceDate"] as? Date ?? state.reference).formatted())").font(.caption2).foregroundStyle(.secondary)}
-            WorkspaceSection("备注"){TextEditor(text:state.field("notes")).frame(minHeight:90).accessibilityIdentifier("quick-notes");}
-            WorkspaceSection("提醒"){ForEach([10080,4320,1440,60,0],id:\.self){minutes in let values=(r["reminderOffsets"] as? [NSNumber] ?? []).map(\.intValue);Toggle([10080:"提前7天",4320:"提前3天",1440:"提前1天",60:"提前1小时",0:"到期"][minutes]!,isOn:Binding(get:{values.contains(minutes)},set:{yes in var next=Set(values);if yes{next.insert(minutes)}else{next.remove(minutes)};state.change("reminderOffsets",Array(next).sorted(by:>))}))}}
-            WorkspaceDisclosure("查看原文"){Text(string(r,"evidence")).font(.caption).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}
-        }else{Text("未选择作业").foregroundStyle(.secondary)}}.padding(12).textFieldStyle(.roundedBorder)}
+        Form {if let r=state.current {
+            TaskFields(title:state.field("title"),subject:state.field("subject"),date:.constant(Date()),notes:state.field("notes"),offsets:Binding(get:{(state.current?["reminderOffsets"] as? [NSNumber] ?? []).map(\.intValue)},set:{state.change("reminderOffsets",$0)}),priority:Binding(get:{(state.current?["priority"] as? NSNumber)?.intValue ?? 0},set:{state.change("priority",$0)}),recurrence:.constant([:]),seriesScope:.constant(0),rawDate:state.field("dateText"),recurrenceEnabled:false,dateHint:string(r,"hint"))
+            if !state.courses.isEmpty {Section {Menu("关联课程"){Button("不关联"){state.change("courseRepository","")};ForEach(workspaceRows(state.courses)){row in Button(string(row.record,"name")){state.change("courseRepository",identifier(row.record));state.change("subject",string(row.record,"name"))}}}}}
+            Section {WorkspaceDisclosure("老师原文与来源"){Text(string(r,"evidence")).textSelection(.enabled)}}
+        }else{Text("未选择作业").foregroundStyle(.secondary)}}.formStyle(.grouped).controlSize(.regular).textFieldStyle(.roundedBorder)
     }
     var body:some View {GeometryReader{geo in VStack(alignment:.leading,spacing:12){
-        HStack{Text("快速录入作业").font(.title2.bold());Spacer();Button("保存草稿并关闭"){state.send("close")}.keyboardShortcut(.cancelAction)}
+        HStack{Text("从文字或截图录入").font(.title2.bold());Spacer();Button("保存草稿并关闭"){state.send("close")}.keyboardShortcut(.cancelAction)}
 
         HStack(alignment:.top,spacing:8){CaptureTextEditor(text:$state.text).frame(height:state.ocrImage == nil ? 90:150).overlay(RoundedRectangle(cornerRadius:6).stroke(Color(nsColor:.separatorColor)));if let image=state.ocrImage{VStack(alignment:.leading,spacing:4){Image(nsImage:image).resizable().scaledToFit().frame(maxHeight:100).accessibilityLabel("录入截图原图");ScrollView{Text(state.ocrWarnings).font(.caption).foregroundStyle(.orange).textSelection(.enabled)}.frame(height:40);HStack{Button("放大原图…"){state.showingOriginal=true};Button("关闭"){state.ocrImage=nil}.accessibilityLabel("关闭截图对照")}}.frame(width:min(260,geo.size.width * 0.36))}}.onChange(of:state.text){_ in state.send("draft")}.task(id:state.text){let value=state.text;try? await Task.sleep(nanoseconds:450_000_000);if !Task.isCancelled && !state.busy && !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && state.parsedText != value{state.send("source-changed")}}
-        HStack{Button("粘贴"){state.send("paste")};Button("选择截图…"){state.send("image")};WorkspaceButton(title:"重新识别",enabled:!state.busy,prominent:false,identity:"quick-parse"){state.send("parse")}.fixedSize();Button("助手识别…"){state.send("skill")};Spacer();if state.busy{ProgressView().progressViewStyle(.linear).frame(width:160)}}.disabled(state.busy)
+        HStack{Button("粘贴"){state.send("paste")};Button("选择截图…"){state.send("image")};WorkspaceButton(title:"重新识别",enabled:!state.busy,prominent:false,identity:"quick-parse"){state.send("parse")}.fixedSize();Button("助手识别…"){state.send("skill")};Spacer();if state.busy{ProgressView().progressViewStyle(.linear).frame(width:160)}}
         HStack{Toggle("指定消息日期",isOn:$state.explicitReference).onChange(of:state.explicitReference){_ in state.send("draft")};if state.explicitReference{DatePicker("",selection:$state.reference).labelsHidden().onChange(of:state.reference){_ in state.send("draft")}};Spacer()}
         HStack{Button("全选"){for i in state.entries.indices{let copy=state.entries[i].mutableCopy() as! NSMutableDictionary;copy["selected"]=true;state.entries[i]=copy};state.send("draft")};Button("取消选择"){for i in state.entries.indices{let copy=state.entries[i].mutableCopy() as! NSMutableDictionary;copy["selected"]=false;state.entries[i]=copy};state.send("draft")};Text("已选 \(state.entries.filter{flag($0,"selected")}.count) / \(state.entries.count)").foregroundStyle(.secondary);Spacer()}
         if geo.size.width<760{VStack(spacing:0){rows.frame(height:150);Divider();details}}else{HStack(spacing:0){rows.frame(width:260);Divider();details}}
-        Divider();Text(state.notice).font(.callout).foregroundStyle(Color(nsColor:.labelColor)).textSelection(.enabled).accessibilityIdentifier("quick-status")
+        if !state.notice.isEmpty {HStack(alignment:.top){Text(state.notice).font(.callout).textSelection(.enabled).accessibilityIdentifier("quick-status");Spacer();Button{state.dismissNotice()}label:{Image(systemName:"xmark")}.buttonStyle(.plain).accessibilityLabel("关闭提示")}}
         HStack{Button("手动导入助手结果…"){state.send("import")};Spacer();WorkspaceButton(title:"保存选中作业",enabled:!state.busy && state.entries.contains{flag($0,"selected")},prominent:true,identity:"quick-save",saveShortcut:true){state.send("save")}.fixedSize()}
     }.padding(16).font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions().accessibilityElement(children:.contain)
     .sheet(isPresented:$state.showingOriginal){VStack(spacing:12){HStack{Text("截图原图").font(.headline);Spacer();Text("缩放");Slider(value:$state.imageScale,in:0.25...3).frame(width:140).accessibilityLabel("原图缩放");Button("完成"){state.showingOriginal=false}.keyboardShortcut(.cancelAction)};if let image=state.ocrImage{ScrollView([.horizontal,.vertical]){Image(nsImage:image).resizable().frame(width:image.size.width*state.imageScale,height:image.size.height*state.imageScale).accessibilityLabel("完整录入截图，可滚动查看")}}}.padding(16).frame(minWidth:620,idealWidth:800,minHeight:460,idealHeight:600)}}}
@@ -1184,8 +1156,8 @@ private struct QuickEntryView:View {
     private let state=QuickEntryState()
     @objc public var actionHandler:((String,NSDictionary)->Void)? {didSet{state.action=actionHandler}}
     @objc public var snapshot:NSDictionary {state.snapshot}
-    @objc public func updateDraft(_ draft:NSDictionary,courses:[NSDictionary],notice:String,busy:Bool){state.parsedText=(draft["material"] as? NSDictionary).map{string($0,"text")} ?? "";state.text=string(draft,"text");state.entries=workspaceRecords(draft["entries"] as? [NSDictionary] ?? []);state.reference=draft["referenceDate"] as? Date ?? Date();state.explicitReference=flag(draft,"explicitReference");state.courses=workspaceRecords(courses);state.notice=notice;state.busy=busy;if !state.entries.contains(where:{recordIdentifier($0)==state.selected}){state.selected=state.entries.first.map{recordIdentifier($0)}}}
-    @objc public func setNotice(_ notice:String,busy:Bool){state.notice=notice;state.busy=busy}
+    @objc public func updateDraft(_ draft:NSDictionary,courses:[NSDictionary],notice:String,busy:Bool){state.parsedText=(draft["material"] as? NSDictionary).map{string($0,"text")} ?? "";state.text=string(draft,"text");state.entries=workspaceRecords(draft["entries"] as? [NSDictionary] ?? []);state.reference=draft["referenceDate"] as? Date ?? Date();state.explicitReference=flag(draft,"explicitReference");state.courses=workspaceRecords(courses);state.presentNotice(notice);state.busy=busy;if !state.entries.contains(where:{recordIdentifier($0)==state.selected}){state.selected=state.entries.first.map{recordIdentifier($0)}}}
+    @objc public func setNotice(_ notice:String,busy:Bool){state.presentNotice(notice);state.busy=busy}
     @objc public func setOCRPreview(_ image:NSImage,warnings:String){state.ocrImage=image;state.ocrWarnings=warnings}
     public override func loadView(){view=NSHostingView(rootView:QuickEntryView(state:state))}
 }
@@ -1318,4 +1290,200 @@ private struct HelpWorkspace:View {
 @objc(AMHelpController) @MainActor public final class AMHelpController:NSViewController {
     @objc public var actionHandler:((String)->Void)?
     public override func loadView(){view=NSHostingView(rootView:HelpWorkspace(action:{[weak self] in self?.actionHandler?($0)}))}
+}
+
+// Shared editable task fields. Containers own save/cancel and source-specific
+// evidence; this component owns the same labels, value summaries and hit areas.
+private typealias TaskValueState<Value> = SwiftUI.State<Value>
+private struct TaskSummaryRow<Content:View>:View {
+    let title:String
+    let summary:String
+    var enabled=true
+    @ViewBuilder let content:()->Content
+    @TaskValueState<Bool> private var expanded=false
+    var body:some View {
+        Button {expanded=true} label:{HStack {Text(title);Spacer(minLength:12);Text(summary).foregroundStyle(.secondary).lineLimit(1);Image(systemName:"chevron.right").font(.caption).foregroundStyle(.tertiary)}.contentShape(Rectangle()).frame(minHeight:30)}
+            .buttonStyle(.plain).disabled(!enabled).accessibilityLabel(title).accessibilityValue(summary)
+            .popover(isPresented:$expanded,arrowEdge:.trailing){VStack(alignment:.leading,spacing:12){HStack{Text(title).font(.headline);Spacer();Button("完成"){expanded=false}};content()}.padding(16).frame(width:300)}
+    }
+}
+private func reminderSummary(_ offsets:[Int])->String {
+    if offsets.isEmpty{return "不提醒"}
+    let names=[10080:"7天",4320:"3天",1440:"1天",60:"1小时",0:"到期"]
+    return Array(Set(offsets)).sorted(by:>).map{names[$0] ?? "\($0)分钟"}.joined(separator:"、")
+}
+private struct TaskReminderEditor:View {
+    @Binding var offsets:[Int]
+    @TaskValueState<String> private var custom=""
+    @TaskValueState<String> private var error=""
+    var body:some View {
+        VStack(alignment:.leading,spacing:10){
+            ForEach([10080,4320,1440,60,0],id:\.self){value in
+                Toggle(reminderSummary([value]),isOn:Binding(get:{offsets.contains(value)},set:{yes in var next=Set(offsets);if yes{next.insert(value)}else{next.remove(value)};offsets=Array(next).sorted(by:>)}))
+            }
+            let other=offsets.filter{![10080,4320,1440,60,0].contains($0)}
+            ForEach(other,id:\.self){value in HStack{Text("提前 \(value) 分钟");Spacer();Button("移除"){offsets.removeAll{$0==value}}}}
+            HStack{TextField("提前分钟数",text:$custom);Button("添加"){guard let value=Int(custom),value>=0,value<=525600 else{error="请输入 0–525600 分钟";return};offsets=Array(Set(offsets+[value])).sorted(by:>);custom="";error=""}}
+            if !error.isEmpty {Text(error).font(.caption).foregroundStyle(.red)}
+            HStack{Button("常用提醒"){offsets=[10080,4320,1440,60,0]};Button("关闭提醒"){offsets=[]}}
+        }.toggleStyle(.checkbox)
+    }
+}
+private struct TaskRecurrenceEditor:View {
+    @Binding var rule:NSDictionary
+    @Binding var scope:Int
+    var preview=""
+    var series=false
+    private func field<T>(_ name:String,_ fallback:T)->Binding<T>{Binding(get:{rule[name] as? T ?? fallback},set:{let next=rule.mutableCopy() as! NSMutableDictionary;next[name]=$0;rule=next.copy() as! NSDictionary})}
+    var body:some View {
+        VStack(alignment:.leading,spacing:10){
+            Picker("方式",selection:field("mode","none")){Text("不重复").tag("none");Text("按固定日历").tag("fixed");Text("完成后重复").tag("completion")}
+            if string(rule,"mode") != "none" && !string(rule,"mode").isEmpty {
+                HStack{Text("每");TextField("间隔",text:field("intervalText","1")).frame(width:60);Picker("单位",selection:field("unit","week")){Text("天").tag("day");Text("周").tag("week");Text("月").tag("month");Text("年").tag("year")}.labelsHidden()}
+                if string(rule,"mode")=="fixed" && string(rule,"unit")=="week" {
+                    HStack(spacing:6){ForEach(0..<7,id:\.self){i in let day=(i+1)%7+1;Toggle(["一","二","三","四","五","六","日"][i],isOn:Binding(get:{(rule["weekdays"] as? [Int] ?? []).contains(day)},set:{yes in var days=Set(rule["weekdays"] as? [Int] ?? []);if yes{days.insert(day)}else{days.remove(day)};let next=rule.mutableCopy() as! NSMutableDictionary;next["weekdays"]=days.sorted();rule=next.copy() as! NSDictionary})).toggleStyle(.button).accessibilityLabel("每周"+["一","二","三","四","五","六","日"][i])}}
+                }
+                Picker("休息日",selection:field("holidayPolicy","keep")){Text("保持日期").tag("keep");Text("跳过").tag("skip");Text("提前至工作日").tag("previous");Text("顺延至工作日").tag("next")}
+                Picker("结束",selection:field("endMode",0)){Text("一直重复").tag(0);Text("截至日期").tag(1);Text("限定次数").tag(2)}
+                if (rule["endMode"] as? Int)==1 {DatePicker("截至",selection:field("until",Date()),displayedComponents:.date)}
+                if (rule["endMode"] as? Int)==2 {TextField("次数",text:field("countText","10"))}
+            }
+            if series {Picker("应用范围",selection:$scope){Text("仅本次").tag(0);Text("本次及以后").tag(1)}}
+            if !preview.isEmpty {Text(preview).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}
+        }
+    }
+}
+private struct TaskFields:View {
+    @Binding var title:String
+    @Binding var subject:String
+    @Binding var date:Date
+    @Binding var notes:String
+    @Binding var offsets:[Int]
+    @Binding var priority:Int
+    @Binding var recurrence:NSDictionary
+    @Binding var seriesScope:Int
+    var rawDate:Binding<String>?=nil
+    var hasDate=true
+    var confirmDate:(()->Void)?=nil
+    var recurrenceEnabled=true
+    var recurrencePreview=""
+    var series=false
+    var error=""
+    var errorField=""
+    var dateHint=""
+    var notesHeight:CGFloat=120
+    var compact=true
+    var focusTitle=false
+    @FocusState private var focus:String?
+    @ViewBuilder private func problem(_ field:String)->some View {if !error.isEmpty && errorField==field {Text(error).font(.caption).foregroundStyle(.red).accessibilityIdentifier("task-error-"+field)}}
+    private var recurrenceSummary:String {
+        let mode=string(recurrence,"mode");if mode.isEmpty || mode=="none" {return "不重复"}
+        let unit=["day":"天","week":"周","month":"月","year":"年"][string(recurrence,"unit")] ?? "周"
+        return (mode=="completion" ? "完成后每":"每")+string(recurrence,"intervalText")+unit
+    }
+    var body:some View {
+        Section {
+            VStack(alignment:.leading,spacing:5){LabeledContent("名称"){TextField("任务名称",text:$title).focused($focus,equals:"title").accessibilityIdentifier("task-title")};problem("title")}
+            LabeledContent("课程"){TextField("课程／分类",text:$subject).accessibilityIdentifier("task-subject")}
+            VStack(alignment:.leading,spacing:5){
+                if let rawDate {LabeledContent("截止时间"){TextField("完整日期和时间",text:rawDate).accessibilityIdentifier("task-deadline")}}
+                else {if compact {VStack(alignment:.leading,spacing:6){Text("截止时间").foregroundStyle(.secondary);DatePicker("截止时间",selection:$date,displayedComponents:[.date,.hourAndMinute]).labelsHidden().accessibilityIdentifier("task-deadline")}}else{DatePicker("截止时间",selection:$date,displayedComponents:[.date,.hourAndMinute]).accessibilityIdentifier("task-deadline")}}
+                if !dateHint.isEmpty {Text(dateHint).font(.caption).foregroundStyle(.secondary)}
+                if !hasDate,let confirmDate {Button("确认截止时间",action:confirmDate).accessibilityIdentifier("task-confirm-date")}
+                problem("date")
+            }
+        }
+        Section {
+            TaskSummaryRow(title:"提醒",summary:reminderSummary(offsets)){TaskReminderEditor(offsets:$offsets)}
+            TaskSummaryRow(title:"重复",summary:recurrenceSummary,enabled:recurrenceEnabled){TaskRecurrenceEditor(rule:$recurrence,scope:$seriesScope,preview:recurrencePreview,series:series)}.help(recurrenceEnabled ? "":"老师作业可从任务菜单另建周期安排")
+            TaskSummaryRow(title:"优先级",summary:["普通","重要","紧急"][max(0,min(2,priority))]){Picker("优先级",selection:$priority){Text("普通").tag(0);Text("重要").tag(1);Text("紧急").tag(2)}.pickerStyle(.radioGroup)}
+            problem("reminders");problem("recurrence")
+        }
+        Section("备注") {
+            TextEditor(text:$notes).font(.body).frame(minHeight:notesHeight,idealHeight:notesHeight,maxHeight:notesHeight).accessibilityIdentifier("task-notes")
+        }
+        .onChange(of:errorField){value in if value=="title" {focus="title"}}.onAppear{if focusTitle{focus="title"}}
+    }
+}
+@MainActor final class TaskDraftState:ObservableObject {
+    @Published var values:NSDictionary=[:]
+    @Published var error=""
+    @Published var errorField=""
+    @Published var notice=""
+    @Published var supplementary:NSView?
+    var baseline:NSDictionary=[:]
+    var action:((String,NSDictionary)->Void)?
+    var commitEditing:(()->Bool)?
+    var effectiveValues:NSDictionary {
+        var result=values as! [String:Any]
+        for key in ["title","subject"] {result[key]=string(values,key).trimmingCharacters(in:.whitespacesAndNewlines)}
+        result["reminderOffsets"]=Array(Set(values["reminderOffsets"] as? [Int] ?? [])).sorted(by:>)
+        if let recurrence=values["recurrence"] as? NSDictionary {
+            if ["","none"].contains(string(recurrence,"mode")){result["recurrence"]=["mode":"none"]}
+            else {var rule=recurrence as! [String:Any];if string(recurrence,"unit") != "week" || string(recurrence,"mode") != "fixed" {rule.removeValue(forKey:"weekdays")};let end=recurrence["endMode"] as? Int ?? 0;if end != 1 {rule.removeValue(forKey:"until")};if end != 2 {rule.removeValue(forKey:"countText")};result["recurrence"]=rule}
+        }
+
+        for key in ["recurrencePreview","dateHint","saveTitle","evidence","isNew","sourceLocked","series","supplementaryHeight","planningSummary"] {result.removeValue(forKey:key)}
+        return result as NSDictionary
+    }
+    var dirty:Bool {!effectiveValues.isEqual(baseline)}
+    func load(_ record:NSDictionary,reset:Bool) {if !values.isEqual(record){values=workspaceSnapshot(record) as! NSDictionary};if reset {baseline=effectiveValues;error="";errorField=""}}
+    func field<T>(_ name:String,_ fallback:T)->Binding<T> {Binding(get:{self.values[name] as? T ?? fallback},set:{value in let next=self.values.mutableCopy() as! NSMutableDictionary;next[name]=value;if name=="due",!(self.values[name] as? Date == value as? Date){next["dateConfirmed"]=true};self.values=next.copy() as! NSDictionary;if self.errorField==name || (name=="due" && self.errorField=="date"){self.error="";self.errorField=""};self.action?("change",self.values)})}
+    func save(){
+        guard commitEditing?() ?? true else{return}
+        if string(values,"title").trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {error="请填写任务名称";errorField="title";return}
+        if !flag(values,"dateConfirmed") {error="请确认截止日期和时间";errorField="date";return}
+        action?("save",values)
+    }
+}
+private struct TaskNativeSupplement:NSViewRepresentable {
+    let content:NSView
+    func makeNSView(context:Context)->NSView {let root=NSView();content.translatesAutoresizingMaskIntoConstraints=false;root.addSubview(content);NSLayoutConstraint.activate([content.leadingAnchor.constraint(equalTo:root.leadingAnchor),content.trailingAnchor.constraint(equalTo:root.trailingAnchor),content.topAnchor.constraint(equalTo:root.topAnchor),content.bottomAnchor.constraint(equalTo:root.bottomAnchor)]);return root}
+    func updateNSView(_ nsView:NSView,context:Context){}
+}
+private struct TaskDraftView:View {
+    @ObservedObject var state:TaskDraftState
+    var body:some View {GeometryReader{geo in VStack(spacing:0){
+        Form {
+            TaskFields(title:state.field("title",""),subject:state.field("subject",""),date:state.field("due",Date()),notes:state.field("notes",""),offsets:state.field("reminderOffsets",[10080,4320,1440,60,0]),priority:state.field("priority",0),recurrence:state.field("recurrence",[:]),seriesScope:state.field("seriesScope",0),hasDate:flag(state.values,"dateConfirmed"),confirmDate:{let next=state.values.mutableCopy() as! NSMutableDictionary;next["dateConfirmed"]=true;state.values=next;state.action?("change",next)},recurrenceEnabled:!flag(state.values,"sourceLocked"),recurrencePreview:string(state.values,"recurrencePreview"),series:flag(state.values,"series"),error:state.error,errorField:state.errorField,dateHint:string(state.values,"dateHint"),notesHeight:max(90,geo.size.height-(geo.size.width<430 ? 560:460)),compact:geo.size.width<430,focusTitle:flag(state.values,"isNew"))
+            if !string(state.values,"evidence").isEmpty {Section{WorkspaceDisclosure("老师原文与来源"){Text(string(state.values,"evidence")).textSelection(.enabled)}}}
+            if let supplementary=state.supplementary {Section {TaskSummaryRow(title:"计划与子任务",summary:string(state.values,"planningSummary")){ScrollView{TaskNativeSupplement(content:supplementary).frame(height:CGFloat((state.values["supplementaryHeight"] as? NSNumber)?.doubleValue ?? 190))}.frame(height:min(420,CGFloat((state.values["supplementaryHeight"] as? NSNumber)?.doubleValue ?? 190)))}}}
+        }.formStyle(.grouped).controlSize(.regular).textFieldStyle(.roundedBorder).environment(\.timeZone,TimeZone(identifier:string(state.values,"timeZone")) ?? .current)
+        Divider()
+        VStack(alignment:.leading,spacing:8){
+            if !state.error.isEmpty && state.errorField.isEmpty {HStack(alignment:.top){Text(state.error).foregroundStyle(.red).textSelection(.enabled);Spacer();Button{state.error=""}label:{Image(systemName:"xmark")}.buttonStyle(.plain).accessibilityLabel("关闭提示")}}
+            if !state.notice.isEmpty {Text(state.notice).font(.caption).foregroundStyle(.secondary)}
+            HStack{
+                if flag(state.values,"isNew"){Button("从文字或截图录入…"){state.action?("recognize",state.values)}}
+                else {Menu("更多"){Button("检查作业文件…"){state.action?("check",state.values)};Button("提交作业…"){state.action?("submit",state.values)};Button("提交记录"){state.action?("history",state.values)}}}
+
+                Spacer(minLength:8);Button("取消"){state.action?("cancel",state.values)}.keyboardShortcut(.cancelAction)
+                WorkspaceButton(title:string(state.values,"saveTitle").isEmpty ? "保存":string(state.values,"saveTitle"),prominent:true,identity:"task-save",saveShortcut:true){state.save()}.fixedSize()
+            }
+        }.padding(12)
+    }.background(Color(nsColor:.windowBackgroundColor))}}
+}
+@objc(AMTaskFormController) @MainActor public final class AMTaskFormController:NSViewController {
+    private let state=TaskDraftState()
+    @objc public var actionHandler:((String,NSDictionary)->Void)? {didSet{state.action=actionHandler}}
+    @objc public var hasUnsavedChanges:Bool {state.dirty}
+    @objc public var snapshot:NSDictionary {state.values}
+    @objc public func loadRecord(_ record:NSDictionary,resetBaseline:Bool){state.load(record,reset:resetBaseline)}
+    @objc public func setValidation(_ message:String,field:String){state.error=message;state.errorField=field}
+    @objc public func setNotice(_ text:String){state.notice=text}
+    @objc public func setSupplementaryView(_ view:NSView?){state.supplementary=view}
+    @objc public func captureEditingPosition()->NSDictionary {
+        guard let text=view.window?.firstResponder as? NSTextView else{return [:]}
+        let target=(text.isFieldEditor ? text.delegate as? NSView:text)
+        guard let target,target.isDescendant(of:view) else{return [:]}
+        let position:NSDictionary=["target":target,"selection":NSValue(range:text.selectedRange())]
+        _ = view.window?.makeFirstResponder(nil)
+        return position
+    }
+    @objc public func restoreEditingPosition(_ position:NSDictionary){
+        guard let target=position["target"] as? NSView,target.isDescendant(of:view) else{return}
+        DispatchQueue.main.async{[weak self,weak target] in guard let self,let target else{return};_ = self.view.window?.makeFirstResponder(target);if let text=self.view.window?.firstResponder as? NSTextView,let selection=position["selection"] as? NSValue{let range=selection.rangeValue;text.setSelectedRange(NSRange(location:min(range.location,text.string.utf16.count),length:min(range.length,max(0,text.string.utf16.count-range.location))))}}
+    }
+    @objc public func save(){state.save()}
+    public override func loadView(){view=NSHostingView(rootView:TaskDraftView(state:state));state.commitEditing={[weak self] in self?.view.window?.makeFirstResponder(nil) ?? true}}
 }
