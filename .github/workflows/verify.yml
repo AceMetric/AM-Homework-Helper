@@ -24,7 +24,9 @@ jobs:
       - name: Native build
         run: zsh build.sh
       - name: Native control geometry and interaction
-        run: AM_UI_TEST=NativeControlsUsage zsh verify-hybrid-ui.sh
+        run: |
+          AM_UI_TEST=NativeControlsUsage zsh verify-hybrid-ui.sh
+          AM_UI_TEST=UnifiedUXUsage zsh verify-hybrid-ui.sh
       - name: Dates and reminders
         run: zsh test.sh
       - name: Document and screenshot import

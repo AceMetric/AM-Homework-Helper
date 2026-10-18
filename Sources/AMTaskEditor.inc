@@ -3,7 +3,7 @@
 - (instancetype)initWithTask:(NSDictionary *)task owner:(AppDelegate *)owner {
     DDLFormPanel *panel=[[DDLFormPanel alloc] initWithContentRect:NSMakeRect(0,0,720,640) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
     if(!(self=[super initWithWindow:panel]))return nil;
-    self.appDelegate=owner;self.task=task;self.candidate=task[@"_reviewCandidate"];
+    self.appDelegate=owner;self.task=task.copy;self.candidate=task[@"_reviewCandidate"];
     panel.title=self.candidate ? ([task[@"_existing"] boolValue] ? @"审核更新":@"审核作业"):(task ? @"编辑任务":@"新建任务");panel.minSize=NSMakeSize(560,500);panel.releasedWhenClosed=NO;panel.delegate=owner;
     Surface *root=Box(Canvas(),0);panel.contentView=root;
     NSStackView *body=[NSStackView stackViewWithViews:@[]];body.orientation=NSUserInterfaceLayoutOrientationVertical;body.distribution=NSStackViewDistributionFill;body.alignment=NSLayoutAttributeLeading;body.spacing=10;body.edgeInsets=NSEdgeInsetsMake(16,24,16,24);self.editorBody=body;
@@ -61,7 +61,7 @@
     self.titleField.accessibilityLabel=@"任务名称";self.subjectField.accessibilityLabel=@"课程或分类";self.reminderField.accessibilityLabel=@"提醒时间";self.notesField.accessibilityLabel=@"我的备注";panel.initialFirstResponder=self.titleField;panel.defaultButtonCell=self.nextReviewButton ? self.nextReviewButton.cell:self.saveButton.cell;panel.autorecalculatesKeyViewLoop=YES;
     root.onResize=^{[weak layoutEditor];};
     NSRect available=owner.window.screen.visibleFrame;if(NSIsEmptyRect(available))available=NSScreen.mainScreen.visibleFrame;NSSize initial=NSMakeSize(MIN(720,MAX(560,NSWidth(available)-80)),MIN(640,MAX(500,NSHeight(available)-100)));if(owner.window)initial.height=MIN(initial.height,MAX(500,NSHeight(owner.window.contentLayoutRect)-32));[panel setContentSize:initial];
-    [self configureRecurrence];[self validateReminders];[self validateDate];[self layoutEditor];self.initialValues=[self formValues];return self;
+    [self configureRecurrence];[self validateReminders];[self validateDate];[self layoutEditor];self.dateExplicitlyConfirmed=!self.candidate || self.task[@"due"]!=nil;[self installSharedForm];self.initialValues=[self formValues];return self;
 }
 - (void)nativeDeadlineChanged:(NSDatePicker *)sender {[self updateDate:sender.dateValue];[self recurrenceChanged:nil];}
 - (void)toggleTeacherSource:(NSButton *)sender {self.sourceScroll.hidden=!self.sourceScroll.hidden;sender.title=self.sourceScroll.hidden ? @"显示老师原文":@"收起老师原文";[self layoutEditor];}
@@ -69,6 +69,7 @@
 #include "AMRecurrenceEditor.inc"
 
 - (void)layoutEditor {
+    if(self.sharedForm){if(!self.syncingSharedForm)[self.sharedForm loadRecord:[self sharedFormRecord] resetBaseline:NO];[self.sharedForm setNotice:self.selectedDate.timeIntervalSinceNow<0 ? @"已逾期，不补发提醒":@""];return;}
     if(self.layingOutEditor || !self.editorBody)return;self.layingOutEditor=YES;
     BOOL wide=NSWidth(self.window.contentView.bounds)>=640;
     self.repeatModeWidth.active=NO;self.stackedDateWidth.active=NO;self.stackedRepeatWidth.active=NO;

@@ -118,6 +118,15 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @end
 
 @implementation SSCourseController
+@synthesize usesToolbar=_usesToolbar;
+- (void)setUsesToolbar:(BOOL)usesToolbar {
+    if(_usesToolbar==usesToolbar)return;_usesToolbar=usesToolbar;
+    if(usesToolbar && self.nativeHeader){
+        for(NSView *row in self.nativeHeader.arrangedSubviews.copy)if(row!=self.nativeHeader.arrangedSubviews.firstObject){[self.nativeHeader removeArrangedSubview:row];[row removeFromSuperview];}
+        for(NSView *view in @[self.scanButton,self.syncButton,self.commitButton,self.assistantButton,self.moreButton,self.reviewFilter,self.typeFilter,self.search])[view removeFromSuperview];
+        [self layoutContent];
+    }
+}
 - (instancetype)initWithPreview:(BOOL)preview {
     if ((self = [super initWithNibName:nil bundle:nil])) {
         self.preview = preview; self.github = SSGitHub.new; self.git = SSGit.new;
@@ -255,7 +264,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.skillJobsController.actionHandler=^(NSString *action,NSString *batch){[owner skillJobAction:action batch:batch];};
     self.cancelReadButton=SSButton(@"终止当前步骤",self,@selector(cancelReadOperation:),NSZeroRect);[root addSubview:self.cancelReadButton];self.cancelReadButton.hidden=YES;
     self.nativeHeader=NSStackView.new;self.nativeHeader.orientation=NSUserInterfaceLayoutOrientationVertical;self.nativeHeader.alignment=NSLayoutAttributeLeading;self.nativeHeader.spacing=8;self.nativeHeader.translatesAutoresizingMaskIntoConstraints=NO;[root addSubview:self.nativeHeader];
-    for(NSArray *controls in @[@[self.accountLabel,self.setupButton],@[self.scanButton,self.syncButton,self.commitButton,self.assistantButton,self.moreButton],@[self.reviewFilter,self.typeFilter,self.search]]){
+    NSArray *headerRows=self.usesToolbar ? @[@[self.accountLabel,self.setupButton]]:@[@[self.accountLabel,self.setupButton],@[self.scanButton,self.syncButton,self.commitButton,self.assistantButton,self.moreButton],@[self.reviewFilter,self.typeFilter,self.search]];
+    for(NSArray *controls in headerRows){
         NSStackView *row=[NSStackView stackViewWithViews:controls];row.orientation=NSUserInterfaceLayoutOrientationHorizontal;row.spacing=8;row.alignment=NSLayoutAttributeCenterY;row.detachesHiddenViews=YES;[self.nativeHeader addArrangedSubview:row];row.translatesAutoresizingMaskIntoConstraints=NO;[row.widthAnchor constraintEqualToAnchor:self.nativeHeader.widthAnchor].active=YES;
     }
     [NSLayoutConstraint activateConstraints:@[[self.nativeHeader.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[self.nativeHeader.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[self.nativeHeader.topAnchor constraintEqualToAnchor:root.safeAreaLayoutGuide.topAnchor]]];
@@ -278,15 +288,28 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.statusLabel.lineBreakMode=NSLineBreakByTruncatingMiddle;[self.statusLabel setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];[self.statusLabel setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
     for(NSButton *button in @[self.recoveryButton,self.cancelReadButton]){[button setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];[button setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];}
     [NSLayoutConstraint activateConstraints:@[[self.operationStatus.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],[self.operationStatus.trailingAnchor constraintEqualToAnchor:root.trailingAnchor],[self.operationStatus.topAnchor constraintEqualToAnchor:self.nativeHeader.bottomAnchor constant:8],[statusRow.widthAnchor constraintEqualToAnchor:self.operationStatus.widthAnchor],[self.progressRow.widthAnchor constraintEqualToAnchor:self.operationStatus.widthAnchor],[self.progressRow.heightAnchor constraintEqualToConstant:progressHeight]]];
+    if(self.usesToolbar){for(NSView *view in @[self.scanButton,self.syncButton,self.commitButton,self.assistantButton,self.moreButton,self.reviewFilter,self.typeFilter,self.search])[view removeFromSuperview];}
     [self layoutContent];
+}
+- (NSToolbarItem *)toolbarItemForIdentifier:(NSString *)identifier {
+    (void)self.view;
+    if([identifier isEqual:@"AMCourseSearch"]){NSSearchToolbarItem *item=[[NSSearchToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"搜索课程内容";item.visibilityPriority=NSToolbarItemVisibilityPriorityHigh;item.searchField=self.search;item.preferredWidthForSearchField=220;return item;}
+    NSDictionary *controls=@{@"AMCourseScan":self.scanButton,@"AMCourseSync":self.syncButton,@"AMCourseSubmit":self.commitButton,@"AMCourseMore":self.moreButton,@"AMCourseFilter":self.typeFilter};
+    NSControl *control=controls[identifier];if(!control)return nil;
+    if([control isKindOfClass:NSPopUpButton.class])return PopupToolbarItem(identifier,@"材料类型",(id)control);
+    NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];[control sizeToFit];item.view=control;
+    item.label=[control isKindOfClass:NSButton.class] ? [(NSButton *)control title]:@"材料类型";item.visibilityPriority=[identifier isEqual:@"AMCourseSync"] ? NSToolbarItemVisibilityPriorityLow:([identifier isEqual:@"AMCourseScan"] ? NSToolbarItemVisibilityPriorityHigh:NSToolbarItemVisibilityPriorityStandard);
+    NSMenuItem *overflow=[[NSMenuItem alloc] initWithTitle:item.label action:control.action keyEquivalent:@""];overflow.target=control.target;item.menuFormRepresentation=overflow;return item;
 }
 - (void)layoutContent {
     CGFloat w = NSWidth(self.view.bounds), h = NSHeight(self.view.bounds);
+    if(self.usesToolbar){if(self.inbox && !self.reviewFilter.superview){[self.nativeHeader addArrangedSubview:self.reviewFilter];}else if(!self.inbox && self.reviewFilter.superview==self.nativeHeader){[self.nativeHeader removeArrangedSubview:self.reviewFilter];[self.reviewFilter removeFromSuperview];}}
     self.sections.hidden=NO;self.typeFilter.hidden=self.inbox || self.sections.selectedSegment!=0;self.reviewFilter.hidden=!self.inbox;self.search.hidden=self.inbox;self.assistantButton.hidden=self.inbox;self.assistantImportButton.hidden=YES;self.assistantButton.enabled=self.assistantImportButton.enabled=!self.operationsPaused;BOOL modelConfigured=![SSRecognitionSettings()[@"mode"] isEqual:@"rules"];self.assistantButton.hidden=self.inbox || !modelConfigured;self.assistantButton.title=modelConfigured ? @"AI增强识别…":@"Skill识别…";self.assistantButton.action=modelConfigured ? @selector(enhanceRecognition:):@selector(exportSkillContext:);
     self.syncButton.hidden=self.inbox || ![self course];self.commitButton.hidden=self.syncButton.hidden;
     self.cancelReadButton.hidden=!self.busy;self.progress.hidden=!self.busy;self.progressRow.hidden=!self.busy;
-    self.operationStatus.hidden=!self.statusLabel.stringValue.length && !self.busy && self.recoveryButton.hidden;
-    [self.view layoutSubtreeIfNeeded];CGFloat workspaceTop=self.operationStatus.hidden ? NSMaxY(self.nativeHeader.frame)+8:NSMaxY(self.operationStatus.frame)+8;
+    // The activity toolbar owns feedback; status changes never move the workspace.
+    self.operationStatus.hidden=YES;
+    [self.view layoutSubtreeIfNeeded];CGFloat workspaceTop=NSMaxY(self.nativeHeader.frame)+8;
     self.table.enclosingScrollView.frame = NSMakeRect(0, 184, w, MAX(112, h - 348));
     self.detail.enclosingScrollView.frame = NSMakeRect(0, h - 152, w, 104); self.reviewButton.frame = NSMakeRect(w - 152, h - 40, 152, 36);
     self.typeButton.frame = NSMakeRect(0, h - 40, 136, 36);
@@ -367,16 +390,26 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     [alert addButtonWithTitle:@"选择已有文件夹"]; [alert addButtonWithTitle:@"下载课程仓库"]; [alert addButtonWithTitle:@"稍后"];
     NSModalResponse answer = [alert runModal]; if (answer == NSAlertFirstButtonReturn) [self linkFolder:nil]; else if (answer == NSAlertSecondButtonReturn) [self cloneFork:nil];
 }
-- (void)more:(NSButton *)sender {
-    NSMenu *menu = NSMenu.new; menu.autoenablesItems = NO; NSDictionary *course = [self course];
-    for (NSArray *entry in @[@[@"AI增强识别…",NSStringFromSelector(@selector(enhanceRecognition:))], @[@"Skill识别…",NSStringFromSelector(@selector(exportSkillContext:))], @[@"添加课程…", NSStringFromSelector(@selector(addFork:))], @[@"关联文件夹…", NSStringFromSelector(@selector(linkFolder:))], @[@"下载课程仓库…", NSStringFromSelector(@selector(cloneFork:))], @[@"打开文件夹", NSStringFromSelector(@selector(openFolder:))], @[@"继续处理冲突…", NSStringFromSelector(@selector(continueMerge:))], @[@"重试推送", NSStringFromSelector(@selector(push:))], @[@"启用 / 停用自动检查", NSStringFromSelector(@selector(toggleCourse:))], @[@"仓库详情", NSStringFromSelector(@selector(repositoryDetails:))], @[@"操作详情…", NSStringFromSelector(@selector(operationDetails:))],@[@"恢复课程访问…",NSStringFromSelector(@selector(restoreAccess:))],@[@"高级登录设置…",NSStringFromSelector(@selector(authenticationSettings:))], @[@"移除课程…", NSStringFromSelector(@selector(removeCourse:))]]) {
-        NSMenuItem *item = [menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""]; item.target = self; item.enabled=course!=nil || item.action==@selector(addFork:) || item.action==@selector(authenticationSettings:);
-        if (item.action == @selector(continueMerge:)) item.enabled = [course[@"pendingMergeTip"] length] > 0;
-        if (item.action == @selector(push:)) item.enabled = [course[@"pushFailed"] boolValue];
-        if (item.action == @selector(toggleCourse:)) item.title = [course[@"enabled"] isEqual:@NO] ? @"启用自动检查" : @"停用自动检查";
-    }
-    for (NSArray *entry in @[@[@"助手识别",NSStringFromSelector(@selector(exportSkillContext:))],@[@"识别批次与进度…",NSStringFromSelector(@selector(showSkillJobs:))],@[@"调整助手课程…",NSStringFromSelector(@selector(adjustSkillCourses:))],@[@"重新分析全部材料…",NSStringFromSelector(@selector(exportAllSkillContext:))],@[@"手动导入助手结果…",NSStringFromSelector(@selector(importSkillResults:))],@[@"高级：用本地模型重新识别…",NSStringFromSelector(@selector(recognizeLocal:))],@[@"高级：课程识别模板…",NSStringFromSelector(@selector(editCourseTemplate:))]]) {NSMenuItem *item=[menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""];item.target=self;item.enabled=!self.operationsPaused && ((![entry[1] isEqual:NSStringFromSelector(@selector(editCourseTemplate:))] && ![entry[1] isEqual:NSStringFromSelector(@selector(recognizeLocal:))]) || course != nil);}
-    [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, NSHeight(sender.bounds)) inView:sender];
+- (void)more:(id)sender {
+    NSMenu *menu=NSMenu.new;menu.autoenablesItems=NO;NSDictionary *course=[self course];
+    void (^add)(NSMenu *,NSString *,SEL,BOOL)=^(NSMenu *target,NSString *title,SEL action,BOOL enabled){NSMenuItem *item=[target addItemWithTitle:title action:action keyEquivalent:@""];item.target=self;item.enabled=enabled && !self.operationsPaused;};
+    add(menu,@"增强识别…",@selector(enhanceRecognition:),course && ![SSRecognitionSettings()[@"mode"] isEqual:@"rules"]);
+    add(menu,@"交给助手识别…",@selector(exportSkillContext:),YES);
+    add(menu,@"识别批次与进度…",@selector(showSkillJobs:),YES);
+    add(menu,@"重新分析材料…",@selector(exportAllSkillContext:),YES);
+    [menu addItem:NSMenuItem.separatorItem];
+    add(menu,@"添加课程…",@selector(addFork:),YES);add(menu,@"关联文件夹…",@selector(linkFolder:),course!=nil);add(menu,@"下载课程…",@selector(cloneFork:),course!=nil);add(menu,@"打开文件夹",@selector(openFolder:),[course[@"path"] length]>0);
+    if([course[@"pendingMergeTip"] length])add(menu,@"处理冲突…",@selector(continueMerge:),YES);
+    if([course[@"pushFailed"] boolValue])add(menu,@"重试推送",@selector(push:),YES);
+    if([self.errorDetails[self.selectedFork ?: @"all"] length])add(menu,@"操作详情…",@selector(operationDetails:),YES);
+    [menu addItem:NSMenuItem.separatorItem];
+    add(menu,[course[@"enabled"] isEqual:@NO] ? @"启用自动检查":@"停用自动检查",@selector(toggleCourse:),course!=nil);
+    add(menu,@"仓库信息",@selector(repositoryDetails:),course!=nil);
+    NSMenuItem *advanced=[menu addItemWithTitle:@"更多设置" action:nil keyEquivalent:@""];NSMenu *options=NSMenu.new;options.autoenablesItems=NO;advanced.submenu=options;
+    add(options,@"调整识别课程…",@selector(adjustSkillCourses:),YES);add(options,@"导入助手结果…",@selector(importSkillResults:),YES);add(options,@"本地模型重新识别…",@selector(recognizeLocal:),course!=nil);add(options,@"识别模板…",@selector(editCourseTemplate:),course!=nil);add(options,@"恢复课程访问…",@selector(restoreAccess:),course!=nil);add(options,@"登录与兼容设置…",@selector(authenticationSettings:),YES);
+    add(menu,@"移除课程…",@selector(removeCourse:),course!=nil);
+    NSView *anchor=[sender isKindOfClass:NSView.class] ? sender:self.view;
+    [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0,anchor==self.view ? 0:NSHeight(anchor.bounds)) inView:anchor];
 }
 - (void)editCourseTemplate:(id)sender {
     NSMutableDictionary *course=[self savedCourse:[self course]];if(!course || self.busy || self.operationsPaused)return;
@@ -531,6 +564,12 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     BOOL anyLocal = NO; for (NSDictionary *item in self.courses) if ([item[@"path"] length]) anyLocal = YES; self.scanButton.enabled = !self.operationsPaused && (local || (!course && anyLocal));
     self.recoveryButton.hidden = !course || (![course[@"pendingMergeTip"] length] && ![course[@"pushFailed"] boolValue]); self.recoveryButton.enabled = !self.operationsPaused;
     self.recoveryButton.title = [course[@"pendingMergeTip"] length] ? @"处理冲突…" : @"重试推送";
+    if(self.statusLabel.stringValue.length && (!self.busy || !self.operationID.length)){
+        __weak typeof(self) messageOwner=self;NSString *courseID=[course[@"fork"] copy];NSString *messageScope=[@"course:" stringByAppendingString:key ?: @"all"];
+        BOOL recovery=!self.recoveryButton.hidden;AMUIMessageSeverity severity=[self.statusLabel.stringValue containsString:@"失败"] || [self.statusLabel.stringValue containsString:@"无法"] || [self.statusLabel.stringValue hasPrefix:@"⚠"] ? AMUIMessageError:([self.statusLabel.stringValue hasPrefix:@"已"] || [self.statusLabel.stringValue containsString:@"成功"] ? AMUIMessageSuccess:AMUIMessageInformation);
+        AMPostUIMessage(messageScope,@"status",self.statusLabel.stringValue,severity,recovery ? self.recoveryButton.title:(self.busy ? @"终止当前步骤":nil),recovery ? ^{if(![messageOwner selectCourseID:courseID])return;[NSApp sendAction:messageOwner.recoveryButton.action to:messageOwner.recoveryButton.target from:messageOwner.recoveryButton];}:(self.busy ? ^{[messageOwner cancelReadOperation:nil];}:nil));
+    }
+
     NSArray *visible = [self visible];
     NSMutableArray *reviewRecords = NSMutableArray.array;
     for (NSDictionary *record in visible) {

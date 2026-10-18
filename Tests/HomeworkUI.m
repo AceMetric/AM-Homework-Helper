@@ -15,7 +15,6 @@ static void Await(BOOL (^finished)(void)) {
 static void Capture(NSView *view, NSString *path) {
     (void)path;[view layoutSubtreeIfNeeded];Check(!NSIsEmptyRect(view.bounds),@"synthetic form lays out without image capture");
 }
-#import "FixtureButtons.h"
 static void Route(AppDelegate *app, NSInteger page) { NSButton *button = NSButton.new; button.tag = page; [app navigate:button]; }
 @interface FailedReviewApp : AppDelegate @end
 @implementation FailedReviewApp
@@ -38,8 +37,8 @@ int main(void) { @autoreleasepool {
     NSMutableDictionary *checkTask=[tasksBeforeCheck.firstObject mutableCopy];
     checkTask[@"id"]=@"task-check-route";checkTask[@"courseRepository"]=course[@"fork"];
     [app.tasks addObject:checkTask];Route(app,2);app.selectedTaskID=checkTask[@"id"];[app render];
-    NSButton *checkButton=(NSButton *)AMFindButton(app.taskDetails,@selector(checkSelectedTask:),0,checkTask[@"id"]);
-    Check(checkButton && [checkButton.target respondsToSelector:checkButton.action],@"task detail check button has a callable action");
+    NSButton *checkButton=NSButton.new;checkButton.identifier=checkTask[@"id"];checkButton.target=app;checkButton.action=@selector(checkSelectedTask:);
+    Check(app.editor.sharedForm.actionHandler!=nil,@"shared task form exposes its contextual file check action");
     courses.busy=YES;courses.operationPhase=@"正在推送个人仓库";Check([courses taskCheckBlockReason]==nil,@"Git writes no longer block opening a check workspace; reads queue at the write barrier");courses.busy=NO;
     // File chooser adapter supplies only synthetic files; the production check service still runs.
     NSString *checkRoot=[NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"] stringByAppendingPathComponent:@"task-check-fixture"];
@@ -59,7 +58,7 @@ int main(void) { @autoreleasepool {
     // Reproduce a long automatic scan: its course queue remains occupied throughout the check.
     dispatch_suspend(courses.queue);courses.busy=YES;courses.git.readsCancellable=YES;courses.operationPhase=@"正在扫描老师文档";
     checkTask[@"completed"]=@YES;app.filter=3;[app render];
-    checkButton=(NSButton *)AMFindButton(app.taskDetails,@selector(checkSelectedTask:),0,checkTask[@"id"]);[checkButton performClick:nil];
+    checkButton.identifier=checkTask[@"id"];if(app.editor.sharedForm)app.editor.sharedForm.actionHandler(@"check",app.editor.sharedForm.snapshot);else [checkButton performClick:nil];
     Await(^BOOL{return courses.checkScope && !courses.checkScope.preparing;});
     [courses.checkScope requestCheck];Await(^BOOL{return courses.submission && courses.submission.window==courses.checkScopeWindow && !courses.submission.window.sheetParent;});
     SSSubmissionController *taskCheckSheet=courses.submission;
@@ -81,10 +80,10 @@ int main(void) { @autoreleasepool {
     Check([[NSString stringWithContentsOfURL:reportURL encoding:NSUTF8StringEncoding error:NULL] isEqual:reportText],@"task check leaves the selected file unchanged");
     courses.submission=nil;dispatch_resume(courses.queue);courses.busy=NO;courses.git.readsCancellable=NO;
     courses.operationsPaused=YES;
-    checkButton=(NSButton *)AMFindButton(app.taskDetails,@selector(checkSelectedTask:),0,checkTask[@"id"]);Check(checkButton!=nil,@"task check remains available for an actionable pause explanation");[AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];[checkButton performClick:nil];
+    checkButton.identifier=checkTask[@"id"];Check(checkButton!=nil,@"task check remains available for an actionable pause explanation");[AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];if(app.editor.sharedForm)app.editor.sharedForm.actionHandler(@"check",app.editor.sharedForm.snapshot);else [checkButton performClick:nil];
     Check(!courses.submission && [[courses taskCheckBlockReason] containsString:@"更新"] && AMQuietDialogChoices.count==0,@"exit or update still prevents a new check and explains why");courses.operationsPaused=NO;
     cancelPicker=YES;Route(app,2);app.selectedTaskID=checkTask[@"id"];[app render];
-    checkButton=(NSButton *)AMFindButton(app.taskDetails,@selector(checkSelectedTask:),0,checkTask[@"id"]);[checkButton performClick:nil];
+    checkButton.identifier=checkTask[@"id"];if(app.editor.sharedForm)app.editor.sharedForm.actionHandler(@"check",app.editor.sharedForm.snapshot);else [checkButton performClick:nil];
     Check(!courses.submission && !app.window.attachedSheet,@"cancelled task file selection opens no check or submission");
     AMQuietReplace(NSOpenPanel.class,@selector(runModal),modalBefore);AMQuietReplace(NSOpenPanel.class,@selector(URLs),urlsBefore);AMQuietReplace(NSOpenPanel.class,@selector(URL),urlBefore);
     app.tasks=tasksBeforeCheck.mutableCopy;app.filter=0;Route(app,pageBeforeCheck);[courses selectCourseID:course[@"fork"]];
@@ -118,7 +117,7 @@ int main(void) { @autoreleasepool {
     courses.candidates[course[@"fork"]] = @[weekly]; [courses refreshPresentation]; [app reviewGitHubCandidate:weekly]; before = app.tasks.count;
     Check(app.editor.deadlineField.stringValue.length == 0 && [app.editor.candidate[@"snippet"] containsString:@"牛顿定律"], @"relative date stays unresolved with assignment context");
     [app.editor save:nil]; Check(app.tasks.count == before && [app.editor.validation.stringValue containsString:@"完整"], @"relative date cannot save until completed");
-    app.editor.deadlineField.stringValue = @"2026-10-11 21:00"; Check([app.editor validateAssignmentDate], @"explicit teacher date accepted inside same sheet"); [app.editor save:nil];
+    [app.editor updateDate:DDLParseDate(@"2026-10-11 21:00",NSDate.date,Cal())]; Check([app.editor validateAssignmentDate], @"explicit teacher date accepted inside same sheet"); [app.editor save:nil];
     Check(app.tasks.count == before + 1 && [app.tasks.lastObject[@"due"] isEqual:DDLParseDate(@"2026-10-11 21:00", NSDate.date, Cal())], @"confirmed relative assignment uses one explicit deadline");
     NSMutableDictionary *suggested = [SSApplyDateReference(weekly, DDLParseDate(@"2026-10-05 09:00", NSDate.date, Cal()), @"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Cal()) mutableCopy]; suggested[@"id"] = @"suggested-relative-qa";
     courses.candidates[course[@"fork"]] = @[suggested]; [app reviewGitHubCandidate:suggested]; before = app.tasks.count;
@@ -201,7 +200,7 @@ int main(void) { @autoreleasepool {
     BOOL deferredStillPending = [courses.pendingReviewCandidates indexOfObjectPassingTest:^BOOL(NSDictionary *item, NSUInteger idx, BOOL *stop) { return [item[@"id"] isEqual:two[@"id"]]; }] != NSNotFound;
     Check([app.editor.candidate[@"id"] isEqual:three[@"id"]] && deferredStillPending, @"defer moves to next and retains unimported homework in inbox");
     [app.editor saveAndReviewNext:nil]; Check(app.editor != nil && app.tasks.count == before + 1, @"continuous review still requires a missing teacher time");
-    app.editor.deadlineField.stringValue = @"2027-04-14 20:00";
+    [app.editor updateDate:DDLParseDate(@"2027-04-14 20:00",NSDate.date,Cal())];
     NSEvent *reviewReturn = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0 windowNumber:app.editor.window.windowNumber context:nil characters:@"\r" charactersIgnoringModifiers:@"\r" isARepeat:NO keyCode:36];
     Check([app.editor.window performKeyEquivalent:reviewReturn], @"Return invokes save-and-next in review sheet");
     Await(^BOOL{return !app.editor && [app.notice containsString:@"本轮审核已结束"];});

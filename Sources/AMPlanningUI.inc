@@ -27,7 +27,7 @@
 - (void)planningAction:(NSString *)action task:(NSString *)identifier subtask:(NSString *)subID value:(NSString *)value {
     if([action isEqual:@"previous"] || [action isEqual:@"next"] || [action isEqual:@"current"]){self.weekOffset=[action isEqual:@"current"] ? 0:MAX(-5200,MIN(5200,self.weekOffset+([action isEqual:@"next"] ? 1:-1)));[self render];return;}
     NSDictionary *task=[self taskWithID:identifier];if(!task)return;
-    if([action isEqual:@"select"]){self.selectedTaskID=identifier;[self render];return;}
+    if([action isEqual:@"select"]){NSButton *sender=NSButton.new;sender.identifier=identifier;[self selectTask:sender];return;}
     NSDictionary *target=task;for(NSDictionary *sub in task[@"subtasks"])if([sub[@"id"] isEqual:subID])target=sub;
     if([action isEqual:@"plan"]){NSAlert *alert=NSAlert.new;alert.messageText=@"安排到哪一天？";alert.informativeText=@"只设置计划完成日期，不改变作业截止时间或提醒。";NSDatePicker *picker=NSDatePicker.new;picker.frame=NSMakeRect(0,0,260,32);picker.datePickerElements=NSDatePickerElementFlagYearMonthDay;picker.datePickerStyle=NSDatePickerStyleTextFieldAndStepper;picker.calendar=Cal();picker.dateValue=DDLPlanDate(target[@"plannedDate"],Cal()) ?: NSDate.date;alert.accessoryView=picker;[alert addButtonWithTitle:@"保存计划"];[alert addButtonWithTitle:@"取消"];[alert addButtonWithTitle:@"取消安排"];
         while(YES){NSInteger response=[alert runModal];if(response==NSAlertSecondButtonReturn)return;NSString *key=response==NSAlertThirdButtonReturn ? @"":DDLPlanKey(picker.dateValue,Cal());if([self applyPlanning:@"set-plan" task:identifier subtask:subID value:key])return;alert.informativeText=self.notice ?: @"未保存，请重试或取消。";} }
