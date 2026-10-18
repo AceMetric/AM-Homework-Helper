@@ -76,8 +76,9 @@ cp "$GITHUB_CLI_DIR/LICENSE" "$CONTENTS/Resources/GitHub-CLI-LICENSE.txt"
 # Keep the official Developer ID signature and every byte of the pinned helper.
 codesign --verify --strict "$CONTENTS/Helpers/gh"
 cp "$REMINDER_CAPSULE" "$CONTENTS/Resources/ReminderIdentities.zip"
-clang -arch arm64 -fobjc-arc -fblocks -dynamiclib -Wall -Wextra -Werror -mmacosx-version-min=13.0 -framework Cocoa -framework UserNotifications "$SCRIPT_DIR/Tools/ReminderMaintenance.m" -o "$CONTENTS/Resources/ReminderMaintenance.dylib"
+clang -arch arm64 -fobjc-arc -fblocks -dynamiclib -Wl,-install_name,@rpath/ReminderMaintenance.dylib -Wall -Wextra -Werror -mmacosx-version-min=13.0 -framework Cocoa -framework UserNotifications "$SCRIPT_DIR/Tools/ReminderMaintenance.m" -o "$CONTENTS/Resources/ReminderMaintenance.dylib"
 codesign --force --sign - "$CONTENTS/Resources/ReminderMaintenance.dylib"
+codesign --verify --strict "$CONTENTS/Resources/ReminderMaintenance.dylib"
 # Preserve Sparkle component signatures; sign the host last.
 BUNDLE_ID=$(python3 -c 'import plistlib,sys; print(plistlib.load(open(sys.argv[1], "rb"))["CFBundleIdentifier"])' "$SCRIPT_DIR/Info.plist")
 codesign --force --sign - --requirements "=designated => identifier \"$BUNDLE_ID\"" "$APP_DIR"
