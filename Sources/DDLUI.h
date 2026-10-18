@@ -52,6 +52,7 @@ void AMConfigureSingleLineField(NSTextField *field);
 ActionButton *Button(NSString *title, id target, SEL action, NSInteger tone);
 Surface *Box(NSColor *fill, CGFloat radius);
 Surface *GradientBox(NSColor *start, NSColor *end, CGFloat radius);
+NSToolbarItem *PopupToolbarItem(NSString *identifier, NSString *label, NSPopUpButton *control);
 NSToolbarItem *SegmentToolbarItem(NSString *identifier, NSString *label, NSSegmentedControl *control);
 ThemeSegmentedControl *FilterSegments(NSArray<NSString *> *labels, id target, SEL action);
 ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL action);
@@ -60,6 +61,12 @@ ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL acti
 - (void)refresh;
 @end
 void AMShowOperations(NSWindow *parent);
+typedef NS_ENUM(NSInteger, AMUIMessageSeverity) { AMUIMessageInformation, AMUIMessageSuccess, AMUIMessageWarning, AMUIMessageError };
+// Presentation only: dismissing a message never changes its operation or guard.
+void AMPostUIMessage(NSString *scope, NSString *identifier, NSString *text, AMUIMessageSeverity severity, NSString *actionTitle, void (^action)(void));
+NSArray<NSDictionary *> *AMUIMessages(void);
+void AMDismissUIMessage(NSString *scope, NSString *identifier);
+NSToolbarItem *AMActivityToolbarItem(NSString *identifier);
 void AMRefreshViewAppearance(NSView *root);
 NSScrollView *AMScrollableForm(NSStackView *stack);
 
