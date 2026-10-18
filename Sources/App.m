@@ -781,13 +781,14 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.courseWindow.stateChanged = ^{ [weakSelf renderSidebar]; if(weakSelf.page==4)[weakSelf renderHeader]; if (weakSelf.page == 0) [weakSelf renderTaskContent]; dispatch_async(dispatch_get_main_queue(),^{NSSet *editing=weakSelf.courseWindow.editingTaskIDs;if(![weakSelf.lastSubmissionEditingIDs isEqual:editing]){weakSelf.lastSubmissionEditingIDs=editing;[weakSelf applyVerifiedSubmissions];}}); };
     self.courseWindow.verifiedSubmissionsChanged=^{[weakSelf applyVerifiedSubmissions];};
     self.exitCoordinator = SSExitCoordinator.new;
-    self.exitCoordinator.operationBusy = ^BOOL { return AMExitBlockingOperations().count>0 || weakSelf.courseWindow.operationBusy || weakSelf.backgroundSaveCount>0; };
+    self.exitCoordinator.operationBusy = ^BOOL { return AMExitBlockingOperations().count>0 || weakSelf.courseWindow.operationBusy || weakSelf.backgroundSaveCount>0 || weakSelf.reminderScheduler.running; };
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(backgroundOperationsChanged:) name:AMOperationsChanged object:nil];
     self.exitCoordinator.pauseOperations = ^(BOOL paused) { weakSelf.courseWindow.operationsPaused = paused; };
     self.exitCoordinator.cancelLogin = ^{ [weakSelf.courseWindow cancelPendingLogin]; };
     self.exitCoordinator.resolveEdits = ^BOOL(BOOL updating) { return [weakSelf resolveEditsForExit:updating]; };
     self.exitCoordinator.persist = ^BOOL {
         if (weakSelf.preview) return YES;
+        if (weakSelf.reminderScheduler && !weakSelf.reminderScheduler.safeToExit) { weakSelf.notice=@"提醒更新未确认，已暂缓退出与更新。请在提醒设置中重试。"; [weakSelf render]; return NO; }
         NSError *error = nil; BOOL ok = [weakSelf.courseWindow persistForExit:&error]; // Task edits are already persisted transactionally; never overwrite an unreadable store on exit.
         if (!ok) { weakSelf.notice = @"本机数据保存失败，已暂缓退出与更新。"; [weakSelf render]; }
         return ok;
@@ -1536,7 +1537,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return NO; }
 - (void)applicationDidBecomeActive:(NSNotification *)notification { if (!self.preview && self.window) {[self refreshPermission];[self generateRecurrencesThrough:nil];[self.courseWindow discoverExternalSubmissions:NO];} }
-- (void)tick:(NSTimer *)timer {if(![self.recurrenceDay isEqual:DDLPlanKey(NSDate.date,Cal())])[self generateRecurrencesThrough:nil]; [self render]; if (!self.preview) {[self refreshReminders];[self.courseWindow recoverSubmissionRecords];[self.courseWindow discoverExternalSubmissions:NO];} }
+- (void)tick:(NSTimer *)timer {if(![self.recurrenceDay isEqual:DDLPlanKey(NSDate.date,Cal())])[self generateRecurrencesThrough:nil]; [self render]; if (!self.preview) {if(!self.exitCoordinator.pending)[self refreshReminders];[self.courseWindow recoverSubmissionRecords];[self.courseWindow discoverExternalSubmissions:NO];} }
 - (void)woke:(NSNotification *)notification { [self render]; if (!self.preview) { [self refreshPermission]; [self refreshReminders]; } }
 - (void)statusClick:(id)sender {
     if (NSApp.currentEvent.type == NSEventTypeRightMouseUp) {
@@ -1859,7 +1860,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)refreshReminders {
     if(self.preview)return;
-    if(!self.reminderScheduler){self.reminderScheduler=AMReminderScheduler.new;__weak typeof(self) owner=self;self.reminderScheduler.changed=^(NSInteger scheduled,NSString *error,NSString *notice){owner.scheduledCount=scheduled;owner.notificationError=error;if(notice.length)owner.notice=notice;[owner refreshPermission];if(error)[owner render];};}
+    if(!self.reminderScheduler){self.reminderScheduler=AMReminderScheduler.new;__weak typeof(self) owner=self;self.reminderScheduler.changed=^(NSInteger scheduled,NSString *error,NSString *notice){owner.scheduledCount=scheduled;owner.notificationError=error;if(notice.length)owner.notice=notice;[owner refreshPermission];if(error)[owner render];[owner.exitCoordinator operationStateChanged];};}
     self.notificationGeneration++;[self.reminderScheduler schedule:[self snapshot]];
 }
 - (void)notificationHelp:(id)sender {
@@ -1873,6 +1874,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         alert.informativeText = @"预览不发送系统通知。"; [alert addButtonWithTitle:@"知道了"];
         [alert beginSheetModalForWindow:self.window completionHandler:nil]; return;
     }
+    [self refreshReminders];
     BOOL notDetermined = self.authorization == UNAuthorizationStatusNotDetermined;
     BOOL denied = self.authorization == UNAuthorizationStatusDenied;
     alert.informativeText = [NSString stringWithFormat:@"%@\n测试提醒约5秒送达，可能受专注模式影响。", self.notificationStatus];
@@ -1896,8 +1898,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)notification withCompletionHandler:(void (^)(UNNotificationPresentationOptions))completionHandler {
     void (^present)(void)=^{
         AMReminderScheduler *parser=self.reminderScheduler ?: AMReminderScheduler.new;
-        NSString *taskID=[parser taskIDForRequest:notification.request];
-        if(taskID.length){NSDictionary *task=[self taskWithID:taskID];if(!task || [task[@"completed"] boolValue] || [task[@"archived"] boolValue] || [task[@"deleted"] boolValue]){completionHandler(UNNotificationPresentationOptionNone);return;}}
+        parser.latestTasks=[self snapshot];
+        if(![parser isRequestCurrent:notification.request]){completionHandler(UNNotificationPresentationOptionNone);return;}
         completionHandler(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionList | UNNotificationPresentationOptionSound);
     };
     if(NSThread.isMainThread)present();else dispatch_async(dispatch_get_main_queue(),present);
