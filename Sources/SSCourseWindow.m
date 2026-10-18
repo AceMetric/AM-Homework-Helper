@@ -39,6 +39,12 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property NSButton *typeButton;
 @property NSArray<NSDictionary *> *availableForks;
 @property dispatch_queue_t queue;
+@property dispatch_queue_t externalQueue;
+@property NSProgress *discoveryCancellation;
+@property SSGit *externalReader;
+#ifdef DDL_TESTING
+@property(copy) SSGit *(^externalReaderFactory)(NSDictionary *course);
+#endif
 @property AMCourseController *courseWorkspace;
 @property NSPopUpButton *reviewFilter;
 @property NSInteger presentedSection;
@@ -152,6 +158,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         [self configureCredentialAccess];
         self.git.progress = ^(NSString *phase) { dispatch_async(dispatch_get_main_queue(), ^{ if (weakSelf.busy) [weakSelf status:phase]; }); };
         self.queue = dispatch_queue_create("ddl.course-work", DISPATCH_QUEUE_SERIAL);
+        self.externalQueue=dispatch_queue_create("ddl.external-history",DISPATCH_QUEUE_SERIAL);
         NSError *decisionError=nil;if(!preview)AMReviewDecisions(&decisionError);[self buildUI];[self refreshCourses];if(decisionError)[self showError:decisionError];
     } return self;
 }
@@ -169,7 +176,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (void)discardReview { [self.reviewWorkspace discardChanges];[self.courseWorkspace discardChanges];[self closeCourseSetup]; }
 - (BOOL)hasSubmissionSheet { return self.submission.window.sheetParent != nil || self.checkScopeWindow != nil; }
 - (BOOL)hasUnsavedSubmission { return (self.checkScopeWindow && self.checkScope.hasUnsavedChanges) || (self.submission && (!self.submission.closed || self.submission.preserveClosedDraft) && !self.submission.submittedSuccessfully && self.submission.hasUnsavedChanges); }
-- (void)setOperationsPaused:(BOOL)paused { _operationsPaused = paused; [self refreshPresentation]; }
+- (void)setOperationsPaused:(BOOL)paused { _operationsPaused = paused;if(paused){[self.discoveryCancellation cancel];[self.externalReader cancelCurrentOperation];} [self refreshPresentation]; }
 - (void)cancelPendingLogin { [self cancelLogin:nil]; }
 - (void)discardSubmission { [self closeCheckScope];[self.submission cancel:nil]; self.submission = nil; }
 - (void)acknowledgeSubmissionFailure { self.submissionFailedDuringExit = NO; }
@@ -262,7 +269,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     __weak typeof(self) historyOwner=self;self.submissionHistory.actionHandler=^(NSString *action,NSString *identifier){[historyOwner submissionAction:action identifier:identifier];};
     self.skillJobsController=AMSkillJobsController.new;[self addChildViewController:self.skillJobsController];[root addSubview:self.skillJobsController.view];self.skillJobsController.view.hidden=YES;
     self.skillJobsController.actionHandler=^(NSString *action,NSString *batch){[owner skillJobAction:action batch:batch];};
-    self.cancelReadButton=SSButton(@"终止当前步骤",self,@selector(cancelReadOperation:),NSZeroRect);[root addSubview:self.cancelReadButton];self.cancelReadButton.hidden=YES;
+    self.cancelReadButton=SSButton(@"",self,@selector(cancelReadOperation:),NSZeroRect);AMConfigureStopButton(self.cancelReadButton,@"停止");[root addSubview:self.cancelReadButton];self.cancelReadButton.hidden=YES;
     self.nativeHeader=NSStackView.new;self.nativeHeader.orientation=NSUserInterfaceLayoutOrientationVertical;self.nativeHeader.alignment=NSLayoutAttributeLeading;self.nativeHeader.spacing=8;self.nativeHeader.translatesAutoresizingMaskIntoConstraints=NO;[root addSubview:self.nativeHeader];
     NSArray *headerRows=self.usesToolbar ? @[@[self.accountLabel,self.setupButton]]:@[@[self.accountLabel,self.setupButton],@[self.scanButton,self.syncButton,self.commitButton,self.assistantButton,self.moreButton],@[self.reviewFilter,self.typeFilter,self.search]];
     for(NSArray *controls in headerRows){
@@ -571,7 +578,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if(self.statusLabel.stringValue.length && (!self.busy || !self.operationID.length)){
         __weak typeof(self) messageOwner=self;NSString *courseID=[course[@"fork"] copy];NSString *messageScope=[@"course:" stringByAppendingString:key ?: @"all"];
         BOOL recovery=!self.recoveryButton.hidden;AMUIMessageSeverity severity=[self.statusLabel.stringValue containsString:@"失败"] || [self.statusLabel.stringValue containsString:@"无法"] || [self.statusLabel.stringValue hasPrefix:@"⚠"] ? AMUIMessageError:([self.statusLabel.stringValue hasPrefix:@"已"] || [self.statusLabel.stringValue containsString:@"成功"] ? AMUIMessageSuccess:AMUIMessageInformation);
-        AMPostUIMessage(messageScope,@"status",self.statusLabel.stringValue,severity,recovery ? self.recoveryButton.title:(self.busy ? @"终止当前步骤":nil),recovery ? ^{if(![messageOwner selectCourseID:courseID])return;[NSApp sendAction:messageOwner.recoveryButton.action to:messageOwner.recoveryButton.target from:messageOwner.recoveryButton];}:(self.busy ? ^{[messageOwner cancelReadOperation:nil];}:nil));
+        AMPostUIMessage(messageScope,@"status",self.statusLabel.stringValue,severity,recovery ? self.recoveryButton.title:(self.busy ? @"停止":nil),recovery ? ^{if(![messageOwner selectCourseID:courseID])return;[NSApp sendAction:messageOwner.recoveryButton.action to:messageOwner.recoveryButton.target from:messageOwner.recoveryButton];}:(self.busy ? ^{[messageOwner cancelReadOperation:nil];}:nil));
     }
 
     NSArray *visible = [self visible];
@@ -623,7 +630,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     [self layoutContent]; self.refreshing = NO;
     if (self.stateChanged) self.stateChanged();
 }
-- (void)cancelReadOperation:(id)sender {if(self.busy){self.git.cancelledReads=YES;[self.git cancelCurrentOperation];self.github.requestsCancelled=YES;self.cancelReadButton.enabled=NO;[self status:@"正在终止当前步骤；本机文件和提交记录保留…"];} }
+- (void)cancelReadOperation:(id)sender {if(self.busy){self.git.cancelledReads=YES;[self.git cancelCurrentOperation];self.github.requestsCancelled=YES;self.cancelReadButton.enabled=NO;[self status:@"正在停止…"];} }
 - (void)status:(NSString *)message { if(self.busy){self.operationPhase=message;AMOperationProgress(self.operationID,message,0,0);} self.statuses[self.statusFork ?: self.selectedFork ?: @"all"] = message ?: @""; [self refreshPresentation]; }
 - (void)showError:(NSError *)error { if (error) {self.errorDetails[self.statusFork ?: self.selectedFork ?: @"all"]=SSRedactedText(error.userInfo[@"SSDetail"] ?: error.localizedDescription);[self status:[@"⚠ " stringByAppendingString:error.localizedDescription]];} }
 - (void)work:(NSString *)message operation:(id (^)(NSError **))operation completion:(void (^)(id, NSError *))completion {
@@ -635,6 +642,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (void)work:(NSString *)message forCourse:(NSDictionary *)course requestKey:(NSString *)scope priority:(NSInteger)priority operation:(id (^)(NSError **))operation completion:(void (^)(id,NSError *))completion {
     if (self.preview) { [self status:@"模拟预览不会操作真实账户或仓库"]; return; }
     if (self.operationsPaused && !self.allowingExitSubmission) return;
+    if(priority>=100 && self.discoveringExternal){[self.discoveryCancellation cancel];[self.externalReader cancelCurrentOperation];}
     NSDictionary *targetCourse=course.copy;NSString *target=targetCourse[@"fork"];
     NSString *key=[NSString stringWithFormat:@"course|%@|%@|%@|%@",message,target ?: @"all",targetCourse ?: self.courses,SSRecognitionSettings()];key=[key stringByAppendingString:scope];
     BOOL readable=[message containsString:@"扫描"] || [message containsString:@"准备"] || [message containsString:@"识别"] || [message containsString:@"核验"] || [message containsString:@"读取"];

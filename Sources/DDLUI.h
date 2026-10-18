@@ -50,6 +50,7 @@ void AMConfigureSingleLineField(NSTextField *field);
 @interface PastelPopUpButton : NSPopUpButton <NSMenuDelegate>
 @end
 ActionButton *Button(NSString *title, id target, SEL action, NSInteger tone);
+void AMConfigureStopButton(NSButton *button,NSString *label);
 Surface *Box(NSColor *fill, CGFloat radius);
 Surface *GradientBox(NSColor *start, NSColor *end, CGFloat radius);
 NSToolbarItem *PopupToolbarItem(NSString *identifier, NSString *label, NSPopUpButton *control);
@@ -58,6 +59,7 @@ ThemeSegmentedControl *FilterSegments(NSArray<NSString *> *labels, id target, SE
 ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL action);
 @interface AMOperationView : NSView
 @property(nonatomic,copy) NSString *operationID;
+@property(nonatomic) BOOL hidesCancellation;
 - (void)refresh;
 @end
 void AMShowOperations(NSWindow *parent);

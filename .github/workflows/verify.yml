@@ -28,6 +28,7 @@ jobs:
           AM_UI_TEST=NativeControlsUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=UnifiedUXUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=ToolbarActivityUsage zsh verify-hybrid-ui.sh
+          AM_UI_TEST=SubmissionResponsivenessUsage zsh verify-hybrid-ui.sh
       - name: Dates and reminders
         run: zsh test.sh
       - name: Document and screenshot import

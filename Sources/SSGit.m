@@ -396,6 +396,8 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     if (status.data.length) { if (error) *error = GitError(@"本地有未提交修改；请先提交或自行处理，再拉取上游。"); return NO; } return YES;
 }
 - (NSArray<NSDictionary *> *)changesForCourse:(NSDictionary *)course error:(NSError **)error {
+    NSTimeInterval previousTimeout=self.commandTimeout;self.commandTimeout=previousTimeout>0 ? MIN(previousTimeout,15):15;
+    @try{
     if (![self validateCourse:course error:error]) return nil;
     SSGitResult *status = [self checked:@[@"status", @"--porcelain=v1", @"-z", @"--untracked-files=all"] in:course[@"path"] token:nil error:error]; if (!status) return nil;
     NSArray *entries = [[self string:status] componentsSeparatedByString:@"\0"]; NSMutableArray *changes = NSMutableArray.array;
@@ -406,6 +408,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
         [changes addObject:@{@"path":file, @"status":code, @"sensitive":@(SSSensitivePath(file))}];
     }
     return changes;
+    }@finally{self.commandTimeout=previousTimeout;}
 }
 - (NSString *)previewForCourse:(NSDictionary *)course path:(NSString *)file error:(NSError **)error {
     NSArray *changes = [self changesForCourse:course error:error]; if (!changes) return nil;

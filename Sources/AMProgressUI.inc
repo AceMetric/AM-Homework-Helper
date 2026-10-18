@@ -1,5 +1,6 @@
 #import "SSLocalData.h"
 #import <objc/runtime.h>
+static NSArray *AMPresentedOperations(void){NSMutableArray *visible=NSMutableArray.array;for(NSDictionary *row in AMOperations())if(!row[@"parent"])[visible addObject:row];return visible;}
 @interface AMOperationView ()
 @property NSProgressIndicator *bar;
 @property NSTextField *stage;
@@ -9,9 +10,11 @@
 @property NSPopover *detailPopover;
 @end
 @implementation AMOperationView
+@synthesize hidesCancellation=_hidesCancellation;
+- (void)setHidesCancellation:(BOOL)hidden{_hidesCancellation=hidden;[self refresh];}
 - (instancetype)initWithFrame:(NSRect)frame{if((self=[super initWithFrame:frame])){
     self.stage=Text(@"",13,NSFontWeightMedium,Ink());self.stage.lineBreakMode=NSLineBreakByWordWrapping;self.stage.maximumNumberOfLines=2;self.stage.selectable=YES;
-    self.amount=Text(@"",11,NSFontWeightRegular,Muted());self.bar=NSProgressIndicator.new;self.bar.style=NSProgressIndicatorStyleBar;self.bar.minValue=0;self.bar.maxValue=1;self.cancelButton=Button(@"取消",self,@selector(cancelOperation:),0);
+    self.amount=Text(@"",11,NSFontWeightRegular,Muted());self.bar=NSProgressIndicator.new;self.bar.style=NSProgressIndicatorStyleBar;self.bar.minValue=0;self.bar.maxValue=1;self.cancelButton=Button(@"",self,@selector(cancelOperation:),3);[self.cancelButton.widthAnchor constraintEqualToConstant:28].active=YES;[self.cancelButton.heightAnchor constraintEqualToConstant:28].active=YES;
     for(NSView *child in @[self.stage,self.amount,self.bar,self.cancelButton]){child.translatesAutoresizingMaskIntoConstraints=NO;[self addSubview:child];}
     [self.cancelButton setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
     [self.cancelButton setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
@@ -24,7 +27,7 @@
 - (void)setOperationID:(NSString *)operationID{_operationID=operationID.copy;[self refresh];}
 
 - (void)refresh{NSDictionary *row=nil;for(NSDictionary *candidate in AMOperations())if([candidate[@"id"] isEqual:self.operationID]){row=candidate;break;}if(!row){self.stage.stringValue=@"暂无后台操作";self.amount.stringValue=@"";self.bar.hidden=YES;self.cancelButton.hidden=YES;return;}
-    BOOL running=[row[@"state"] isEqual:@"running"],queued=[row[@"state"] isEqual:@"queued"];self.stage.stringValue=[NSString stringWithFormat:@"%@%@",[row[@"target"] length] ? [row[@"target"] stringByAppendingString:@" · "]:@"",row[@"stage"]];self.stage.toolTip=self.stage.stringValue;self.stage.textColor=[row[@"state"] isEqual:@"failed"] ? NSColor.systemOrangeColor:Ink();NSInteger total=[row[@"total"] integerValue],done=[row[@"completed"] integerValue];self.bar.hidden=!running;self.bar.indeterminate=total<=0;if(total>0){[self.bar stopAnimation:nil];self.bar.doubleValue=MIN(1,(double)done/total);}else if(running)[self.bar startAnimation:nil];BOOL failed=[row[@"state"] isEqual:@"failed"];self.cancelButton.title=failed ? @"详情":(queued ? @"取消排队":@"终止当前步骤");self.cancelButton.action=failed ? @selector(showDetails:):@selector(cancelOperation:);self.cancelButton.hidden=(running || queued) ? ![row[@"cancellable"] boolValue]:!failed;NSTimeInterval seconds=-[row[@"started"] timeIntervalSinceNow];if(row[@"finished"])seconds=[row[@"finished"] timeIntervalSinceDate:row[@"started"]];self.amount.stringValue=[NSString stringWithFormat:queued ? @"%@等待 %.0f 秒":@"%@已用 %.0f 秒",total>0 ? [NSString stringWithFormat:@"%ld／%ld · ",(long)done,(long)total]:@"",MAX(0,seconds)];self.needsLayout=YES;
+    BOOL running=[row[@"state"] isEqual:@"running"],queued=[row[@"state"] isEqual:@"queued"];self.stage.stringValue=[NSString stringWithFormat:@"%@%@",[row[@"target"] length] ? [row[@"target"] stringByAppendingString:@" · "]:@"",row[@"stage"]];self.stage.toolTip=self.stage.stringValue;self.stage.textColor=[row[@"state"] isEqual:@"failed"] ? NSColor.systemOrangeColor:Ink();NSInteger total=[row[@"total"] integerValue],done=[row[@"completed"] integerValue];self.bar.hidden=!running;self.bar.indeterminate=total<=0;if(total>0){[self.bar stopAnimation:nil];self.bar.doubleValue=MIN(1,(double)done/total);}else if(running)[self.bar startAnimation:nil];BOOL failed=[row[@"state"] isEqual:@"failed"];self.cancelButton.title=@"";self.cancelButton.image=[NSImage imageWithSystemSymbolName:failed ? @"info.circle":@"stop.circle" accessibilityDescription:nil];self.cancelButton.imagePosition=NSImageOnly;self.cancelButton.toolTip=failed ? @"详情":(queued ? @"取消排队":@"停止");self.cancelButton.accessibilityLabel=self.cancelButton.toolTip;self.cancelButton.action=failed ? @selector(showDetails:):@selector(cancelOperation:);self.cancelButton.hidden=self.hidesCancellation || ((running || queued) ? ![row[@"cancellable"] boolValue]:!failed);NSTimeInterval seconds=-[row[@"started"] timeIntervalSinceNow];if(row[@"finished"])seconds=[row[@"finished"] timeIntervalSinceDate:row[@"started"]];self.amount.stringValue=[NSString stringWithFormat:queued ? @"%@等待 %.0f 秒":@"%@已用 %.0f 秒",total>0 ? [NSString stringWithFormat:@"%ld／%ld · ",(long)done,(long)total]:@"",MAX(0,seconds)];self.needsLayout=YES;
 }
 - (void)cancelOperation:(id)sender{AMOperationCancel(self.operationID);}
 - (void)showDetails:(id)sender {
@@ -54,7 +57,7 @@
     }return self;
 }
 - (void)refreshRows {
-    NSArray *all=AMOperations();NSUInteger running=0,queued=0,failed=0,completed=0;for(NSDictionary *row in all){if([row[@"state"] isEqual:@"running"])running++;else if([row[@"state"] isEqual:@"queued"])queued++;else if([row[@"state"] isEqual:@"failed"])failed++;else completed++;}
+    NSArray *all=AMPresentedOperations();NSUInteger running=0,queued=0,failed=0,completed=0;for(NSDictionary *row in all){if([row[@"state"] isEqual:@"running"])running++;else if([row[@"state"] isEqual:@"queued"])queued++;else if([row[@"state"] isEqual:@"failed"])failed++;else completed++;}
     self.history.title=[NSString stringWithFormat:@"%@已完成记录（%lu）",self.showsHistory ? @"收起":@"显示",(unsigned long)completed];self.history.hidden=completed==0;
     NSMutableArray *rows=NSMutableArray.array;for(NSString *state in @[@"running",@"queued",@"failed"])for(NSDictionary *row in all)if([row[@"state"] isEqual:state])[rows addObject:row];if(self.showsHistory)for(NSDictionary *row in all)if(![@[@"running",@"queued",@"failed"] containsObject:row[@"state"]])[rows addObject:row];
     self.summary.stringValue=(running || queued) ? [NSString stringWithFormat:@"%lu 项进行中 · %lu 项排队 · %lu 项最近记录",(unsigned long)running,(unsigned long)queued,(unsigned long)(all.count-running-queued)]:[NSString stringWithFormat:@"暂无进行中的任务 · %lu 项最近记录%@",(unsigned long)all.count,failed ? [NSString stringWithFormat:@" · %lu 项未完成",(unsigned long)failed]:@""];

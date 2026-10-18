@@ -69,6 +69,7 @@ void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight weight, NS
 ActionButton *Button(NSString *title, id target, SEL action, NSInteger tone) {
     ActionButton *b = [[ActionButton alloc] initWithFrame:NSZeroRect]; b.title = title; b.target = target; b.action = action; b.tone = tone; [b setAccessibilityLabel:title]; return b;
 }
+void AMConfigureStopButton(NSButton *button,NSString *label){button.title=@"";button.image=[NSImage imageWithSystemSymbolName:@"stop.circle" accessibilityDescription:nil];button.imagePosition=NSImageOnly;button.bordered=NO;button.controlSize=NSControlSizeRegular;button.toolTip=label ?: @"停止";button.accessibilityLabel=button.toolTip;}
 Surface *Box(NSColor *fill, CGFloat radius) { Surface *v = [Surface new]; v.fill = fill; v.radius = radius; return v; }
 Surface *GradientBox(NSColor *start, NSColor *end, CGFloat radius) { Surface *v = Box(start, radius); v.gradientEnd = nil; return v; }
 
