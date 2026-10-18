@@ -67,7 +67,7 @@ def suite(identity_only=False):
                     checks+=1
                     run('/usr/bin/open','-g','-n','-W',app,'--args','seed',timeout=20)
                     bridge=root/(name+'.dylib')
-                    run('clang','-fobjc-arc','-fblocks','-dynamiclib',f'-DAM_REMINDER_HOST_PREFIX=@"{bundle}"','-framework','Cocoa','-framework','UserNotifications',ROOT/'Tools/ReminderMaintenance.m','-o',bridge)
+                    run('clang','-fobjc-arc','-fblocks','-dynamiclib','-Wl,-install_name,@rpath/ReminderMaintenance.dylib',f'-DAM_REMINDER_HOST_PREFIX=@"{bundle}"','-framework','Cocoa','-framework','UserNotifications',ROOT/'Tools/ReminderMaintenance.m','-o',bridge)
                     run('codesign','--force','--sign','-',bridge)
                     env={'HOME':str(Path.home()),'PATH':'/usr/bin:/bin','DYLD_INSERT_LIBRARIES':str(bridge),'AM_REMINDER_MAINTENANCE':'1'}
                     copy=root/(name+'-copy.app');shutil.copytree(app,copy)
