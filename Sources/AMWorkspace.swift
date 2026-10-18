@@ -906,7 +906,7 @@ private struct SetupWorkspace:View {
             if state.step>0 && state.step<4 {Button("返回"){state.send("back")}.disabled(state.busy)}
             Spacer()
             if state.step==0 {if !state.busy && string(state.context,"code").isEmpty{Button("先使用本机作业功能"){state.send("local")}};Button("连接 GitHub 课程"){state.send("login")}.amPrimaryAction().disabled(state.busy || !string(state.context,"code").isEmpty).keyboardShortcut(.defaultAction)}
-            else if state.step==1 {Button("下一步：核验课程"){state.send("select")}.amPrimaryAction().disabled(state.busy || state.selected.isEmpty).keyboardShortcut(.defaultAction)}
+            else if state.step==1 {Button("核验课程"){state.send("select")}.amPrimaryAction().disabled(state.busy || state.selected.isEmpty).keyboardShortcut(.defaultAction)}
             else if state.step==2 {Button("确认并开始检查"){state.send("link-check")}.disabled(state.busy || !state.records.contains{!flag($0,"invalid") && !(state.paths[string($0,"fork")] ?? string($0,"path")).isEmpty}).amPrimaryAction().keyboardShortcut(.defaultAction)}
             else if state.step==3 {Button("重试未完成课程"){state.send("retry-check")}.disabled(state.busy);Button("完成配置"){state.send("finish")}.amPrimaryAction().disabled(state.busy).keyboardShortcut(.defaultAction)}
             else {Button("重新运行配置引导"){state.send("restart")}.disabled(state.busy);Button("查看课程"){state.send("courses")}.keyboardShortcut(.defaultAction);Button("查看待审核"){state.send("review")}}
@@ -1070,7 +1070,6 @@ private struct SubmissionHistoryView:View {
     var body:some View {GeometryReader{geo in
         let list=List(selection:Binding(get:{state.selected},set:{state.selected=$0})){ForEach(workspaceRows(state.records)){row in let r=row.record;VStack(alignment:.leading,spacing:5){Text(string(r,"message").isEmpty ? "课程操作":string(r,"message")).lineLimit(2);Text(string(r,"label")).font(.caption).foregroundStyle(string(r,"state")=="confirmed" ? Color.secondary:Color.orange);Text(String(string(r,"commit").prefix(12))).font(.caption2.monospaced())}.padding(.vertical,4).tag(identifier(r))}}.listStyle(.inset)
         VStack(alignment:.leading,spacing:8){HStack{Text("提交记录").font(.headline);Spacer();Button("刷新终端提交"){state.action?("refresh-external","")}.disabled(state.busy);Button("更早记录"){state.action?("more-external","")}.disabled(state.busy);Button("关联已有提交…"){state.action?("existing","")}.disabled(state.busy)}.padding(.horizontal,12)
-            if state.reading{HStack{ProgressView().progressViewStyle(.linear).frame(width:140);Text("正在读取／核验终端提交…").foregroundStyle(.secondary)}.padding(.horizontal,12)}
             if state.records.isEmpty{VStack(spacing:12){Image(systemName:"clock.arrow.circlepath").font(.largeTitle);Text("暂无提交记录").font(.headline)}.frame(maxWidth:.infinity,maxHeight:.infinity)}
             else if geo.size.width<760{VStack(spacing:0){list.frame(height:max(150,geo.size.height*0.4));Divider();if let r=current{details(r)}else{Text("未选择提交记录").foregroundStyle(.secondary).padding()}}}
             else{HStack(spacing:0){list.frame(width:280);Divider();if let r=current{details(r)}else{Text("未选择提交记录").foregroundStyle(.secondary).frame(maxWidth:.infinity,maxHeight:.infinity)}}}

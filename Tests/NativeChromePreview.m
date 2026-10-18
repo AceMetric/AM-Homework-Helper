@@ -4,6 +4,10 @@
 #undef main
 #import "../Sources/SSCourseWindow.m"
 #import "NativeControlGallery.inc"
+static NSData *AnnotatedPreviewImage(NSString *formula){
+    NSBitmapImageRep *bitmap=[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:800 pixelsHigh:600 bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+    [NSGraphicsContext saveGraphicsState];[NSGraphicsContext setCurrentContext:[NSGraphicsContext graphicsContextWithBitmapImageRep:bitmap]];[[NSColor colorWithDeviceWhite:1 alpha:1] setFill];NSRectFill(NSMakeRect(0,0,800,600));NSDictionary *style=@{NSFontAttributeName:[NSFont systemFontOfSize:32],NSForegroundColorAttributeName:[NSColor colorWithDeviceWhite:0 alpha:1]};[@"模拟作业" drawInRect:NSMakeRect(40,510,720,50) withAttributes:style];[formula drawInRect:NSMakeRect(40,420,720,70) withAttributes:style];[NSGraphicsContext restoreGraphicsState];return [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+}
 @interface ChromePreviewCourse:SSCourseController
 @property BOOL showingProgressSample;
 @end
@@ -49,10 +53,11 @@
     [self.courseWindow refreshCourses];[self openList:nil];[self render];
     NSString *revision=[NSBundle.mainBundle objectForInfoDictionaryKey:@"AMPreviewRevision"];self.window.title=[@"AM Helper 界面预览 · " stringByAppendingString:revision ?: @""];
     NSMenu *menu=NSApp.windowsMenu;
-    for(NSArray *spec in @[@[@"任务编辑表单…",@"showEditorSample:"],@[@"原生控件样例…",@"showGallery:"],@[@"任务页样例",@"showTasksSample:"],@[@"课程页样例",@"showCourseSample:"],@[@"课程检查进度样例",@"showCourseProgressSample:"],@[@"提交与预览样例…",@"showSubmissionSample:"]]){NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:spec[0] action:NSSelectorFromString(spec[1]) keyEquivalent:@""];item.target=self;[menu addItem:item];}
+    for(NSArray *spec in @[@[@"任务编辑表单…",@"showEditorSample:"],@[@"原生控件样例…",@"showGallery:"],@[@"任务页样例",@"showTasksSample:"],@[@"课程页样例",@"showCourseSample:"],@[@"课程检查进度样例",@"showCourseProgressSample:"],@[@"提交与预览样例…",@"showSubmissionSample:"],@[@"批注报告样例",@"showAnnotatedSample:"]]){NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:spec[0] action:NSSelectorFromString(spec[1]) keyEquivalent:@""];item.target=self;[menu addItem:item];}
 
     __block NSString *operation;operation=AMOperationBegin(@"检查文件",@"模拟作业项目",YES,^{AMOperationFinish(operation,@"cancelled",@"模拟检查已取消");});self.progressSampleOperationID=operation;AMOperationProgress(operation,@"检查文件与图片",12,37);
     NSString *finished=AMOperationBegin(@"检查所有课程",@"模拟课程",NO,nil);AMOperationFinish(finished,@"success",@"检查完成，发现 3 项待审核作业");
+    if([NSProcessInfo.processInfo.arguments containsObject:@"--annotations"])dispatch_async(dispatch_get_main_queue(),^{[self showAnnotatedSample:nil];});
 }
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
     // These samples intentionally never finish on their own. Stop only the
@@ -68,6 +73,12 @@
 - (void)showTasksSample:(id)sender{[self openList:nil];}
 - (void)showCourseSample:(id)sender{NSButton *button=NSButton.new;button.identifier=@"demo/physics";[self selectSidebarCourse:button];}
 - (void)showCourseProgressSample:(id)sender{[self showCourseSample:nil];[(ChromePreviewCourse *)self.courseWindow showProgressSample];}
+- (void)showAnnotatedSample:(id)sender {
+    if(self.window.attachedSheet)return;[self showCourseSample:nil];SSSubmissionController *reader=[[SSSubmissionController alloc] initWithCourse:@{@"fork":@"demo/physics",@"branch":@"main"} changes:@[]];self.courseWindow.submission=reader;reader.checkOnly=YES;
+    NSData *force=AnnotatedPreviewImage(@"F = 2 × 3 = 5 N"),*distance=AnnotatedPreviewImage(@"s = 10 × 2 = 5 m");NSMutableDictionary *files=NSMutableDictionary.dictionary;NSMutableArray *issues=NSMutableArray.array,*coverage=NSMutableArray.array;
+    for(NSArray *sample in @[@[@"force.png",force,@"乘积计算有误",@"$2 \\times 3 = 6$，应为 $6\\,\\mathrm{N}$。"],@[@"distance.png",distance,@"距离计算有误",@"$10 \\times 2 = 20$，应为 $20\\,\\mathrm{m}$。"]]){NSString *path=sample[0];NSData *data=sample[1];NSString *version=AMPreflightHash(data);files[path]=@{@"data":data,@"image":@YES,@"version":version};[issues addObject:@{@"id":path,@"path":path,@"version":version,@"category":@"answer",@"severity":@"error",@"provider":@"assistant",@"message":sample[2],@"reason":sample[3],@"suggestion":@"核对乘法结果和单位。",@"region":@[@.04,@.18,@.92,@.15]}];[coverage addObject:@{@"path":path,@"kind":@"image",@"status":@"已检查"}];}
+    reader.snapshot=@{@"files":files,@"paths":@[@"force.png",@"distance.png"],@"version":@"synthetic-annotated"};reader.report=@{@"version":@"synthetic-annotated",@"issues":issues,@"coverage":coverage};[reader buildCheckPage];[reader refreshReport];reader.validation.stringValue=@"";reader.validation.hidden=YES;reader.onlineButton.enabled=NO;[reader.window setContentSize:NSMakeSize(1100,760)];[self.window beginSheet:reader.window completionHandler:nil];
+}
 - (void)showSubmissionSample:(id)sender{[self showCourseSample:nil];[self.courseWindow commit:nil];}
 @end
 #ifndef AM_PREVIEW_NO_MAIN

@@ -17,6 +17,9 @@ NSString *AMOperationEnqueue(NSString *key,NSString *kind,NSString *target,NSArr
 NSString *AMOperationSchedule(NSString *key,NSString *kind,NSString *target,NSArray<NSString *> *resources,NSInteger priority,BOOL cancellableWhileRunning,void (^start)(NSString *identifier),void (^ _Nullable cancel)(BOOL beforeStart));
 NSUInteger AMQueuedOperationCount(void);
 void AMCancelQueuedOperations(void);
+// Internal resource work belongs to one user-visible task; scheduling and exit
+// protection still track the child independently.
+id _Nullable AMPerformResourceOperationInTask(NSString *task,NSString *key,NSString *kind,NSString *target,NSArray<NSString *> *resources,NSInteger priority,BOOL (^ _Nullable cancelled)(void),id _Nullable (^perform)(NSError **error),NSError **error);
 id _Nullable AMPerformResourceOperation(NSString *key,NSString *kind,NSString *target,NSArray<NSString *> *resources,NSInteger priority,BOOL (^ _Nullable cancelled)(void),id _Nullable (^perform)(NSError **error),NSError **error);
 id _Nullable AMPerformModelOperation(NSString *key,NSString *target,BOOL manual,BOOL (^ _Nullable cancelled)(void),id _Nullable (^perform)(NSError **error),NSError **error);
 NS_ASSUME_NONNULL_END

@@ -71,7 +71,7 @@ int main(){@autoreleasepool{
         Check(course.operationStatus.hidden && NSMinY(course.courseWorkspace.view.frame)==NSMaxY(course.nativeHeader.frame)+8,@"running, recovery and completed feedback never push course content down");
         Check(course.cancelReadButton.enabled && course.cancelReadButton.action==@selector(cancelReadOperation:),@"activity cancellation retains the same operation target");
     }
-    [course cancelReadOperation:nil];Check(course.git.cancelledReads && !course.cancelReadButton.enabled && [course.statusLabel.stringValue containsString:@"正在终止"],@"cancel remains connected to the active read after layout changes");
+    [course cancelReadOperation:nil];Check(course.git.cancelledReads && !course.cancelReadButton.enabled && [course.statusLabel.stringValue containsString:@"正在停止"],@"cancel remains connected to the active read after layout changes");
     course.busy=NO;course.git.readsCancellable=NO;course.git.cancelledReads=NO;course.git.operationCancelled=NO;course.github.requestsCancelled=NO;[course refreshPresentation];
     Check(course.cancelReadButton.hidden && course.progress.hidden,@"finished course check removes the cancel action and progress bar");
     course.statusLabel.stringValue=@"";course.recoveryButton.hidden=YES;[course layoutContent];
