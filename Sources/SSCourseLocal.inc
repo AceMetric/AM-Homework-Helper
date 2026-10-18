@@ -20,6 +20,6 @@
             NSMutableArray *assignments=NSMutableArray.array,*other=NSMutableArray.array;for(NSDictionary *record in byID.allValues)if([record[@"kind"] isEqual:@"assignment"])[assignments addObject:record];else[other addObject:record];
             candidates[course[@"fork"]]=SSConsolidateAssignments(assignments);materials[course[@"fork"]]=SSGroupMaterials(other);
             NSError *saveError=nil;if(!SSWritePlist(@"discoveries.plist",[self discoveryEnvelope:candidates materials:materials progress:self.skillProgress batches:self.skillBatches],&saveError)){[self showError:saveError];return;}self.candidates=candidates;self.materials=materials;SSWritePlist(@"recognition-last-result.plist",@{@"course":course[@"fork"],@"date":NSDate.date,@"model":settings[@"model"],@"success":enhanced[@"modelCompleted"] ?: @NO},NULL);
-            [self status:[enhanced[@"recognitionMessages"] count] ? [NSString stringWithFormat:@"部分本地分析失败，规则结果已保留：%@",[enhanced[@"recognitionMessages"] firstObject]]:@"本地重新识别完成，新增建议可在待审核作业中确认。"]; }];
+            NSMutableDictionary *reports=self.reports.mutableCopy ?: NSMutableDictionary.dictionary;reports[course[@"fork"]]=enhanced;self.reports=reports;[self status:@"已保留可用结果"];[self postRecognitionSummary]; }];
     }];
 }

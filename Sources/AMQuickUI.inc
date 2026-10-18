@@ -75,7 +75,7 @@
     for(NSDictionary *job in [self.quickState[@"jobs"] allValues])if([job[@"sourceID"] isEqual:material[@"id"]] && [job[@"version"] isEqual:material[@"version"]] && ![job[@"received"] boolValue] && [NSFileManager.defaultManager fileExistsAtPath:[self quickFolder:job[@"id"]].path]){[self quickJobAction:@"copy" batch:job[@"id"]];[self refreshQuick:@"相同材料已经在等待助手，已复制原批次指令。" ];return;}
     NSString *batch=NSUUID.UUID.UUIDString;NSURL *folder=[self quickFolder:batch];NSError *error=nil;
     NSDictionary *doc=@{@"sourceID":material[@"id"],@"version":material[@"version"],@"text":material[@"text"],@"timeZone":material[@"timeZone"],@"referenceDate":[NSISO8601DateFormatter.new stringFromDate:material[@"referenceDate"]]};
-    NSData *data=[NSJSONSerialization dataWithJSONObject:@{@"format":@"am-local-context-v1",@"batchID":batch,@"documents":@[doc]} options:0 error:&error];
+    NSData *data=[NSJSONSerialization dataWithJSONObject:@{@"format":@"am-local-context-v1",@"instructions":AMLocalNoticeGuidance(),@"batchID":batch,@"documents":@[doc]} options:0 error:&error];
     NSString *skill=[NSString stringWithContentsOfFile:[NSBundle.mainBundle pathForResource:@"am-homework-extract" ofType:@"md"] encoding:NSUTF8StringEncoding error:&error];
     BOOL ok=folder && data && skill && [NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:&error];
     if(ok)ok=[data writeToURL:[folder URLByAppendingPathComponent:@"materials.local.json"] options:NSDataWritingAtomic error:&error] && [skill writeToURL:[folder URLByAppendingPathComponent:@"SKILL.md"] atomically:YES encoding:NSUTF8StringEncoding error:&error];

@@ -27,10 +27,14 @@ class Fixture(http.server.BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         assert 'tools' not in body
         Fixture.calls += 1
-        text = body['messages'][-1]['content']
+        text = json.loads(body['messages'][-1]['content'])['text']
         activities = [{'kind': 'assignment', 'title': '模拟课程报告', 'summary': '分析模拟任务。',
-                       'submissionRequirements': '', 'evidence': text,
+                       'submissionRequirements': '', 'summaryEvidence': text, 'evidence': text,
                        'deadlineEvidence': next((line for line in text.splitlines() if line.startswith('截止')), '')}]
+        if body['model'] == 'partial-fixture':
+            activities = [
+                {'kind': 'assignment', 'title': '第一份报告', 'evidence': '# Assignment A', 'summary': '写报告。', 'summaryEvidence': 'Write a report.', 'startLine': 1, 'endLine': 2},
+                {'kind': 'assignment', 'title': '第二份报告', 'evidence': 'invented evidence'}]
         content = '{}' if body['model'] == 'invalid-fixture' else json.dumps({'activities': activities})
         self.respond({'message': {'content': content}})
 

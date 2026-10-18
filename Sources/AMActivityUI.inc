@@ -7,13 +7,16 @@ static NSMutableArray<NSMutableDictionary *> *AMMessageLedger(void) {
     static NSMutableArray *rows;static dispatch_once_t once;dispatch_once(&once,^{rows=NSMutableArray.array;});return rows;
 }
 void AMPostUIMessage(NSString *scope,NSString *identifier,NSString *text,AMUIMessageSeverity severity,NSString *actionTitle,void (^action)(void)) {
+    AMPostUIMessageWithRevision(scope,identifier,text,text,severity,actionTitle,action);
+}
+void AMPostUIMessageWithRevision(NSString *scope,NSString *identifier,NSString *revision,NSString *text,AMUIMessageSeverity severity,NSString *actionTitle,void (^action)(void)) {
     if(!text.length)return;
-    if(!NSThread.isMainThread){dispatch_async(dispatch_get_main_queue(),^{AMPostUIMessage(scope,identifier,text,severity,actionTitle,action);});return;}
+    if(!NSThread.isMainThread){dispatch_async(dispatch_get_main_queue(),^{AMPostUIMessageWithRevision(scope,identifier,revision,text,severity,actionTitle,action);});return;}
     NSMutableArray *rows=AMMessageLedger();NSMutableDictionary *previous=nil;
     for(NSMutableDictionary *row in rows)if([row[@"scope"] isEqual:scope] && [row[@"id"] isEqual:identifier]){previous=row;break;}
-    if([previous[@"text"] isEqual:text] && [previous[@"severity"] integerValue]==severity)return;
+    if([previous[@"revision"] isEqual:revision] && [previous[@"severity"] integerValue]==severity){if(action){previous[@"action"]=[action copy];previous[@"actionTitle"]=actionTitle ?: @"查看";}return;}
     if(previous)[rows removeObjectIdenticalTo:previous];
-    NSMutableDictionary *row=[@{@"scope":scope ?: @"app",@"id":identifier ?: @"status",@"text":text,@"severity":@(severity),@"date":NSDate.date,@"dismissed":@NO} mutableCopy];
+    NSMutableDictionary *row=[@{@"scope":scope ?: @"app",@"id":identifier ?: @"status",@"text":text,@"revision":revision ?: text,@"severity":@(severity),@"date":NSDate.date,@"dismissed":@NO} mutableCopy];
     if(action){row[@"action"]=[action copy];row[@"actionTitle"]=actionTitle ?: @"查看";}
     [rows insertObject:row atIndex:0];while(rows.count>48)[rows removeLastObject];
     [NSNotificationCenter.defaultCenter postNotificationName:AMUIMessagesChanged object:nil];
@@ -93,9 +96,9 @@ void AMDismissUIMessage(NSString *scope,NSString *identifier){for(NSMutableDicti
 }
 - (void)refresh {
     NSUInteger active=0;BOOL failed=NO;for(NSDictionary *op in AMPresentedOperations()){if([@[@"queued",@"running"] containsObject:op[@"state"]])active++;if([op[@"state"] isEqual:@"failed"] && ![AMHiddenActivityOperations() containsObject:AMActivityOperationRevision(op)])failed=YES;}
-    NSDictionary *latest=nil;for(NSDictionary *message in AMUIMessages())if(![message[@"dismissed"] boolValue]){latest=message;break;}
-    BOOL recent=latest && [latest[@"severity"] integerValue]==AMUIMessageSuccess && -[latest[@"date"] timeIntervalSinceNow]<4;NSString *symbol=active ? @"arrow.triangle.2.circlepath":(failed || [latest[@"severity"] integerValue]>=AMUIMessageWarning ? @"exclamationmark.circle":recent ? @"checkmark.circle":@"clock");
-    self.image=[NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];self.toolTip=active ? [NSString stringWithFormat:@"%lu 项后台操作",(unsigned long)active]:(latest[@"text"] ?: @"活动与最近记录");self.accessibilityValue=self.toolTip;
+    NSDictionary *latest=nil,*warning=nil;for(NSDictionary *message in AMUIMessages())if(![message[@"dismissed"] boolValue]){if(!latest)latest=message;if(!warning && [message[@"severity"] integerValue]>=AMUIMessageWarning)warning=message;}
+    BOOL recent=latest && [latest[@"severity"] integerValue]==AMUIMessageSuccess && -[latest[@"date"] timeIntervalSinceNow]<4;NSString *symbol=active ? @"arrow.triangle.2.circlepath":(failed || warning!=nil ? @"exclamationmark.circle":recent ? @"checkmark.circle":@"clock");
+    self.image=[NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];self.toolTip=active ? [NSString stringWithFormat:@"%lu 项后台操作",(unsigned long)active]:(warning[@"text"] ?: latest[@"text"] ?: @"活动与最近记录");self.accessibilityValue=self.toolTip;
 }
 - (void)showActivity:(id)sender{if(self.activityPopover.shown){[self.activityPopover close];return;}self.activityPopover=NSPopover.new;self.activityPopover.behavior=NSPopoverBehaviorTransient;AMActivityController *controller=AMActivityController.new;self.activityPopover.contentViewController=controller;controller.popover=self.activityPopover;self.activityPopover.contentSize=controller.preferredContentSize;[self.activityPopover showRelativeToRect:self.bounds ofView:self preferredEdge:NSRectEdgeMaxY];}
 - (void)dealloc{[self.refreshTimer invalidate];[NSNotificationCenter.defaultCenter removeObserver:self];}

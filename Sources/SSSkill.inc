@@ -32,7 +32,7 @@ NSDictionary *SSSkillExport(NSArray *courses, NSDictionary *scans, NSDictionary 
         copy[@"courseID"]=course[@"fork"];[documents addObject:copy];manifest[key]=version;
     }
     NSString *batch=NSUUID.UUID.UUIDString;
-    return @{@"context":@{@"format":@"am-course-context-v2",@"skillVersion":@3,@"batchID":batch,@"documents":documents},@"manifest":manifest};
+    return @{@"context":@{@"format":@"am-course-context-v2",@"skillVersion":@4,@"instructions":AMCoursePrompt(),@"batchID":batch,@"documents":documents},@"manifest":manifest};
 }
 NSDictionary *SSSkillValidateBatch(id result, NSArray *courses, NSDictionary *scans, NSDictionary *batches, NSString *legacyCourse, NSError **error) {
     BOOL legacy=[result isKindOfClass:NSDictionary.class] && [result[@"format"] isEqual:@"am-course-results-v1"];

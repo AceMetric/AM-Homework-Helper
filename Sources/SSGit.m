@@ -361,15 +361,19 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSDictionary *scoped=SSCourseRecognitionSettings(settings,course);if([scoped[@"mode"] isEqual:@"rules"])return scan;
     NSMutableDictionary *byID=NSMutableDictionary.dictionary;for(NSDictionary *record in scan[@"candidates"])byID[record[@"id"]]=record;
     for(NSDictionary *group in scan[@"materials"])for(NSDictionary *record in group[@"documents"] ?: @[group])byID[record[@"id"]]=record;
-    NSMutableArray *messages=NSMutableArray.array;NSUInteger processed=0,reused=0,pending=0;
+    NSMutableArray *messages=NSMutableArray.array;NSMutableDictionary *failures=[scan[@"modelFailures"] mutableCopy] ?: NSMutableDictionary.dictionary;NSUInteger processed=0,reused=0,pending=0;
     for(NSDictionary *document in scan[@"documents"]){if(paths && ![paths containsObject:document[@"path"]])continue;
         if(self.readsCancellable && self.cancelledReads){[messages addObject:@"分析已取消，已完成的材料保留。"];break;}
         NSCalendar *calendar=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];calendar.timeZone=[NSTimeZone timeZoneWithName:document[@"timeZone"]] ?: NSTimeZone.localTimeZone;
         NSString *completedKey=[NSString stringWithFormat:@"model-complete-v1|%@|%@|%@|%@",[document[@"repository"] lowercaseString],document[@"path"],document[@"blobSHA"],calendar.timeZone.name];
         NSDictionary *completed=cache[completedKey];NSError *failure=nil;NSArray *found=nil;
+        NSString *stateKey=[@"recognition-state|" stringByAppendingString:SSRecognitionCacheKey(document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,scoped)];NSDictionary *savedState=cache[stateKey];
+        if(savedState && ![savedState[@"complete"] boolValue] && ![scoped[@"forceRecognition"] boolValue]){failures[document[@"path"]]=@{@"path":document[@"path"],@"blobSHA":document[@"blobSHA"],@"issues":savedState[@"issues"] ?: @[],@"state":savedState[@"state"] ?: @"partial"};for(NSDictionary *record in savedState[@"records"] ?: @[])byID[record[@"id"]]=record;}
+
         if(completed && ![scoped[@"forceRecognition"] boolValue]){
-            if(![completed[@"validation"] isEqual:AMCourseValidationVersion()]){[messages addObject:[NSString stringWithFormat:@"%@：旧分析需要手动重新核验，规则结果保留。",document[@"path"]]];continue;}
             found=completed[@"records"];reused++;
+            if(![completed[@"validation"] isEqual:AMCourseValidationVersion()]){NSMutableArray *legacy=NSMutableArray.array;for(NSDictionary *record in found){NSMutableDictionary *copy=record.mutableCopy;if(![copy[@"recognizer"] hasPrefix:@"rules"] && ![copy[@"recognizer"] hasPrefix:@"template"]){copy[@"analysisValidation"]=completed[@"validation"] ?: @"legacy";copy[@"requiresReview"]=@YES;copy[@"modelOnly"]=@YES;}[legacy addObject:copy];}found=legacy;}
+
         }else{
             BOOL cached=![scoped[@"forceRecognition"] boolValue] && SSCachedRecognition(document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,scoped,cache)!=nil;
             if(!cached && [scoped[@"cacheOnly"] boolValue]){pending++;continue;}
@@ -379,17 +383,27 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
             if(!failure && found){completed=@{@"records":found,@"model":scoped[@"model"] ?: @"",@"prompt":AMCoursePromptVersion(),@"validation":AMCourseValidationVersion(),@"date":NSDate.date};cache[completedKey]=completed;if(cached)reused++;else processed++;}
             if(self.scanCheckpoint && !self.scanCheckpoint(cache,&failure))found=nil;
         }
-        if(failure){[messages addObject:[NSString stringWithFormat:@"%@：%@",document[@"path"],failure.localizedDescription]];if([scoped[@"mode"] isEqual:@"local"] && ([failure.localizedDescription containsString:@"连接失败"] || [failure.localizedDescription containsString:@"超时"] || [failure.localizedDescription containsString:@"服务返回 HTTP"])){[messages addObject:@"其余文档暂用规则结果，可恢复服务后重试。"];break;}continue;}
+        if(failure){
+            [cache removeObjectForKey:completedKey];
+            NSString *stateKey=[@"recognition-state|" stringByAppendingString:SSRecognitionCacheKey(document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,scoped)];NSDictionary *state=cache[stateKey];
+            if(!found)found=state[@"records"];
+            if(![state[@"issues"] count]){NSMutableDictionary *next=[state mutableCopy] ?: NSMutableDictionary.dictionary;next[@"issues"]=@[@{@"field":@"request",@"code":@"storage-or-request",@"reason":failure.localizedDescription}];next[@"complete"]=@NO;next[@"state"]=[next[@"records"] count] ? @"partial":@"failed";cache[stateKey]=next;state=next;}
+            failures[document[@"path"]]=@{@"path":document[@"path"],@"blobSHA":document[@"blobSHA"],@"issues":state[@"issues"] ?: failure.userInfo[@"validationIssues"] ?: @[@{@"field":@"request",@"code":@"request",@"reason":failure.localizedDescription}],@"state":state[@"state"] ?: @"failed"};
+        }else [failures removeObjectForKey:document[@"path"]];
         for(NSDictionary *record in found){NSMutableDictionary *copy=record.mutableCopy;copy[@"timeZone"]=calendar.timeZone.name;NSDictionary *old=byID[record[@"id"]];
-            if(completed[@"model"])copy[@"analysisModel"]=completed[@"model"];
-            if(completed[@"prompt"])copy[@"analysisPrompt"]=completed[@"prompt"];
+            copy[@"analysisModel"]=completed[@"model"] ?: scoped[@"model"] ?: @"";
+            copy[@"analysisPrompt"]=completed[@"prompt"] ?: AMCoursePromptVersion();
             if([record[@"recognizer"] hasPrefix:@"rules"] || [record[@"recognizer"] hasPrefix:@"template"])continue;
             if([record[@"relative"] boolValue]){NSDictionary *basis=old[@"dateBasis"] ? old : [self cachedDateReference:copy head:scan[@"commit"] branch:scan[@"branch"] path:course[@"path"] cache:cache];for(NSString *field in @[@"dateBasis",@"suggestedDue"])if(basis[field])copy[field]=basis[field];}
             byID[record[@"id"]]=copy;
         }
     }
     NSMutableArray *assignments=NSMutableArray.array,*materials=NSMutableArray.array;for(NSDictionary *record in byID.allValues)if([record[@"kind"] isEqual:@"assignment"])[assignments addObject:record];else[materials addObject:record];
-    NSMutableDictionary *result=scan.mutableCopy;result[@"candidates"]=SSAttachLinkedDocuments(SSConsolidateAssignments(assignments),scan[@"documents"]);result[@"materials"]=SSGroupMaterials(materials);result[@"recognitionMessages"]=messages;result[@"modelCompleted"]=@(messages.count==0 && pending==0);result[@"modelSummary"]=@{@"processed":@(processed),@"reused":@(reused),@"failed":@(messages.count),@"pending":@(pending)};return result;
+    NSMutableDictionary *result=scan.mutableCopy;result[@"candidates"]=SSAttachLinkedDocuments(SSConsolidateAssignments(assignments),scan[@"documents"]);result[@"materials"]=SSGroupMaterials(materials);pending=0;NSMutableSet *live=NSMutableSet.set;
+    for(NSDictionary *document in scan[@"documents"]){NSString *path=document[@"path"];[live addObject:path];if(failures[path] && ![failures[path][@"blobSHA"] isEqual:document[@"blobSHA"]])[failures removeObjectForKey:path];NSString *done=[NSString stringWithFormat:@"model-complete-v1|%@|%@|%@|%@",[document[@"repository"] lowercaseString],path,document[@"blobSHA"],document[@"timeZone"]];if(!cache[done] && !failures[path])pending++;}
+    for(NSString *path in failures.allKeys)if(![live containsObject:path])[failures removeObjectForKey:path];
+    for(NSString *path in [failures.allKeys sortedArrayUsingSelector:@selector(compare:)])[messages addObject:[NSString stringWithFormat:@"%@：%@",path,[failures[path][@"issues"] firstObject][@"reason"] ?: @"识别未完成"]];
+    result[@"recognitionMessages"]=messages;result[@"modelFailures"]=failures;result[@"modelCompleted"]=@(failures.count==0 && pending==0);result[@"modelSummary"]=@{@"processed":@(processed),@"reused":@(reused),@"failed":@(failures.count),@"pending":@(pending)};return result;
 }
 - (BOOL)cleanWorktree:(NSString *)path error:(NSError **)error {
     SSGitResult *status = [self checked:@[@"status", @"--porcelain=v1", @"-z", @"--untracked-files=all"] in:path token:nil error:error]; if (!status) return NO;

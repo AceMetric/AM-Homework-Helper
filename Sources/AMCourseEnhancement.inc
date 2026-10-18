@@ -1,3 +1,28 @@
+- (NSArray *)recognitionFailures {
+    NSMutableArray *rows=NSMutableArray.array;
+    for(NSString *fork in [self.reports.allKeys sortedArrayUsingSelector:@selector(compare:)]){NSDictionary *report=self.reports[fork];for(NSString *path in [report[@"modelFailures"] allKeys]){NSMutableDictionary *row=[report[@"modelFailures"][path] mutableCopy];row[@"course"]=fork;[rows addObject:row];}}
+    return [rows sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [[a[@"course"] stringByAppendingString:a[@"path"]] compare:[b[@"course"] stringByAppendingString:b[@"path"]]];}];
+}
+- (void)postRecognitionSummary {
+    NSArray *failures=[self recognitionFailures];if(!failures.count){AMDismissUIMessage(@"course-recognition",@"failures");return;}
+    NSString *revision=[[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:failures options:NSJSONWritingSortedKeys error:NULL] encoding:NSUTF8StringEncoding];__weak typeof(self) owner=self;
+    AMPostUIMessageWithRevision(@"course-recognition",@"failures",revision,[NSString stringWithFormat:@"%lu 份材料未完成增强",(unsigned long)failures.count],AMUIMessageWarning,@"查看",^{[owner showRecognitionFailures:nil];});
+}
+- (void)showRecognitionFailures:(id)sender {
+    NSArray *failures=[self recognitionFailures];if(!failures.count)return;
+    NSAlert *alert=NSAlert.new;alert.messageText=[NSString stringWithFormat:@"%lu 份材料未完成增强",(unsigned long)failures.count];NSDictionary *settings=SSRecognitionSettings();BOOL cloud=[settings[@"mode"] isEqual:@"cloud"];
+    alert.informativeText=cloud ? [NSString stringWithFormat:@"重试仅发送这些文件到 %@（%@），可能产生费用。",[NSURL URLWithString:settings[@"endpoint"]].host ?: @"所选服务",settings[@"model"] ?: @"模型"]:@"可用结果已保留。重试仅处理以下文件。";
+    NSView *accessory=[[NSView alloc] initWithFrame:NSMakeRect(0,0,550,230)];NSPopUpButton *source=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(0,202,550,26)];
+    NSMutableArray *lines=NSMutableArray.array;for(NSDictionary *row in failures){[source addItemWithTitle:[NSString stringWithFormat:@"%@ · %@",row[@"course"],row[@"path"]]];NSMutableOrderedSet *reasons=NSMutableOrderedSet.orderedSet;for(NSDictionary *issue in row[@"issues"])[reasons addObject:[NSString stringWithFormat:@"%@：%@",issue[@"field"] ?: @"结果",issue[@"reason"] ?: @"未通过核验"]];[lines addObject:[NSString stringWithFormat:@"%@ · %@\n%@",row[@"course"],row[@"path"],[reasons.array componentsJoinedByString:@"；"]]];}
+    [accessory addSubview:source];NSScrollView *scroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,550,190)];scroll.hasVerticalScroller=YES;NSTextView *detail=[[NSTextView alloc] initWithFrame:NSMakeRect(0,0,530,190)];detail.editable=NO;detail.font=[NSFont systemFontOfSize:13];detail.string=[lines componentsJoinedByString:@"\n\n"];scroll.documentView=detail;[accessory addSubview:scroll];alert.accessoryView=accessory;
+    NSButton *retry=[alert addButtonWithTitle:cloud ? @"发送并重试":@"重试失败项"];retry.enabled=![settings[@"mode"] isEqual:@"rules"] && !self.operationsPaused;[alert addButtonWithTitle:@"查看原文"];[alert addButtonWithTitle:@"关闭"];NSModalResponse choice=[alert runModal];
+    if(choice==NSAlertSecondButtonReturn){NSDictionary *row=failures[MAX(0,source.indexOfSelectedItem)];NSDictionary *document=nil;for(NSDictionary *doc in self.reports[row[@"course"]][@"documents"])if([doc[@"path"] isEqual:row[@"path"]] && [doc[@"blobSHA"] isEqual:row[@"blobSHA"]])document=doc;if(!document){[self status:@"原文版本已变化，请重新检查课程"];return;}NSWindow *window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,800,600) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];window.releasedWhenClosed=NO;window.title=[NSString stringWithFormat:@"%@ · %@",row[@"path"],row[@"blobSHA"]];AMDocumentView *view=[[AMDocumentView alloc] initWithFrame:window.contentView.bounds];window.contentView=view;view.markdown=document[@"text"];[view locateLine:1];[window center];[window makeKeyAndOrderFront:nil];objc_setAssociatedObject(self,@selector(showRecognitionFailures:),window,OBJC_ASSOCIATION_RETAIN_NONATOMIC);return;}
+    if(choice!=NSAlertFirstButtonReturn)return;
+    NSMutableDictionary *byCourse=NSMutableDictionary.dictionary;for(NSDictionary *row in failures){if(!byCourse[row[@"course"]])byCourse[row[@"course"]]=NSMutableArray.array;[byCourse[row[@"course"]] addObject:row[@"path"]];}
+    for(NSString *fork in byCourse){NSDictionary *course=[self savedCourse:@{@"fork":fork}].copy,*scan=[self.reports[fork] copy];NSArray *paths=[byCourse[fork] copy];if(!course || !scan)continue;NSMutableDictionary *approved=settings.mutableCopy;approved[@"manualLocal"]=@YES;approved[@"manualCloud"]=@YES;approved[@"forceRecognition"]=@YES;
+        [self work:@"重试识别…" forCourse:course requestKey:[NSString stringWithFormat:@"retry|%@|%@",scan[@"commit"],paths] priority:100 operation:^id(NSError **error){NSMutableDictionary *cache=AMScanCacheLoad(error);if(!cache)return nil;NSDictionary *live=[self.git readCourseDocuments:course paths:paths fetch:YES cache:cache error:error];if(!live)return nil;for(NSString *path in paths){NSDictionary *old=nil,*now=nil;for(NSDictionary *doc in scan[@"documents"])if([doc[@"path"] isEqual:path])old=doc;for(NSDictionary *doc in live[@"documents"])if([doc[@"path"] isEqual:path])now=doc;if(!old || ![old[@"blobSHA"] isEqual:now[@"blobSHA"]]){if(error)*error=[NSError errorWithDomain:@"AMRecognition" code:3 userInfo:@{NSLocalizedDescriptionKey:@"材料版本已变化，请重新检查课程"}];return nil;}}NSDictionary *result=[self.git enhanceScan:scan course:course settings:approved paths:paths cache:cache];return AMScanCacheSave(cache,error) ? result:nil;} completion:^(NSDictionary *result,NSError *error){if(!result){[self showError:error];return;}NSMutableDictionary *reports=self.reports.mutableCopy;reports[fork]=result;self.reports=reports;if(self.hasUnsavedReview){if(!self.deferredScans)self.deferredScans=NSMutableDictionary.dictionary;self.deferredScans[fork]=result;}else {self.candidates[fork]=[self retainingSkill:self.candidates[fork] current:result[@"candidates"] documents:result[@"documents"]];self.materials[fork]=result[@"materials"] ?: @[];}NSError *save=nil;if(!SSWritePlist(@"discoveries.plist",self.discoveryEnvelope,&save))[self showError:save];else [self status:@"识别结果已保存"];[self postRecognitionSummary];[self refreshPresentation];}];
+    }
+}
 - (void)enhanceRecognition:(id)sender {
     NSDictionary *course=[self course].copy;if(!course || ![course[@"path"] length]){[self status:@"请选择已关联本机文件夹的课程，再增强识别。" ];return;}
     NSDictionary *settings=SSRecognitionSettings();BOOL cloud=[settings[@"mode"] isEqual:@"cloud"];
@@ -23,7 +48,7 @@
             NSMutableDictionary *reports=self.reports.mutableCopy ?: NSMutableDictionary.dictionary;reports[course[@"fork"]]=result;self.reports=reports;
             if(self.hasUnsavedReview){if(!self.deferredScans)self.deferredScans=NSMutableDictionary.dictionary;self.deferredScans[course[@"fork"]]=result;[self status:@"增强结果已准备好；当前审核草稿保留，结束编辑后接入。" ];return;}
             self.candidates[course[@"fork"]]=[self retainingSkill:self.candidates[course[@"fork"]] current:result[@"candidates"] documents:result[@"documents"]];self.materials[course[@"fork"]]=result[@"materials"] ?: @[];if(!self.preview)SSWritePlist(@"discoveries.plist",[self discoveryEnvelope],NULL);[self refreshPresentation];
-            [self status:[result[@"recognitionMessages"] count] ? [NSString stringWithFormat:@"部分增强未完成；规则结果和草稿保留。%@",[result[@"recognitionMessages"] componentsJoinedByString:@"；"]]:@"增强结果已进入待审核；请核对日期与内容。" ];
+            [self status:[result[@"recognitionMessages"] count] ? @"已保留可用结果":@"增强识别完成"];[self postRecognitionSummary];
         }];
     }];
 }
@@ -53,7 +78,7 @@
             if(self.hasUnsavedReview){if(!self.deferredScans)self.deferredScans=NSMutableDictionary.dictionary;self.deferredScans[course[@"fork"]]=result;}
             else {self.candidates[course[@"fork"]]=[self retainingSkill:self.candidates[course[@"fork"]] current:result[@"candidates"] documents:result[@"documents"]];self.materials[course[@"fork"]]=result[@"materials"] ?: @[];}
             if(!SSWritePlist(@"discoveries.plist",self.discoveryEnvelope,NULL))[self status:@"结果尚未保存，请检查本机数据目录后重试。"];
-            else [self status:[result[@"recognitionMessages"] count] ? [result[@"recognitionMessages"] firstObject]:@"新增材料分析完成，结果已接入审核。"];
+            else [self status:[result[@"recognitionMessages"] count] ? @"已保留可用结果":@"增强识别完成"];[self postRecognitionSummary];
         }];
     }
 }
