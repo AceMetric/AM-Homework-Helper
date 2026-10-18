@@ -108,7 +108,7 @@ def fixture(name, base_url, scenario):
         info['CFBundleVersion'] = build
         info['CFBundleShortVersionString'] = '1.1' if build == '2' else '1.2'
         (contents / 'Info.plist').write_bytes(plistlib.dumps(info))
-        run('/usr/bin/codesign', '--force', '--sign', '-', destination)
+        run('/usr/bin/codesign', '--force', '--sign', '-', *(['--requirements', f'=designated => identifier "{bundle_id}"'] if build == '3' else []), destination)
         run('/usr/bin/codesign', '--verify', '--deep', '--strict', destination)
     run('/usr/bin/ditto', host, folder / 'baseline/DDLUpdateTest.app')
     archive = folder / 'update.zip'

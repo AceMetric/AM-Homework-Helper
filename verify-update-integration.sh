@@ -12,4 +12,4 @@ clang -DDDL_TESTING -fobjc-arc -fblocks -Wall -Wextra -Werror -Wno-unused-parame
   Tests/UpdateIntegration.m Sources/DDLCore.m Sources/DDLImport.m Sources/SSRecognition.m Sources/SSAssignments.m Sources/SSLocalData.m \
   Sources/SSGitHub.m Sources/SSGit.m Sources/SSSecurity.m Sources/DDLUI.m \
   Sources/SSUpdateController.m Sources/SSExitCoordinator.m -o build/tests/update-integration
-python3 Tools/test-update-integration.py
+python3 Tools/test-update-integration.py "$@"

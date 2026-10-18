@@ -32,6 +32,8 @@ AM_UI_TEST=SkillExchange zsh verify-hybrid-ui.sh
 AM_UI_TEST=QualityUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=PlanningUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=ReminderUsage zsh verify-hybrid-ui.sh
+AM_UI_TEST=ReminderMigrationUsage zsh verify-hybrid-ui.sh
+python3 Tools/test-reminder-identity.py --identity-only
 AM_UI_TEST=PreflightUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=OnlineReviewUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=QuickUsage zsh verify-hybrid-ui.sh

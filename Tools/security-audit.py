@@ -89,7 +89,13 @@ def inspect(data, label, depth=0, commit=False):
     counts['files'] += 1
     if SENSITIVE_NAMES.search(label):
         findings.add((label, 'credential-file'))
-    if PINNED_PUBLIC_BINARY.get(label.rsplit('/', 1)[-1]) == hashlib.sha256(data).hexdigest():
+    sha = hashlib.sha256(data).hexdigest()
+    public_name = label.rsplit('/', 1)[-1]
+    # The legacy capsule stores identical sealed files by content hash. Apply
+    # existing exact-byte vendor rules after recovering that pinned name only.
+    if label.endswith('ReminderIdentities.zip!blobs/' + sha):
+        public_name = next((name for name, expected in {**PINNED_PUBLIC_BINARY, **PUBLIC_ATTRIBUTION}.items() if expected == sha), public_name)
+    if PINNED_PUBLIC_BINARY.get(public_name) == sha:
         counts['verified_official_binaries'] = counts.get('verified_official_binaries', 0) + 1
         return
     texts = [data]
@@ -110,7 +116,7 @@ def inspect(data, label, depth=0, commit=False):
     elif data.startswith(b'PK\x03\x04'):
         privacy_texts = []  # ZIP entries are scanned after decompression below.
     for category, regex in REGEXES.items():
-        if category == 'personal-email' and PUBLIC_ATTRIBUTION.get(label.rsplit('/', 1)[-1]) == hashlib.sha256(data).hexdigest():
+        if category == 'personal-email' and PUBLIC_ATTRIBUTION.get(public_name) == sha:
             continue
         eligible = privacy_texts if category in ('personal-email', 'personal-home-path') else texts
         if any(regex.search(text) for text in eligible):
