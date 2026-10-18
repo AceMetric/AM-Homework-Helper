@@ -1,5 +1,6 @@
 #import "DDLUI.h"
 #import "AMUI-Swift.h"
+#import <objc/runtime.h>
 NSColor *RGB(unsigned value) { return [NSColor colorWithSRGBRed:((value >> 16) & 255) / 255.0 green:((value >> 8) & 255) / 255.0 blue:(value & 255) / 255.0 alpha:1]; }
 NSColor *Adaptive(unsigned light, unsigned dark) {
     return [NSColor colorWithName:nil dynamicProvider:^NSColor *(NSAppearance *appearance) {
@@ -61,9 +62,6 @@ void DrawText(NSString *text, NSRect rect, CGFloat size, NSFontWeight weight, NS
 - (instancetype)initWithFrame:(NSRect)frame {if((self=[super initWithFrame:frame])){self.bezelStyle=NSBezelStyleRounded;self.font=[NSFont systemFontOfSize:13];[self setButtonType:NSButtonTypeMomentaryPushIn];self.focusRingType=NSFocusRingTypeDefault;}return self;}
 - (void)setTone:(NSInteger)tone {
     _tone=tone;self.bordered=tone!=3;self.bezelStyle=NSBezelStyleRounded;
-#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
-    if(@available(macOS 26.0,*)){if(tone==1)self.bezelStyle=NSBezelStyleGlass;self.borderShape=NSControlBorderShapeCapsule;}
-#endif
     self.bezelColor=tone==1 ? Accent():nil;self.contentTintColor=nil;
 }
 - (void)setSymbol:(NSString *)symbol {_symbol=symbol.copy;self.image=symbol.length ? [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil]:nil;self.imagePosition=symbol.length ? (self.title.length ? NSImageLeft:NSImageOnly):NSNoImage;}
@@ -81,12 +79,9 @@ void AMConfigureSingleLineField(NSTextField *field) {
     // isBordered and isBezeled are mutually exclusive in AppKit. Setting
     // isBordered after isBezeled disables the rounded bezel altogether.
     field.bordered=NO;field.bezeled=YES;field.bezelStyle=NSTextFieldRoundedBezel;
-    field.controlSize=NSControlSizeLarge;field.drawsBackground=YES;field.backgroundColor=NSColor.textBackgroundColor;
+    field.controlSize=NSControlSizeRegular;field.drawsBackground=YES;field.backgroundColor=NSColor.textBackgroundColor;
     field.focusRingType=NSFocusRingTypeDefault;field.maximumNumberOfLines=1;
     NSTextFieldCell *cell=(NSTextFieldCell *)field.cell;cell.scrollable=YES;cell.usesSingleLineMode=YES;
-#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
-    if(@available(macOS 26.0,*))field.borderShape=NSControlBorderShapeCapsule;
-#endif
 }
 @implementation PastelTextField
 - (instancetype)initWithFrame:(NSRect)frame {if((self=[super initWithFrame:frame])){AMConfigureSingleLineField(self);self.font=[NSFont systemFontOfSize:13];}return self;}
@@ -117,6 +112,21 @@ void AMConfigureSingleLineField(NSTextField *field) {
 @end
 
 
+@interface AMPopupToolbarTarget:NSObject<NSMenuItemValidation>
+@property(weak) NSPopUpButton *control;
+- (void)choose:(NSMenuItem *)sender;
+@end
+@implementation AMPopupToolbarTarget
+- (void)choose:(NSMenuItem *)sender{if(sender.tag<0 || sender.tag>=self.control.numberOfItems)return;[self.control selectItemAtIndex:sender.tag];[NSApp sendAction:self.control.action to:self.control.target from:self.control];}
+- (BOOL)validateMenuItem:(NSMenuItem *)item{item.state=self.control.indexOfSelectedItem==item.tag ? NSControlStateValueOn:NSControlStateValueOff;return self.control.enabled;}
+@end
+NSToolbarItem *PopupToolbarItem(NSString *identifier,NSString *label,NSPopUpButton *control){
+    NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=label;[control sizeToFit];item.view=control;
+    AMPopupToolbarTarget *target=AMPopupToolbarTarget.new;target.control=control;objc_setAssociatedObject(item,@selector(choose:),target,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    NSMenuItem *overflow=[[NSMenuItem alloc] initWithTitle:label action:nil keyEquivalent:@""];NSMenu *menu=[[NSMenu alloc] initWithTitle:label];
+    for(NSInteger i=0;i<control.numberOfItems;i++){NSMenuItem *choice=[menu addItemWithTitle:[control itemTitleAtIndex:i] action:@selector(choose:) keyEquivalent:@""];choice.tag=i;choice.target=target;}
+    overflow.submenu=menu;item.menuFormRepresentation=overflow;return item;
+}
 @implementation ThemeSegmentedControl
 - (void)chooseToolbarSegment:(NSMenuItem *)sender {NSInteger index=sender.tag;if(index<0 || index>=self.segmentCount)return;self.selectedSegment=index;[NSApp sendAction:self.action to:self.target from:self];}
 - (BOOL)validateMenuItem:(NSMenuItem *)item {item.state=self.selectedSegment==item.tag ? NSControlStateValueOn:NSControlStateValueOff;return self.enabled;}
@@ -146,6 +156,7 @@ NSToolbarItem *SegmentToolbarItem(NSString *identifier,NSString *label,NSSegment
 }
 #import "AMNativeUI.inc"
 #import "AMProgressUI.inc"
+#import "AMActivityUI.inc"
 
 #import "AMRenderer.inc"
 
