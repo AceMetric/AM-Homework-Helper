@@ -29,6 +29,7 @@ static NSImage *ThemeIcon(void) {
 static NSCalendar *Cal(void) { NSCalendar *c = [[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian]; c.firstWeekday = 2; return c; }
 
 #import "SSReminders.inc"
+#import "AMReminderMigration.inc"
 
 @interface DayButton : NSButton
 @property NSDate *date;
@@ -436,6 +437,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSInteger scheduledCount;
 @property NSInteger notificationGeneration;
 @property AMReminderScheduler *reminderScheduler;
+@property AMReminderMigration *reminderMigration;
 @property BOOL applyingSubmissionCompletions;
 @property NSSet *lastSubmissionEditingIDs;
 @property BOOL submissionCompletionUndoAvailable;
@@ -1860,7 +1862,11 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)refreshReminders {
     if(self.preview)return;
-    if(!self.reminderScheduler){self.reminderScheduler=AMReminderScheduler.new;__weak typeof(self) owner=self;self.reminderScheduler.changed=^(NSInteger scheduled,NSString *error,NSString *notice){owner.scheduledCount=scheduled;owner.notificationError=error;if(notice.length)owner.notice=notice;[owner refreshPermission];if(error)[owner render];[owner.exitCoordinator operationStateChanged];};}
+#ifndef DDL_TESTING
+    if(!self.reminderMigration){self.reminderMigration=AMReminderMigration.new;__weak typeof(self) owner=self;[self.reminderMigration start:^{if(owner.reminderMigration.error){owner.notice=owner.reminderMigration.error.localizedDescription;[owner render];}[owner refreshReminders];[owner.exitCoordinator operationStateChanged];}];return;}
+    if(self.reminderMigration.running)return;
+#endif
+    if(!self.reminderScheduler){self.reminderScheduler=AMReminderScheduler.new;__weak typeof(self) owner=self;self.reminderScheduler.changed=^(NSInteger scheduled,NSString *error,NSString *notice){owner.scheduledCount=scheduled;owner.notificationError=owner.reminderMigration.error.localizedDescription ?: error;if(notice.length)owner.notice=notice;[owner refreshPermission];if(error)[owner render];[owner.exitCoordinator operationStateChanged];};}
     self.notificationGeneration++;[self.reminderScheduler schedule:[self snapshot]];
 }
 - (void)notificationHelp:(id)sender {
@@ -1874,6 +1880,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         alert.informativeText = @"预览不发送系统通知。"; [alert addButtonWithTitle:@"知道了"];
         [alert beginSheetModalForWindow:self.window completionHandler:nil]; return;
     }
+    if(self.reminderMigration.error)self.reminderMigration=nil;
     [self refreshReminders];
     BOOL notDetermined = self.authorization == UNAuthorizationStatusNotDetermined;
     BOOL denied = self.authorization == UNAuthorizationStatusDenied;

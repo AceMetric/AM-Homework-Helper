@@ -21,6 +21,10 @@ jobs:
           persist-credentials: false
       - name: Source and tag privacy preflight
         run: python3 Tools/security-audit.py --history
+      - uses: actions/cache@v4
+        with:
+          path: build/dependencies/reminder-legacy
+          key: reminder-legacy-${{ runner.os }}-${{ hashFiles('Config/ReminderLegacy.json', 'Tools/prepare-reminder-legacy.py') }}
       - name: Native build
         run: zsh build.sh
       - name: Native control geometry and interaction
@@ -63,6 +67,8 @@ jobs:
           AM_UI_TEST=PlanningUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=AIEnhancementUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=ReminderUsage zsh verify-hybrid-ui.sh
+          AM_UI_TEST=ReminderMigrationUsage zsh verify-hybrid-ui.sh
+          python3 Tools/test-reminder-identity.py --identity-only
           AM_UI_TEST=SubmissionCompletionUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=PreflightUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=OnlineReviewUsage zsh verify-hybrid-ui.sh

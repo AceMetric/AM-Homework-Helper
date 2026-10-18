@@ -16,6 +16,7 @@ SWIFTUI_DIR=$(python3 "$SCRIPT_DIR/Tools/prepare-swiftui.py")
 RENDERER_DIR=$(python3 "$SCRIPT_DIR/Tools/prepare-renderer.py")
 GITHUB_CLI_DIR=$(python3 "$SCRIPT_DIR/Tools/prepare-github-cli.py")
 SPARKLE_DIR=$(python3 "$SCRIPT_DIR/Tools/prepare-sparkle.py")
+REMINDER_CAPSULE=$(python3 "$SCRIPT_DIR/Tools/prepare-reminder-legacy.py")
 mkdir -p "$CONTENTS/Frameworks"
 /usr/bin/ditto "$SPARKLE_DIR/Sparkle.framework" "$CONTENTS/Frameworks/Sparkle.framework"
 cp "$SWIFTUI_DIR/libAMUI.dylib" "$CONTENTS/Frameworks/libAMUI.dylib"
@@ -74,8 +75,12 @@ cp "$GITHUB_CLI_DIR/gh" "$CONTENTS/Helpers/gh"
 cp "$GITHUB_CLI_DIR/LICENSE" "$CONTENTS/Resources/GitHub-CLI-LICENSE.txt"
 # Keep the official Developer ID signature and every byte of the pinned helper.
 codesign --verify --strict "$CONTENTS/Helpers/gh"
+cp "$REMINDER_CAPSULE" "$CONTENTS/Resources/ReminderIdentities.zip"
+clang -arch arm64 -fobjc-arc -fblocks -dynamiclib -Wall -Wextra -Werror -mmacosx-version-min=13.0 -framework Cocoa -framework UserNotifications "$SCRIPT_DIR/Tools/ReminderMaintenance.m" -o "$CONTENTS/Resources/ReminderMaintenance.dylib"
+codesign --force --sign - "$CONTENTS/Resources/ReminderMaintenance.dylib"
 # Preserve Sparkle component signatures; sign the host last.
-codesign --force --sign - "$APP_DIR"
+BUNDLE_ID=$(python3 -c 'import plistlib,sys; print(plistlib.load(open(sys.argv[1], "rb"))["CFBundleIdentifier"])' "$SCRIPT_DIR/Info.plist")
+codesign --force --sign - --requirements "=designated => identifier \"$BUNDLE_ID\"" "$APP_DIR"
 codesign --verify --deep --strict "$APP_DIR"
 
 echo "$APP_DIR"

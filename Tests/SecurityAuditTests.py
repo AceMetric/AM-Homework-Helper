@@ -93,5 +93,35 @@ class AuditTests(unittest.TestCase):
         self.assertIn(('artifact/Sparkle-LICENSE.txt', 'personal-email'), GLOBALS['findings'])
 
 
+    def test_content_addressed_official_binary_still_requires_pinned_bytes(self):
+        import hashlib
+        path = Path(__file__).resolve().parent.parent / 'build/dependencies/gh-2.101.0/gh'
+        if not path.exists():
+            self.skipTest('prepare the pinned official CLI first')
+        data = path.read_bytes()
+        label = 'artifact/ReminderIdentities.zip!blobs/' + hashlib.sha256(data).hexdigest()
+        SCAN(data, label)
+        self.assertEqual(GLOBALS['findings'], set())
+        modified = data + b'\n' + self.address
+        altered = 'artifact/ReminderIdentities.zip!blobs/' + hashlib.sha256(modified).hexdigest()
+        SCAN(modified, altered)
+        self.assertIn((altered, 'personal-email'), GLOBALS['findings'])
+
+    def test_content_addressed_attribution_cannot_hide_added_private_text(self):
+        import hashlib
+        root = Path(__file__).resolve().parent.parent
+        name = __import__('plistlib').loads((root / 'Info.plist').read_bytes())['CFBundleName']
+        path = root / 'build' / (name + '.app') / 'Contents/Resources/Sparkle-LICENSE.txt'
+        if not path.exists():
+            self.skipTest('build the pinned dependency first')
+        data = path.read_bytes()
+        label = 'artifact/ReminderIdentities.zip!blobs/' + hashlib.sha256(data).hexdigest()
+        SCAN(data, label)
+        self.assertEqual(GLOBALS['findings'], set())
+        modified = data + b'\n' + self.address
+        SCAN(modified, label)
+        self.assertIn((label, 'personal-email'), GLOBALS['findings'])
+
+
 if __name__ == '__main__':
     unittest.main()

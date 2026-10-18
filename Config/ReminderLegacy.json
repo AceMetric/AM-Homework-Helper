@@ -1,0 +1,156 @@
+{
+  "format": 1,
+  "bundleID": "io.github.acemetric.sshomeworkmanager",
+  "releases": [
+    {
+      "version": "1.14.1",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.14.1/AM-Homework-Helper-1.14.1-macOS-arm64.zip",
+      "sha256": "6f3e5a68c5e164c3a779486a0bbd710b09321b2e35c0e792a37e91e1386d9a41"
+    },
+    {
+      "version": "1.14.0",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.14.0/AM-Homework-Helper-1.14.0-macOS-arm64.zip",
+      "sha256": "8b2f5781573563bc20999a60cd67b5187ae478e1792c97ccfc3511e116ea12b0"
+    },
+    {
+      "version": "1.13.3",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.13.3/AM-Homework-Helper-1.13.3-macOS-arm64.zip",
+      "sha256": "c2c1bcb9582796ac70f4f3902617297a250e655671363fad50bc14ab6ce8cfe7"
+    },
+    {
+      "version": "1.13.2",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.13.2/AM-Homework-Helper-1.13.2-macOS-arm64.zip",
+      "sha256": "39ba2f5af05f8398de916ebe2a1287d2e6b765806c4752d6b880f24db5d1dd81"
+    },
+    {
+      "version": "1.13.1",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.13.1/AM-Homework-Helper-1.13.1-macOS-arm64.zip",
+      "sha256": "0e0c1d5c474fcbe8220859495475d3ce6593b4f1cb8e63cfbb0218ebe045b7e8"
+    },
+    {
+      "version": "1.13.0",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.13.0/AM-Homework-Helper-1.13.0-macOS-arm64.zip",
+      "sha256": "3aa078fdb347b757c21188831f6e2663ee39112120fe42815dbd8adf042d3984"
+    },
+    {
+      "version": "1.12.2",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.12.2/AM-Homework-Helper-1.12.2-macOS-arm64.zip",
+      "sha256": "b0699cd1225f86526fbee891e79890379bee756df9678695738f11aae9732549"
+    },
+    {
+      "version": "1.12.1",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.12.1/AM-Homework-Helper-1.12.1-macOS-arm64.zip",
+      "sha256": "5aefbbf3d30cd49c7149e50a08f242aa0aff01c162ccb453fa3dbf6e9de5cfc2"
+    },
+    {
+      "version": "1.12.0",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.12.0/AM-Homework-Helper-1.12.0-macOS-arm64.zip",
+      "sha256": "4f85ee70a21fb8e0157b0662786ca77ba38133f7e35c9d621bbc76bb8ba75e96"
+    },
+    {
+      "version": "1.11.0",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.11.0/AM-Homework-Helper-1.11.0-macOS-arm64.zip",
+      "sha256": "ada60c163afad39cc18914fbd911f12398070bb03062143f5544bf00dc4186a5"
+    },
+    {
+      "version": "1.10.1",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.10.1/AM-Homework-Helper-1.10.1-macOS-arm64.zip",
+      "sha256": "cdd8767a18480e1e88c8c3c6ac040d51265f395c88c0a7cbb9bc411f6296a792"
+    },
+    {
+      "version": "1.10.0",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.10.0/AM-Homework-Helper-1.10.0-macOS-arm64.zip",
+      "sha256": "9b229525ced73f3f4c54552c3a4aa822fac595c5d7f44186d5f0ae97457103a4"
+    },
+    {
+      "version": "1.8.1",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.8.1/AM-Homework-Helper-1.8.1-macOS-arm64.zip",
+      "sha256": "978d34a7370593732b7d5e1e55b4fa15b93e4c5dc83826c4323e0b8df36bb1d0"
+    },
+    {
+      "version": "1.8.0",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.8.0/AM-Homework-Helper-1.8.0-macOS-arm64.zip",
+      "sha256": "6ad2f102b75f6f5f852dd741083aa53bcec3aca915d38eeabedca7466329d8fd"
+    },
+    {
+      "version": "1.7.2",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.7.2/AM-Homework-Helper-1.7.2-macOS-arm64.zip",
+      "sha256": "aec204892c7349c772328c4ec064eec8a6f2b85ce7e1c0c54db94be50ea09df1"
+    },
+    {
+      "version": "1.7.1",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.7.1/AM-Homework-Helper-1.7.1-macOS-arm64.zip",
+      "sha256": "237b3cf9eb8e409919d6296c3e339d4569034e01103c1cc5b73e54e579c07da9"
+    },
+    {
+      "version": "1.7.0",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.7.0/AM-Homework-Helper-1.7.0-macOS-arm64.zip",
+      "sha256": "b3e7febc5dcdcbfe60e52591d08da80cc363ea38779461d999ebb62a7c55fdc3"
+    },
+    {
+      "version": "1.6.0",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.6.0/AM-Homework-Helper-1.6.0-macOS-arm64.zip",
+      "sha256": "7fb64462ab792e1392e6d387e140f06b93806a3ad257e0569f40496906662838"
+    },
+    {
+      "version": "1.5.0",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.5.0/AM-Homework-Helper-1.5.0-macOS-arm64.zip",
+      "sha256": "711612269b0cf554ea7950cfcc38ad217e63713f27b266679c023c9789d76d6d"
+    },
+    {
+      "version": "1.4.1",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.4.1/AM-Homework-Helper-1.4.1-macOS-arm64.zip",
+      "sha256": "7b946242126ea7a9c0d312be9d859a085817161a7a84cf213302ea7bc2560d23"
+    },
+    {
+      "version": "1.4.0",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.4.0/AM-Homework-Helper-1.4.0-macOS-arm64.zip",
+      "sha256": "dda46e4a0aef8d2408c0da8d3ff5e113ba49ffc7d9d4803fb054ab2da2dfbe71"
+    },
+    {
+      "version": "1.3.7",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.3.7/AM-Homework-Helper-1.3.7-macOS-arm64.zip",
+      "sha256": "0b042f71d178e52484d8fa1473a5ea594d3a1c4fdc755044e926b2cc4f9b795d"
+    },
+    {
+      "version": "1.3.6",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.3.6/AM-Homework-Helper-1.3.6-macOS-arm64.zip",
+      "sha256": "6bd2307ce4ffc4ce90dbc5e8b8e005720d2e874879cc0e8c48ee13dbcc965a00"
+    },
+    {
+      "version": "1.3.5",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.3.5/AM-Homework-Helper-1.3.5-macOS-arm64.zip",
+      "sha256": "ad5e3c9c5878a10d882d6a3dd0eb9b62dd1b000c121d3ff75e495921bf696fed"
+    },
+    {
+      "version": "1.3.4",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.3.4/AM-Homework-Helper-1.3.4-macOS-arm64.zip",
+      "sha256": "645ca70d5f8802520ef811fda8449260ef117feb8a0ccb25244a72013cfdb388"
+    },
+    {
+      "version": "1.3.3",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.3.3/AM-Homework-Helper-1.3.3-macOS-arm64.zip",
+      "sha256": "82c7cb5212d4763da5a106353a922bf44b04cf681b5d2966f54bd2c989ce911f"
+    },
+    {
+      "version": "1.3.2",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.3.2/AM-Homework-Helper-1.3.2-macOS-arm64.zip",
+      "sha256": "5f16f7282f1bd5987f1f1a111c0b97722610830681d922a4d082957d1b41c78f"
+    },
+    {
+      "version": "1.3.0",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.3.0/AM-Homework-Helper-1.3.0-macOS-arm64.zip",
+      "sha256": "2fc3dfabcb4547b59054bab42adf4fd7bc255bfdf2c2b41e926fbceee242295e"
+    },
+    {
+      "version": "1.2.0",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.2.0/AM-Homework-Helper-1.2.0-macOS-arm64.zip",
+      "sha256": "d7d880bb2c86f639df2f9bff359fd6d944953795e228bf4354fcf8de901c42a5"
+    },
+    {
+      "version": "1.1.2",
+      "url": "https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.1.2/AM-Homework-Helper-1.1.2-macOS-arm64.zip",
+      "sha256": "877cc97c18f530bafe5f43efc7f253b5a77d484c4798081d72c04bcafec859ce"
+    }
+  ]
+}
