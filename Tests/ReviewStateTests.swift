@@ -5,6 +5,25 @@ import AppKit
     @MainActor static func main() {
         var count=0
         func check(_ pass:Bool,_ label:String){count += 1;if !pass {fatalError(label)}}
+
+        do {
+        let draft=TaskDraftState()
+        let taskRecord:NSDictionary=["title":"报告","subject":"物理","due":Date(timeIntervalSince1970:2_000_000_000),"notes":"原始备注","priority":0,"dateConfirmed":true,"reminderOffsets":[1440,60,0],"recurrence":["mode":"none","intervalText":"1","endMode":0]]
+        draft.load(taskRecord,reset:true)
+        check(!draft.dirty,"shared task starts clean")
+        draft.field("title","").wrappedValue="报告";check(!draft.dirty,"same value is clean")
+        draft.field("title","").wrappedValue="修改报告";check(draft.dirty,"shared field detects edit")
+        draft.field("title","").wrappedValue="报告";check(!draft.dirty,"revert clears edit")
+        draft.field("reminderOffsets",[Int]()).wrappedValue=[0,60,1440,60];check(!draft.dirty,"reminders compare as a set")
+        draft.field("recurrence",NSDictionary()).wrappedValue=["mode":"none","intervalText":"17","endMode":2,"countText":"6"];check(!draft.dirty,"hidden recurrence settings do not dirty disabled recurrence")
+        draft.notice="后台状态";draft.error="磁盘错误";draft.errorField="";check(!draft.dirty,"presentation never changes saved values")
+        var requested=0;draft.action={action,_ in if action=="save"{requested+=1}}
+        draft.field("title","").wrappedValue="";draft.save();check(requested==0 && draft.errorField=="title","blank task validates before persistence")
+        draft.field("title","").wrappedValue="报告";draft.save();check(requested==1,"valid task requests explicit save")
+        draft.load(taskRecord,reset:false);check(draft.error.isEmpty,"editing invalid field clears its error")
+        draft.field("notes","").wrappedValue="保留输入";draft.error="保存失败";check(draft.dirty && draft.values["notes"] as? String=="保留输入","save failure preserves draft")
+        draft.load(taskRecord,reset:true);check(!draft.dirty,"only explicit baseline reset clears edit")
+        }
         let doubleClick=NSEvent.mouseEvent(with:.leftMouseUp,location:.zero,modifierFlags:[],timestamp:0,windowNumber:0,context:nil,eventNumber:1,clickCount:2,pressure:0)
         check(isRepeatedWorkspaceEvent(doubleClick),"double mouse activation cannot save the next item")
         let repeatKey=NSEvent.keyEvent(with:.keyDown,location:.zero,modifierFlags:.command,timestamp:0,windowNumber:0,context:nil,characters:"\r",charactersIgnoringModifiers:"\r",isARepeat:true,keyCode:36)

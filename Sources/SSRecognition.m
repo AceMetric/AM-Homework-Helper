@@ -151,6 +151,7 @@ NSDictionary *SSReviewedTask(NSDictionary *record, NSDictionary *draft, NSDictio
     else if(draft[@"notes"] && ![draft[@"notes"] isEqual:existing[@"notes"]]){task[@"notesOrigin"]=@"user";task[@"notesUserEdited"]=@YES;}
     if (draft[@"reminderOffsets"]) task[@"reminderOffsets"] = draft[@"reminderOffsets"];
     task[@"due"] = teacher;
+    if([draft[@"priority"] isKindOfClass:NSNumber.class])task[@"priority"]=@(MAX(0,MIN(2,[draft[@"priority"] integerValue])));
     // Original deadline evidence stays in sourceObservedDue. Old split-deadline
     // metadata may remain on old tasks, but never drives new scheduling.
     task[@"sourceID"] = record[@"id"]; task[@"sourceBlobSHA"] = record[@"blobSHA"] ?: @"";
