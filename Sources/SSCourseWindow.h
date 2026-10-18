@@ -3,6 +3,7 @@
 NS_ASSUME_NONNULL_BEGIN
 @interface SSCourseController : NSViewController <NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate>
 @property(nonatomic) BOOL usesToolbar;
+@property(readonly) NSArray<NSString *> *toolbarActionIdentifiers;
 - (NSToolbarItem *)toolbarItemForIdentifier:(NSString *)identifier;
 @property(readonly) BOOL hasCheckWorkspace;
 @property(readonly) NSSegmentedControl *navigationControl;

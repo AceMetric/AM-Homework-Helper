@@ -1456,11 +1456,14 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     return nil;
 }
 - (void)refreshPageToolbar {
-    NSMutableArray *desired=NSMutableArray.array;if(self.page==0)[desired addObject:@"AMOverviewMode"];if(self.page==1)[desired addObject:@"AMCalendarStatus"];if(self.page==4)[desired addObjectsFromArray:@[@"AMCourseSections",@"AMCourseScan",@"AMCourseSync",@"AMCourseSubmit",@"AMCourseMore"]];if(self.page==2)[desired addObjectsFromArray:@[@"AMTaskFilter",@"AMSort"]];[desired addObject:NSToolbarFlexibleSpaceItemIdentifier];[desired addObject:@"AMActivity"];if(self.submissionCompletionUndoAvailable)[desired addObject:@"AMUndoSubmissionCompletion"];if(self.page<3)[desired addObjectsFromArray:@[@"AMSearch",@"AMNewTask"]];else if(self.page==4){if(self.courseWindow.navigationControl.selectedSegment==0)[desired addObject:@"AMCourseFilter"];[desired addObject:@"AMCourseSearch"];}
+    NSMutableArray *desired=NSMutableArray.array;if(self.page==0)[desired addObject:@"AMOverviewMode"];if(self.page==1)[desired addObject:@"AMCalendarStatus"];if(self.page==4){[desired addObject:@"AMCourseSections"];[desired addObjectsFromArray:self.courseWindow.toolbarActionIdentifiers];}if(self.page==2)[desired addObjectsFromArray:@[@"AMTaskFilter",@"AMSort"]];[desired addObject:NSToolbarFlexibleSpaceItemIdentifier];[desired addObject:@"AMActivity"];if(self.submissionCompletionUndoAvailable)[desired addObject:@"AMUndoSubmissionCompletion"];if(self.page<3)[desired addObjectsFromArray:@[@"AMSearch",@"AMNewTask"]];else if(self.page==4){if(self.courseWindow.navigationControl.selectedSegment==0)[desired addObject:@"AMCourseFilter"];[desired addObject:@"AMCourseSearch"];}
     NSToolbar *toolbar=self.window.toolbar;
     for(NSInteger index=(NSInteger)toolbar.items.count-1;index>=0;index--)if(![desired containsObject:toolbar.items[index].itemIdentifier])[toolbar removeItemAtIndex:index];
     for(NSUInteger index=0;index<desired.count;index++){if(index<toolbar.items.count && [toolbar.items[index].itemIdentifier isEqual:desired[index]])continue;[toolbar insertItemWithItemIdentifier:desired[index] atIndex:index];}
-    for(NSToolbarItem *item in toolbar.items)if([item.itemIdentifier isEqual:@"AMOverviewMode"] && [item.view isKindOfClass:NSSegmentedControl.class])[(NSSegmentedControl *)item.view setSelectedSegment:self.weeklyMode ? 1:0];
+    for(NSToolbarItem *item in toolbar.items){
+        if([item.itemIdentifier isEqual:@"AMOverviewMode"] && [item.view isKindOfClass:NSSegmentedControl.class])[(NSSegmentedControl *)item.view setSelectedSegment:self.weeklyMode ? 1:0];
+        if([item.itemIdentifier hasPrefix:@"AMCourse"] && [item.view isKindOfClass:NSButton.class]){NSButton *button=(id)item.view;item.label=button.title;item.menuFormRepresentation.title=button.title;item.menuFormRepresentation.enabled=button.enabled;}
+    }
 }
 - (void)showCheckWorkspace:(id)sender{[self.courseWindow showCheckWorkspace];}
 - (void)showOperations:(id)sender{AMShowOperations(self.window);}

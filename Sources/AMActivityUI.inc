@@ -41,12 +41,16 @@ void AMDismissUIMessage(NSString *scope,NSString *identifier){for(NSMutableDicti
 @interface AMActivityController:NSViewController
 @property NSStackView *body;
 @property NSArray *rowKeys;
+@property NSScrollView *scroll;
+@property NSButton *allButton;
+@property(weak) NSPopover *popover;
 @end
 @implementation AMActivityController
 - (void)loadView {
-    NSView *root=[[NSView alloc] initWithFrame:NSMakeRect(0,0,500,400)];self.view=root;
-    self.body=[NSStackView stackViewWithViews:@[]];self.body.orientation=NSUserInterfaceLayoutOrientationVertical;self.body.alignment=NSLayoutAttributeLeading;self.body.spacing=8;NSScrollView *scroll=AMScrollableForm(self.body);scroll.frame=NSMakeRect(16,48,468,336);scroll.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;[root addSubview:scroll];
-    NSButton *all=Button(@"查看全部后台任务…",self,@selector(showAll:),0);Put(root,all,16,8,210,32);
+    Surface *root=Box(nil,0);root.frame=NSMakeRect(0,0,440,140);self.view=root;
+    self.body=[NSStackView stackViewWithViews:@[]];self.body.orientation=NSUserInterfaceLayoutOrientationVertical;self.body.alignment=NSLayoutAttributeLeading;self.body.spacing=8;
+    self.scroll=AMScrollableForm(self.body);[root addSubview:self.scroll];
+    self.allButton=Button(@"查看全部后台任务…",self,@selector(showAll:),0);[self.allButton sizeToFit];[root addSubview:self.allButton];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:AMUIMessagesChanged object:nil];[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:AMOperationsChanged object:nil];[self refresh];
 }
 - (void)refresh {
@@ -58,10 +62,22 @@ void AMDismissUIMessage(NSString *scope,NSString *identifier){for(NSMutableDicti
     for(NSDictionary *op in operations){
         AMOperationView *view=[[AMOperationView alloc] initWithFrame:NSMakeRect(0,0,430,76)];view.operationID=op[@"id"];
         ActionButton *hide=Button(@"",self,@selector(hideOperation:),3);hide.symbol=@"xmark";hide.identifier=AMActivityOperationRevision(op);hide.accessibilityLabel=@"隐藏此操作的进度";
-        NSStackView *row=[NSStackView stackViewWithViews:@[view,hide]];row.alignment=NSLayoutAttributeTop;row.spacing=8;[self.body addArrangedSubview:row];[row.widthAnchor constraintEqualToAnchor:self.body.widthAnchor].active=YES;[view.heightAnchor constraintEqualToConstant:76].active=YES;[hide.widthAnchor constraintGreaterThanOrEqualToConstant:24].active=YES;
+        NSStackView *row=[NSStackView stackViewWithViews:@[view,hide]];row.alignment=NSLayoutAttributeTop;row.spacing=8;[self.body addArrangedSubview:row];[row.widthAnchor constraintEqualToAnchor:self.body.widthAnchor].active=YES;[view.heightAnchor constraintEqualToConstant:76].active=YES;[row.heightAnchor constraintEqualToConstant:76].active=YES;[hide.widthAnchor constraintEqualToConstant:24].active=YES;[view.widthAnchor constraintEqualToAnchor:row.widthAnchor constant:-32].active=YES;
     }
     for(NSDictionary *message in messages){AMActivityMessageRow *view=[[AMActivityMessageRow alloc] initWithMessage:message];[self.body addArrangedSubview:view];[view.widthAnchor constraintEqualToAnchor:self.body.widthAnchor].active=YES;}
     if(!messages.count && !operations.count)[self.body addArrangedSubview:Text(@"暂无活动",13,NSFontWeightRegular,Muted())];
+    // Size from the rows, never from the scroll view's previous viewport.
+    CGFloat width=440,bodyWidth=width-32;
+    self.scroll.frame=NSMakeRect(16,16,bodyWidth,300);
+    [self.scroll layoutSubtreeIfNeeded];[self.body layoutSubtreeIfNeeded];
+    CGFloat contentHeight=MAX(28,ceil(self.body.fittingSize.height));
+    CGFloat visibleHeight=MIN(300,contentHeight),height=visibleHeight+68;
+    self.preferredContentSize=NSMakeSize(width,height);self.view.frame=NSMakeRect(0,0,width,height);
+    self.popover.contentSize=self.preferredContentSize;
+    self.scroll.frame=NSMakeRect(16,16,bodyWidth,visibleHeight);
+    self.allButton.frame=NSMakeRect(16,height-40,MIN(bodyWidth,self.allButton.fittingSize.width),28);
+    [self.scroll layoutSubtreeIfNeeded];
+
 }
 - (void)hideOperation:(NSButton *)sender{[AMHiddenActivityOperations() addObject:sender.identifier];[NSNotificationCenter.defaultCenter postNotificationName:AMUIMessagesChanged object:nil];}
 - (void)showAll:(id)sender{AMShowOperations(self.view.window);}
@@ -81,7 +97,7 @@ void AMDismissUIMessage(NSString *scope,NSString *identifier){for(NSMutableDicti
     BOOL recent=latest && [latest[@"severity"] integerValue]==AMUIMessageSuccess && -[latest[@"date"] timeIntervalSinceNow]<4;NSString *symbol=active ? @"arrow.triangle.2.circlepath":(failed || [latest[@"severity"] integerValue]>=AMUIMessageWarning ? @"exclamationmark.circle":recent ? @"checkmark.circle":@"clock");
     self.image=[NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];self.toolTip=active ? [NSString stringWithFormat:@"%lu 项后台操作",(unsigned long)active]:(latest[@"text"] ?: @"活动与最近记录");self.accessibilityValue=self.toolTip;
 }
-- (void)showActivity:(id)sender{if(self.activityPopover.shown){[self.activityPopover close];return;}self.activityPopover=NSPopover.new;self.activityPopover.behavior=NSPopoverBehaviorTransient;self.activityPopover.contentViewController=AMActivityController.new;[self.activityPopover showRelativeToRect:self.bounds ofView:self preferredEdge:NSRectEdgeMaxY];}
+- (void)showActivity:(id)sender{if(self.activityPopover.shown){[self.activityPopover close];return;}self.activityPopover=NSPopover.new;self.activityPopover.behavior=NSPopoverBehaviorTransient;AMActivityController *controller=AMActivityController.new;self.activityPopover.contentViewController=controller;controller.popover=self.activityPopover;self.activityPopover.contentSize=controller.preferredContentSize;[self.activityPopover showRelativeToRect:self.bounds ofView:self preferredEdge:NSRectEdgeMaxY];}
 - (void)dealloc{[self.refreshTimer invalidate];[NSNotificationCenter.defaultCenter removeObserver:self];}
 @end
 NSToolbarItem *AMActivityToolbarItem(NSString *identifier){NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"活动";item.visibilityPriority=NSToolbarItemVisibilityPriorityHigh;AMActivityButton *button=[[AMActivityButton alloc] initWithFrame:NSZeroRect];[button sizeToFit];item.view=button;NSMenuItem *overflow=[[NSMenuItem alloc] initWithTitle:@"活动与后台任务…" action:@selector(showAll:) keyEquivalent:@""];AMActivityController *controller=AMActivityController.new;objc_setAssociatedObject(item,@selector(showAll:),controller,OBJC_ASSOCIATION_RETAIN_NONATOMIC);overflow.target=controller;item.menuFormRepresentation=overflow;return item;}
