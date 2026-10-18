@@ -83,6 +83,13 @@ def suite(identity_only=False):
                     shutil.copytree(backup,app)
                     run('/usr/bin/open','-g','-n','-W',app,'--args','clear',timeout=20)
         (ROOT/'build/qa/reminder-identity-regression.json').write_text(json.dumps({'checks':checks,'realNotifications':not identity_only,'scenarios':outcomes},indent=2))
+    info=plistlib.loads((ROOT/'Info.plist').read_bytes())
+    built=ROOT/'build'/(info['CFBundleName']+'.app')
+    display=run('codesign','-d','-r-',built)
+    expression=next(line.split('designated =>',1)[1].strip() for line in (display.stdout+display.stderr).decode().splitlines() if 'designated =>' in line)
+    assert expression=='identifier \"'+info['CFBundleIdentifier']+'\"', 'Built application reminder identity changed; migrate notification ownership explicitly'
+    run('codesign','--verify','--strict','-R','='+expression,built)
+    print('PASS: built application uses the fixed reminder identity contract')
     print(f'PASS: {checks} '+('code identity' if identity_only else 'real notification identity, isolation and maintenance')+' assertions; no alert/sound or production identity')
 
 if __name__=='__main__':
