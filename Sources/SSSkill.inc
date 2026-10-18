@@ -55,7 +55,8 @@ NSDictionary *SSSkillValidateBatch(id result, NSArray *courses, NSDictionary *sc
         NSError *failure=nil;NSArray *found=SSValidatedSkillResults(@{@"format":@"am-course-results-v1",@"documents":@[document]},@[live],[(scan[@"candidates"] ?: @[]) arrayByAddingObjectsFromArray:scan[@"materials"] ?: @[]],&failure);
         if(!found){[issues addObject:[NSString stringWithFormat:@"%@：%@",label,failure.localizedDescription]];continue;}
         if(!records[target])records[target]=NSMutableArray.array;[records[target] addObjectsFromArray:found];
-        progress[key]=SSSkillVersion(live);counts[target]=@([counts[target] unsignedIntegerValue]+1);
+        if(failure)[issues addObject:[NSString stringWithFormat:@"%@：%@",label,failure.localizedDescription]];
+        else {progress[key]=SSSkillVersion(live);counts[target]=@([counts[target] unsignedIntegerValue]+1);}
     }
     if(!legacy)for(NSString *key in manifest)if(![seen containsObject:key])[issues addObject:@"本批有文档尚未返回结果，增量进度保留，可重新交给助手。"];
     return @{@"records":records,@"progress":progress,@"counts":counts,@"issues":issues};

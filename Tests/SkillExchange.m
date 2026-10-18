@@ -25,7 +25,7 @@ int main(int argc,const char *argv[]){@autoreleasepool{
     controller.courses=[NSMutableArray arrayWithArray:courses];
     NSMutableDictionary *scans=NSMutableDictionary.dictionary,*sources=NSMutableDictionary.dictionary;NSMutableArray *answers=NSMutableArray.array;
     for(NSDictionary *course in courses){NSDictionary *document=@{@"repository":course[@"upstream"],@"path":@"assignment.md",@"blobSHA":@"version-1",@"timeZone":@"Asia/Shanghai",@"text":@"# 作业\n提交实验报告。截止时间：2027年1月2日 18:00。"};sources[course[@"fork"]]=@[document];scans[course[@"fork"]]=@{@"documents":@[document]};NSMutableDictionary *answer=document.mutableCopy;[answer removeObjectForKey:@"text"];answer[@"courseID"]=course[@"fork"];answer[@"activities"]=@[];[answers addObject:answer];}
-    answers[0][@"activities"]=@[@{@"kind":@"assignment",@"title":@"实验报告",@"summary":@"完成实验并分析结果。",@"submissionRequirements":@"提交实验报告。",@"evidence":@"提交实验报告。",@"deadlineEvidence":@"截止时间：2027年1月2日 18:00。"}];
+    answers[0][@"activities"]=@[@{@"kind":@"assignment",@"title":@"实验报告",@"summary":@"提交实验报告。",@"summaryEvidence":@"提交实验报告。",@"submissionRequirements":@"提交实验报告。",@"requirementsEvidence":@"提交实验报告。",@"evidence":@"提交实验报告。",@"deadlineEvidence":@"截止时间：2027年1月2日 18:00。"}];
     git.sources=sources;NSDictionary *exported=SSSkillExport(courses,scans,@{},NO);NSString *batch=exported[@"context"][@"batchID"];
     controller.skillBatches[batch]=exported[@"manifest"];controller.skillJobs[batch]=@{@"state":@"等待助手",@"date":NSDate.date,@"count":@3};
     NSURL *folder=[controller skillFolder:batch];Check(folder!=nil && [controller skillFolder:@"../outside"]==nil,@"only UUID child job paths are allowed");
