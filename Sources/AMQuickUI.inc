@@ -26,18 +26,18 @@
     [self.courseWindow refreshPresentation];[self renderSidebar];
 }
 - (void)quickEntry:(id)sender {
-    if(self.quickWindow){[self.quickWindow makeKeyAndOrderFront:nil];return;}if(self.window.attachedSheet)return;
+    if(self.quickWindow){[self.quickWindow makeKeyAndOrderFront:nil];return;}if(self.window.attachedSheet && self.window.attachedSheet!=self.editor.window)return;
     [self loadQuick];if(!self.quickState){[self render];return;}
     self.quickController=AMQuickEntryController.new;__weak typeof(self) owner=self;
     self.quickController.actionHandler=^(NSString *action,NSDictionary *payload){[owner quickAction:action payload:payload];};
-    self.quickWindow=[[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,1000,760) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];self.quickWindow.title=@"快速录入作业";self.quickWindow.contentMinSize=NSMakeSize(650,640);self.quickWindow.delegate=self;self.quickWindow.releasedWhenClosed=NO;self.quickWindow.contentViewController=self.quickController;[self.quickWindow setContentSize:NSMakeSize(1000,760)];
-    [self refreshQuick:nil];[self.window beginSheet:self.quickWindow completionHandler:nil];
+    self.quickWindow=[[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,1000,760) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];self.quickWindow.title=@"从文字或截图录入";self.quickWindow.contentMinSize=NSMakeSize(650,640);self.quickWindow.delegate=self;self.quickWindow.releasedWhenClosed=NO;self.quickWindow.contentViewController=self.quickController;[self.quickWindow setContentSize:NSMakeSize(1000,760)];
+    [self refreshQuick:nil];[(self.editor && !self.editor.embedded ? self.editor.window:self.window) beginSheet:self.quickWindow completionHandler:nil];
 }
 - (void)closeQuick {
     [self.quickPersistTimer invalidate];self.quickPersistTimer=nil;
-    if(self.quickWindow.sheetParent)[self.window endSheet:self.quickWindow];[self.quickWindow orderOut:nil];self.quickWindow=nil;self.quickController=nil;
+    if(self.quickWindow.sheetParent)[self.quickWindow.sheetParent endSheet:self.quickWindow];[self.quickWindow orderOut:nil];self.quickWindow=nil;self.quickController=nil;
 }
-- (void)newTaskMenu:(id)sender {NSMenu *menu=NSMenu.new;NSMenuItem *item=[menu addItemWithTitle:@"快速录入作业…" action:@selector(quickEntry:) keyEquivalent:@""];item.target=self;item=[menu addItemWithTitle:@"完整新建任务…" action:@selector(addTask:) keyEquivalent:@""];item.target=self;[menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0,-4) inView:sender];}
+- (void)newTaskMenu:(id)sender {NSMenu *menu=NSMenu.new;NSMenuItem *item=[menu addItemWithTitle:@"从文字或截图录入…" action:@selector(quickEntry:) keyEquivalent:@""];item.target=self;item=[menu addItemWithTitle:@"新建任务…" action:@selector(addTask:) keyEquivalent:@""];item.target=self;[menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0,-4) inView:sender];}
 - (void)taskSubmissionHistory:(id)sender {NSButton *route=NSButton.new;route.tag=4;[self navigate:route];[self.courseWindow showSubmissionHistory:[self identifierForSender:sender]];}
 - (void)submitSelectedTask:(id)sender {NSButton *route=NSButton.new;route.tag=4;[self navigate:route];[self.courseWindow submitTask:[self identifierForSender:sender]];}
 - (void)checkSelectedTask:(id)sender {

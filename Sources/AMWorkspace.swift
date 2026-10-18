@@ -257,6 +257,7 @@ final class ReviewState: ObservableObject {
         default: return false
         }
     }
+    func editDate(_ value:Date){guard floor(value.timeIntervalSince1970/60) != floor(date.timeIntervalSince1970/60) else{return};date=value;hasDate=true;dateConfirmed=true}
     func select(_ record: NSDictionary) { guard !saving,identifier(record) != selected, resolve() else { return };message="";failed=false;load(record) }
     func validation(_ record:NSDictionary, editing:Bool)->String {
         if flag(record,"reviewDeleted"){return "该审核建议已删除，请先恢复。"}
@@ -346,7 +347,7 @@ private struct ReviewDetails: View {
     }
     var body:some View {
         Form {
-            TaskFields(title:editing(\.title),subject:editing(\.subject),date:Binding(get:{state.date},set:{state.date=$0;state.hasDate=true;state.dateConfirmed=true}),notes:editing(\.notes),offsets:Binding(get:{state.reminders ? Array(state.reminderOffsets).sorted(by:>):[]},set:{state.reminders = !$0.isEmpty;state.reminderOffsets=Set($0)}),priority:editing(\.priority),recurrence:.constant([:]),seriesScope:.constant(0),hasDate:state.hasDate && state.dateConfirmed,confirmDate:{state.hasDate=true;state.dateConfirmed=true},recurrenceEnabled:false,dateHint:string(record,"dateText"),notesHeight:120)
+            TaskFields(title:editing(\.title),subject:editing(\.subject),date:Binding(get:{state.date},set:{state.editDate($0)}),notes:editing(\.notes),offsets:Binding(get:{state.reminders ? Array(state.reminderOffsets).sorted(by:>):[]},set:{state.reminders = !$0.isEmpty;state.reminderOffsets=Set($0)}),priority:editing(\.priority),recurrence:.constant([:]),seriesScope:.constant(0),hasDate:state.hasDate && state.dateConfirmed,confirmDate:{state.hasDate=true;state.dateConfirmed=true},recurrenceEnabled:false,dateHint:string(record,"dateText"),notesHeight:120)
             if !((record["warnings"] as? [String] ?? [])+(record["contentWarnings"] as? [String] ?? [])).isEmpty {Section("需核对"){ForEach(Array(((record["warnings"] as? [String] ?? [])+(record["contentWarnings"] as? [String] ?? [])).enumerated()),id:\.offset){Text($0.element).foregroundStyle(.orange)}}}
             Section {WorkspaceDisclosure("老师原文与来源") {
                 Text("\(string(record,"repository")) / \(string(record,"path"))").font(.caption).foregroundStyle(.secondary)
@@ -1122,8 +1123,13 @@ private struct CaptureTextEditor:NSViewRepresentable {
     var current:NSDictionary? {entries.first{identifier($0)==selected}}
     var snapshot:NSDictionary {["text":text,"entries":entries,"referenceDate":reference,"explicitReference":explicitReference]}
     func send(_ name:String){action?(name,snapshot)}
-    func change(_ key:String,_ value:Any){guard let id=selected,let index=entries.firstIndex(where:{identifier($0)==id})else{return};let copy=entries[index].mutableCopy() as! NSMutableDictionary;copy[key]=value;if key != "selected"{copy["edited"]=true;var fields=Set(copy["editedFields"] as? [String] ?? []);fields.insert(key);copy["editedFields"]=Array(fields)};entries[index]=copy.copy() as! NSDictionary;send("draft")}
+    func change(_ key:String,_ value:Any){guard let id=selected,let index=entries.firstIndex(where:{identifier($0)==id})else{return};let copy=entries[index].mutableCopy() as! NSMutableDictionary;if NSDictionary(dictionary:["value":copy[key] ?? NSNull()]).isEqual(to:["value":value]){return};copy[key]=value;if key != "selected"{copy["edited"]=true;var fields=Set(copy["editedFields"] as? [String] ?? []);fields.insert(key);copy["editedFields"]=Array(fields)};entries[index]=copy.copy() as! NSDictionary;send("draft")}
     func field(_ key:String)->Binding<String>{Binding(get:{self.current.map{string($0,key)} ?? ""},set:{self.change(key,$0)})}
+    private func dateFormatter(_ format:String)->DateFormatter {let formatter=DateFormatter();formatter.locale=Locale(identifier:"en_US_POSIX");formatter.dateFormat=format;formatter.isLenient=false;formatter.timeZone=TimeZone(identifier:current.map{string($0,"timeZone")} ?? "") ?? .current;return formatter}
+    var knownDate:Date? {guard let current else{return nil};let text=string(current,"dateText");guard text.range(of:"^\\d{4}-\\d{1,2}-\\d{1,2} [0-9]{1,2}:[0-9]{2}$",options:.regularExpression) != nil else{return nil};return dateFormatter("yyyy-MM-dd HH:mm").date(from:text)}
+    var displayDate:Date {if let knownDate{return knownDate};if let current,let day=dateFormatter("yyyy-MM-dd").date(from:string(current,"dateText")){var calendar=Calendar(identifier:.gregorian);calendar.timeZone=dateFormatter("yyyy-MM-dd").timeZone;return calendar.date(bySettingHour:23,minute:59,second:0,of:day) ?? day};return Date(timeIntervalSince1970:floor(reference.timeIntervalSince1970/60)*60)}
+    var dateBinding:Binding<Date> {Binding(get:{self.displayDate},set:{if $0 != self.displayDate{self.confirmDate($0)}})}
+    func confirmDate(_ date:Date?=nil){change("dateText",dateFormatter("yyyy-MM-dd HH:mm").string(from:date ?? displayDate))}
 }
 private struct QuickEntryView:View {
     @ObservedObject var state:QuickEntryState
@@ -1134,10 +1140,10 @@ private struct QuickEntryView:View {
     }
     private var details:some View {
         Form {if let r=state.current {
-            TaskFields(title:state.field("title"),subject:state.field("subject"),date:.constant(Date()),notes:state.field("notes"),offsets:Binding(get:{(state.current?["reminderOffsets"] as? [NSNumber] ?? []).map(\.intValue)},set:{state.change("reminderOffsets",$0)}),priority:Binding(get:{(state.current?["priority"] as? NSNumber)?.intValue ?? 0},set:{state.change("priority",$0)}),recurrence:.constant([:]),seriesScope:.constant(0),rawDate:state.field("dateText"),recurrenceEnabled:false,dateHint:string(r,"hint"))
+            TaskFields(title:state.field("title"),subject:state.field("subject"),date:state.dateBinding,notes:state.field("notes"),offsets:Binding(get:{(state.current?["reminderOffsets"] as? [NSNumber] ?? []).map(\.intValue)},set:{state.change("reminderOffsets",$0)}),priority:Binding(get:{(state.current?["priority"] as? NSNumber)?.intValue ?? 0},set:{state.change("priority",$0)}),recurrence:.constant([:]),seriesScope:.constant(0),hasDate:state.knownDate != nil,confirmDate:{state.confirmDate()},recurrenceEnabled:false,dateHint:string(r,"hint"))
             if !state.courses.isEmpty {Section {Menu("关联课程"){Button("不关联"){state.change("courseRepository","")};ForEach(workspaceRows(state.courses)){row in Button(string(row.record,"name")){state.change("courseRepository",identifier(row.record));state.change("subject",string(row.record,"name"))}}}}}
             Section {WorkspaceDisclosure("老师原文与来源"){Text(string(r,"evidence")).textSelection(.enabled)}}
-        }else{Text("未选择作业").foregroundStyle(.secondary)}}.formStyle(.grouped).controlSize(.regular).textFieldStyle(.roundedBorder)
+        }else{Text("未选择作业").foregroundStyle(.secondary)}}.formStyle(.grouped).controlSize(.regular).textFieldStyle(.roundedBorder).environment(\.timeZone,TimeZone(identifier:state.current.map{string($0,"timeZone")} ?? "") ?? .current)
     }
     var body:some View {GeometryReader{geo in VStack(alignment:.leading,spacing:12){
         HStack{Text("从文字或截图录入").font(.title2.bold());Spacer();Button("保存草稿并关闭"){state.send("close")}.keyboardShortcut(.cancelAction)}
@@ -1362,7 +1368,6 @@ private struct TaskFields:View {
     @Binding var priority:Int
     @Binding var recurrence:NSDictionary
     @Binding var seriesScope:Int
-    var rawDate:Binding<String>?=nil
     var hasDate=true
     var confirmDate:(()->Void)?=nil
     var recurrenceEnabled=true
@@ -1386,8 +1391,7 @@ private struct TaskFields:View {
             VStack(alignment:.leading,spacing:5){LabeledContent("名称"){TextField("任务名称",text:$title).focused($focus,equals:"title").accessibilityIdentifier("task-title")};problem("title")}
             LabeledContent("课程"){TextField("课程／分类",text:$subject).accessibilityIdentifier("task-subject")}
             VStack(alignment:.leading,spacing:5){
-                if let rawDate {LabeledContent("截止时间"){TextField("完整日期和时间",text:rawDate).accessibilityIdentifier("task-deadline")}}
-                else {if compact {VStack(alignment:.leading,spacing:6){Text("截止时间").foregroundStyle(.secondary);DatePicker("截止时间",selection:$date,displayedComponents:[.date,.hourAndMinute]).labelsHidden().accessibilityIdentifier("task-deadline")}}else{DatePicker("截止时间",selection:$date,displayedComponents:[.date,.hourAndMinute]).accessibilityIdentifier("task-deadline")}}
+                if compact {VStack(alignment:.leading,spacing:6){Text("截止时间").foregroundStyle(.secondary);DatePicker("截止时间",selection:$date,displayedComponents:[.date,.hourAndMinute]).labelsHidden().accessibilityIdentifier("task-deadline")}}else{DatePicker("截止时间",selection:$date,displayedComponents:[.date,.hourAndMinute]).accessibilityIdentifier("task-deadline")}
                 if !dateHint.isEmpty {Text(dateHint).font(.caption).foregroundStyle(.secondary)}
                 if !hasDate,let confirmDate {Button("确认截止时间",action:confirmDate).accessibilityIdentifier("task-confirm-date")}
                 problem("date")
@@ -1395,7 +1399,7 @@ private struct TaskFields:View {
         }
         Section {
             TaskSummaryRow(title:"提醒",summary:reminderSummary(offsets)){TaskReminderEditor(offsets:$offsets)}
-            TaskSummaryRow(title:"重复",summary:recurrenceSummary,enabled:recurrenceEnabled){TaskRecurrenceEditor(rule:$recurrence,scope:$seriesScope,preview:recurrencePreview,series:series)}.help(recurrenceEnabled ? "":"老师作业可从任务菜单另建周期安排")
+            TaskSummaryRow(title:"重复",summary:recurrenceSummary,enabled:recurrenceEnabled){TaskRecurrenceEditor(rule:$recurrence,scope:$seriesScope,preview:recurrencePreview,series:series)}.help(recurrenceEnabled ? "":"可在任务菜单另建周期安排")
             TaskSummaryRow(title:"优先级",summary:["普通","重要","紧急"][max(0,min(2,priority))]){Picker("优先级",selection:$priority){Text("普通").tag(0);Text("重要").tag(1);Text("紧急").tag(2)}.pickerStyle(.radioGroup)}
             problem("reminders");problem("recurrence")
         }
@@ -1417,6 +1421,7 @@ private struct TaskFields:View {
     var effectiveValues:NSDictionary {
         var result=values as! [String:Any]
         for key in ["title","subject"] {result[key]=string(values,key).trimmingCharacters(in:.whitespacesAndNewlines)}
+        if (result["subject"] as? String ?? "").isEmpty {result["subject"]="其他"}
         result["reminderOffsets"]=Array(Set(values["reminderOffsets"] as? [Int] ?? [])).sorted(by:>)
         if let recurrence=values["recurrence"] as? NSDictionary {
             if ["","none"].contains(string(recurrence,"mode")){result["recurrence"]=["mode":"none"]}
@@ -1428,7 +1433,7 @@ private struct TaskFields:View {
     }
     var dirty:Bool {!effectiveValues.isEqual(baseline)}
     func load(_ record:NSDictionary,reset:Bool) {if !values.isEqual(record){values=workspaceSnapshot(record) as! NSDictionary};if reset {baseline=effectiveValues;error="";errorField=""}}
-    func field<T>(_ name:String,_ fallback:T)->Binding<T> {Binding(get:{self.values[name] as? T ?? fallback},set:{value in let next=self.values.mutableCopy() as! NSMutableDictionary;next[name]=value;if name=="due",!(self.values[name] as? Date == value as? Date){next["dateConfirmed"]=true};self.values=next.copy() as! NSDictionary;if self.errorField==name || (name=="due" && self.errorField=="date"){self.error="";self.errorField=""};self.action?("change",self.values)})}
+    func field<T>(_ name:String,_ fallback:T)->Binding<T> {Binding(get:{self.values[name] as? T ?? fallback},set:{value in if name=="due",let before=self.values[name] as? Date,let date=value as? Date,floor(before.timeIntervalSince1970/60)==floor(date.timeIntervalSince1970/60){return};let next=self.values.mutableCopy() as! NSMutableDictionary;next[name]=value;if name=="due",!(self.values[name] as? Date == value as? Date){next["dateConfirmed"]=true};self.values=next.copy() as! NSDictionary;if self.errorField==name || (name=="due" && self.errorField=="date"){self.error="";self.errorField=""};self.action?("change",self.values)})}
     func save(){
         guard commitEditing?() ?? true else{return}
         if string(values,"title").trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {error="请填写任务名称";errorField="title";return}

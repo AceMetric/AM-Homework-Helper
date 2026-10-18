@@ -36,7 +36,7 @@ int main(){@autoreleasepool{
     Check([app control:app.search textView:(NSTextView *)app.search.currentEditor doCommandBySelector:@selector(cancelOperation:)] && !app.search.currentEditor && [app.search.stringValue isEqual:@"persistent search"],@"Escape exits search and retains its contents");
     NSSearchField *search=app.search;[app render];Check(app.search==search,@"normal refresh retains the search control");app.search.stringValue=@"";
     NSToolbarItem *plus=nil;for(NSToolbarItem *item in app.window.toolbar.items){Check(![@[@"AMOperations",@"AMCheckWorkspace"] containsObject:item.itemIdentifier],@"idle toolbar has no ambiguous progress or checking icons");if([item.itemIdentifier isEqual:@"AMNewTask"])plus=item;}
-    Check(plus.action==@selector(quickEntry:) && ![plus isKindOfClass:NSMenuToolbarItem.class],@"plus is a direct quick-entry action");[NSApp sendAction:plus.action to:plus.target from:plus];Check(app.quickController!=nil,@"plus opens quick entry directly");[app closeQuick];
+    Check(plus.action==@selector(addTask:) && ![plus isKindOfClass:NSMenuToolbarItem.class],@"plus is the shared manual new-task action");[NSApp sendAction:plus.action to:plus.target from:plus];Check(app.editor!=nil && app.quickController==nil,@"plus opens manual form directly");[app closeEditor];
     ThemeSegmentedControl *tabs=Segments(@[@"课程内容",@"已加入任务",@"仓库信息",@"提交记录"],nil,NULL);for(NSInteger index=0;index<4;index++){tabs.selectedSegment=index;Check(tabs.selectedSegment==index,@"all navigation segments can be selected");}if(@available(macOS 26.0,*))Check([[tabs valueForKey:@"borderShape"] integerValue]==1,@"capsule shape requested through public system API");
     app.page=1;[app refreshPageToolbar];NSToolbarItem *calendarItem=nil;for(NSToolbarItem *item in app.window.toolbar.items)if([item.itemIdentifier isEqual:@"AMCalendarStatus"])calendarItem=item;
     Check(calendarItem.view==app.calendarStatus && app.calendarStatus.superview!=app.root,@"calendar filter belongs to native toolbar, not stretched body controls");
@@ -68,13 +68,8 @@ int main(){@autoreleasepool{
     for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua])for(NSNumber *width in @[@692,@1120])for(NSNumber *recovery in @[@NO,@YES]){
         course.view.appearance=[NSAppearance appearanceNamed:appearance];course.recoveryButton.hidden=!recovery.boolValue;course.recoveryButton.title=@"处理冲突…";
         [course.view setFrameSize:NSMakeSize(width.doubleValue,520)];[course layoutContent];[course.view layoutSubtreeIfNeeded];
-        NSRect cancel=In(course.cancelReadButton,course.view),bar=In(course.progress,course.view),label=In(course.statusLabel,course.view);
-        if(NSMaxY(cancel)+4>NSMinY(bar) || NSMaxY(label)+4>NSMinY(bar))fprintf(stderr,"Course geometry: appearance=%s width=%s recovery=%s cancel=%s label=%s progress=%s\n",appearance.UTF8String,width.stringValue.UTF8String,recovery.stringValue.UTF8String,NSStringFromRect(cancel).UTF8String,NSStringFromRect(label).UTF8String,NSStringFromRect(bar).UTF8String);
-        Check(!course.cancelReadButton.hidden && NSContainsRect(course.view.bounds,cancel),@"running course check keeps its cancel button fully inside the pane");
-        Check(NSMaxY(cancel)+4<=NSMinY(bar) && NSMaxY(label)+4<=NSMinY(bar),@"course progress occupies a separate row below status text and the native cancel button");
-        Check(!NSIntersectsRect(label,cancel) && NSWidth(label)>160,@"long status text leaves room for the cancel action at the minimum width");
-        Check(NSMinY(course.courseWorkspace.view.frame)>=NSMaxY(bar)+4,@"course content starts below the progress row");
-        if(recovery.boolValue)Check(!NSIntersectsRect(In(course.recoveryButton,course.view),cancel),@"recovery and cancel actions never share the same frame");
+        Check(course.operationStatus.hidden && NSMinY(course.courseWorkspace.view.frame)==NSMaxY(course.nativeHeader.frame)+8,@"running, recovery and completed feedback never push course content down");
+        Check(course.cancelReadButton.enabled && course.cancelReadButton.action==@selector(cancelReadOperation:),@"activity cancellation retains the same operation target");
     }
     [course cancelReadOperation:nil];Check(course.git.cancelledReads && !course.cancelReadButton.enabled && [course.statusLabel.stringValue containsString:@"正在终止"],@"cancel remains connected to the active read after layout changes");
     course.busy=NO;course.git.readsCancellable=NO;course.git.cancelledReads=NO;course.git.operationCancelled=NO;course.github.requestsCancelled=NO;[course refreshPresentation];

@@ -326,6 +326,14 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSStackView *dateRepeatRow,*dateSection,*repeatModeSection;
 @property NSLayoutConstraint *repeatModeWidth,*stackedDateWidth,*stackedRepeatWidth;
 @property BOOL layingOutEditor;
+@property AMTaskFormController *sharedForm;
+@property AMTaskPlanningController *sharedPlanner;
+@property NSView *legacyEditorRoot;
+@property BOOL syncingSharedForm,embedded,dateExplicitlyConfirmed;
+@property NSString *creationCourse;
+- (void)installSharedForm;
+- (void)applySharedForm:(NSDictionary *)values;
+- (void)reportSharedValidation;
 @property NSStackView *recurrenceSection;
 @property NSPopUpButton *repeatMode,*repeatUnit,*holidayPolicy,*repeatEnd,*seriesScope;
 @property NSTextField *repeatInterval,*repeatCount,*repeatPreview;
@@ -420,7 +428,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSDate *month;
 @property NSDate *selectedDay;
 @property NSString *query;
-@property NSString *notice;
+@property(nonatomic,copy) NSString *notice;
 @property NSString *notificationStatus;
 @property NSString *notificationError;
 @property NSInteger authorization;
@@ -455,6 +463,12 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)quickEntry:(id)sender;
 - (void)quickAction:(NSString *)action payload:(NSDictionary *)payload;
 - (void)addTask:(id)sender;
+- (BOOL)resolveTaskEditor;
+- (void)checkSelectedTask:(id)sender;
+- (void)submitSelectedTask:(id)sender;
+- (void)taskSubmissionHistory:(id)sender;
+- (void)planningAction:(NSString *)action task:(NSString *)taskID subtask:(NSString *)subID value:(NSString *)value;
+- (void)requestCloseTaskEditor;
 - (void)importClipboard:(id)sender;
 - (void)openCourses:(id)sender;
 - (void)navigate:(id)sender;
@@ -478,12 +492,14 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 
 @implementation EditorController
 #include "AMTaskEditor.inc"
+#include "AMTaskFormAdapter.inc"
 - (NSArray *)formValues {
-    return [[NSArray alloc] initWithArray:@[self.titleField.stringValue ?: @"", self.subjectField.stringValue ?: @"", self.nativeDeadlinePicker.dateValue ?: self.selectedDate ?: NSNull.null, self.notesField.string ?: @"", DDLParseReminderOffsets(self.reminderField.stringValue) ?: self.reminderField.stringValue, @(self.priority.indexOfSelectedItem),[self recurrenceRule] ?: @{},@(self.seriesScope.indexOfSelectedItem)] copyItems:YES];
+    NSString *subject=[self.subjectField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    return [[NSArray alloc] initWithArray:@[[self.titleField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] ?: @"", subject.length ? subject:@"其他", self.nativeDeadlinePicker.dateValue ?: self.selectedDate ?: NSNull.null, self.notesField.string ?: @"", DDLParseReminderOffsets(self.reminderField.stringValue) ?: self.reminderField.stringValue, @(self.priority.indexOfSelectedItem),[self recurrenceRule] ?: @{},@(self.seriesScope.indexOfSelectedItem),@(self.dateExplicitlyConfirmed)] copyItems:YES];
 }
 - (BOOL)hasUnsavedChanges { return ![self.initialValues isEqual:[self formValues]]; }
 - (BOOL)saveForExit { [self save:nil]; return self.appDelegate.editor != self; }
-- (void)updateReviewProgress { self.reviewProgress.stringValue = [NSString stringWithFormat:@"本轮剩余 %lu 项", (unsigned long)self.reviewQueue.count]; }
+- (void)updateReviewProgress { self.reviewProgress.stringValue = [NSString stringWithFormat:@"本轮剩余 %lu 项", (unsigned long)self.reviewQueue.count];if(self.sharedForm)[self.sharedForm loadRecord:[self sharedFormRecord] resetBaseline:NO]; }
 - (void)saveAndReviewNext:(id)sender {
     NSArray *queue = self.reviewQueue; NSString *identifier = self.candidate[@"id"]; AppDelegate *owner = self.appDelegate;
     [self save:nil]; if (owner.editor == self) return;
@@ -536,7 +552,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     [self layoutEditor];
 }
 - (void)updateDate:(NSDate *)date {
-    if (!date) return; self.nativeDeadlinePicker.dateValue=date; NSDictionary *dayInfo=DDLChinaDayInfo(date,self.teacherCalendar,self.appDelegate.preview ? @{}:SSCalendarOverrides());self.calendarHint.stringValue=([dayInfo[@"known"] boolValue] ? dayInfo[@"name"]:[NSString stringWithFormat:@"%@ · %@",dayInfo[@"name"],dayInfo[@"source"]]); self.selectedDate = date; self.deadlineField.stringValue = [self formatTeacherDate:date]; self.calendar.selection = date; self.calendar.month = date; self.timePicker.stringValue = [self timeString:date]; [self.calendar reload]; [self validateDate];
+    if (!date) return;self.dateExplicitlyConfirmed=YES; self.nativeDeadlinePicker.dateValue=date; NSDictionary *dayInfo=DDLChinaDayInfo(date,self.teacherCalendar,self.appDelegate.preview ? @{}:SSCalendarOverrides());self.calendarHint.stringValue=([dayInfo[@"known"] boolValue] ? dayInfo[@"name"]:[NSString stringWithFormat:@"%@ · %@",dayInfo[@"name"],dayInfo[@"source"]]); self.selectedDate = date; self.deadlineField.stringValue = [self formatTeacherDate:date]; self.calendar.selection = date; self.calendar.month = date; self.timePicker.stringValue = [self timeString:date]; [self.calendar reload]; [self validateDate];
 }
 - (void)chooseDate:(NSDate *)date {
     NSDateComponents *time = [self.teacherCalendar components:NSCalendarUnitHour | NSCalendarUnitMinute fromDate:self.selectedDate];
@@ -628,10 +644,11 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         else { weakSelf.importStatus.stringValue = @"图片读取失败，请选择 PNG、JPEG、HEIC 或 TIFF。"; weakSelf.importStatus.textColor = NSColor.systemRedColor; }
     }];
 }
-- (void)cancel:(id)sender { [self.appDelegate closeEditor]; }
-- (void)focusInput:(NSView *)field { [field scrollRectToVisible:field.bounds]; [self.window makeFirstResponder:field]; }
+- (void)cancel:(id)sender { [self.appDelegate requestCloseTaskEditor]; }
+- (void)focusInput:(NSView *)field { if(self.sharedForm){[self reportSharedValidation];return;}[field scrollRectToVisible:field.bounds]; [self.window makeFirstResponder:field]; }
 - (void)save:(id)sender {
     if(![self.window makeFirstResponder:nil])return;
+    if(self.sharedForm && self.candidate && !self.dateExplicitlyConfirmed){self.validation.stringValue=@"请确认完整截止日期和时间";[self reportSharedValidation];return;}
     if(self.nativeDeadlinePicker && ![self.nativeDeadlinePicker.dateValue isEqual:self.selectedDate])[self updateDate:self.nativeDeadlinePicker.dateValue];
     NSString *title = [self.titleField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!title.length) { self.validation.stringValue = @"先写一个任务名称。"; self.validation.textColor = NSColor.systemRedColor; [self focusInput:self.titleField]; return; }
@@ -643,6 +660,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (!reminderOffsets) { [self validateReminders]; [self focusInput:self.reminderField]; return; }
     NSMutableDictionary *task = self.task ? [self.task mutableCopy] : [@{@"id":NSUUID.UUID.UUIDString, @"completed":@NO, @"archived":@NO} mutableCopy];
     if(!task[@"id"])task[@"id"]=NSUUID.UUID.UUIDString;
+    if(!self.task && self.creationCourse.length)task[@"courseRepository"]=self.creationCourse;
     NSString *subject = [self.subjectField.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     NSInteger legacyMode = reminderOffsets.count == 0 ? 4 : ([reminderOffsets isEqual:@[@0]] ? 0 : ([reminderOffsets isEqual:@[@60, @0]] ? 1 : ([reminderOffsets isEqual:@[@1440, @60, @0]] ? 2 : ([reminderOffsets isEqual:@[@4320, @1440, @60, @0]] ? 3 : 2))));
     task[@"title"] = title; task[@"subject"] = subject.length ? subject : @"其他"; task[@"due"] = date; task[@"notes"] = self.notesField.string;if(![self.task[@"notes"] isEqual:task[@"notes"]]){task[@"notesOrigin"]=@"user";task[@"notesUserEdited"]=@YES;} task[@"priority"] = @(self.priority.indexOfSelectedItem); task[@"reminder"] = @(legacyMode); task[@"reminderOffsets"] = reminderOffsets;
@@ -654,13 +672,21 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (self.candidate) {
         NSDictionary *draft=@{@"title":title,@"subject":task[@"subject"],@"notes":task[@"notes"],@"assignmentDue":date,@"reminderOffsets":reminderOffsets,@"dateConfirmed":@YES};
         NSString *failure=[self.appDelegate saveReviewItems:@[@{@"record":self.candidate,@"draft":draft}] automatic:NO];
-        if (failure.length) {self.validation.stringValue=failure;self.validation.textColor=NSColor.systemRedColor;return;}
+        if (failure.length) {self.validation.stringValue=failure;self.validation.textColor=NSColor.systemRedColor;[self reportSharedValidation];return;}
         [self.appDelegate closeEditor];
-    } else if ([self.appDelegate commitTask:task originalID:self.task[@"id"]]) [self.appDelegate closeEditor];
+    } else if ([self.appDelegate commitTask:task originalID:self.task[@"id"]]) [self.appDelegate closeEditor];else{if(!self.validation.stringValue.length)self.validation.stringValue=@"保存失败，请重试";[self reportSharedValidation];}
 }
 @end
 
 @implementation AppDelegate
+@synthesize notice=_notice;
+- (void)setNotice:(NSString *)notice {
+    if([_notice isEqual:notice])return;_notice=notice.copy;
+    if(!notice.length)return;
+    BOOL problem=[notice containsString:@"失败"] || [notice containsString:@"无法"] || [notice containsString:@"损坏"] || [notice containsString:@"未能"];
+    BOOL success=[notice hasPrefix:@"已"] || [notice containsString:@"成功"];
+    AMPostUIMessage(@"app",@"status",notice,problem ? AMUIMessageError:(success ? AMUIMessageSuccess:AMUIMessageInformation),nil,nil);
+}
 #include "AMRecurrenceUI.inc"
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
 #ifndef DDL_TESTING
@@ -741,7 +767,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.ticker = [NSTimer timerWithTimeInterval:60 target:self selector:@selector(tick:) userInfo:nil repeats:YES]; [NSRunLoop.mainRunLoop addTimer:self.ticker forMode:NSRunLoopCommonModes];
     [NSWorkspace.sharedWorkspace.notificationCenter addObserver:self selector:@selector(woke:) name:NSWorkspaceDidWakeNotification object:nil];
     [NSWorkspace.sharedWorkspace.notificationCenter addObserver:self selector:@selector(accessibilityChanged:) name:NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification object:nil];
-    self.courseWindow = [self makeCourseController];
+    self.courseWindow = [self makeCourseController];self.courseWindow.usesToolbar=YES;
     self.courseWindow.tasksProvider = ^NSArray * { return [weakSelf snapshot]; };
     self.courseWindow.localReviewProvider=^NSArray * {return [weakSelf quickReviewRecords];};
     [self loadQuick];
@@ -826,7 +852,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     [app addItemWithTitle:@"退出 AM's Homework Helper" action:@selector(terminate:) keyEquivalent:@"q"];
     NSMenuItem *fileItem = [NSMenuItem new]; [menu addItem:fileItem]; NSMenu *file = [[NSMenu alloc] initWithTitle:@"文件"]; fileItem.submenu = file;
     NSMenuItem *add = [file addItemWithTitle:@"新建任务" action:@selector(addTask:) keyEquivalent:@"n"]; add.target = self;
-    NSMenuItem *quick=[file addItemWithTitle:@"快速录入作业…" action:@selector(quickEntry:) keyEquivalent:@"n"];quick.target=self;quick.keyEquivalentModifierMask=NSEventModifierFlagCommand|NSEventModifierFlagShift;
+    NSMenuItem *quick=[file addItemWithTitle:@"从文字或截图录入…" action:@selector(quickEntry:) keyEquivalent:@"n"];quick.target=self;quick.keyEquivalentModifierMask=NSEventModifierFlagCommand|NSEventModifierFlagShift;
     NSMenuItem *courses = [file addItemWithTitle:@"GitHub 课程与作业…" action:@selector(openCourses:) keyEquivalent:@"g"]; courses.target = self;
     NSMenuItem *import = [file addItemWithTitle:@"粘贴并识别 DDL" action:@selector(importClipboard:) keyEquivalent:@"v"]; import.target = self; import.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     NSMenuItem *search = [file addItemWithTitle:@"搜索任务" action:@selector(focusSearch:) keyEquivalent:@"f"]; search.target = self;
@@ -857,6 +883,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (NSUndoManager *)windowWillReturnUndoManager:(NSWindow *)window { return self.taskUndo; }
 - (BOOL)windowShouldClose:(NSWindow *)window {
+    if(window==self.window && self.editor.embedded && ![self resolveTaskEditor])return NO;
     if(window==self.editor.window){
         if(self.editor.hasUnsavedChanges){NSAlert *alert=NSAlert.new;alert.messageText=@"保存任务修改？";[alert addButtonWithTitle:@"保存"];[alert addButtonWithTitle:@"不保存"];[alert addButtonWithTitle:@"继续编辑"];NSModalResponse choice=[alert runModal];if(choice==NSAlertFirstButtonReturn){[self.editor save:nil];return NO;}if(choice!=NSAlertSecondButtonReturn)return NO;}
         [self closeEditor];return NO;
@@ -896,7 +923,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.layingOutMain=NO;
 }
 - (void)layoutHeaderAndPages {
-    CGFloat headerHeight=self.calendarMode ? self.calendarHeader.fittingSize.height+4:((self.page==0 || (self.page<3 && self.notice.length)) ? 76:40);
+    CGFloat headerHeight=self.calendarMode ? self.calendarHeader.fittingSize.height+4:(self.page==0 ? 76:40);
     self.headerHeight.constant=MAX(40,ceil(headerHeight));
     [self.root layoutSubtreeIfNeeded];
     CGFloat top=NSMaxY(self.header.frame)+16,w=NSWidth(self.root.bounds),h=NSHeight(self.root.bounds);
@@ -911,10 +938,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     CGFloat w=NSWidth(self.root.bounds),h=NSHeight(self.root.bounds),x=24,content=w-x-24,top=NSMaxY(self.header.frame)+16,available=MAX(0,h-top-24);
     self.taskDetails.hidden=self.page>=3 || self.calendarMode || !self.selectedTaskID;
     if(self.calendarMode){
-        if(w>=988){self.calendarScroll.frame=NSMakeRect(x,top,content-304,available);self.agenda.frame=NSMakeRect(w-304,top,280,available);}
+        if(w>=988){CGFloat pane=self.selectedTaskID ? 380:280;self.calendarScroll.frame=NSMakeRect(x,top,content-pane-24,available);self.agenda.frame=NSMakeRect(w-pane-24,top,pane,available);}
         else {CGFloat agendaHeight=MIN(self.selectedTaskID ? 280:176,available*.5);self.calendarScroll.frame=NSMakeRect(x,top,content,MAX(0,available-agendaHeight-16));self.agenda.frame=NSMakeRect(x,h-24-agendaHeight,content,agendaHeight);}
     }else{
-        CGFloat inspector=self.selectedTaskID && self.page<3 ? 320:0;
+        CGFloat inspector=self.selectedTaskID && self.page<3 && w>=880 ? MIN(440,MAX(360,content*.39)):0;
         if(inspector && content<760){CGFloat detailHeight=MIN(240,available*0.52);self.scroll.frame=NSMakeRect(x,top,content,MAX(0,available-16-detailHeight));self.taskDetails.frame=NSMakeRect(x,h-24-detailHeight,content,detailHeight);}
         else {self.scroll.frame=NSMakeRect(x,top,content-(inspector ? inspector+16:0),available);self.taskDetails.frame=NSMakeRect(w-24-inspector,top,inspector,available);}
     }
@@ -930,9 +957,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)validateTaskSelection {
     if(self.page>=3 || !self.selectedTaskID)return;
     BOOL found=NO;for(NSDictionary *task in self.selectionTasks)if([task[@"id"] isEqual:self.selectedTaskID]){found=YES;break;}
-    if(!found){self.selectedTaskID=nil;self.focusedTaskID=nil;}
+    if(!found && !(self.editor.embedded && self.editor.hasUnsavedChanges)){if(self.editor.embedded)[self closeEditor];self.selectedTaskID=nil;self.focusedTaskID=nil;}
 }
 - (void)selectTask:(NSButton *)sender {
+    if(![self.selectedTaskID isEqual:sender.identifier] && ![self resolveTaskEditor]){[self.nativeTasks focusSelection];return;}
     self.selectedTaskID=sender.identifier;if(self.calendarMode)self.focusedTaskID=sender.identifier;
     [self render];[self focusSelectedTaskRow];
 }
@@ -942,7 +970,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     for(NSView *view in container.subviews)if([view isKindOfClass:TaskSelectionRow.class] && [view.identifier isEqual:self.selectedTaskID]){[self.window makeFirstResponder:view];[view scrollRectToVisible:view.bounds];return;}
     if(self.calendarMode && self.selectedTaskID)[self.window makeFirstResponder:self.taskDetailsText];
 }
-- (void)closeTaskDetails:(id)sender {self.selectedTaskID=nil;self.focusedTaskID=nil;[self render];if(self.page==2)[self.nativeTasks focusSelection];else [self.window makeFirstResponder:nil];}
+- (void)closeTaskDetails:(id)sender {if(![self resolveTaskEditor])return;self.selectedTaskID=nil;self.focusedTaskID=nil;[self render];if(self.page==2)[self.nativeTasks focusSelection];else [self.window makeFirstResponder:nil];}
 - (void)moveTaskSelection:(NSInteger)direction {
     NSArray *tasks=self.selectionTasks;if(!tasks.count)return;NSInteger index=0;
     for(NSUInteger i=0;i<tasks.count;i++)if([tasks[i][@"id"] isEqual:self.selectedTaskID]){index=(NSInteger)i+direction;break;}
@@ -955,43 +983,31 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)renderTaskDetailsIn:(Surface *)panel {
     NSDictionary *task=[self taskWithID:self.selectedTaskID];if(!task)return;
-    NSString *appearance=[self.root.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]];
-    BOOL sameTask=[self.displayedTaskID isEqual:self.selectedTaskID];
-    if(sameTask && [self.detailsSnapshot isEqual:task] && [self.detailsAppearance isEqual:appearance] && NSEqualSizes(self.detailsSize,panel.bounds.size) && self.taskDetailsScroll.superview==panel)return;
-    NSPoint position=sameTask ? self.taskDetailsScroll.contentView.bounds.origin:NSZeroPoint;
-    BOOL restoreFocus=sameTask && self.window.firstResponder==self.taskDetailsText;NSRange selection=self.taskDetailsText.selectedRange;
-    self.detailsSnapshot=task.copy;self.detailsAppearance=appearance;self.detailsSize=panel.bounds.size;
-    self.displayedTaskID=self.selectedTaskID;Clear(panel);CGFloat w=NSWidth(panel.bounds),h=NSHeight(panel.bounds);
-    Put(panel,Text(@"任务详情",14,NSFontWeightSemibold,Ink()),16,16,w-72,24);
-    ActionButton *close=Button(@"",self,@selector(closeTaskDetails:),3);close.symbol=@"xmark";close.accessibilityLabel=@"关闭任务详情";Put(panel,close,w-44,12,28,28);
-    NSScrollView *scroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(12,52,w-24,MAX(64,h-112))];scroll.hasVerticalScroller=YES;scroll.autohidesScrollers=YES;scroll.drawsBackground=NO;
-    TaskDetailsText *text=[[TaskDetailsText alloc] initWithFrame:NSMakeRect(0,0,w-24,NSHeight(scroll.bounds))];text.editable=NO;text.selectable=YES;text.richText=YES;text.drawsBackground=NO;text.textContainerInset=NSMakeSize(4,8);text.minSize=NSMakeSize(0,NSHeight(scroll.bounds));text.maxSize=NSMakeSize(CGFLOAT_MAX,CGFLOAT_MAX);text.verticallyResizable=YES;text.horizontallyResizable=NO;text.autoresizingMask=NSViewWidthSizable;text.textContainer.widthTracksTextView=YES;ThemeEditor(text);
-    NSMutableAttributedString *body=NSMutableAttributedString.new;
-    void (^append)(NSString *,CGFloat,NSFontWeight,NSColor *)=^(NSString *value,CGFloat size,NSFontWeight weight,NSColor *color){[body appendAttributedString:[[NSAttributedString alloc] initWithString:value attributes:@{NSFontAttributeName:[NSFont systemFontOfSize:size weight:weight],NSForegroundColorAttributeName:color}]];};
-    append(@"备注\n",13,NSFontWeightSemibold,Ink());append([task[@"notes"] length] ? task[@"notes"]:@"暂无备注，可通过“编辑任务”添加。",13,NSFontWeightRegular,[task[@"notes"] length] ? Ink():Muted());
-    [text.textStorage setAttributedString:body];__weak typeof(self) owner=self;text.onClose=^{[owner closeTaskDetails:nil];};[panel addSubview:scroll];[text.layoutManager ensureLayoutForTextContainer:text.textContainer];
-    Surface *detailDocument=Box(Card(),0);CGFloat plannerHeight=170+[task[@"subtasks"] count]*76;CGFloat submissionHeight=148;CGFloat textHeight=MAX(180,NSMaxY([text.layoutManager usedRectForTextContainer:text.textContainer])+16);
-    AMTaskPlanningController *planner=AMTaskPlanningController.new;self.taskPlanningController=planner;[planner updateTask:task];planner.actionHandler=^(NSString *action,NSString *taskID,NSString *subID,NSString *value){[owner planningAction:action task:taskID subtask:subID value:value];};
-    detailDocument.frame=NSMakeRect(0,0,w-24,100+plannerHeight+textHeight+submissionHeight);
-    NSTextField *taskTitle=Text(task[@"title"],17,NSFontWeightSemibold,Ink());taskTitle.maximumNumberOfLines=2;taskTitle.toolTip=task[@"title"];Put(detailDocument,taskTitle,12,4,w-48,44);
-    Put(detailDocument,Text([NSString stringWithFormat:@"截止：%@",DDLFormatDate(task[@"due"],@"yyyy年M月d日 HH:mm")],12,NSFontWeightRegular,Muted()),12,52,w-48,22);
-    Put(detailDocument,Text([task[@"archived"] boolValue] ? @"已归档":([task[@"completed"] boolValue] ? @"已完成":@"待完成"),12,NSFontWeightRegular,Muted()),12,76,w-48,20);
-    Put(detailDocument,text,0,100,w-24,textHeight);Put(detailDocument,planner.view,0,100+textHeight,w-24,plannerHeight);NSString *lastLabel=@"尚无关联提交";for(NSDictionary *record in AMSubmissionRecords(NULL) ?: @[])if([record[@"taskIDs"] containsObject:task[@"id"]])lastLabel=AMSubmissionStateLabel(record);
-    if([task[@"completed"] boolValue] && [task[@"completionEvidence"] isKindOfClass:NSDictionary.class])lastLabel=[@"自动完成 · " stringByAppendingString:[task[@"completionEvidence"][@"commit"] substringToIndex:12]];
-    CGFloat sy=100+textHeight+plannerHeight;Put(detailDocument,Text([@"提交：" stringByAppendingString:lastLabel],12,NSFontWeightRegular,Muted()),12,sy,w-48,24);
-    ActionButton *history=Button(@"提交记录",self,@selector(taskSubmissionHistory:),0);history.identifier=task[@"id"];Put(detailDocument,history,12,sy+32,120,32);
-    if([task[@"sourceRepository"] length] || [task[@"courseRepository"] length]){ActionButton *submit=Button(@"提交作业…",self,@selector(submitSelectedTask:),0);submit.identifier=task[@"id"];Put(detailDocument,submit,144,sy+32,120,32);}
-    ActionButton *check=Button(@"检查作业文件…",self,@selector(checkSelectedTask:),0);check.identifier=task[@"id"];Put(detailDocument,check,12,sy+76,140,32);
-    scroll.documentView=detailDocument;
-    [scroll.contentView scrollToPoint:position];self.taskDetailsScroll=scroll;self.taskDetailsText=text;
-    if(restoreFocus){[self.window makeFirstResponder:text];text.selectedRange=NSMakeRange(MIN(selection.location,text.string.length),MIN(selection.length,text.string.length-MIN(selection.location,text.string.length)));}
-    ActionButton *edit=Button(@"编辑任务",self,@selector(editTask:),2);edit.identifier=task[@"id"];BOOL canRestore=![task[@"notes"] length] && SSSuggestedNotes(task).length;
-    Put(panel,edit,16,h-48,canRestore ? (w-40)/2:w-32,32);
-    if(canRestore){ActionButton *restore=Button(@"补全备注…",self,@selector(restoreTaskNotes:),0);restore.identifier=task[@"id"];restore.accessibilityLabel=@"从识别内容补全备注";Put(panel,restore,24+(w-40)/2,h-48,(w-40)/2,32);}
+    if([task[@"deleted"] boolValue] && !(self.editor.embedded && self.editor.hasUnsavedChanges && [self.editor.task[@"id"] isEqual:self.selectedTaskID])){Clear(panel);Put(panel,Text(@"该任务已删除，可从任务菜单恢复",13,NSFontWeightRegular,Muted()),16,16,MAX(1,NSWidth(panel.bounds)-32),44);return;}
+    if(self.editor && (!self.editor.embedded || ![self.editor.task[@"id"] isEqual:self.selectedTaskID]))return;
+    if(!self.editor){self.editor=[[EditorController alloc] initWithTask:task owner:self];self.editor.embedded=YES;}
+    else if(!self.editor.hasUnsavedChanges && ![self.editor.task isEqual:task]){
+        EditorController *current=self.editor;current.task=task.copy;current.titleField.stringValue=task[@"title"] ?: @"";current.subjectField.stringValue=task[@"subject"] ?: @"";current.notesField.string=task[@"notes"] ?: @"";[current.priority selectItemAtIndex:MAX(0,MIN(2,[task[@"priority"] integerValue]))];current.reminderField.stringValue=DDLFormatReminderOffsets(DDLReminderOffsetsForTask(task));[current updateDate:task[@"due"]];current.initialValues=[current formValues];[current.sharedForm loadRecord:[current sharedFormRecord] resetBaseline:YES];[current.sharedPlanner updateTask:task];
+    }
+    EditorController *editor=self.editor;
+    if([task[@"deleted"] boolValue])[editor.sharedForm setValidation:@"任务已删除，当前填写已保留" field:@""];
+    BOOL canEmbed=NSWidth(self.root.bounds)>=880;
+    if(!canEmbed){
+        if(!editor.window.sheetParent){NSDictionary *position=[editor.sharedForm captureEditingPosition];[editor.sharedForm.view removeFromSuperview];editor.sharedForm.view.frame=editor.window.contentView.bounds;[editor.window.contentView addSubview:editor.sharedForm.view];[self.window beginSheet:editor.window completionHandler:nil];[editor.sharedForm restoreEditingPosition:position];}
+        panel.hidden=YES;return;
+    }
+    NSDictionary *position=editor.window.sheetParent ? [editor.sharedForm captureEditingPosition]:@{};
+    if(editor.window.sheetParent){[self.window endSheet:editor.window];[editor.window orderOut:nil];}
+    panel.hidden=NO;
+    if(editor.sharedForm.view.superview!=panel){Clear(panel);[editor.sharedForm.view removeFromSuperview];[panel addSubview:editor.sharedForm.view];}
+    editor.sharedForm.view.frame=panel.bounds;editor.sharedForm.view.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;
+    [editor.sharedForm restoreEditingPosition:position];
+    self.displayedTaskID=self.selectedTaskID;self.detailsSnapshot=task.copy;self.taskPlanningController=editor.sharedPlanner;
 }
 - (void)navigate:(id)sender {
     NSInteger destination = [sender tag];
     if (destination < 0 || destination > 5) return;
+    if(self.page!=destination && ![self resolveTaskEditor])return;
     if (self.page != destination) {
         if(self.courseWindow.hasUnsavedReview && ![self.courseWindow resolveUnsavedReview])return;
         self.pageStates[@(self.page)] = @{@"query":self.query ?: @"", @"scroll":[NSValue valueWithPoint:((self.page==2 || (self.page==0 && !self.weeklyMode)) ? self.nativeTasks.scroll:self.scroll).contentView.bounds.origin], @"filter":@(self.filter),@"sort":@(self.sortMenu.indexOfSelectedItem),@"taskSelection":self.selectedTaskID ?: @""};
@@ -1065,6 +1081,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)toggleCourses:(id)sender {self.coursesCollapsed=!self.coursesCollapsed;[self renderSidebar];}
 - (void)selectSidebarCourse:(NSButton *)sender {
+    if(![self resolveTaskEditor])return;
     if(self.courseWindow.hasUnsavedReview && ![self.courseWindow resolveUnsavedReview])return;
     NSString *identifier=sender.identifier.length ? sender.identifier:nil;
     NSButton *route=NSButton.new;route.tag=4;[self navigate:route];
@@ -1161,7 +1178,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if(self.page==0 && self.weeklyMode)title=@"每周安排";
     if(self.page==4)title=self.courseWindow.selectedCourseID.lastPathComponent ?: @"所有课程";
     Put(self.header, Text(title, 22, NSFontWeightSemibold, Ink()), 0, 4, w - 152, 32);
-    NSString *subtitle=(self.notice.length && self.page<3) ? self.notice:(self.page==0 ? DDLFormatDate(NSDate.date,@"M月d日 EEEE"):@"");
+    NSString *subtitle=self.page==0 ? DDLFormatDate(NSDate.date,@"M月d日 EEEE"):@"";
     if(self.page==0 && self.courseWindow.pendingCount){NSButton *pending=Button([NSString stringWithFormat:@"%lu 项待审核",(unsigned long)self.courseWindow.pendingCount],self,@selector(navigate:),0);pending.tag=3;Put(self.header,pending,w-148,4,148,32);}
     if(subtitle.length)Put(self.header, Text(subtitle, 13, NSFontWeightRegular, Muted()), 0, 48, w, 24);
     [self layoutHeaderAndPages];
@@ -1224,12 +1241,12 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.calendarHeader=NSStackView.new;self.calendarHeader.orientation=NSUserInterfaceLayoutOrientationVertical;self.calendarHeader.alignment=NSLayoutAttributeLeading;self.calendarHeader.spacing=12;self.calendarHeader.translatesAutoresizingMaskIntoConstraints=NO;[self.header addSubview:self.calendarHeader];
     [NSLayoutConstraint activateConstraints:@[[self.calendarHeader.leadingAnchor constraintEqualToAnchor:self.header.leadingAnchor],[self.calendarHeader.trailingAnchor constraintEqualToAnchor:self.header.trailingAnchor],[self.calendarHeader.topAnchor constraintEqualToAnchor:self.header.topAnchor constant:4],[self.calendarHeader.bottomAnchor constraintLessThanOrEqualToAnchor:self.header.bottomAnchor]]];
     self.calendarMonthTitle=Text(@"",25,NSFontWeightSemibold,Ink());[self.calendarMonthTitle setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
-    ActionButton *add=Button(@"新建任务",self,@selector(addTask:),1);add.symbol=@"plus";
+
     self.yearPicker=[[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];for(NSInteger year=1900;year<=2200;year++)[self.yearPicker addItemWithTitle:[NSString stringWithFormat:@"%ld 年",(long)year]];self.yearPicker.target=self;self.yearPicker.action=@selector(jumpCalendar:);
     self.monthPicker=[[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];for(NSInteger month=1;month<=12;month++)[self.monthPicker addItemWithTitle:[NSString stringWithFormat:@"%ld 月",(long)month]];self.monthPicker.target=self;self.monthPicker.action=@selector(jumpCalendar:);
     ActionButton *prev=Button(@"",self,@selector(navigateCalendar:),0);prev.tag=-1;prev.symbol=@"chevron.up";prev.accessibilityLabel=@"上个月";ActionButton *today=Button(@"今天",self,@selector(navigateCalendar:),0);today.tag=0;today.accessibilityIdentifier=@"calendar-today";ActionButton *next=Button(@"",self,@selector(navigateCalendar:),0);next.tag=1;next.symbol=@"chevron.down";next.accessibilityLabel=@"下个月";
     self.calendarProgressText=Text(@"",12,NSFontWeightRegular,Muted());self.calendarProgressText.alignment=NSTextAlignmentRight;[self.calendarProgressText setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
-    for(NSArray *controls in @[@[self.calendarMonthTitle,add],@[self.yearPicker,self.monthPicker,prev,today,next,self.calendarProgressText]]){NSStackView *row=[NSStackView stackViewWithViews:controls];row.spacing=8;row.alignment=NSLayoutAttributeCenterY;[self.calendarHeader addArrangedSubview:row];[row.widthAnchor constraintEqualToAnchor:self.calendarHeader.widthAnchor].active=YES;}
+    for(NSArray *controls in @[@[self.calendarMonthTitle],@[self.yearPicker,self.monthPicker,prev,today,next,self.calendarProgressText]]){NSStackView *row=[NSStackView stackViewWithViews:controls];row.spacing=8;row.alignment=NSLayoutAttributeCenterY;[self.calendarHeader addArrangedSubview:row];[row.widthAnchor constraintEqualToAnchor:self.calendarHeader.widthAnchor].active=YES;}
     [self updateCalendarHeaderState];
 }
 - (void)updateCalendarHeaderState {
@@ -1279,7 +1296,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
             NSTextField *monthTitle = Text(DDLFormatDate(month, @"yyyy 年 M 月"), 18, NSFontWeightSemibold, Ink()); Put(self.calendarDocument, monthTitle, 4, sectionY + 6, calendarWidth - 8, 28);
             OverviewGrid *grid = [OverviewGrid new]; grid.fill = Panel(); grid.gradientEnd = nil; grid.stroke = Line(); grid.radius = 14; grid.month = month; grid.selection = self.selectedDay; grid.tasksByDay = tasksByDay;
             grid.onSelect = ^(NSDate *date, NSString *taskID) {
-                weakSelf.selectedDay = date; weakSelf.month = date; weakSelf.focusedTaskID = taskID; weakSelf.selectedTaskID=taskID; weakSelf.notice = @"";
+                if(![weakSelf resolveTaskEditor])return;weakSelf.selectedDay = date; weakSelf.month = date; weakSelf.focusedTaskID = taskID; weakSelf.selectedTaskID=taskID; weakSelf.notice = @"";
                 [weakSelf.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [weakSelf render];
             };
             Put(self.calendarDocument, grid, 0, sectionY + 38, calendarWidth - 6, self.calendarSectionHeight - 48); [grid reload];
@@ -1383,7 +1400,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         [(OverviewGrid *)view refreshHoverAtWindowPoint:point];
     }
 }
-- (void)changeCalendarStatus:(id)sender { self.focusedTaskID = nil; self.selectedTaskID=nil; self.notice = @""; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [self render]; }
+- (void)changeCalendarStatus:(id)sender { if(![self resolveTaskEditor])return;self.focusedTaskID = nil; self.selectedTaskID=nil; self.notice = @""; [self.agendaScroll.contentView scrollToPoint:NSZeroPoint]; [self render]; }
 - (void)openCalendar:(id)sender { NSButton *route = NSButton.new; route.tag = 1; [self navigate:route]; }
 - (void)openList:(id)sender { NSButton *route = NSButton.new; route.tag = 2; [self navigate:route]; }
 - (void)taskScrolled:(NSNotification *)notification {
@@ -1399,7 +1416,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSString *heading=self.query.length ? [NSString stringWithFormat:@"搜索结果 · %lu",(unsigned long)tasks.count]:[NSString stringWithFormat:@"%@ · %lu",@[@"待完成",@"今天",@"未来7天",@"已完成",@"归档",@"最近删除"][self.filter],(unsigned long)tasks.count];
     [self.nativeTasks updateTasks:presentation selected:self.selectedTaskID heading:heading];
 }
-- (void)changeFilter:(id)sender { self.filter = [sender isKindOfClass:NSPopUpButton.class] ? [sender indexOfSelectedItem] : [sender tag]; self.page = 2; self.calendarMode = NO; self.notice = @""; [self.scroll.contentView scrollToPoint:NSZeroPoint]; [self layout]; }
+- (void)changeFilter:(id)sender { if(![self resolveTaskEditor]){[self.taskFilter selectItemAtIndex:self.filter];return;}self.filter = [sender isKindOfClass:NSPopUpButton.class] ? [sender indexOfSelectedItem] : [sender tag]; self.page = 2; self.calendarMode = NO; self.notice = @""; [self.scroll.contentView scrollToPoint:NSZeroPoint]; [self layout]; }
 - (void)sortChanged:(id)sender { [self renderTaskContent]; }
 - (void)controlTextDidChange:(NSNotification *)notification {
     if (notification.object != self.search) return;
@@ -1420,25 +1437,26 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)dismissSearchAtWindowPoint:(NSPoint)point {if(self.search.currentEditor && !NSPointInRect([self.search convertPoint:point fromView:nil],self.search.bounds))[self endSearchEditing];}
 - (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)command {if(control==self.search && command==@selector(cancelOperation:)){[self endSearchEditing];return YES;}return NO;}
 - (void)showWindow { [self.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES]; }
-- (NSArray *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar{return @[@"AMOverviewMode",@"AMCalendarStatus",@"AMCourseSections",@"AMTaskFilter",@"AMSort",@"AMSearch",@"AMNewTask",@"AMUndoSubmissionCompletion",NSToolbarFlexibleSpaceItemIdentifier,NSToolbarSpaceItemIdentifier];}
+- (NSArray *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar{return @[@"AMOverviewMode",@"AMCalendarStatus",@"AMCourseSections",@"AMTaskFilter",@"AMSort",@"AMSearch",@"AMNewTask",@"AMActivity",@"AMCourseScan",@"AMCourseSync",@"AMCourseSubmit",@"AMCourseMore",@"AMCourseSearch",@"AMCourseFilter",@"AMUndoSubmissionCompletion",NSToolbarFlexibleSpaceItemIdentifier,NSToolbarSpaceItemIdentifier];}
 - (NSArray *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar{return @[NSToolbarFlexibleSpaceItemIdentifier];}
 - (NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSString *)identifier willBeInsertedIntoToolbar:(BOOL)flag {
+    if([identifier isEqual:@"AMActivity"])return AMActivityToolbarItem(identifier);
+    if([identifier hasPrefix:@"AMCourse"] && ![identifier isEqual:@"AMCourseSections"])return [self.courseWindow toolbarItemForIdentifier:identifier];
     if([identifier isEqual:@"AMOverviewMode"]){if(!self.overviewModeControl)self.overviewModeControl=Segments(@[@"今日",@"本周"],self,@selector(changeOverviewMode:));self.overviewModeControl.selectedSegment=self.weeklyMode ? 1:0;return SegmentToolbarItem(identifier,@"总览显示方式",self.overviewModeControl);}
     if([identifier isEqual:@"AMCalendarStatus"])return SegmentToolbarItem(identifier,@"日历任务状态",self.calendarStatus);
     if([identifier isEqual:@"AMCourseSections"])return SegmentToolbarItem(identifier,@"课程分区",self.courseWindow.navigationControl);
     if([identifier isEqual:@"AMUndoSubmissionCompletion"]){NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"撤销自动完成";item.toolTip=@"撤销自动完成（⌘Z）";item.image=[NSImage imageWithSystemSymbolName:@"arrow.uturn.backward" accessibilityDescription:item.label];item.target=self;item.action=@selector(undo:);item.bordered=YES;return item;}
-    if([identifier isEqual:@"AMSearch"]){NSSearchToolbarItem *item=[[NSSearchToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"搜索任务";item.searchField=self.search;item.preferredWidthForSearchField=240;return item;}
-    if([identifier isEqual:@"AMNewTask"]){NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"快速录入作业";item.toolTip=@"快速录入作业（⌘⇧N）";item.image=[NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:item.label];item.target=self;item.action=@selector(quickEntry:);item.bordered=YES;
+    if([identifier isEqual:@"AMSearch"]){NSSearchToolbarItem *item=[[NSSearchToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"搜索任务";item.visibilityPriority=NSToolbarItemVisibilityPriorityHigh;item.searchField=self.search;item.preferredWidthForSearchField=240;return item;}
+    if([identifier isEqual:@"AMNewTask"]){NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"新建任务";item.visibilityPriority=NSToolbarItemVisibilityPriorityHigh;item.toolTip=@"新建任务（⌘N）";item.image=[NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:item.label];item.target=self;item.action=@selector(addTask:);item.bordered=YES;
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
         if(@available(macOS 26.0,*))item.style=NSToolbarItemStyleProminent;
 #endif
         return item;}
-    NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];
-    if([identifier isEqual:@"AMTaskFilter"] || [identifier isEqual:@"AMSort"]){NSPopUpButton *control=[identifier isEqual:@"AMSort"] ? self.sortMenu:self.taskFilter;item.label=[identifier isEqual:@"AMSort"] ? @"排序":@"任务筛选";[control sizeToFit];item.view=control;return item;}
+    if([identifier isEqual:@"AMTaskFilter"] || [identifier isEqual:@"AMSort"])return PopupToolbarItem(identifier,[identifier isEqual:@"AMSort"] ? @"排序":@"任务筛选",[identifier isEqual:@"AMSort"] ? self.sortMenu:self.taskFilter);
     return nil;
 }
 - (void)refreshPageToolbar {
-    NSMutableArray *desired=NSMutableArray.array;if(self.page==0)[desired addObject:@"AMOverviewMode"];if(self.page==1)[desired addObject:@"AMCalendarStatus"];if(self.page==4)[desired addObject:@"AMCourseSections"];if(self.page==2)[desired addObjectsFromArray:@[@"AMTaskFilter",@"AMSort"]];[desired addObject:NSToolbarFlexibleSpaceItemIdentifier];if(self.submissionCompletionUndoAvailable)[desired addObject:@"AMUndoSubmissionCompletion"];if(self.page<3)[desired addObjectsFromArray:@[@"AMSearch",@"AMNewTask"]];
+    NSMutableArray *desired=NSMutableArray.array;if(self.page==0)[desired addObject:@"AMOverviewMode"];if(self.page==1)[desired addObject:@"AMCalendarStatus"];if(self.page==4)[desired addObjectsFromArray:@[@"AMCourseSections",@"AMCourseScan",@"AMCourseSync",@"AMCourseSubmit",@"AMCourseMore"]];if(self.page==2)[desired addObjectsFromArray:@[@"AMTaskFilter",@"AMSort"]];[desired addObject:NSToolbarFlexibleSpaceItemIdentifier];[desired addObject:@"AMActivity"];if(self.submissionCompletionUndoAvailable)[desired addObject:@"AMUndoSubmissionCompletion"];if(self.page<3)[desired addObjectsFromArray:@[@"AMSearch",@"AMNewTask"]];else if(self.page==4){if(self.courseWindow.navigationControl.selectedSegment==0)[desired addObject:@"AMCourseFilter"];[desired addObject:@"AMCourseSearch"];}
     NSToolbar *toolbar=self.window.toolbar;
     for(NSInteger index=(NSInteger)toolbar.items.count-1;index>=0;index--)if(![desired containsObject:toolbar.items[index].itemIdentifier])[toolbar removeItemAtIndex:index];
     for(NSUInteger index=0;index<desired.count;index++){if(index<toolbar.items.count && [toolbar.items[index].itemIdentifier isEqual:desired[index]])continue;[toolbar insertItemWithItemIdentifier:desired[index] atIndex:index];}
@@ -1521,7 +1539,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         NSMenu *menu = [NSMenu new];
         NSMenuItem *show = [menu addItemWithTitle:@"打开 AM's Homework Helper" action:@selector(showMain:) keyEquivalent:@""]; show.target = self;
         NSMenuItem *add = [menu addItemWithTitle:@"新建任务" action:@selector(addTask:) keyEquivalent:@""]; add.target = self;
-        NSMenuItem *quick=[menu addItemWithTitle:@"快速录入作业…" action:@selector(quickEntry:) keyEquivalent:@""];quick.target=self;
+        NSMenuItem *quick=[menu addItemWithTitle:@"从文字或截图录入…" action:@selector(quickEntry:) keyEquivalent:@""];quick.target=self;
         [menu addItem:[NSMenuItem separatorItem]]; [menu addItemWithTitle:@"退出" action:@selector(terminate:) keyEquivalent:@"q"];
         [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, self.statusItem.button.bounds.size.height) inView:self.statusItem.button];
     } else if (self.window.visible && self.window.keyWindow) [self.window orderOut:nil]; else [self showWindow];
@@ -1532,16 +1550,18 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (NSMutableDictionary *)taskWithID:(NSString *)identifier { for (NSMutableDictionary *task in self.tasks) if ([task[@"id"] isEqual:identifier]) return task; return nil; }
 #include "AMQuickUI.inc"
 - (void)addTask:(id)sender {
-    [self showWindow]; if (self.window.attachedSheet) return;
+    [self showWindow]; if (![self resolveTaskEditor] || self.window.attachedSheet) return;
     self.editor = [[EditorController alloc] initWithTask:nil owner:self];
     if (self.calendarMode) [self.editor chooseDate:self.selectedDay];
+    if(self.page==4 && self.courseWindow.selectedCourseID.length){self.editor.creationCourse=self.courseWindow.selectedCourseID;self.editor.subjectField.stringValue=self.courseWindow.selectedCourseID.lastPathComponent;}
+    self.editor.initialValues=[self.editor formValues];[self.editor.sharedForm loadRecord:[self.editor sharedFormRecord] resetBaseline:YES];
     [self.window beginSheet:self.editor.window completionHandler:nil];
 }
 - (void)openCourses:(id)sender { NSButton *route = NSButton.new; route.tag = 4; [self navigate:route]; }
 - (void)reviewGitHubCandidate:(NSDictionary *)candidate {
     if (candidate[@"kind"] && ![candidate[@"kind"] isEqual:@"assignment"]) return;
     [self showWindow];
-    if (self.window.attachedSheet) return;
+    if (![self resolveTaskEditor] || self.window.attachedSheet) return;
     NSDictionary *existing = nil;
     for (NSDictionary *task in self.tasks) if ([task[@"sourceID"] isEqual:candidate[@"id"]]) { existing = task; break; }
     NSMutableDictionary *draft = existing ? [existing mutableCopy] : [@{@"id":NSUUID.UUID.UUIDString, @"title":candidate[@"suggestedTitle"] ?: candidate[@"title"], @"subject":[candidate[@"repository"] lastPathComponent], @"notes":SSSuggestedNotes(candidate), @"completed":@NO, @"archived":@NO, @"reminderOffsets":DDLDefaultReminderOffsets()} mutableCopy];
@@ -1607,10 +1627,23 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSError *error=nil;if(![self replaceTasks:tasks action:@"补全作业备注" error:&error]){self.notice=error.localizedDescription ?: @"备注保存失败，请重试。";[self render];}
 }
 - (void)editTask:(id)sender {
-    if (self.window.attachedSheet) return; NSDictionary *task = [self taskWithID:[self identifierForSender:sender]]; if (!task) return;
-    self.editor = [[EditorController alloc] initWithTask:task owner:self]; [self.window beginSheet:self.editor.window completionHandler:nil];
+    NSDictionary *task=[self taskWithID:[self identifierForSender:sender]];if(!task || [task[@"deleted"] boolValue])return;
+    if(![self resolveTaskEditor] || self.window.attachedSheet)return;
+    if(self.page>=3){self.editor=[[EditorController alloc] initWithTask:task owner:self];[self.window beginSheet:self.editor.window completionHandler:nil];return;}
+    self.selectedTaskID=task[@"id"];[self render];
 }
-- (void)closeEditor { [self.window endSheet:self.editor.window]; [self.editor.window orderOut:nil]; self.editor = nil; [self applyVerifiedSubmissions]; }
+- (BOOL)resolveTaskEditor {
+    EditorController *editor=self.editor;if(!editor)return YES;
+    [self.window makeFirstResponder:nil];[editor.window makeFirstResponder:nil];
+    if(editor.hasUnsavedChanges){NSAlert *alert=NSAlert.new;alert.messageText=@"保存任务修改？";[alert addButtonWithTitle:@"保存"];[alert addButtonWithTitle:@"不保存"];[alert addButtonWithTitle:@"继续编辑"];NSModalResponse answer=[alert runModal];if(answer==NSAlertFirstButtonReturn){[editor save:nil];return self.editor!=editor;}if(answer!=NSAlertSecondButtonReturn)return NO;}
+    [self closeEditor];return YES;
+}
+- (void)requestCloseTaskEditor {if(![self resolveTaskEditor])return;self.selectedTaskID=nil;self.focusedTaskID=nil;[self render];}
+- (void)closeEditor {
+    EditorController *editor=self.editor;if(!editor)return;[editor.sharedForm.view removeFromSuperview];
+    if(editor.window.sheetParent)[editor.window.sheetParent endSheet:editor.window];[editor.window orderOut:nil];self.editor=nil;
+    dispatch_async(dispatch_get_main_queue(),^{[self applyVerifiedSubmissions];});
+}
 - (NSArray *)snapshot {NSMutableArray *result=NSMutableArray.array;for(NSDictionary *task in self.tasks){NSMutableDictionary *copy=task.mutableCopy;if(task[@"subtasks"])copy[@"subtasks"]=[[NSArray alloc] initWithArray:task[@"subtasks"] copyItems:YES];[result addObject:copy.copy];}return result.copy;}
 - (BOOL)replaceTasks:(NSArray *)tasks action:(NSString *)action error:(NSError **)error {
     NSArray *expanded=self.recurrenceSeries ? DDLMaterializeRecurringTasks(tasks,self.recurrenceSeries,[Cal() startOfDayForDate:NSDate.date],[Cal() dateByAddingUnit:NSCalendarUnitDay value:90 toDate:NSDate.date options:0],self.preview ? @{}:SSCalendarOverrides(),error):tasks;if(!expanded)return NO;
@@ -1626,7 +1659,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)applyVerifiedSubmissions {
     if(self.preview || self.taskStoreBlocked || self.applyingSubmissionCompletions || !self.courseWindow)return;
     self.applyingSubmissionCompletions=YES;
-    NSMutableSet *deferred=[self.courseWindow.editingTaskIDs mutableCopy];if(!deferred)deferred=NSMutableSet.set;if(self.editor.task[@"id"])[deferred addObject:self.editor.task[@"id"]];
+    NSMutableSet *deferred=[self.courseWindow.editingTaskIDs mutableCopy];if(!deferred)deferred=NSMutableSet.set;if(self.editor.task[@"id"] && self.editor.hasUnsavedChanges)[deferred addObject:self.editor.task[@"id"]];
     NSError *error=nil;NSDictionary *result=AMApplySubmissionCompletions([self snapshot],self.courseWindow.submissionCourses,deferred,self.recurrenceSeries ?: @[],SSCalendarOverrides(),&error);
     if(!result){NSString *message=error.localizedDescription ?: @"自动完成未保存，请在提交记录中重试。";if(![self.notice isEqual:message]){self.notice=message;[self render];}}
     else if([result[@"completedIDs"] count]){
@@ -1662,7 +1695,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         for(NSString *key in @[@"dateText",@"due",@"suggestedDue",@"needsDate",@"needsTime"]){if(![(live[key] ?: NSNull.null) isEqual:(record[key] ?: NSNull.null)]){trace(@"source",@"recognition-changed");return @"截止时间识别结果已变化，整批未保存。请刷新来源并重新核对。";}}
         if([live[@"sourceType"] isEqual:@"local"]){
             if(automatic)continue;BOOL alreadySaved=NO;for(NSDictionary *task in next)if([task[@"entryID"] isEqual:live[@"id"]])alreadySaved=YES;if(alreadySaved)continue;NSMutableDictionary *entry=live.mutableCopy;
-            for(NSString *key in @[@"title",@"subject",@"notes",@"reminderOffsets"])if(draft[key])entry[key]=draft[key];
+            for(NSString *key in @[@"title",@"subject",@"notes",@"reminderOffsets",@"priority"])if(draft[key])entry[key]=draft[key];
             if([draft[@"assignmentDue"] isKindOfClass:NSDate.class])entry[@"dateText"]=AMQuickDateText(draft[@"assignmentDue"],entry[@"timeZone"]);entry[@"edited"]=@YES;
             NSError *error=nil;NSDictionary *task=AMQuickTask(entry,&error);if(!task)return error.localizedDescription;
             [next addObject:task];[added addObject:task];savedCount++;continue;
@@ -1712,15 +1745,29 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (BOOL)commitTask:(NSDictionary *)task originalID:(NSString *)identifier {
     NSMutableArray *next=[[self snapshot] mutableCopy]; NSUInteger index=[next indexOfObjectPassingTest:^BOOL(NSDictionary *item,NSUInteger idx,BOOL *stop){return [item[@"id"] isEqual:identifier];}];
     NSArray *oldSeries=self.recurrenceSeries;self.undoSeriesOverride=oldSeries;
-    NSMutableDictionary *edited=task.mutableCopy;if(![self applyRecurrenceToTask:edited tasks:next error:NULL]){self.undoSeriesOverride=nil;return NO;}
+    NSMutableDictionary *edited=task.mutableCopy;
+    if(identifier){
+        if(index==NSNotFound || [next[index][@"deleted"] boolValue]){self.undoSeriesOverride=nil;self.editor.validation.stringValue=@"任务已删除，当前修改未保存";return NO;}
+        NSDictionary *latest=next[index],*original=self.editor.task;
+        if(original && [original[@"id"] isEqual:identifier]){
+            edited=latest.mutableCopy;
+            for(NSString *key in @[@"title",@"subject",@"due",@"notes",@"priority",@"reminder",@"reminderOffsets",@"notesOrigin",@"notesUserEdited"]){
+                id before=original[key] ?: NSNull.null,after=task[key] ?: NSNull.null,current=latest[key] ?: NSNull.null;
+                if(![before isEqual:after]){if(![before isEqual:current] && ![after isEqual:current]){self.undoSeriesOverride=nil;self.editor.validation.stringValue=@"任务已在其他位置修改，请保留填写并重新核对";return NO;}if(task[key])edited[key]=task[key];else [edited removeObjectForKey:key];}
+            }
+            for(NSString *key in @[@"_recurrenceRule",@"_stopRecurrence",@"_seriesScope"])if(task[key])edited[key]=task[key];
+        }
+    }
+    NSError *recurrenceError=nil;if(![self applyRecurrenceToTask:edited tasks:next error:&recurrenceError]){self.recurrenceSeries=oldSeries;self.undoSeriesOverride=nil;self.editor.validation.stringValue=recurrenceError.localizedDescription ?: @"请检查重复设置";return NO;}
     task=edited;if(index==NSNotFound)[next addObject:task];else next[index]=task;
     NSError *error=nil; if(![self replaceTasks:next action:identifier ? @"编辑任务" : @"添加任务" error:&error]) {self.recurrenceSeries=oldSeries;self.undoSeriesOverride=nil;self.editor.validation.stringValue=error.localizedDescription ?: @"任务未能保存，请检查本机存储后重试。";self.editor.validation.textColor=NSColor.systemRedColor;return NO;}
     if(!identifier){self.filter=0;self.query=@"";self.search.stringValue=@"";if(self.calendarMode)self.calendarStatus.selectedSegment=0;}
     if(self.calendarMode){self.selectedDay=task[@"due"];self.month=task[@"due"];self.calendarBaseMonth=self.month;self.calendarNeedsCenter=YES;self.focusedTaskID=task[@"id"];}
-    self.notice=identifier ? @"任务已更新，提醒时间也已同步。" : @"新任务已加入清单。";
+    self.notice=identifier ? @"已保存任务" : @"已添加任务";
     if(!self.preview && self.authorization==UNAuthorizationStatusNotDetermined)[self requestPermission];[self render];return YES;
 }
 - (void)changeTask:(NSString *)identifier action:(NSString *)action change:(BOOL (^)(NSMutableDictionary *))change {
+    if([self.editor.task[@"id"] isEqual:identifier] && ![self resolveTaskEditor])return;
     NSMutableArray *next=[DDLNormalizeTasks([self snapshot]) mutableCopy]; NSUInteger index=[next indexOfObjectPassingTest:^BOOL(NSDictionary *item,NSUInteger i,BOOL *stop){return [item[@"id"] isEqual:identifier];}];if(index==NSNotFound)return;
     if(!change(next[index]))[next removeObjectAtIndex:index];NSError *error=nil;
     self.notice=[self replaceTasks:next action:action error:&error] ? [action stringByAppendingString:@"已保存，可按 ⌘Z 撤销。"] : (error.localizedDescription ?: @"保存失败，任务保持完整。");[self render];
