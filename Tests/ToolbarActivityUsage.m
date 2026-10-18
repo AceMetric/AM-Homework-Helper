@@ -35,7 +35,12 @@ int main(){@autoreleasepool{
         NSTextField *stage=[progress valueForKey:@"stage"];NSButton *cancel=[progress valueForKey:@"cancelButton"];NSProgressIndicator *bar=[progress valueForKey:@"bar"];
         Check(NSHeight(activity.view.frame)<200 && NSWidth(progress.frame)>340,@"single activity is compact without compressing its content");
         Check(stage.stringValue.length && NSWidth(stage.frame)>180 && NSContainsRect(progress.bounds,[stage alignmentRectForFrame:stage.frame]),@"stage text has a readable, contained frame");
-        Check(!cancel.hidden && NSContainsRect(progress.bounds,cancel.frame) && !NSIntersectsRect(stage.frame,cancel.frame),@"terminate action fits without covering the stage");
+        // AppKit's older rounded buttons include bezel/shadow insets outside their
+        // alignment frame. Compare the same layout bounds on every supported OS.
+        NSRect stageLayout=[stage alignmentRectForFrame:stage.frame],cancelLayout=[cancel alignmentRectForFrame:cancel.frame];
+        BOOL actionFits=!cancel.hidden && NSContainsRect(progress.bounds,cancelLayout) && !NSIntersectsRect(stageLayout,cancelLayout);
+        if(!actionFits)fprintf(stderr,"Activity geometry: bounds=%s stage=%s cancel=%s hidden=%d\n",NSStringFromRect(progress.bounds).UTF8String,NSStringFromRect(stageLayout).UTF8String,NSStringFromRect(cancelLayout).UTF8String,cancel.hidden);
+        Check(actionFits,@"terminate action fits without covering the stage");
         Check(NSWidth(bar.frame)>340 && NSContainsRect(progress.bounds,bar.frame),@"progress fills the row and stays within bounds");
     }
     NSButton *hide=(id)row.arrangedSubviews.lastObject;[hide performClick:nil];Check(!cancelled,@"hiding progress never terminates the operation");AMOperationFinish(operation,@"success",@"完成");
