@@ -12,7 +12,11 @@ static void AMQuietReplace(Class cls, SEL selector, IMP implementation) {
 @implementation AMQuietUI
 + (void)load {
     @autoreleasepool {
-        if(![NSProcessInfo.processInfo.arguments containsObject:@"--quiet-test"]) {fprintf(stderr,"UI tests require the quiet runner\n");exit(2);}
+        BOOL isolatedUpdateBundle=NO;
+#ifdef AM_QUIET_BUNDLED_FIXTURE
+        isolatedUpdateBundle=[NSBundle.mainBundle.bundleIdentifier hasPrefix:@"io.github.ddl-manager.update-test."] && [[NSBundle.mainBundle objectForInfoDictionaryKey:@"DDLTestDataDirectory"] length]>0 && [[NSBundle.mainBundle objectForInfoDictionaryKey:@"DDLTestRoot"] length]>0;
+#endif
+        if(!isolatedUpdateBundle && ![NSProcessInfo.processInfo.arguments containsObject:@"--quiet-test"]) {fprintf(stderr,"UI tests require the quiet runner\n");exit(2);}
         AMQuietDialogChoices=NSMutableArray.array;
         pid_t frontBefore=NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier;
         AMQuietReplace(NSApplication.class,@selector(activateIgnoringOtherApps:),imp_implementationWithBlock(^(id obj,BOOL flag){AMQuietSuppressed++;}));

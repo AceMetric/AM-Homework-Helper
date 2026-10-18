@@ -90,7 +90,7 @@ def fixture(name, base_url, scenario):
                 CFBundleName="AM's Homework Helper 升级测试", CFBundleDisplayName="AM's Homework Helper 升级测试",
                 DDLTestRoot=str(folder), DDLTestDataDirectory=str(data), DDLTestKeychainService=keychain_service,
                 SUEnableAutomaticChecks=False, SUFeedURL=base_url + '/' + folder.name + '/appcast.xml',
-                NSAppTransportSecurity={'NSAllowsLocalNetworking': True})
+                LSUIElement=True, NSAppTransportSecurity={'NSAllowsLocalNetworking': True})
     task = {'id': 'synthetic-task', 'title': '升级保留模拟作业', 'subject': '模拟课程',
             'due': datetime.datetime(2026, 12, 20, 21), 'announcedDue': datetime.datetime(2026, 12, 21, 21),
             'leadDays': 1, 'reminderOffsets': [1440, 60, 0], 'priority': 1, 'completed': False, 'archived': False}
@@ -184,7 +184,7 @@ def main():
             elif scenario == 'offline':
                 feed.unlink()
             log = open(folder / 'process.log', 'w')
-            process = subprocess.Popen(['/usr/bin/open', '-n', '-W', str(host)], stdout=log, stderr=log)
+            process = subprocess.Popen(['/usr/bin/open', '-g', '-n', '-W', str(host)], stdout=log, stderr=log)
             try:
                 deadline = time.monotonic() + (90 if scenario == 'timeout' else 50)
                 terminal = None

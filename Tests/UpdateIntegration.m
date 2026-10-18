@@ -1,3 +1,5 @@
+#define AM_QUIET_BUNDLED_FIXTURE 1
+#import "QuietUI.h"
 // This full application harness is compiled with DDL_TESTING and an isolated bundle/data/keychain identity.
 // It drives Sparkle's real downloader/installer without clicking the production UI or accessing user data.
 #define main DDLApplicationMain
@@ -41,6 +43,7 @@ static NSArray *ErrorCodes(NSError *error) {
         self.app.courseWindow.busy = NO;
         [self.app.exitCoordinator operationStateChanged];
     });
+    [AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)]; // Explicitly choose safe waiting in the production quit prompt.
     reply(SPUUserUpdateChoiceInstall);
 }
 - (void)showInstallingUpdateWithApplicationTerminated:(BOOL)terminated retryTerminatingApplication:(void (^)(void))retry {}
@@ -86,4 +89,4 @@ static NSArray *ErrorCodes(NSError *error) {
     }
 }
 @end
-int main(int argc, char **argv) { @autoreleasepool { [NSApplication sharedApplication]; TestApplication *app = TestApplication.new; NSApp.delegate = app; [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular]; [NSApp run]; } return 0; }
+int main(int argc, char **argv) { @autoreleasepool { [NSApplication sharedApplication]; TestApplication *app = TestApplication.new; NSApp.delegate = app; [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited]; [NSApp run]; } return 0; }
