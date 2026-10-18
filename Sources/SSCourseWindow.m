@@ -291,6 +291,10 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if(self.usesToolbar){for(NSView *view in @[self.scanButton,self.syncButton,self.commitButton,self.assistantButton,self.moreButton,self.reviewFilter,self.typeFilter,self.search])[view removeFromSuperview];}
     [self layoutContent];
 }
+- (NSArray<NSString *> *)toolbarActionIdentifiers {
+    if(self.inbox)return @[];
+    return [self course] ? @[@"AMCourseScan",@"AMCourseSync",@"AMCourseSubmit",@"AMCourseMore"]:@[@"AMCourseScan",@"AMCourseMore"];
+}
 - (NSToolbarItem *)toolbarItemForIdentifier:(NSString *)identifier {
     (void)self.view;
     if([identifier isEqual:@"AMCourseSearch"]){NSSearchToolbarItem *item=[[NSSearchToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"搜索课程内容";item.visibilityPriority=NSToolbarItemVisibilityPriorityHigh;item.searchField=self.search;item.preferredWidthForSearchField=220;return item;}
