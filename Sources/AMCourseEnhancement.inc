@@ -4,7 +4,7 @@
     return [rows sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [[a[@"course"] stringByAppendingString:a[@"path"]] compare:[b[@"course"] stringByAppendingString:b[@"path"]]];}];
 }
 - (void)postRecognitionSummary {
-    NSArray *failures=[self recognitionFailures];if(!failures.count){AMDismissUIMessage(@"course-recognition",@"failures");return;}
+    NSArray *failures=[self recognitionFailures];if(self.operationID.length){AMDismissUIMessage(@"course-recognition",@"failures");return;}if(!failures.count){AMDismissUIMessage(@"course-recognition",@"failures");return;}
     NSString *revision=[[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:failures options:NSJSONWritingSortedKeys error:NULL] encoding:NSUTF8StringEncoding];__weak typeof(self) owner=self;
     AMPostUIMessageWithRevision(@"course-recognition",@"failures",revision,[NSString stringWithFormat:@"%lu 份材料未完成增强",(unsigned long)failures.count],AMUIMessageWarning,@"查看",^{[owner showRecognitionFailures:nil];});
 }
@@ -20,7 +20,7 @@
     if(choice!=NSAlertFirstButtonReturn)return;
     NSMutableDictionary *byCourse=NSMutableDictionary.dictionary;for(NSDictionary *row in failures){if(!byCourse[row[@"course"]])byCourse[row[@"course"]]=NSMutableArray.array;[byCourse[row[@"course"]] addObject:row[@"path"]];}
     for(NSString *fork in byCourse){NSDictionary *course=[self savedCourse:@{@"fork":fork}].copy,*scan=[self.reports[fork] copy];NSArray *paths=[byCourse[fork] copy];if(!course || !scan)continue;NSMutableDictionary *approved=settings.mutableCopy;approved[@"manualLocal"]=@YES;approved[@"manualCloud"]=@YES;approved[@"forceRecognition"]=@YES;
-        [self work:@"重试识别…" forCourse:course requestKey:[NSString stringWithFormat:@"retry|%@|%@",scan[@"commit"],paths] priority:100 operation:^id(NSError **error){NSMutableDictionary *cache=AMScanCacheLoad(error);if(!cache)return nil;NSDictionary *live=[self.git readCourseDocuments:course paths:paths fetch:YES cache:cache error:error];if(!live)return nil;for(NSString *path in paths){NSDictionary *old=nil,*now=nil;for(NSDictionary *doc in scan[@"documents"])if([doc[@"path"] isEqual:path])old=doc;for(NSDictionary *doc in live[@"documents"])if([doc[@"path"] isEqual:path])now=doc;if(!old || ![old[@"blobSHA"] isEqual:now[@"blobSHA"]]){if(error)*error=[NSError errorWithDomain:@"AMRecognition" code:3 userInfo:@{NSLocalizedDescriptionKey:@"材料版本已变化，请重新检查课程"}];return nil;}}NSDictionary *result=[self.git enhanceScan:scan course:course settings:approved paths:paths cache:cache];return AMScanCacheSave(cache,error) ? result:nil;} completion:^(NSDictionary *result,NSError *error){if(!result){[self showError:error];return;}NSMutableDictionary *reports=self.reports.mutableCopy;reports[fork]=result;self.reports=reports;if(self.hasUnsavedReview){if(!self.deferredScans)self.deferredScans=NSMutableDictionary.dictionary;self.deferredScans[fork]=result;}else {self.candidates[fork]=[self retainingSkill:self.candidates[fork] current:result[@"candidates"] documents:result[@"documents"]];self.materials[fork]=result[@"materials"] ?: @[];}NSError *save=nil;if(!SSWritePlist(@"discoveries.plist",self.discoveryEnvelope,&save))[self showError:save];else [self status:@"识别结果已保存"];[self postRecognitionSummary];[self refreshPresentation];}];
+        [self work:@"重试识别…" forCourse:course requestKey:[NSString stringWithFormat:@"retry|%@|%@",scan[@"commit"],paths] priority:100 operation:^id(NSError **error){NSMutableDictionary *cache=AMScanCacheLoad(error);if(!cache)return nil;NSDictionary *live=[self.git readCourseDocuments:course paths:paths fetch:YES cache:cache error:error];if(!live)return nil;for(NSString *path in paths){NSDictionary *old=nil,*now=nil;for(NSDictionary *doc in scan[@"documents"])if([doc[@"path"] isEqual:path])old=doc;for(NSDictionary *doc in live[@"documents"])if([doc[@"path"] isEqual:path])now=doc;if(!old || ![old[@"blobSHA"] isEqual:now[@"blobSHA"]]){if(error)*error=[NSError errorWithDomain:@"AMRecognition" code:3 userInfo:@{NSLocalizedDescriptionKey:@"材料版本已变化，请重新检查课程"}];return nil;}}NSDictionary *result=[self.git enhanceScan:scan course:course settings:approved paths:paths cache:cache];return AMScanCacheSave(cache,error) ? result:nil;} completion:^(NSDictionary *result,NSError *error){if(!result){[self showError:error];return;}NSMutableDictionary *reports=self.reports.mutableCopy;reports[fork]=result;self.reports=reports;if(self.hasUnsavedReview){if(!self.deferredScans)self.deferredScans=NSMutableDictionary.dictionary;self.deferredScans[fork]=result;}else {self.candidates[fork]=[self retainingSkill:self.candidates[fork] current:result[@"candidates"] documents:result[@"documents"]];self.materials[fork]=result[@"materials"] ?: @[];}NSError *save=nil;if(!SSWritePlist(@"discoveries.plist",self.discoveryEnvelope,&save))[self showError:save];else {[self updateCheckSummaryForCourse:course];[self status:self.statuses[fork]];}[self postRecognitionSummary];[self refreshPresentation];}];
     }
 }
 - (void)enhanceRecognition:(id)sender {
@@ -48,7 +48,7 @@
             NSMutableDictionary *reports=self.reports.mutableCopy ?: NSMutableDictionary.dictionary;reports[course[@"fork"]]=result;self.reports=reports;
             if(self.hasUnsavedReview){if(!self.deferredScans)self.deferredScans=NSMutableDictionary.dictionary;self.deferredScans[course[@"fork"]]=result;[self status:@"增强结果已准备好；当前审核草稿保留，结束编辑后接入。" ];return;}
             self.candidates[course[@"fork"]]=[self retainingSkill:self.candidates[course[@"fork"]] current:result[@"candidates"] documents:result[@"documents"]];self.materials[course[@"fork"]]=result[@"materials"] ?: @[];if(!self.preview)SSWritePlist(@"discoveries.plist",[self discoveryEnvelope],NULL);[self refreshPresentation];
-            [self status:[result[@"recognitionMessages"] count] ? @"已保留可用结果":@"增强识别完成"];[self postRecognitionSummary];
+            [self updateCheckSummaryForCourse:course];[self status:self.statuses[course[@"fork"]]];[self postRecognitionSummary];
         }];
     }];
 }
@@ -63,7 +63,7 @@
         NSString *completedKey=[NSString stringWithFormat:@"model-complete-v1|%@|%@|%@|%@",[document[@"repository"] lowercaseString],document[@"path"],document[@"blobSHA"],document[@"timeZone"]];
         if(cache[completedKey])continue;
         NSString *scope=[NSString stringWithFormat:@"%@|%@|%@",scan[@"commit"],document[@"path"],document[@"blobSHA"]];
-        [self work:@"后台增强识别…" forCourse:course requestKey:scope priority:0 operation:^id(NSError **error){
+        [self work:[NSString stringWithFormat:@"增强识别：%@",document[@"path"]] forCourse:course requestKey:scope priority:0 operation:^id(NSError **error){
             __block NSDictionary *input=nil;dispatch_sync(dispatch_get_main_queue(),^{input=[self.reports[course[@"fork"]] copy];});
             if(![input[@"commit"] isEqual:scan[@"commit"]]){if(error)*error=[NSError errorWithDomain:@"AMOperation" code:1 userInfo:@{NSLocalizedDescriptionKey:@"老师材料已更新，旧版本排队分析已跳过。"}];return nil;}
             NSMutableDictionary *stored=AMScanCacheLoad(error);if(!stored)return nil;
@@ -78,7 +78,7 @@
             if(self.hasUnsavedReview){if(!self.deferredScans)self.deferredScans=NSMutableDictionary.dictionary;self.deferredScans[course[@"fork"]]=result;}
             else {self.candidates[course[@"fork"]]=[self retainingSkill:self.candidates[course[@"fork"]] current:result[@"candidates"] documents:result[@"documents"]];self.materials[course[@"fork"]]=result[@"materials"] ?: @[];}
             if(!SSWritePlist(@"discoveries.plist",self.discoveryEnvelope,NULL))[self status:@"结果尚未保存，请检查本机数据目录后重试。"];
-            else [self status:[result[@"recognitionMessages"] count] ? @"已保留可用结果":@"增强识别完成"];[self postRecognitionSummary];
+            else {[self updateCheckSummaryForCourse:course];[self status:self.statuses[course[@"fork"]]];}[self postRecognitionSummary];
         }];
     }
 }

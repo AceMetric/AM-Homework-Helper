@@ -1,8 +1,6 @@
 // A bounded, session-only presentation ledger. The operation scheduler remains
 // the source of truth for running work; no message can unlock a safety check.
 static NSString *const AMUIMessagesChanged=@"AMUIMessagesChanged";
-static NSMutableSet *AMHiddenActivityOperations(void){static NSMutableSet *hidden;static dispatch_once_t once;dispatch_once(&once,^{hidden=NSMutableSet.set;});return hidden;}
-static NSString *AMActivityOperationRevision(NSDictionary *row){return [NSString stringWithFormat:@"%@/%@",row[@"id"],row[@"state"]];}
 static NSMutableArray<NSMutableDictionary *> *AMMessageLedger(void) {
     static NSMutableArray *rows;static dispatch_once_t once;dispatch_once(&once,^{rows=NSMutableArray.array;});return rows;
 }
@@ -43,7 +41,8 @@ void AMDismissUIMessage(NSString *scope,NSString *identifier){for(NSMutableDicti
 
 @interface AMActivityController:NSViewController
 @property NSStackView *body;
-@property NSArray *rowKeys;
+@property NSMutableDictionary<NSString *,NSView *> *rows;
+@property BOOL refreshing;
 @property NSScrollView *scroll;
 @property NSButton *allButton;
 @property(weak) NSPopover *popover;
@@ -53,36 +52,38 @@ void AMDismissUIMessage(NSString *scope,NSString *identifier){for(NSMutableDicti
     Surface *root=Box(nil,0);root.frame=NSMakeRect(0,0,440,140);self.view=root;
     self.body=[NSStackView stackViewWithViews:@[]];self.body.orientation=NSUserInterfaceLayoutOrientationVertical;self.body.alignment=NSLayoutAttributeLeading;self.body.spacing=8;
     self.scroll=AMScrollableForm(self.body);[root addSubview:self.scroll];
-    self.allButton=Button(@"查看全部后台任务…",self,@selector(showAll:),0);[self.allButton sizeToFit];[root addSubview:self.allButton];
+    self.allButton=Button(@"全部活动…",self,@selector(showAll:),0);[self.allButton sizeToFit];[root addSubview:self.allButton];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:AMUIMessagesChanged object:nil];[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:AMOperationsChanged object:nil];[self refresh];
 }
 - (void)refresh {
-    NSMutableArray *messages=NSMutableArray.array,*operations=NSMutableArray.array,*keys=NSMutableArray.array;
-    for(NSDictionary *message in AMUIMessages())if(![message[@"dismissed"] boolValue]){[messages addObject:message];[keys addObject:@[message[@"scope"],message[@"id"],message[@"date"]]];}
-    for(NSDictionary *op in AMPresentedOperations())if([@[@"queued",@"running",@"failed"] containsObject:op[@"state"]] && ![AMHiddenActivityOperations() containsObject:AMActivityOperationRevision(op)]){[operations addObject:op];[keys addObject:@[op[@"id"],op[@"state"]]];}
-    if([keys isEqual:self.rowKeys])return;self.rowKeys=keys;
-    for(NSView *child in self.body.arrangedSubviews.copy){[self.body removeArrangedSubview:child];[child removeFromSuperview];}
-    for(NSDictionary *op in operations){
-        AMOperationView *view=[[AMOperationView alloc] initWithFrame:NSMakeRect(0,0,430,76)];view.operationID=op[@"id"];
-        ActionButton *hide=Button(@"",self,@selector(hideOperation:),3);hide.symbol=@"xmark";hide.identifier=AMActivityOperationRevision(op);hide.accessibilityLabel=@"隐藏此操作的进度";
-        NSStackView *row=[NSStackView stackViewWithViews:@[view,hide]];row.alignment=NSLayoutAttributeTop;row.spacing=8;[self.body addArrangedSubview:row];[row.widthAnchor constraintEqualToAnchor:self.body.widthAnchor].active=YES;[view.heightAnchor constraintEqualToConstant:76].active=YES;[row.heightAnchor constraintEqualToConstant:76].active=YES;[hide.widthAnchor constraintEqualToConstant:24].active=YES;[view.widthAnchor constraintEqualToAnchor:row.widthAnchor constant:-32].active=YES;
+    if(self.refreshing)return;self.refreshing=YES;
+    if(!self.rows)self.rows=NSMutableDictionary.dictionary;
+    NSMutableArray *descriptors=NSMutableArray.array;
+    for(NSString *state in @[@"running",@"queued",@"failed",@"success",@"completed",@"cancelled"])for(NSDictionary *op in AMPresentedOperations())if([op[@"state"] isEqual:state] && ![AMHiddenActivityOperations() containsObject:op[@"id"]]) [descriptors addObject:@{@"key":[@"op/" stringByAppendingString:op[@"id"]],@"operation":op}];
+    for(NSDictionary *message in AMUIMessages())if(![message[@"dismissed"] boolValue])[descriptors addObject:@{@"key":[NSString stringWithFormat:@"message/%@/%@",message[@"scope"],message[@"id"]],@"message":message}];
+    NSMutableSet *wanted=NSMutableSet.set;for(NSDictionary *entry in descriptors)[wanted addObject:entry[@"key"]];
+    for(NSString *key in self.rows.allKeys.copy)if(![wanted containsObject:key]){NSView *view=self.rows[key];[self.body removeArrangedSubview:view];[view removeFromSuperview];[self.rows removeObjectForKey:key];}
+    for(NSView *view in self.body.arrangedSubviews.copy)if([view.identifier isEqual:@"activity-empty"]){[self.body removeArrangedSubview:view];[view removeFromSuperview];}
+    NSRect available=self.view.window.screen.visibleFrame;if(NSIsEmptyRect(available))available=NSScreen.mainScreen.visibleFrame;if(NSIsEmptyRect(available))available=NSMakeRect(0,0,800,600);
+    CGFloat width=MIN(440,MAX(240,NSWidth(available)-32)),bodyWidth=width-32;NSPoint position=self.scroll.contentView.bounds.origin;
+    self.body.frame=NSMakeRect(0,0,bodyWidth,0);self.scroll.frame=NSMakeRect(16,16,bodyWidth,1);
+    NSUInteger index=0;
+    for(NSDictionary *entry in descriptors){NSString *key=entry[@"key"];NSView *view=self.rows[key];
+        if(entry[@"operation"]){AMOperationView *progress=(id)view;if(!progress){progress=AMOperationView.new;progress.showsHeading=YES;progress.allowsDismissal=YES;progress.operationID=entry[@"operation"][@"id"];view=progress;}[progress refresh];}
+        else if(!view || ![[(AMActivityMessageRow *)view message][@"revision"] isEqual:entry[@"message"][@"revision"]]){if(view){[self.body removeArrangedSubview:view];[view removeFromSuperview];}view=[[AMActivityMessageRow alloc] initWithMessage:entry[@"message"]];}
+        if(self.rows[key]!=view){self.rows[key]=view;[self.body insertArrangedSubview:view atIndex:MIN(index,self.body.arrangedSubviews.count)];[view.widthAnchor constraintEqualToAnchor:self.body.widthAnchor].active=YES;}
+        else if([self.body.arrangedSubviews indexOfObjectIdenticalTo:view]!=index){[self.body removeArrangedSubview:view];[self.body insertArrangedSubview:view atIndex:index];}
+        view.frame=NSMakeRect(0,0,bodyWidth,NSHeight(view.frame));
+        if([view isKindOfClass:AMOperationView.class]){NSLayoutConstraint *height=objc_getAssociatedObject(view,@selector(heightForWidth:));if(!height){height=[view.heightAnchor constraintEqualToConstant:1];height.active=YES;objc_setAssociatedObject(view,@selector(heightForWidth:),height,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}height.constant=[(AMOperationView *)view heightForWidth:bodyWidth];}
+        index++;
     }
-    for(NSDictionary *message in messages){AMActivityMessageRow *view=[[AMActivityMessageRow alloc] initWithMessage:message];[self.body addArrangedSubview:view];[view.widthAnchor constraintEqualToAnchor:self.body.widthAnchor].active=YES;}
-    if(!messages.count && !operations.count)[self.body addArrangedSubview:Text(@"暂无活动",13,NSFontWeightRegular,Muted())];
-    // Size from the rows, never from the scroll view's previous viewport.
-    CGFloat width=440,bodyWidth=width-32;
-    self.scroll.frame=NSMakeRect(16,16,bodyWidth,300);
-    [self.scroll layoutSubtreeIfNeeded];[self.body layoutSubtreeIfNeeded];
-    CGFloat contentHeight=MAX(28,ceil(self.body.fittingSize.height));
-    CGFloat visibleHeight=MIN(300,contentHeight),height=visibleHeight+68;
-    self.preferredContentSize=NSMakeSize(width,height);self.view.frame=NSMakeRect(0,0,width,height);
-    self.popover.contentSize=self.preferredContentSize;
-    self.scroll.frame=NSMakeRect(16,16,bodyWidth,visibleHeight);
-    self.allButton.frame=NSMakeRect(16,height-40,MIN(bodyWidth,self.allButton.fittingSize.width),28);
-    [self.scroll layoutSubtreeIfNeeded];
-
+    if(!descriptors.count){NSTextField *empty=Text(@"暂无活动",13,NSFontWeightRegular,Muted());empty.identifier=@"activity-empty";[self.body addArrangedSubview:empty];}
+    [self.scroll layoutSubtreeIfNeeded];[self.body layoutSubtreeIfNeeded];CGFloat contentHeight=MAX(28,ceil(self.body.fittingSize.height));
+    CGFloat limit=MIN(420,NSHeight(available)*0.6),visibleHeight=MIN(MAX(28,limit-64),contentHeight),height=visibleHeight+64;
+    self.preferredContentSize=NSMakeSize(width,height);self.view.frame=NSMakeRect(0,0,width,height);self.popover.contentSize=self.preferredContentSize;
+    self.scroll.frame=NSMakeRect(16,16,bodyWidth,visibleHeight);self.allButton.frame=NSMakeRect(16,height-40,MIN(bodyWidth,self.allButton.fittingSize.width),28);
+    [self.scroll layoutSubtreeIfNeeded];[self.body layoutSubtreeIfNeeded];[self.scroll.contentView scrollToPoint:NSMakePoint(position.x,MIN(position.y,MAX(0,contentHeight-visibleHeight)))];[self.scroll reflectScrolledClipView:self.scroll.contentView];self.refreshing=NO;
 }
-- (void)hideOperation:(NSButton *)sender{[AMHiddenActivityOperations() addObject:sender.identifier];[NSNotificationCenter.defaultCenter postNotificationName:AMUIMessagesChanged object:nil];}
 - (void)showAll:(id)sender{AMShowOperations(self.view.window);}
 - (void)dealloc{[NSNotificationCenter.defaultCenter removeObserver:self];}
 @end
@@ -95,7 +96,7 @@ void AMDismissUIMessage(NSString *scope,NSString *identifier){for(NSMutableDicti
     if((self=[super initWithFrame:frame])){self.title=@"活动";self.bezelStyle=NSBezelStyleRounded;self.imagePosition=NSImageLeft;self.target=self;self.action=@selector(showActivity:);self.accessibilityLabel=@"活动与提示";[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:AMUIMessagesChanged object:nil];[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:AMOperationsChanged object:nil];__weak typeof(self) owner=self;self.refreshTimer=[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer){[owner refresh];}];[self refresh];}return self;
 }
 - (void)refresh {
-    NSUInteger active=0;BOOL failed=NO;for(NSDictionary *op in AMPresentedOperations()){if([@[@"queued",@"running"] containsObject:op[@"state"]])active++;if([op[@"state"] isEqual:@"failed"] && ![AMHiddenActivityOperations() containsObject:AMActivityOperationRevision(op)])failed=YES;}
+    NSUInteger active=0;BOOL failed=NO;for(NSDictionary *op in AMPresentedOperations()){if([@[@"queued",@"running"] containsObject:op[@"state"]])active++;if(([op[@"state"] isEqual:@"failed"] || [op[@"warning"] boolValue]) && ![AMHiddenActivityOperations() containsObject:op[@"id"]])failed=YES;}
     NSDictionary *latest=nil,*warning=nil;for(NSDictionary *message in AMUIMessages())if(![message[@"dismissed"] boolValue]){if(!latest)latest=message;if(!warning && [message[@"severity"] integerValue]>=AMUIMessageWarning)warning=message;}
     BOOL recent=latest && [latest[@"severity"] integerValue]==AMUIMessageSuccess && -[latest[@"date"] timeIntervalSinceNow]<4;NSString *symbol=active ? @"arrow.triangle.2.circlepath":(failed || warning!=nil ? @"exclamationmark.circle":recent ? @"checkmark.circle":@"clock");
     self.image=[NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];self.toolTip=active ? [NSString stringWithFormat:@"%lu 项后台操作",(unsigned long)active]:(warning[@"text"] ?: latest[@"text"] ?: @"活动与最近记录");self.accessibilityValue=self.toolTip;

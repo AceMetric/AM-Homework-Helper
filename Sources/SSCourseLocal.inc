@@ -20,6 +20,6 @@
             NSMutableArray *assignments=NSMutableArray.array,*other=NSMutableArray.array;for(NSDictionary *record in byID.allValues)if([record[@"kind"] isEqual:@"assignment"])[assignments addObject:record];else[other addObject:record];
             candidates[course[@"fork"]]=SSConsolidateAssignments(assignments);materials[course[@"fork"]]=SSGroupMaterials(other);
             NSError *saveError=nil;if(!SSWritePlist(@"discoveries.plist",[self discoveryEnvelope:candidates materials:materials progress:self.skillProgress batches:self.skillBatches],&saveError)){[self showError:saveError];return;}self.candidates=candidates;self.materials=materials;SSWritePlist(@"recognition-last-result.plist",@{@"course":course[@"fork"],@"date":NSDate.date,@"model":settings[@"model"],@"success":enhanced[@"modelCompleted"] ?: @NO},NULL);
-            NSMutableDictionary *reports=self.reports.mutableCopy ?: NSMutableDictionary.dictionary;reports[course[@"fork"]]=enhanced;self.reports=reports;[self status:@"已保留可用结果"];[self postRecognitionSummary]; }];
+            NSMutableDictionary *reports=self.reports.mutableCopy ?: NSMutableDictionary.dictionary;reports[course[@"fork"]]=enhanced;self.reports=reports;[self updateCheckSummaryForCourse:course];[self status:self.statuses[course[@"fork"]]];[self postRecognitionSummary]; }];
     }];
 }
