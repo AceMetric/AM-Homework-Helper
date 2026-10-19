@@ -43,7 +43,7 @@ static inline NSDictionary *AMCourseCheckPresentation(NSDictionary *scan,NSUInte
     if(unknown)[details addObject:[NSString stringWithFormat:@"类型待确认：%lu 项",(unsigned long)unknown]];
     NSDictionary *counts=scan[@"scanSummary"];
     for(NSArray *pair in @[@[@"new",@"新增材料"],@[@"changed",@"变化材料"],@[@"reused",@"复用材料"],@[@"read",@"读取材料"]])if([counts[pair[0]] unsignedIntegerValue])[details addObject:[NSString stringWithFormat:@"%@：%@ 份",pair[1],counts[pair[0]]]];
-    if([scan[@"skipped"] count])[details addObject:[NSString stringWithFormat:@"跳过文件：%lu 个\n%@",(unsigned long)[scan[@"skipped"] count],scan[@"skipped"]]];
+    if([scan[@"skipped"] count])[details addObject:[NSString stringWithFormat:@"跳过文件：%lu 个\n%@",(unsigned long)[scan[@"skipped"] count],[scan[@"skipped"] componentsJoinedByString:@"\n"]]];
     for(NSString *path in [[scan[@"modelFailures"] allKeys] sortedArrayUsingSelector:@selector(compare:)]){
         NSDictionary *failure=scan[@"modelFailures"][path];NSMutableArray *reasons=NSMutableArray.array;for(NSDictionary *issue in failure[@"issues"] ?: @[])[reasons addObject:issue[@"reason"] ?: @"未通过核验"];
         [details addObject:[NSString stringWithFormat:@"未完成增强：%@\n%@",path,[reasons componentsJoinedByString:@"\n"]]];
