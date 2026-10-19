@@ -78,11 +78,19 @@ void AMDismissUIMessage(NSString *scope,NSString *identifier){for(NSMutableDicti
         index++;
     }
     if(!descriptors.count){NSTextField *empty=Text(@"暂无活动",13,NSFontWeightRegular,Muted());empty.identifier=@"activity-empty";[self.body addArrangedSubview:empty];}
-    [self.scroll layoutSubtreeIfNeeded];[self.body layoutSubtreeIfNeeded];CGFloat contentHeight=MAX(28,ceil(self.body.fittingSize.height));
-    CGFloat limit=MIN(420,NSHeight(available)*0.6),visibleHeight=MIN(MAX(28,limit-64),contentHeight),height=visibleHeight+64;
-    self.preferredContentSize=NSMakeSize(width,height);self.view.frame=NSMakeRect(0,0,width,height);self.popover.contentSize=self.preferredContentSize;
-    self.scroll.frame=NSMakeRect(16,16,bodyWidth,visibleHeight);self.allButton.frame=NSMakeRect(16,height-40,MIN(bodyWidth,self.allButton.fittingSize.width),28);
+    // A legacy scroller takes layout width only after overflow is known. Measure
+    // again using the actual clip width so wrapped text never keeps a stale height.
+    CGFloat contentHeight=0,visibleHeight=0;
+    for(NSUInteger pass=0;pass<3;pass++){
+        [self.scroll layoutSubtreeIfNeeded];[self.body layoutSubtreeIfNeeded];CGFloat actualWidth=NSWidth(self.body.bounds);
+        for(NSView *view in self.body.arrangedSubviews)if([view isKindOfClass:AMOperationView.class]){NSLayoutConstraint *height=objc_getAssociatedObject(view,@selector(heightForWidth:));height.constant=[(AMOperationView *)view heightForWidth:actualWidth];}
+        [self.body layoutSubtreeIfNeeded];contentHeight=MAX(28,ceil(self.body.fittingSize.height));
+        CGFloat limit=MIN(420,NSHeight(available)*0.6);visibleHeight=MIN(MAX(28,limit-64),contentHeight);CGFloat height=visibleHeight+64;
+        self.preferredContentSize=NSMakeSize(width,height);self.view.frame=NSMakeRect(0,0,width,height);self.popover.contentSize=self.preferredContentSize;
+        self.scroll.frame=NSMakeRect(16,16,bodyWidth,visibleHeight);self.allButton.frame=NSMakeRect(16,height-40,MIN(bodyWidth,self.allButton.fittingSize.width),28);
+    }
     [self.scroll layoutSubtreeIfNeeded];[self.body layoutSubtreeIfNeeded];[self.scroll.contentView scrollToPoint:NSMakePoint(position.x,MIN(position.y,MAX(0,contentHeight-visibleHeight)))];[self.scroll reflectScrolledClipView:self.scroll.contentView];self.refreshing=NO;
+
 }
 - (void)showAll:(id)sender{AMShowOperations(self.view.window);}
 - (void)dealloc{[NSNotificationCenter.defaultCenter removeObserver:self];}
