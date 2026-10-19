@@ -5,54 +5,57 @@
 #import "../Sources/SSCourseWindow.m"
 @interface NSViewController (ActivityTest)
 - (void)refresh;
-- (void)hideOperation:(NSButton *)sender;
 @end
 static NSUInteger checks;
 static void Check(BOOL ok,NSString *reason){checks++;if(!ok){fprintf(stderr,"FAIL: %s\n",reason.UTF8String);exit(1);}}
 static NSToolbarItem *Item(AppDelegate *app,NSString *identifier){for(NSToolbarItem *item in app.window.toolbar.items)if([item.itemIdentifier isEqual:identifier])return item;return nil;}
 static void Layout(NSView *view){[view layoutSubtreeIfNeeded];for(NSView *child in view.subviews)Layout(child);}
+static AMOperationView *FindOperation(NSView *root,NSString *identifier){if([root isKindOfClass:AMOperationView.class] && [[(AMOperationView *)root operationID] isEqual:identifier])return (id)root;for(NSView *view in root.subviews){AMOperationView *found=FindOperation(view,identifier);if(found)return found;}return nil;}
+static void CheckGeometry(AMOperationView *view){Layout(view);NSTextField *phase=[view valueForKey:@"stage"],*amount=[view valueForKey:@"amount"];NSButton *heading=[view valueForKey:@"heading"],*button=[view valueForKey:@"cancelButton"];NSProgressIndicator *bar=[view valueForKey:@"bar"];
+    NSRect text=[phase alignmentRectForFrame:phase.frame],action=[button alignmentRectForFrame:button.frame];
+    if(!NSContainsRect(view.bounds,text))fprintf(stderr,"bounds=%s phase=%s\n",NSStringFromRect(view.bounds).UTF8String,NSStringFromRect(text).UTF8String);
+    Check(NSWidth(text)>240 && NSContainsRect(view.bounds,text),@"phase has a readable contained frame");
+    Check(NSContainsRect(view.bounds,[heading alignmentRectForFrame:heading.frame]),@"heading fits row");
+    Check(button.hidden || (NSContainsRect(view.bounds,action) && !NSIntersectsRect(text,action)),@"single state action fits without overlapping text");
+    Check(NSContainsRect(view.bounds,[amount alignmentRectForFrame:amount.frame]),@"elapsed time fits row");
+    Check(bar.hidden || (NSContainsRect(view.bounds,bar.frame) && !NSIntersectsRect(bar.frame,text) && !NSIntersectsRect(bar.frame,amount.frame)),@"progress follows phase and does not cover time");
+}
 int main(){@autoreleasepool{
-    Check(NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"]!=nil,@"isolated synthetic data");
-    [NSApplication sharedApplication];[NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];AppDelegate *app=AppDelegate.new;NSApp.delegate=app;[app applicationDidFinishLaunching:[NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification object:NSApp]];
-    app.page=4;[app.courseWindow selectCourseID:nil];[app refreshPageToolbar];
-    Check(!Item(app,@"AMCourseSync") && !Item(app,@"AMCourseSubmit"),@"all courses removes unavailable toolbar items instead of leaving empty capsules");
-    [app.courseWindow.courses addObject:[@{@"fork":@"student/toolbar-fixture",@"upstream":@"teacher/fixture",@"path":@"/synthetic/no-git-operations"} mutableCopy]];
-    Check([app.courseWindow selectCourseID:@"student/toolbar-fixture"],@"select synthetic course");
-    for(NSInteger section=0;section<4;section++){
-        app.courseWindow.sections.selectedSegment=section;[app.courseWindow layoutContent];[app refreshPageToolbar];
-        for(NSString *identifier in @[@"AMCourseSync",@"AMCourseSubmit"]){NSToolbarItem *item=Item(app,identifier);NSButton *button=(id)item.view;Check(item && !button.hidden && button.title.length && NSWidth(button.frame)>30,@"selected course exposes named, visible actions in every section");}
-        Check([Item(app,@"AMCourseScan").menuFormRepresentation.title isEqual:app.courseWindow.scanButton.title],@"overflow action name follows the selected course");
-        Check((Item(app,@"AMCourseFilter")!=nil)==(section==0),@"filter item exists only in its content section");
+    Check(NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"]!=nil,@"isolated synthetic data");[NSApplication sharedApplication];[NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];AppDelegate *app=AppDelegate.new;NSApp.delegate=app;[app applicationDidFinishLaunching:[NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification object:NSApp]];
+    app.page=4;[app.courseWindow selectCourseID:nil];[app refreshPageToolbar];Check(!Item(app,@"AMCourseSync") && !Item(app,@"AMCourseSubmit"),@"all courses removes unavailable actions");
+    [app.courseWindow.courses addObject:[@{@"fork":@"student/toolbar-fixture",@"upstream":@"teacher/fixture",@"path":@"/synthetic/no-git-operations"} mutableCopy]];Check([app.courseWindow selectCourseID:@"student/toolbar-fixture"],@"select course");app.courseWindow.connected=YES;
+    for(NSInteger section=0;section<4;section++){app.courseWindow.sections.selectedSegment=section;[app.courseWindow refreshPresentation];[app refreshPageToolbar];
+        for(NSString *identifier in @[@"AMCourseSync",@"AMCourseSubmit"]){NSButton *button=(id)Item(app,identifier).view;Check(button && !button.hidden && button.title.length && NSWidth(button.frame)>30,@"named toolbar action remains available");}
+        Check(app.courseWindow.setupButton.hidden,@"configured course has no duplicate add-course button");Check((Item(app,@"AMCourseFilter")!=nil)==(section==0),@"filter exists only in content section");
     }
-    [app.courseWindow selectCourseID:nil];[app refreshPageToolbar];Check(!Item(app,@"AMCourseSync") && !Item(app,@"AMCourseSubmit"),@"returning to all courses removes items again");Check([Item(app,@"AMCourseScan").menuFormRepresentation.title isEqual:@"检查所有课程"],@"overflow action resets to all courses");
-    for(NSDictionary *row in AMUIMessages())AMDismissUIMessage(row[@"scope"],row[@"id"]);
-    NSViewController *activity=[NSClassFromString(@"AMActivityController") new];NSWindow *window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,440,200) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];window.contentViewController=activity;
-    (void)activity.view;Layout(activity.view);Check(NSHeight(activity.view.frame)<150,@"empty activity fits its content");
-    __block BOOL cancelled=NO;NSString *operation=AMOperationBegin(@"检查材料",@"模拟课程",YES,^{cancelled=YES;});AMOperationProgress(operation,@"读取作业与附件",12,37);[activity refresh];Layout(activity.view);
-    NSStackView *body=[activity valueForKey:@"body"];NSStackView *row=(id)body.arrangedSubviews.firstObject;AMOperationView *progress=(id)row.arrangedSubviews.firstObject;
-    for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua,NSAppearanceNameAccessibilityHighContrastAqua,NSAppearanceNameAccessibilityHighContrastDarkAqua]){
-        activity.view.appearance=[NSAppearance appearanceNamed:appearance];Layout(activity.view);
-        NSTextField *stage=[progress valueForKey:@"stage"];NSButton *cancel=[progress valueForKey:@"cancelButton"];NSProgressIndicator *bar=[progress valueForKey:@"bar"];
-        Check(NSHeight(activity.view.frame)<200 && NSWidth(progress.frame)>340,@"single activity is compact without compressing its content");
-        Check(stage.stringValue.length && NSWidth(stage.frame)>180 && NSContainsRect(progress.bounds,[stage alignmentRectForFrame:stage.frame]),@"stage text has a readable, contained frame");
-        // AppKit's older rounded buttons include bezel/shadow insets outside their
-        // alignment frame. Compare the same layout bounds on every supported OS.
-        NSRect stageLayout=[stage alignmentRectForFrame:stage.frame],cancelLayout=[cancel alignmentRectForFrame:cancel.frame];
-        BOOL actionFits=!cancel.hidden && NSContainsRect(progress.bounds,cancelLayout) && !NSIntersectsRect(stageLayout,cancelLayout);
-        if(!actionFits)fprintf(stderr,"Activity geometry: bounds=%s stage=%s cancel=%s hidden=%d\n",NSStringFromRect(progress.bounds).UTF8String,NSStringFromRect(stageLayout).UTF8String,NSStringFromRect(cancelLayout).UTF8String,cancel.hidden);
-        Check(actionFits,@"terminate action fits without covering the stage");
-        Check(NSWidth(bar.frame)>340 && NSContainsRect(progress.bounds,bar.frame),@"progress fills the row and stays within bounds");
-    }
-    NSButton *hide=(id)row.arrangedSubviews.lastObject;[hide performClick:nil];Check(!cancelled,@"hiding progress never terminates the operation");AMOperationFinish(operation,@"success",@"完成");
-    NSString *cancellable=AMOperationBegin(@"再次检查",@"模拟课程",YES,^{cancelled=YES;});[activity refresh];Layout(activity.view);row=(id)body.arrangedSubviews.firstObject;progress=(id)row.arrangedSubviews.firstObject;
-    NSButton *terminate=[progress valueForKey:@"cancelButton"];[terminate performClick:nil];Check(cancelled,@"terminate button still reaches the scheduler cancellation action");AMOperationFinish(cancellable,@"cancelled",@"已取消");
-    NSPopover *popover=NSPopover.new;popover.contentViewController=activity;[activity setValue:popover forKey:@"popover"];Check(popover.contentSize.height<200,@"native popover receives the compact controller size");
-    for(NSUInteger i=0;i<12;i++)AMPostUIMessage(@"layout",[NSString stringWithFormat:@"%lu",(unsigned long)i],@"这是一条需要显示完整内容的模拟错误消息，请重试当前操作。",AMUIMessageError,nil,nil);
-    [activity refresh];Layout(activity.view);NSScrollView *scroll=[activity valueForKey:@"scroll"];
-    Check(popover.contentSize.height<=400 && fabs(popover.contentSize.height-NSHeight(activity.view.frame))<1 && popover.contentSize.height>250,@"native popover grows with many messages within its limit");
-    Check(NSHeight(activity.view.frame)<=400 && NSHeight(scroll.documentView.frame)>NSHeight(scroll.contentView.bounds),@"many messages scroll within a bounded popover");
-    for(NSView *message in body.arrangedSubviews)Check(NSWidth(message.frame)>380 && NSHeight(message.frame)>=32,@"message rows retain readable dimensions");
-    for(NSDictionary *message in AMUIMessages())AMDismissUIMessage(message[@"scope"],message[@"id"]);[activity refresh];Layout(activity.view);Check(popover.contentSize.height<150,@"native popover shrinks when activities are dismissed");
-    Check(NSHeight(activity.view.frame)<150,@"dismissal shrinks the activity instead of leaving blank space");
+    app.courseWindow.connected=NO;[app.courseWindow refreshPresentation];Check(!app.courseWindow.setupButton.hidden && [app.courseWindow.setupButton.title isEqual:@"连接 GitHub"],@"disconnected course retains recovery entry");app.courseWindow.connected=YES;[app.courseWindow.courses[0] removeObjectForKey:@"path"];[app.courseWindow refreshPresentation];Check(!app.courseWindow.setupButton.hidden && [app.courseWindow.setupButton.title isEqual:@"关联文件夹…"],@"unlinked course retains necessary action");
+    NSMenu *actions=[app.courseWindow courseActionsMenu];Check([actions itemWithTitle:@"添加课程…"]!=nil && ![actions itemWithTitle:@"仓库信息"],@"add course has one menu entry and repository uses section navigation only");
+    NSDictionary *warm=@{@"candidates":@[@{}],@"materials":@[],@"scanSummary":@{@"new":@0,@"changed":@0,@"reused":@5},@"skipped":@[]};
+    NSDictionary *summary=AMCourseCheckPresentation(warm,0);Check([summary[@"summary"] isEqual:@"无新增作业"] && [summary[@"details"] containsString:@"复用材料：5 份"],@"cache count stays in details and an imported discovery is not called pending");
+    summary=AMCourseCheckPresentation(@{@"materials":@[@{@"kind":@"exam"}],@"scanSummary":@{@"reused":@5}},0);Check([summary[@"summary"] isEqual:@"1 项考试"],@"exam-only result has no zero counts or model boilerplate");
+    Check([AMCourseCheckPresentation(@{},3)[@"summary"] isEqual:@"3 项待审核"],@"pending count uses effective review state rather than material count");
+    summary=AMCourseCheckPresentation(@{@"modelFailures":@{@"a/README.md":@{@"issues":@[@{@"reason":@"原文不匹配"}]}},@"materials":@[@{@"kind":@"exam"}]},2);Check([summary[@"summary"] isEqual:@"2 项待审核 · 1 项考试 · 1 份材料未完成增强"] && [summary[@"warning"] boolValue] && [summary[@"details"] containsString:@"原文不匹配"],@"partial result preserves findings and concrete failure details");
+    summary=AMCourseCheckPresentation(@{@"error":@"断网",@"detail":@"老师远端暂时不可访问"},0);Check([summary[@"summary"] isEqual:@"检查失败"] && [summary[@"details"] containsString:@"老师远端"],@"failure is short without losing reason");
+    for(NSDictionary *message in AMUIMessages())AMDismissUIMessage(message[@"scope"],message[@"id"]);
+    // A real controller completion writes its result into the operation, never a second status message.
+    app.courseWindow.preview=NO;app.courseWindow.verifiedSubmissionsChanged=nil;NSDictionary *target=app.courseWindow.courses[0];__block BOOL done=NO;
+    [app.courseWindow work:@"读取模拟课程" forCourse:target requestKey:@"presentation-fixture" priority:100 operation:^id(NSError **error){return @{};} completion:^(NSDictionary *value,NSError *error){Check(!error,@"synthetic completion succeeds");[app.courseWindow status:@"无新增作业"];done=YES;}];
+    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:3];while((!done || app.courseWindow.operationID) && deadline.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];Check(done && !app.courseWindow.operationID,@"controller finishes synthetic work");
+    NSUInteger records=0;NSString *finished=nil;for(NSDictionary *row in AMOperations())if([row[@"kind"] isEqual:@"读取模拟课程"]){records++;finished=row[@"id"];Check([row[@"summary"] isEqual:@"无新增作业"],@"completion summary belongs to original operation");}
+    Check(records==1,@"one request creates one operation result");for(NSUInteger i=0;i<4;i++)[app.courseWindow refreshPresentation];BOOL duplicate=NO;for(NSDictionary *message in AMUIMessages())if(![message[@"dismissed"] boolValue] && [message[@"text"] isEqual:@"无新增作业"])duplicate=YES;Check(!duplicate,@"completion and rendering do not emit duplicate status messages");app.courseWindow.preview=YES;
+    NSViewController *activity=[NSClassFromString(@"AMActivityController") new];NSWindow *window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,440,200) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];window.contentViewController=activity;(void)activity.view;[activity refresh];NSButton *finishedClose=[FindOperation(activity.view,finished) valueForKey:@"cancelButton"];[finishedClose performClick:nil];[activity refresh];Layout(activity.view);Check(NSHeight(activity.view.frame)<150,@"empty activity fits content");
+    __block NSUInteger cancelled=0;NSString *operation=AMOperationBegin(@"检查材料",@"student/一门名称很长的模拟课程",YES,^{cancelled++;});AMOperationProgress(operation,@"分析老师材料：assignment-01/deep/directory/README.md，核验对应活动与日期依据",12,37);[activity refresh];
+    AMOperationView *progress=FindOperation(activity.view,operation);Check(progress!=nil && progress.subviews.count==2,@"one operation owns text column and exactly one state action");
+    for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua,NSAppearanceNameAccessibilityHighContrastAqua,NSAppearanceNameAccessibilityHighContrastDarkAqua]){activity.view.appearance=[NSAppearance appearanceNamed:appearance];[activity refresh];CheckGeometry(progress);Check(NSHeight(activity.view.frame)<240,@"single long activity grows naturally without blank space");}
+    NSButton *stop=[progress valueForKey:@"cancelButton"];Check([stop.accessibilityLabel isEqual:@"停止"],@"running item offers stop only");[stop performClick:nil];Check(cancelled==1,@"stop reaches scheduler once");AMOperationProgress(operation,@"late progress callback",13,37);[activity refresh];Check(stop.hidden && [[[progress valueForKey:@"stage"] stringValue] isEqual:@"正在停止"],@"late callback cannot replace stopping state or re-enable action");
+    AMOperationSetResult(operation,@"1 项考试",@"复用材料：5 份",NO,nil,nil);AMOperationFinish(operation,@"success",@"完成");[activity refresh];Check(FindOperation(activity.view,operation)==progress,@"completion reuses same row");Check([[[progress valueForKey:@"stage"] stringValue] isEqual:@"1 项考试"],@"stopping state ends when result arrives");Check(!stop.hidden && [stop.accessibilityLabel isEqual:@"关闭记录"],@"finished item offers dismiss only");[stop performClick:nil];[activity refresh];Check(!FindOperation(activity.view,operation) && cancelled==1,@"dismiss removes completed row without cancellation");[activity refresh];Check(!FindOperation(activity.view,operation),@"refresh does not restore dismissed result");
+    __block NSUInteger queuedStarts=0;NSString *blocker=AMOperationEnqueue(@"layout-resource-owner",@"检查课程",@"student/course",@[@"layout-only"],100,^(NSString *key){},nil);
+    NSString *queued=AMOperationEnqueue(@"layout-queued",@"增强识别",@"student/course",@[@"layout-only"],100,^(NSString *key){queuedStarts++;AMOperationFinish(key,@"success",@"完成");},nil);[activity refresh];AMOperationView *waiting=FindOperation(activity.view,queued);NSButton *cancelQueue=[waiting valueForKey:@"cancelButton"];Check([cancelQueue.accessibilityLabel isEqual:@"取消排队"] && [[[waiting valueForKey:@"stage"] stringValue] isEqual:@"排队中"],@"queued row has one cancel action and compact status");Check(FindOperation(activity.view,blocker)!=waiting,@"same course with distinct operations retains separate rows");[cancelQueue performClick:nil];[activity refresh];Check(queuedStarts==0 && FindOperation(activity.view,queued)==waiting,@"queue cancellation never starts work and retains result identity");AMOperationFinish(blocker,@"success",@"完成");[activity refresh];for(NSString *key in @[queued,blocker]){NSButton *close=[FindOperation(activity.view,key) valueForKey:@"cancelButton"];[close performClick:nil];}[activity refresh];
+    NSString *active=AMOperationBegin(@"后台分析",@"student/course",YES,^{cancelled++;});[activity refresh];AMOperationView *same=FindOperation(activity.view,active);for(NSUInteger i=0;i<20;i++){AMOperationProgress(active,@"核验原文",i,20);[activity refresh];Check(FindOperation(activity.view,active)==same,@"frequent updates retain row identity");}
+    for(NSUInteger i=0;i<8;i++)AMPostUIMessage(@"layout",[NSString stringWithFormat:@"%lu",(unsigned long)i],@"模拟错误：这是一段较长的中文内容，需要在浮窗内正常换行，并保留恢复入口。",AMUIMessageError,nil,nil);[activity refresh];Layout(activity.view);
+    NSScrollView *scroll=[activity valueForKey:@"scroll"];NSButton *all=[activity valueForKey:@"allButton"];Check(NSHeight(activity.view.frame)<=420 && NSHeight(scroll.documentView.frame)>NSHeight(scroll.contentView.bounds),@"many rows scroll inside bounded popover");Check(NSContainsRect(activity.view.bounds,all.frame) && !NSIntersectsRect(all.frame,scroll.frame),@"all activities footer stays outside scrolling rows");[scroll.contentView scrollToPoint:NSMakePoint(0,50)];CGFloat before=scroll.contentView.bounds.origin.y;AMOperationProgress(active,@"下一阶段",1,2);[activity refresh];Check(fabs(scroll.contentView.bounds.origin.y-before)<1,@"progress refresh preserves scroll position");
+    NSStackView *body=[activity valueForKey:@"body"];for(NSView *row in body.arrangedSubviews)Check(NSWidth(row.frame)>380 && NSHeight(row.frame)>=28,@"operation and message rows retain readable width and height");
+    for(NSDictionary *message in AMUIMessages())AMDismissUIMessage(message[@"scope"],message[@"id"]);AMOperationFinish(active,@"cancelled",@"已取消");[activity refresh];NSButton *dismiss=[FindOperation(activity.view,active) valueForKey:@"cancelButton"];[dismiss performClick:nil];[activity refresh];Check(NSHeight(activity.view.frame)<150,@"dismissal shrinks popover");
+    NSPopover *popover=NSPopover.new;popover.contentViewController=activity;[activity setValue:popover forKey:@"popover"];Check(popover.contentSize.height<150,@"native popover receives compact size");
     [app.ticker invalidate];[app.quickTimer invalidate];[app.window orderOut:nil];[window orderOut:nil];[NSStatusBar.systemStatusBar removeStatusItem:app.statusItem];printf("PASS: %lu toolbar and activity geometry and interaction assertions\n",(unsigned long)checks);
 }return 0;}

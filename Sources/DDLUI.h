@@ -62,6 +62,9 @@ ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL acti
 @interface AMOperationView : NSView
 @property(nonatomic,copy) NSString *operationID;
 @property(nonatomic) BOOL hidesCancellation;
+@property(nonatomic) BOOL showsHeading;
+@property(nonatomic) BOOL allowsDismissal;
+- (CGFloat)heightForWidth:(CGFloat)width;
 - (void)refresh;
 @end
 void AMShowOperations(NSWindow *parent);

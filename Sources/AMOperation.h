@@ -6,6 +6,8 @@ NSString *AMOperationBeginWithExitPolicy(NSString *kind,NSString *target,BOOL ca
 void AMOperationProgress(NSString * _Nullable identifier,NSString *stage,NSInteger completed,NSInteger total);
 void AMOperationFinish(NSString * _Nullable identifier,NSString *state,NSString *message);
 void AMOperationCancel(NSString *identifier);
+// A result belongs to its original operation; details and recovery stay off the compact row.
+void AMOperationSetResult(NSString *identifier,NSString *summary,NSString *details,BOOL warning,NSString * _Nullable actionTitle,void (^ _Nullable action)(void));
 BOOL AMCurrentOperationCancelled(void);
 typedef BOOL (^AMCancellationCheck)(void);
 AMCancellationCheck _Nullable AMCurrentCancellationCheck(void);

@@ -39,12 +39,16 @@ NSString *AMOperationSchedule(NSString *key,NSString *kind,NSString *target,NSAr
         NSMutableDictionary *row=AMOperationRows[identifier];row[@"resources"]=resources.copy;row[@"state"]=@"queued";row[@"stage"]=@"排队中，等待当前操作安全结束";row[@"cancellable"]=@YES;
     }AMOperationNotify();AMOperationPump();return identifier;
 }
-void AMOperationProgress(NSString *identifier,NSString *stage,NSInteger completed,NSInteger total){if(!identifier)return;@synchronized(AMOperationLock()){NSMutableDictionary *row=AMOperationRows[identifier];if(![row[@"state"] isEqual:@"running"])return;row[@"stage"]=stage ?: @"";row[@"completed"]=@(MAX(0,completed));row[@"total"]=@(MAX(0,total));}AMOperationNotify();}
+void AMOperationProgress(NSString *identifier,NSString *stage,NSInteger completed,NSInteger total){if(!identifier)return;@synchronized(AMOperationLock()){NSMutableDictionary *row=AMOperationRows[identifier];if(![row[@"state"] isEqual:@"running"])return;row[@"stage"]=[row[@"cancelRequested"] boolValue] ? @"正在停止":(stage ?: @"");row[@"completed"]=@(MAX(0,completed));row[@"total"]=@(MAX(0,total));}AMOperationNotify();}
 void AMOperationFinish(NSString *identifier,NSString *state,NSString *message){if(!identifier)return;@synchronized(AMOperationLock()){
     NSMutableDictionary *row=AMOperationRows[identifier];if(!row || ![@[@"running",@"queued"] containsObject:row[@"state"]])return;
     NSDictionary *job=AMScheduledJobs[identifier];for(NSString *resource in job[@"resources"])if([AMResourceOwners[resource] isEqual:identifier])[AMResourceOwners removeObjectForKey:resource];
     [AMScheduledJobs removeObjectForKey:identifier];row[@"state"]=state;row[@"stage"]=message ?: @"";row[@"finished"]=NSDate.date;row[@"cancellable"]=@NO;[AMOperationCancels removeObjectForKey:identifier];
 }AMOperationNotify();AMOperationPump();}
+void AMOperationSetResult(NSString *identifier,NSString *summary,NSString *details,BOOL warning,NSString *actionTitle,void (^action)(void)){
+    @synchronized(AMOperationLock()){NSMutableDictionary *row=AMOperationRows[identifier];if(!row)return;row[@"summary"]=summary ?: @"";row[@"details"]=details ?: @"";row[@"warning"]=@(warning);if(action){row[@"recoveryTitle"]=actionTitle ?: @"查看";row[@"recovery"]=[action copy];}}
+    AMOperationNotify();
+}
 void AMOperationCancel(NSString *identifier){
     void(^cancel)(void)=nil;void(^scheduledCancel)(BOOL)=nil;BOOL queued=NO;
     @synchronized(AMOperationLock()){
@@ -55,7 +59,7 @@ void AMOperationCancel(NSString *identifier){
             AMOperationFinish(identifier,@"cancelled",@"已取消排队，未执行操作");
         }else{
             cancel=AMOperationCancels[identifier];[AMOperationCancels removeObjectForKey:identifier];
-            if(cancel || scheduledCancel){row[@"cancellable"]=@NO;row[@"stage"]=@"正在安全取消…";if(scheduledCancel)[AMScheduledJobs[identifier] removeObjectForKey:@"cancel"];}
+            if(cancel || scheduledCancel){row[@"cancellable"]=@NO;row[@"cancelRequested"]=@YES;row[@"stage"]=@"正在停止";if(scheduledCancel)[AMScheduledJobs[identifier] removeObjectForKey:@"cancel"];}
         }
     }
     if(scheduledCancel)scheduledCancel(queued);else if(cancel)cancel();AMOperationNotify();
