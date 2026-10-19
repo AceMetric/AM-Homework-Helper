@@ -35,6 +35,7 @@ int main(){@autoreleasepool{
     summary=AMCourseCheckPresentation(@{@"materials":@[@{@"kind":@"exam"}],@"scanSummary":@{@"reused":@5}},0);Check([summary[@"summary"] isEqual:@"1 项考试"],@"exam-only result has no zero counts or model boilerplate");
     Check([AMCourseCheckPresentation(@{},3)[@"summary"] isEqual:@"3 项待审核"],@"pending count uses effective review state rather than material count");
     summary=AMCourseCheckPresentation(@{@"modelFailures":@{@"a/README.md":@{@"issues":@[@{@"reason":@"原文不匹配"}]}},@"materials":@[@{@"kind":@"exam"}]},2);Check([summary[@"summary"] isEqual:@"2 项待审核 · 1 项考试 · 1 份材料未完成增强"] && [summary[@"warning"] boolValue] && [summary[@"details"] containsString:@"原文不匹配"],@"partial result preserves findings and concrete failure details");
+    summary=AMCourseCheckPresentation(@{@"skipped":@[@"large.txt：超出扫描大小限制",@"link.txt：符号链接，未读取外部文件"]},0);Check([summary[@"details"] containsString:@"large.txt：超出扫描大小限制\nlink.txt：符号链接"] && ![summary[@"summary"] containsString:@"跳过"],@"skipped reasons are readable lines in details, not a raw array or main-status noise");
     summary=AMCourseCheckPresentation(@{@"error":@"断网",@"detail":@"老师远端暂时不可访问"},0);Check([summary[@"summary"] isEqual:@"检查失败"] && [summary[@"details"] containsString:@"老师远端"],@"failure is short without losing reason");
     for(NSDictionary *message in AMUIMessages())AMDismissUIMessage(message[@"scope"],message[@"id"]);
     // A real controller completion writes its result into the operation, never a second status message.
