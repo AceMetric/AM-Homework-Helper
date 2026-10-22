@@ -7,6 +7,12 @@ static NSUInteger checks;
 static void Check(BOOL value,NSString *message){checks++;if(!value){fprintf(stderr,"FAIL: %s\n",message.UTF8String);exit(1);}}
 static BOOL Pump(BOOL(^ready)(void)){NSDate *until=[NSDate dateWithTimeIntervalSinceNow:4];while(!ready() && until.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];return ready();}
 static NSDictionary *Row(NSString *key){for(NSDictionary *row in AMOperations())if([row[@"id"] isEqual:key])return row;return nil;}
+@interface WorkflowSheetHost:NSWindow
+@property NSWindow *testSheet;
+@end
+@implementation WorkflowSheetHost
+- (NSWindow *)attachedSheet{return self.testSheet;}
+@end
 int main(){@autoreleasepool{
     [NSApplication sharedApplication];[NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];SSCourseController *controller=[[SSCourseController alloc] initWithPreview:YES];controller.preview=NO;
     NSMutableDictionary *course=[@{@"fork":@"student/first",@"upstream":@"teacher/first",@"branch":@"main",@"path":@"/synthetic/first"} mutableCopy],*other=[@{@"fork":@"student/second",@"upstream":@"teacher/second",@"branch":@"main",@"path":@"/synthetic/second"} mutableCopy];[controller.courses addObjectsFromArray:@[course,other]];[controller selectCourseID:course[@"fork"]];controller.workflowGitFactory=^{return SSGit.new;};controller.workflowAPIFactory=^{return SSGitHub.new;};
@@ -28,5 +34,7 @@ int main(){@autoreleasepool{
     [controller selectCourseID:other[@"fork"]];AMCourseOperationContext *noticeContext=controller.workflowNoticeContext;[controller selectCourseID:noticeContext.course[@"fork"]];NSWindow *host=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,800,600) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];host.contentView=controller.view;
     for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua,NSAppearanceNameAccessibilityHighContrastAqua,NSAppearanceNameAccessibilityHighContrastDarkAqua])for(NSNumber *width in @[@560,@1000]){[host setContentSize:NSMakeSize(width.doubleValue,620)];host.appearance=[NSAppearance appearanceNamed:appearance];[controller.view layoutSubtreeIfNeeded];[controller.workflowNotice layoutSubtreeIfNeeded];Check(NSContainsRect(controller.view.bounds,controller.workflowNotice.frame),@"compact error stays inside current window without changing content layout");Check(NSHeight(controller.workflowNotice.frame)<125 && NSWidth(controller.workflowNotice.actionButton.frame)>28,@"error offers a usable native action without oversized blank space");}
     [controller.workflowNotice dismiss:nil];[controller refreshPresentation];Check(controller.workflowNotice.hidden && controller.workflowFailures[noticeContext.identifier]!=nil && Row(noticeContext.identifier)[@"recovery"],@"closing compact error preserves failure and recovery");[host orderOut:nil];
+    WorkflowSheetHost *sheetHost=[[WorkflowSheetHost alloc] initWithContentRect:NSMakeRect(0,0,800,620) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];sheetHost.contentView=controller.view;SSSubmissionController *otherDraft=[[SSSubmissionController alloc] initWithCourse:other changes:@[@{@"path":@"answer.md",@"status":@"??"}]];otherDraft.message.stringValue=@"Keep other course input";controller.submission=otherDraft;sheetHost.testSheet=otherDraft.window;NSUInteger pendingBefore=controller.workflowContexts.count;
+    [controller openSubmissionForCourse:course preserving:otherDraft];Check(!otherDraft.closed && [otherDraft.message.stringValue isEqual:@"Keep other course input"],@"recovery never closes or transfers another course submission draft");Check(controller.workflowContexts.count==pendingBefore && controller.submission==otherDraft,@"cross-course recovery waits for the existing sheet without starting a read");sheetHost.testSheet=nil;[otherDraft cancel:nil];[sheetHost orderOut:nil];
     printf("PASS: %lu workflow context, concurrency and recovery assertions\n",(unsigned long)checks);
 }return 0;}

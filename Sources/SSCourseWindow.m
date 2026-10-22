@@ -997,6 +997,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     [self openSubmissionForCourse:course preserving:previous];
 }
 - (void)openSubmissionForCourse:(NSDictionary *)course preserving:(SSSubmissionController *)previous {
+    if(previous)for(NSString *field in @[@"fork",@"branch",@"path"])if(![(previous.course[field] ?: NSNull.null) isEqual:course[field] ?: NSNull.null]){previous=nil;break;}
     if(self.submission && !self.submission.closed && self.submission!=previous && self.window.attachedSheet){[self status:@"请先完成或关闭当前提交窗口，输入已保留"];return;}
     if(previous){[previous cancel:nil];previous.preserveClosedDraft=YES;}
     [self work:@"正在读取本地修改…" forCourse:course requestKey:@"local-files" priority:100 kind:AMCourseWorkLocal operation:^id(NSError **error) { return [self.git changesForCourse:course error:error]; } completion:^(NSArray *changes, NSError *error) {
