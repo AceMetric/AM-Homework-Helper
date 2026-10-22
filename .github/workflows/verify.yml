@@ -43,6 +43,8 @@ jobs:
       - name: Submission records and quick entry
         run: |
           zsh verify-submissions.sh
+          zsh verify-workflows.sh
+          AM_UI_TEST=WorkflowUsage zsh verify-hybrid-ui.sh
           zsh verify-preflight.sh
           zsh verify-online-review.sh
           zsh verify-quick-entry.sh

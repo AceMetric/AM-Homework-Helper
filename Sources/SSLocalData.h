@@ -43,6 +43,7 @@ BOOL AMResetSubmissionBaselines(NSError **error);
 NSDictionary *AMSubmissionCompletionPlan(NSArray *tasks,NSArray *records,NSArray *courses,NSSet *deferred);
 NSDictionary * _Nullable AMApplySubmissionCompletions(NSArray *previous,NSArray *courses,NSSet *deferred,NSArray *series,NSDictionary *overrides,NSError **error);
 BOOL AMSaveTasksWithSubmissionDecisions(NSArray *previous,NSArray *tasks,NSArray *series,NSDictionary *overrides,NSError **error);
+void SSWorkflowDiagnostic(NSString *stage,NSString *outcome,NSString *issue,NSTimeInterval seconds);
 void SSDiagnostic(NSString *stage, NSString *outcome, NSTimeInterval seconds);
 NSArray<NSDictionary *> *SSDiagnostics(void);
 

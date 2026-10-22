@@ -57,7 +57,7 @@
     NSDictionary *source=records.count ? [self completionSourceCourse:course]:course;
     NSMutableArray *verified=NSMutableArray.array;
     for(NSDictionary *record in records){if(![record[@"repository"] isEqual:course[@"fork"]] || ![record[@"branch"] isEqual:course[@"branch"]])continue;NSString *commit=record[@"commit"];if(![commit isKindOfClass:NSString.class] || [commit rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location==NSNotFound)continue;
-        SSGitResult *contains=[self run:@[@"merge-base",@"--is-ancestor",commit,remote] in:course[@"path"] token:nil error:error];if(!contains || contains.status>1)return nil;NSMutableDictionary *next=record.mutableCopy;next[@"checkedAt"]=NSDate.date;next[@"remoteCommit"]=remote;next[@"completionAnchor"]=anchor;next[@"completionEpoch"]=[record[@"completionEligibility"] isEqual:@"associated"] ? (record[@"completionEpoch"] ?: @"initial"):epoch;[self classifyCompletionOwnership:next course:source];next[@"state"]=contains.status==0 ? @"confirmed":@"local";
+        SSGitResult *contains=[self run:@[@"merge-base",@"--is-ancestor",commit,remote] in:course[@"path"] token:nil error:error];if(!contains || contains.status>1)return nil;NSMutableDictionary *next=record.mutableCopy;self.lastWorkflowRecord=next;next[@"checkedAt"]=NSDate.date;next[@"remoteCommit"]=remote;next[@"completionAnchor"]=anchor;next[@"completionEpoch"]=[record[@"completionEligibility"] isEqual:@"associated"] ? (record[@"completionEpoch"] ?: @"initial"):epoch;[self classifyCompletionOwnership:next course:source];next[@"state"]=contains.status==0 ? @"confirmed":@"local";
         if(![record[@"completionEligibility"] isEqual:@"associated"]){
             SSGitResult *historical=[self run:@[@"merge-base",@"--is-ancestor",commit,anchor] in:course[@"path"] token:nil error:error];if(!historical || historical.status>1)return nil;
             next[@"completionEligibility"]=AMSubmissionAutoCompletionEnabled() && historical.status==1 ? @"new":@"historical";
@@ -75,18 +75,18 @@
 }
 - (NSDictionary *)verifySubmission:(NSDictionary *)record course:(NSDictionary *)course token:(NSString *)token retry:(BOOL)retry error:(NSError **)error {
     if(![record[@"repository"] isEqual:course[@"fork"]] || ![record[@"branch"] isEqual:course[@"branch"]] || ![self authorize:course error:error] || ![self validateCourse:course error:error] || ![self submissionBranch:course error:error])return nil;
-    NSMutableDictionary *next=record.mutableCopy;
+    NSMutableDictionary *next=record.mutableCopy;self.lastWorkflowRecord=next;
     NSString *commit=record[@"commit"];
     if(!commit.length && [record[@"before"] length]){
         // Recover only an exact immediate child with matching message and file set.
         SSGitResult *head=[self checked:@[@"rev-parse",@"HEAD"] in:course[@"path"] token:nil error:error];NSString *tip=Trim([self string:head]);
-        if(head && [tip isEqual:record[@"before"]]){next[@"state"]=@"failed";next[@"issue"]=@"not-committed";if(!AMStoreSubmission(next,error))return nil;return next;}
+        if(head && [tip isEqual:record[@"before"]]){next[@"state"]=@"failed";next[@"issue"]=@"not-committed";self.lastWorkflowRecord=next;if(!AMStoreSubmission(next,error))return nil;return next;}
         SSGitResult *parent=[self run:@[@"rev-parse",@"HEAD^"] in:course[@"path"] token:nil error:NULL];
         SSGitResult *msg=[self run:@[@"log",@"-1",@"--format=%B",@"HEAD",@"--"] in:course[@"path"] token:nil error:NULL];
         SSGitResult *files=[self run:@[@"diff-tree",@"--no-commit-id",@"--name-only",@"-r",@"-z",@"HEAD",@"--"] in:course[@"path"] token:nil error:NULL];
         if(head && parent && msg && files && parent.status==0 && msg.status==0 && files.status==0 && [Trim([self string:parent]) isEqual:record[@"before"]] && [Trim([self string:msg]) isEqual:record[@"message"]] && [[NSSet setWithArray:NonemptyParts([self string:files],@"\0")] isEqual:[NSSet setWithArray:record[@"files"]]]){commit=tip;next[@"commit"]=tip;next[@"state"]=@"local";next[@"issue"]=@"index-recovery-needed";if(!AMStoreSubmission(next,error))return nil;}
     }
-    if(!commit.length){next[@"state"]=@"uncertain";next[@"issue"]=@"local-unresolved";if(!AMStoreSubmission(next,error))return nil;return next;}
+    if(!commit.length){next[@"state"]=@"uncertain";next[@"issue"]=@"local-unresolved";self.lastWorkflowRecord=next;if(!AMStoreSubmission(next,error))return nil;return next;}
     if([commit rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location==NSNotFound)return nil;
     // The interrupted commit used a temporary index. Reconcile only when the
     // real index is still exactly the previously verified, untouched base tree.
@@ -108,18 +108,19 @@
         if(![self pushCourse:course token:token error:error])return nil;
         return [self verifySubmission:next course:course token:token retry:NO error:error];
     }else{next[@"state"]=@"local";next[@"issue"]=record[@"confirmedAt"] ? @"remote-changed":@"not-on-remote";}
-    if(!AMStoreSubmission(next,error))return nil;return next;
+    next[@"workflowResult"]=[next[@"state"] isEqual:@"confirmed"] ? @"completed":([next[@"state"] isEqual:@"local"] ? @"needs-action":@"uncertain");next[@"workflowStage"]=@"verify";self.lastWorkflowRecord=next;if(!AMStoreSubmission(next,error))return nil;return next;
 }
 - (NSDictionary *)performRecordedCourse:(NSDictionary *)course kind:(NSString *)kind taskIDs:(NSArray *)taskIDs paths:(NSArray *)paths message:(NSString *)message token:(NSString *)token login:(NSString *)login userID:(NSNumber *)userID error:(NSError **)error {
     if(![course[@"fork"] isKindOfClass:NSString.class] || ![course[@"branch"] isKindOfClass:NSString.class]){if(error)*error=GitError(@"课程目标不完整，请重新关联课程。");return nil;}
     if([kind isEqual:@"submission"])for(NSDictionary *pending in AMSubmissionRecords(NULL))if([pending[@"repository"] isEqual:course[@"fork"]] && [pending[@"branch"] isEqual:course[@"branch"]] && [pending[@"before"] length] && ![pending[@"commit"] length] && [@[@"running",@"uncertain"] containsObject:pending[@"state"]] && [[NSSet setWithArray:paths] intersectsSet:[NSSet setWithArray:pending[@"files"]]]){
         NSDictionary *resolved=[self verifySubmission:pending course:course token:token retry:NO error:NULL];if(![resolved[@"state"] isEqual:@"failed"]){if(error)*error=[NSError errorWithDomain:@"SSGit" code:2 userInfo:@{NSLocalizedDescriptionKey:@"此前提交的结果需要核验，请在提交记录中继续；未再次创建提交。",@"SSPendingPush":@YES}];return nil;}
     }
-    NSMutableDictionary *record=[@{@"id":NSUUID.UUID.UUIDString,@"repository":course[@"fork"],@"branch":course[@"branch"],@"kind":kind,@"state":@"running",@"message":message ?: @"",@"date":NSDate.date,@"files":paths ?: @[],@"taskIDs":taskIDs ?: @[]} mutableCopy];
+    if([kind isEqual:@"submission"])for(NSDictionary *pending in AMSubmissionRecords(NULL))if([pending[@"repository"] isEqual:course[@"fork"]] && [pending[@"branch"] isEqual:course[@"branch"]] && [pending[@"commit"] length] && [@[@"running",@"local",@"uncertain"] containsObject:pending[@"state"]] && [[NSSet setWithArray:paths] intersectsSet:[NSSet setWithArray:pending[@"files"]]]){self.lastWorkflowRecord=pending;if(error)*error=AMWorkflowError(@"verification-pending",@"已有本地提交，请先核验推送",nil);return nil;}
+    NSMutableDictionary *record=[@{@"id":NSUUID.UUID.UUIDString,@"repository":course[@"fork"],@"branch":course[@"branch"],@"kind":kind,@"state":@"running",@"workflowStage":@"prepare",@"workflowResult":@"needs-action",@"message":message ?: @"",@"date":NSDate.date,@"files":paths ?: @[],@"taskIDs":taskIDs ?: @[]} mutableCopy];
     record[@"completionEpoch"]=AMSubmissionAutomation(NULL)[@"epoch"] ?: @"initial";
     record[@"completionEligibility"]=[kind isEqual:@"submission"] && AMSubmissionAutoCompletionEnabled() ? @"new":@"historical";
     if([kind isEqual:@"submission"] && self.submissionReviewSummary)record[@"review"]=self.submissionReviewSummary;
-    if(!AMStoreSubmission(record,error))return nil;
+    self.lastWorkflowRecord=record;if(!AMStoreSubmission(record,error))return nil;
     self.submissionCheckpoint=^BOOL(NSDictionary *fields,NSError **failure){[record addEntriesFromDictionary:fields];return AMStoreSubmission(record,failure);};
     BOOL ok=NO;NSError *failure=nil;
     @try {
@@ -127,7 +128,7 @@
         else if([kind isEqual:@"sync"]){NSDictionary *result=[self syncCourse:course token:token error:&failure];ok=[result[@"success"] boolValue];if(result[@"conflicts"]){record[@"issue"]=@"merge-conflict";record[@"conflicts"]=result[@"conflicts"];record[@"mergeHead"]=result[@"mergeHead"];}}
         else if([kind isEqual:@"merge"])ok=[self continueMergeForCourse:course token:token error:&failure];
     }@finally{self.submissionCheckpoint=nil;self.expectedSubmissionSnapshot=nil;self.submissionReviewSummary=nil;}
-    if(!ok){if([record[@"state"] isEqual:@"running"])record[@"state"]=record[@"commit"] ? @"local":([record[@"before"] length] ? @"uncertain":@"failed");record[@"issue"]=record[@"issue"] ?: (failure.userInfo[@"SSIssue"] ?: @"operation-failed");NSError *saveError=nil;if(!AMStoreSubmission(record,&saveError))failure=saveError;if(error)*error=failure;return record;}
+    if(!ok){if([record[@"state"] isEqual:@"running"])record[@"state"]=record[@"commit"] ? @"local":([record[@"before"] length] ? @"uncertain":@"failed");record[@"issue"]=record[@"issue"] ?: AMWorkflowIssue(failure);record[@"workflowResult"]=([record[@"commit"] length] || [record[@"before"] length]) ? @"uncertain":([AMWorkflowIssue(failure) isEqual:@"cancelled"] ? @"cancelled":@"failed");record[@"workflowStage"]=record[@"commit"] ? @"push":(record[@"before"] ? @"commit":([record[@"localUpdated"] boolValue] ? @"merge":@"prepare"));NSError *saveError=nil;if(!AMStoreSubmission(record,&saveError))failure=saveError;if(error)*error=failure;return record;}
     NSDictionary *verified=[self verifySubmission:record course:course token:token retry:NO error:&failure];
-    if(!verified){record[@"state"]=@"uncertain";record[@"issue"]=@"verification-pending";NSError *saveError=nil;if(!AMStoreSubmission(record,&saveError))failure=saveError;if(error)*error=failure;return record;}return verified;
+    if(!verified){if([self.lastWorkflowRecord[@"state"] isEqual:@"confirmed"]){if(error)*error=failure;return self.lastWorkflowRecord;}record[@"state"]=@"uncertain";record[@"issue"]=@"verification-pending";NSError *saveError=nil;if(!AMStoreSubmission(record,&saveError))failure=saveError;if(error)*error=failure;return record;}return verified;
 }

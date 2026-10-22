@@ -19,6 +19,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property(atomic) BOOL cancelledReads;
 @property(atomic) BOOL operationCancelled;
 @property NSTimeInterval commandTimeout;
+@property(strong, nullable) NSDictionary *lastWorkflowRecord;
+- (NSString * _Nullable)differencesForCourse:(NSDictionary *)course token:(NSString *)token error:(NSError **)error;
 /// Stop the current owned Git process group; never reset files or remove shared locks.
 - (void)cancelCurrentOperation;
 /// Required before cloning, committing, merging or pushing. Rechecks GitHub ownership.

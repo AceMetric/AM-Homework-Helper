@@ -8,6 +8,8 @@ void AMOperationFinish(NSString * _Nullable identifier,NSString *state,NSString 
 void AMOperationCancel(NSString *identifier);
 // A result belongs to its original operation; details and recovery stay off the compact row.
 void AMOperationSetResult(NSString *identifier,NSString *summary,NSString *details,BOOL warning,NSString * _Nullable actionTitle,void (^ _Nullable action)(void));
+void AMOperationReleaseResources(NSString *identifier);
+void AMOperationSetWorkflowResult(NSString *identifier,NSString *result,NSString *issue,NSString *stage);
 BOOL AMCurrentOperationCancelled(void);
 typedef BOOL (^AMCancellationCheck)(void);
 AMCancellationCheck _Nullable AMCurrentCancellationCheck(void);

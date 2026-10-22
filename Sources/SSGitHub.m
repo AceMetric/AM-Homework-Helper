@@ -1,4 +1,5 @@
 #import "SSGitHub.h"
+#import "AMWorkflow.h"
 #import "AMOperation.h"
 #import "SSLocalData.h"
 #import "SSSecurity.h"
@@ -15,6 +16,12 @@ static NSError *GHCancelled(void){return [NSError errorWithDomain:@"SSGitHub" co
 @property NSString *responseScopes;
 @end
 
+@interface SSGitHub ()
+@property NSDate *workflowDeadline;
+#ifdef DDL_TESTING
+@property NSArray *workflowProtocolClasses;
+#endif
+@end
 @implementation SSGitHub
 - (instancetype)init {
     if ((self = [super init])) {
@@ -33,11 +40,20 @@ static NSError *GHCancelled(void){return [NSError errorWithDomain:@"SSGitHub" co
 }
 
 - (id)requestURL:(NSURL *)url form:(NSDictionary *)form token:(NSString *)token error:(NSError **)error {
+    NSDate *previous=self.workflowDeadline;self.workflowDeadline=[NSDate dateWithTimeIntervalSinceNow:35];AMCancellationCheck stop=AMCurrentCancellationCheck();
+    @try{for(NSUInteger attempt=0;attempt<2;attempt++){
+        NSError *failure=nil;NSDate *started=NSDate.date;id value=[self workflowRequestURL:url form:form token:token error:&failure];SSWorkflowDiagnostic(@"github-api",value ? @"success":@"failed",value ? @"":AMWorkflowIssue(failure),-started.timeIntervalSinceNow);if(value)return value;
+        NSDate *retryAt=failure.userInfo[@"AMRetryAt"];NSTimeInterval delay=retryAt ? MAX(1,retryAt.timeIntervalSinceNow):1;
+        if(!form && attempt==0 && AMWorkflowTransient(failure) && AMWorkflowRetryDelay(delay,self.workflowDeadline,^BOOL{return self.requestsCancelled || (stop && stop());}))continue;
+        if(error)*error=failure ?: AMWorkflowError(@"unknown",@"GitHub 未返回有效结果",nil);return nil;
+    }}@finally{self.workflowDeadline=previous;}return nil;
+}
+- (id)workflowRequestURL:(NSURL *)url form:(NSDictionary *)form token:(NSString *)token error:(NSError **)error {
     AMCancellationCheck scopedCancellation=AMCurrentCancellationCheck();
     if(self.requestsCancelled || (scopedCancellation && scopedCancellation())){if(error)*error=GHCancelled();return nil;}
     if (![url.scheme isEqual:@"https"] || ![@[@"github.com", @"api.github.com"] containsObject:url.host]) { if (error) *error = GHError(@"拒绝向非 GitHub 地址发送授权请求"); return nil; }
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
-    request.timeoutInterval = 30;
+    request.timeoutInterval = MAX(.01,MIN(30,self.workflowDeadline ? self.workflowDeadline.timeIntervalSinceNow:35));
     [request setValue:@"application/vnd.github+json" forHTTPHeaderField:@"Accept"];
     [request setValue:@"2022-11-28" forHTTPHeaderField:@"X-GitHub-Api-Version"];
     if (token.length) [request setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
@@ -52,15 +68,18 @@ static NSError *GHCancelled(void){return [NSError errorWithDomain:@"SSGitHub" co
     dispatch_semaphore_t done = dispatch_semaphore_create(0);
     __block NSData *responseData = nil; __block NSURLResponse *response = nil; __block NSError *networkError = nil;
     NSURLSessionConfiguration *configuration = NSURLSessionConfiguration.ephemeralSessionConfiguration;
+#ifdef DDL_TESTING
+    if(self.workflowProtocolClasses)configuration.protocolClasses=self.workflowProtocolClasses;
+#endif
     configuration.URLCache = nil; configuration.HTTPShouldSetCookies = NO; configuration.HTTPCookieStorage = nil; configuration.URLCredentialStorage = nil;
     NSURLSession *session = [NSURLSession sessionWithConfiguration:configuration delegate:self delegateQueue:nil];
     NSURLSessionDataTask *task = [session dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *res, NSError *err) {
         responseData = data; response = res; networkError = err; dispatch_semaphore_signal(done);
     }]; [task resume];
-    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:35];
-    while(dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC))!=0){if(self.requestsCancelled || (scopedCancellation && scopedCancellation()) || deadline.timeIntervalSinceNow<=0){[session invalidateAndCancel];if(error)*error=((self.requestsCancelled || (scopedCancellation && scopedCancellation())) ? GHCancelled():GHError(@"GitHub 请求超时，请稍后重试"));return nil;}}
+    NSDate *deadline=self.workflowDeadline ?: [NSDate dateWithTimeIntervalSinceNow:35];
+    while(dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC))!=0){if(self.requestsCancelled || (scopedCancellation && scopedCancellation()) || deadline.timeIntervalSinceNow<=0){[session invalidateAndCancel];if(error)*error=((self.requestsCancelled || (scopedCancellation && scopedCancellation())) ? GHCancelled():AMWorkflowError(@"timeout",@"GitHub 请求超时",nil));return nil;}}
     [session finishTasksAndInvalidate];
-    if (networkError) { if (error) *error = GHError(networkError.localizedDescription); return nil; }
+    if (networkError) { if (error) *error = AMWorkflowError(networkError.code==NSURLErrorTimedOut ? @"timeout":([@[@(NSURLErrorCannotFindHost),@(NSURLErrorCannotConnectToHost),@(NSURLErrorDNSLookupFailed),@(NSURLErrorNetworkConnectionLost),@(NSURLErrorNotConnectedToInternet)] containsObject:@(networkError.code)] ? @"network":@"transport"),@"无法连接 GitHub",networkError); return nil; }
     id object = responseData ? [NSJSONSerialization JSONObjectWithData:responseData options:0 error:NULL] : nil;
     NSInteger status = [(NSHTTPURLResponse *)response statusCode];
     self.responseScopes=nil;
@@ -70,10 +89,14 @@ static NSError *GHCancelled(void){return [NSError errorWithDomain:@"SSGitHub" co
             NSString *detail = [object isKindOfClass:NSDictionary.class] ? (object[@"message"] ?: object[@"error_description"] ?: @"GitHub 请求失败") : @"GitHub 响应无效";
             NSDictionary *headers = [(NSHTTPURLResponse *)response allHeaderFields]; NSString *sso = @"";
             for (NSString *key in headers) if ([key.lowercaseString isEqual:@"x-github-sso"]) sso = [headers[key] description];
-            NSString *kind = status == 401 ? @"login" : ([sso containsString:@"required"] ? @"sso" : (status == 403 && ([detail.lowercaseString containsString:@"oauth"] || [detail.lowercaseString containsString:@"organization"]) ? @"approval" : (status == 404 || status == 403 ? @"permission" : @"network")));
+            BOOL limited=status==429;NSString *retry=nil,*remaining=nil,*reset=nil;for(NSString *key in headers){NSString *lower=key.lowercaseString;if([lower isEqual:@"retry-after"])retry=[headers[key] description];if([lower isEqual:@"x-ratelimit-remaining"])remaining=[headers[key] description];if([lower isEqual:@"x-ratelimit-reset"])reset=[headers[key] description];}limited=limited || (status==403 && ([remaining isEqual:@"0"] || retry.length)) || (status==403 && [detail.lowercaseString containsString:@"rate limit"]);
+            NSString *kind = limited ? @"rate-limit":(status>=500 ? @"service":(status == 401 ? @"login" : ([sso containsString:@"required"] ? @"sso" : (status == 403 && ([detail.lowercaseString containsString:@"oauth"] || [detail.lowercaseString containsString:@"organization"]) ? @"approval" : (status == 404 || status == 403 ? @"permission" : @"response")))));
             if([self.authType isEqual:@"githubCLI"] && [kind isEqual:@"approval"])kind=@"permission";
             NSString *message = [kind isEqual:@"login"] ? @"GitHub 登录已失效，请重新登录。" : ([kind isEqual:@"sso"] ? @"学校要求单点登录，请在浏览器登录学校组织后重新检测。" : ([kind isEqual:@"approval"] ? @"学校组织尚未允许此应用，请申请批准后重新检测。" : ([kind isEqual:@"permission"] ? @"无法访问该仓库，请核对课程权限及学校组织授权。" : @"GitHub 暂时无法连接，请稍后重试。")));
-            *error = [NSError errorWithDomain:@"SSGitHub" code:status userInfo:@{NSLocalizedDescriptionKey:message,@"SSIssue":kind,@"SSDetail":SSRedactedText(detail)}];
+            NSMutableDictionary *info=[@{NSLocalizedDescriptionKey:limited ? @"GitHub 请求受限":message,@"SSIssue":kind,@"SSDetail":SSRedactedText(detail)} mutableCopy];
+            NSArray *parts=url.pathComponents;if(parts.count>=4 && [parts[1] isEqual:@"repos"]){NSString *repository=[NSString stringWithFormat:@"%@/%@",parts[2],parts[3]];if(SSCanonicalRepository([@"https://github.com/" stringByAppendingString:repository]))info[@"SSRepository"]=repository;}
+            if(limited){NSDate *date=nil;if(retry.length){NSScanner *scanner=[NSScanner scannerWithString:retry];double seconds=0;if([scanner scanDouble:&seconds] && scanner.isAtEnd)date=[NSDate dateWithTimeIntervalSinceNow:MAX(0,seconds)];else {NSDateFormatter *formatter=NSDateFormatter.new;formatter.locale=[NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];formatter.dateFormat=@"EEE, dd MMM yyyy HH:mm:ss zzz";date=[formatter dateFromString:retry];}}if(!date && reset.length)date=[NSDate dateWithTimeIntervalSince1970:reset.doubleValue];info[@"AMRetryAt"]=date ?: [NSDate dateWithTimeIntervalSinceNow:60];}
+            *error=[NSError errorWithDomain:@"SSGitHub" code:status userInfo:info];
         }
         return nil;
     }
@@ -83,6 +106,7 @@ static NSError *GHCancelled(void){return [NSError errorWithDomain:@"SSGitHub" co
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task willPerformHTTPRedirection:(NSHTTPURLResponse *)response newRequest:(NSURLRequest *)request completionHandler:(void (^)(NSURLRequest *))completionHandler {
     completionHandler(nil); // Authenticated requests never follow redirects.
 }
+- (NSDictionary *)authenticationIdentity {NSDictionary *stored=[self loadCredentials];return @{@"type":self.authType ?: @"",@"client":self.clientID ?: @"",@"user":stored[@"userID"] ?: @0,@"login":stored[@"login"] ?: @""};}
 - (NSString *)credentialAccount { return [self.authType isEqual:@"githubCLI"] ? @"github.cli" : [self.authType isEqual:@"oauth"] ? @"github.oauth" : @"github"; }
 - (NSDictionary *)loadCredentials { return SSReadSecret([self credentialAccount]); }
 - (BOOL)storeCredentials:(NSDictionary *)credentials { return SSWriteSecret([self credentialAccount], credentials); }

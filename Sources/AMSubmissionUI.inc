@@ -27,6 +27,8 @@
         }];return;
     }
     if(!record)return;
+    if([action isEqual:@"recover-workflow"]){AMCourseOperationContext *context=AMCourseOperationContext.new;context.owner=self;context.identifier=[@"record-" stringByAppendingString:identifier];context.course=course;context.authenticationIdentity=_github.authenticationIdentity;context.authType=_github.authType;context.api=SSGitHub.new;context.record=record;context.stage=record[@"workflowStage"] ?: @"核验提交";context.failure=AMWorkflowError(record[@"issue"] ?: @"verification-pending",@"提交操作未完成",nil);context.problem=AMWorkflowProblem(context.failure,context.stage,record);if(!self.workflowFailures)self.workflowFailures=NSMutableDictionary.dictionary;self.workflowFailures[context.identifier]=context;[self showWorkflowProblem:context retry:^id(NSError **error){return [self.git changesForCourse:course error:error];} message:@"读取本地修改" scope:@"record-recovery" priority:100 completion:^(id result,NSError *error){if(error)[self showError:error];else [self openSubmissionForCourse:course preserving:self.submission];}];if(context.recovery)context.recovery();return;}
+
     [self work:@"正在核验个人仓库提交…" forCourse:course operation:^id(NSError **error){NSString *token=[self.github accessToken:error];if(!token)return nil;if([record[@"origin"] isEqual:@"external"]){NSArray *checked=[self.git verifyExternalRecords:@[record] course:course token:token error:error];if(checked.count && AMStoreSubmission(checked[0],error))return checked[0];return nil;}return [self.git verifySubmission:record course:course token:token retry:[action isEqual:@"retry"] error:error];} completion:^(NSDictionary *result,NSError *error){if(error)[self showError:error];else [self status:AMSubmissionStateLabel(result)];}];
 }
 

@@ -405,6 +405,6 @@ static void IncrementalTests(void){
     [service scanCourse:f cache:cache error:&error];Check([service.commandCounts[@"blame"] integerValue]==1 && ![service.commandCounts[@"cat-file"] integerValue],@"history rewrite revalidates dates while retaining unchanged file content");NSTimeZone.defaultTimeZone=machineZone;
     service.scanCheckpoint=^BOOL(NSMutableDictionary *values,NSError **failure){if(failure)*failure=[NSError errorWithDomain:@"fixture" code:1 userInfo:@{NSLocalizedDescriptionKey:@"simulated storage failure"}];return NO;};
     service.recognitionSettings=@{@"mode":@"rules",@"courseTemplate":@{@"titlePattern":@"(Homework)"}};
-    Check(![service scanCourse:f cache:cache error:&error] && [error.localizedDescription containsString:@"storage failure"],@"checkpoint write failure is visible and does not claim a completed scan");Cleanup(f);
+    NSDictionary *partialScan=[service scanCourse:f cache:cache error:&error];Check(partialScan[@"candidates"] && partialScan[@"persistenceIssue"] && error && [AMWorkflowIssue(error) isEqual:@"storage"],@"checkpoint failure retains valid results with explicit unsaved outcome");Cleanup(f);
 }
 int main(void) { @autoreleasepool { ParserTests(); SecurityTests(); APITests(); OAuthTests(); GitTests(); DateReferenceTests(); IncrementalTests(); printf("PASS: %lu homework/API/Git/security assertions\n", (unsigned long)assertions); } return 0; }

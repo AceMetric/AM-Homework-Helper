@@ -17,6 +17,7 @@ static void Check(BOOL value,NSString *message){checks++;if(!value){fprintf(stde
 @end
 @interface EnhancementController:SSCourseController @end
 @implementation EnhancementController
+- (void)work:(NSString *)message forCourse:(NSDictionary *)course requestKey:(NSString *)key priority:(NSInteger)priority kind:(AMCourseWorkKind)kind operation:(id (^)(NSError **))op completion:(void (^)(id,NSError *))done{[self work:message forCourse:course operation:op completion:done];}
 - (void)work:(NSString *)message forCourse:(NSDictionary *)course requestKey:(NSString *)key priority:(NSInteger)priority operation:(id (^)(NSError **))op completion:(void (^)(id,NSError *))done{[self work:message forCourse:course operation:op completion:done];}
 - (void)work:(NSString *)message forCourse:(NSDictionary *)course operation:(id (^)(NSError **))operation completion:(void (^)(id,NSError *))completion{NSError *error=nil;id value=operation(&error);completion(value,error);}
 @end
