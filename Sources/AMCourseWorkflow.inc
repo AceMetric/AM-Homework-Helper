@@ -23,6 +23,7 @@
 @property SSSubmissionController *submissionDraft;
 @end
 @implementation AMCourseOperationContext @end
+static NSDictionary *AMWorkflowSavedScan(NSDictionary *result){NSMutableDictionary *saved=result.mutableCopy;[saved removeObjectForKey:@"persistenceIssue"];if(saved[@"modelSummary"]){NSMutableDictionary *summary=[saved[@"modelSummary"] mutableCopy];summary[@"unsaved"]=@0;saved[@"modelSummary"]=summary;saved[@"modelCompleted"]=@([summary[@"failed"] unsignedIntegerValue]==0 && [summary[@"pending"] unsignedIntegerValue]==0);}return saved;}
 static AMCourseOperationContext *AMCourseFailureContext(SSCourseController *owner,NSDictionary *course,SSGitHub *api,NSDictionary *authentication,NSError *error,NSDictionary *record){AMCourseOperationContext *context=AMCourseOperationContext.new;context.owner=owner;context.course=course;context.api=api;context.authenticationIdentity=authentication;context.failure=error;context.record=record;return context;}
 static AMCourseOperationContext *AMCourseContext(id owner){AMCourseOperationContext *context=NSThread.currentThread.threadDictionary[@"AMCourseOperationContext"];return context.owner==owner ? context:nil;}
 static void AMWithCourseContext(AMCourseOperationContext *context,void (^body)(void)){

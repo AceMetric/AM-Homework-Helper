@@ -350,7 +350,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSDictionary *scoped=SSCourseRecognitionSettings(settings,course);if([scoped[@"mode"] isEqual:@"rules"])return scan;
     NSMutableDictionary *byID=NSMutableDictionary.dictionary;for(NSDictionary *record in scan[@"candidates"])byID[record[@"id"]]=record;
     for(NSDictionary *group in scan[@"materials"])for(NSDictionary *record in group[@"documents"] ?: @[group])byID[record[@"id"]]=record;
-    NSMutableArray *messages=NSMutableArray.array;NSMutableDictionary *failures=[scan[@"modelFailures"] mutableCopy] ?: NSMutableDictionary.dictionary;NSUInteger processed=0,reused=0,pending=0;NSError *persistenceFailure=nil;
+    NSMutableArray *messages=NSMutableArray.array;NSMutableDictionary *failures=[scan[@"modelFailures"] mutableCopy] ?: NSMutableDictionary.dictionary;NSUInteger processed=0,reused=0,pending=0;NSError *persistenceFailure=nil;NSMutableSet *unsavedDocuments=NSMutableSet.set;
     for(NSDictionary *document in scan[@"documents"]){if(paths && ![paths containsObject:document[@"path"]])continue;
         if(self.readsCancellable && self.cancelledReads){[messages addObject:@"分析已取消，已完成的材料保留。"];break;}
         NSCalendar *calendar=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];calendar.timeZone=[NSTimeZone timeZoneWithName:document[@"timeZone"]] ?: NSTimeZone.localTimeZone;
@@ -370,7 +370,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
             if(cached)found=SSRecognizeDocument(document[@"text"],document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,scoped,cache,&failure);
             else found=AMPerformModelOperation(SSRecognitionCacheKey(document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,scoped),document[@"path"],[scoped[@"manualLocal"] boolValue] || [scoped[@"manualCloud"] boolValue],^BOOL{return self.readsCancellable && self.cancelledReads;},^id(NSError **problem){return SSRecognizeDocument(document[@"text"],document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,scoped,cache,problem);},&failure);
             if(!failure && found){completed=@{@"records":found,@"model":scoped[@"model"] ?: @"",@"prompt":AMCoursePromptVersion(),@"validation":AMCourseValidationVersion(),@"date":NSDate.date};cache[completedKey]=completed;if(cached)reused++;else processed++;}
-            if(self.scanCheckpoint){NSError *saveError=nil;if(!self.scanCheckpoint(cache,&saveError))persistenceFailure=saveError;}
+            if(self.scanCheckpoint){NSError *saveError=nil;if(!self.scanCheckpoint(cache,&saveError)){persistenceFailure=saveError;[unsavedDocuments addObject:document[@"path"]];}}
         }
         if(failure){
             [cache removeObjectForKey:completedKey];
@@ -392,7 +392,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     for(NSDictionary *document in scan[@"documents"]){NSString *path=document[@"path"];[live addObject:path];if(failures[path] && ![failures[path][@"blobSHA"] isEqual:document[@"blobSHA"]])[failures removeObjectForKey:path];NSString *done=[NSString stringWithFormat:@"model-complete-v1|%@|%@|%@|%@",[document[@"repository"] lowercaseString],path,document[@"blobSHA"],document[@"timeZone"]];if(!cache[done] && !failures[path])pending++;}
     for(NSString *path in failures.allKeys)if(![live containsObject:path])[failures removeObjectForKey:path];
     for(NSString *path in [failures.allKeys sortedArrayUsingSelector:@selector(compare:)])[messages addObject:[NSString stringWithFormat:@"%@：%@",path,[failures[path][@"issues"] firstObject][@"reason"] ?: @"识别未完成"]];
-    if(persistenceFailure)result[@"persistenceIssue"]=SSRedactedText(persistenceFailure.localizedDescription);result[@"recognitionMessages"]=messages;result[@"modelFailures"]=failures;result[@"modelCompleted"]=@(failures.count==0 && pending==0);result[@"modelSummary"]=@{@"processed":@(processed),@"reused":@(reused),@"failed":@(failures.count),@"pending":@(pending)};return result;
+    if(persistenceFailure)result[@"persistenceIssue"]=SSRedactedText(persistenceFailure.localizedDescription);result[@"recognitionMessages"]=messages;result[@"modelFailures"]=failures;result[@"modelCompleted"]=@(failures.count==0 && pending==0 && !persistenceFailure);result[@"modelSummary"]=@{@"processed":@(processed),@"reused":@(reused),@"failed":@(failures.count),@"pending":@(pending),@"unsaved":@(unsavedDocuments.count)};return result;
 }
 - (BOOL)cleanWorktree:(NSString *)path error:(NSError **)error {
     SSGitResult *status = [self checked:@[@"status", @"--porcelain=v1", @"-z", @"--untracked-files=all"] in:path token:nil error:error]; if (!status) return NO;
