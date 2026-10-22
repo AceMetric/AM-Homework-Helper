@@ -709,7 +709,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{@autoreleasepool{__block NSError *failure=nil;__block id value=nil;NSDate *started=NSDate.date;
                 AMWithCourseContext(context,^{@try{if(context.cancelled)failure=AMWorkflowError(@"cancelled",@"已停止",nil);else value=operation(&failure);}@catch(NSException *exception){failure=AMWorkflowError(@"unknown",SSRedactedText(exception.reason),nil);}});
                 if(!failure && (!value || ([value isKindOfClass:NSNumber.class] && ![value boolValue])))failure=AMWorkflowError(@"unknown",@"操作未返回有效结果",nil);
-                if(context.cancelled && (!failure || [AMWorkflowIssue(failure) isEqual:@"unknown"]))failure=AMWorkflowError(@"cancelled",@"已停止",failure);
+                if((context.cancelled || context.git.operationCancelled || context.git.cancelledReads || context.api.requestsCancelled) && ![context.git.lastWorkflowRecord[@"state"] isEqual:@"confirmed"] && (!failure || [AMWorkflowIssue(failure) isEqual:@"unknown"]))failure=AMWorkflowError(@"cancelled",@"已停止",failure);
                 SSDiagnostic(@"operation",[AMWorkflowIssue(failure) isEqual:@"cancelled"] ? @"cancelled":(failure ? @"failed":@"success"),-started.timeIntervalSinceNow);
                 dispatch_async(dispatch_get_main_queue(),^{[self finishWorkflow:context value:value error:failure completion:completion retry:operation message:message scope:scope priority:priority];});
             }});
