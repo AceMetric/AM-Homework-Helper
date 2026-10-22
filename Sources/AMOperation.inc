@@ -39,6 +39,8 @@ NSString *AMOperationSchedule(NSString *key,NSString *kind,NSString *target,NSAr
         NSMutableDictionary *row=AMOperationRows[identifier];row[@"resources"]=resources.copy;row[@"state"]=@"queued";row[@"stage"]=@"排队中，等待当前操作安全结束";row[@"cancellable"]=@YES;
     }AMOperationNotify();AMOperationPump();return identifier;
 }
+void AMOperationReleaseResources(NSString *identifier){if(!identifier)return;@synchronized(AMOperationLock()){NSDictionary *job=AMScheduledJobs[identifier];for(NSString *resource in job[@"resources"])if([AMResourceOwners[resource] isEqual:identifier])[AMResourceOwners removeObjectForKey:resource];}AMOperationPump();}
+void AMOperationSetWorkflowResult(NSString *identifier,NSString *result,NSString *issue,NSString *stage){if(!identifier)return;@synchronized(AMOperationLock()){NSMutableDictionary *row=AMOperationRows[identifier];row[@"workflowResult"]=result;row[@"workflowIssue"]=issue;row[@"workflowStage"]=stage ?: @"";if([result isEqual:@"completed"] && [@[@"failed",@"cancelled"] containsObject:row[@"state"]]){row[@"state"]=@"success";row[@"stage"]=@"结果已保存";}}AMOperationNotify();}
 void AMOperationProgress(NSString *identifier,NSString *stage,NSInteger completed,NSInteger total){if(!identifier)return;@synchronized(AMOperationLock()){NSMutableDictionary *row=AMOperationRows[identifier];if(![row[@"state"] isEqual:@"running"])return;row[@"stage"]=[row[@"cancelRequested"] boolValue] ? @"正在停止":(stage ?: @"");row[@"completed"]=@(MAX(0,completed));row[@"total"]=@(MAX(0,total));}AMOperationNotify();}
 void AMOperationFinish(NSString *identifier,NSString *state,NSString *message){if(!identifier)return;@synchronized(AMOperationLock()){
     NSMutableDictionary *row=AMOperationRows[identifier];if(!row || ![@[@"running",@"queued"] containsObject:row[@"state"]])return;
@@ -46,7 +48,7 @@ void AMOperationFinish(NSString *identifier,NSString *state,NSString *message){i
     [AMScheduledJobs removeObjectForKey:identifier];row[@"state"]=state;row[@"stage"]=message ?: @"";row[@"finished"]=NSDate.date;row[@"cancellable"]=@NO;[AMOperationCancels removeObjectForKey:identifier];
 }AMOperationNotify();AMOperationPump();}
 void AMOperationSetResult(NSString *identifier,NSString *summary,NSString *details,BOOL warning,NSString *actionTitle,void (^action)(void)){
-    @synchronized(AMOperationLock()){NSMutableDictionary *row=AMOperationRows[identifier];if(!row)return;row[@"summary"]=summary ?: @"";row[@"details"]=details ?: @"";row[@"warning"]=@(warning);if(action){row[@"recoveryTitle"]=actionTitle ?: @"查看";row[@"recovery"]=[action copy];}}
+    @synchronized(AMOperationLock()){NSMutableDictionary *row=AMOperationRows[identifier];if(!row)return;row[@"summary"]=summary ?: @"";row[@"details"]=details ?: @"";row[@"warning"]=@(warning);if(action){row[@"recoveryTitle"]=actionTitle ?: @"查看";row[@"recovery"]=[action copy];}else {[row removeObjectForKey:@"recovery"];[row removeObjectForKey:@"recoveryTitle"];}}
     AMOperationNotify();
 }
 void AMOperationCancel(NSString *identifier){

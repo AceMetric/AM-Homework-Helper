@@ -1058,13 +1058,13 @@ private struct SubmissionHistoryView:View {
             if string(r,"origin")=="external" && !flag(r,"teacherHistoryKnown"){Text("上游历史尚未完整核对；此记录暂未判断是否为作业。").font(.caption).foregroundStyle(.secondary)}
             Text(string(r,"message")).textSelection(.enabled)
             if !string(r,"commit").isEmpty{WorkspaceSection("提交版本"){Text(string(r,"commit")).font(.system(.caption,design:.monospaced)).textSelection(.enabled);Button("在 GitHub 查看"){state.action?("open",identifier(r))}}}
-            WorkspaceSection("操作与核验"){Text("本机操作：\((r["date"] as? Date ?? Date()).formatted())");if let checked=r["checkedAt"] as? Date{Text("最近核验：\(checked.formatted())")};if let confirmed=r["confirmedAt"] as? Date{Text("曾确认推送：\(confirmed.formatted())")}}
+            WorkspaceSection("操作与核验"){if let stage=r["workflowStage"] as? String {Text("阶段：\(["prepare":"检查条件","commit":"保存提交","merge":"合并老师更新","push":"推送个人远端","verify":"核验结果","save":"保存记录"][stage] ?? "待核验")").foregroundStyle(.secondary)};Text("本机操作：\((r["date"] as? Date ?? Date()).formatted())");if let checked=r["checkedAt"] as? Date{Text("最近核验：\(checked.formatted())")};if let confirmed=r["confirmedAt"] as? Date{Text("曾确认推送：\(confirmed.formatted())")}}
             if let review=r["review"] as? NSDictionary {WorkspaceSection("提交前检查"){Text("\((review["date"] as? Date ?? Date()).formatted()) · \((review["count"] as? NSNumber)?.intValue ?? 0) 条建议");Text(string(review,"coverage")=="local" ? "本机检查，用户确认继续":(string(review,"coverage")=="partial" ? "含助手复核；部分未完成，用户确认继续":"含助手复核，用户确认继续")).foregroundStyle(.secondary)}}
             if string(r,"completionStatus")=="completed" {Label("已处理关联作业",systemImage:"checkmark.circle").foregroundStyle(.secondary)}
             else if string(r,"completionStatus")=="waiting" {Text("待关联作业").foregroundStyle(.secondary)}
             else if string(r,"completionStatus")=="deferred" {Text("编辑结束后完成作业").foregroundStyle(.secondary)}
             WorkspaceSection("实际文件"){ForEach(r["files"] as? [String] ?? [],id:\.self){Text($0).font(.caption).textSelection(.enabled)}}
-            HStack{Button("关联作业…"){state.action?("associate",identifier(r))};Button("重新核验"){state.action?("verify",identifier(r))};if string(r,"origin") != "external" && string(r,"state") != "confirmed" && !string(r,"commit").isEmpty{Button("核验并重试推送"){state.action?("retry",identifier(r))}}}.disabled(state.busy)
+            HStack{Button("关联作业…"){state.action?("associate",identifier(r))};if !string(r,"issue").isEmpty {Button("处理问题…"){state.action?("recover-workflow",identifier(r))}};Button("核验推送"){state.action?("verify",identifier(r))};if string(r,"origin") != "external" && string(r,"state") != "confirmed" && !string(r,"commit").isEmpty{Button("核验并重试推送"){state.action?("retry",identifier(r))}}}.disabled(state.busy)
         }.padding(16).frame(maxWidth:.infinity,alignment:.leading)}
     }
     var body:some View {GeometryReader{geo in

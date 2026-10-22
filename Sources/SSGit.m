@@ -6,6 +6,7 @@
 #import "SSRecognition.h"
 #import "SSSecurity.h"
 #import "SSLocalData.h"
+#import "AMWorkflow.h"
 #import <signal.h>
 #import <fcntl.h>
 #import <unistd.h>
@@ -18,10 +19,17 @@ static NSError *GitError(NSString *message) {
     if([detail containsString:@"Permission denied (publickey)"]){friendly=@"本机 SSH 身份验证失败。推荐切换到统一浏览器登录，无需配置 SSH。";issue=@"ssh";}
     else if([detail containsString:@"Authentication failed"] || [detail containsString:@"could not read Username"] || [detail containsString:@"Invalid username or token"]){friendly=@"GitHub 登录或凭据失效，请重新登录。";issue=@"login";}
     else if([detail containsString:@"Repository not found"]){friendly=@"无法读取课程仓库，请核对账户权限或学校授权。";issue=@"permission";}
-    else if([detail containsString:@"Could not resolve host"] || [detail containsString:@"Failed to connect"] || [detail containsString:@"timed out"]){friendly=@"无法连接 GitHub，请检查网络后重试。";issue=@"network";}
+    else if([detail containsString:@"Could not resolve host"] || [detail containsString:@"Failed to connect"] || [detail containsString:@"timed out"] || [detail containsString:@"Connection reset"] || [detail containsString:@"remote end hung up"]){friendly=@"无法连接 GitHub，请检查网络后重试。";issue=@"network";}
+    else if(([detail containsString:@"未提交修改"] || [detail.lowercaseString containsString:@"local changes"] || [detail.lowercaseString containsString:@"untracked working tree"] || [detail.lowercaseString containsString:@"index.lock"])){issue=@"dirty";friendly=@"本地修改需要先处理";}
+    else if([detail containsString:@"切换到课程提交分支"]){issue=@"branch";friendly=@"课程分支不匹配";}
+    else if([detail containsString:@"冲突"]){issue=@"merge-conflict";friendly=@"课程文件存在冲突";}
+    else if([detail.lowercaseString containsString:@"non-fast-forward"] || [detail.lowercaseString containsString:@"divergent"] || [detail.lowercaseString containsString:@"not possible to fast-forward"]){issue=@"diverged";friendly=@"个人远端已有更新";}
+    else if([detail containsString:@"不存在"] || [detail containsString:@"not a git repository"] || [detail containsString:@"No such file or directory"]){issue=@"directory";friendly=@"课程文件夹不可用";}
+    else if([detail containsString:@"版本已变化"] || [detail containsString:@"文件已变化"]){issue=@"files-changed";}
+    else if([detail containsString:@"503"] || [detail containsString:@"502"] || [detail containsString:@"500"]){issue=@"service";}
     return [NSError errorWithDomain:@"SSGit" code:1 userInfo:@{NSLocalizedDescriptionKey:friendly,@"SSDetail":detail,@"SSIssue":issue}];
 }
-static NSError *PendingPushError(NSError *error) { return [NSError errorWithDomain:@"SSGit" code:2 userInfo:@{NSLocalizedDescriptionKey:[@"本地更新已保留，尚未推送。修复原因后选择“重试推送”：\n" stringByAppendingString:error.localizedDescription ?: @"网络或权限错误"], @"SSPendingPush":@YES}]; }
+static NSError *PendingPushError(NSError *error) {NSMutableDictionary *info=[error.userInfo mutableCopy] ?: NSMutableDictionary.dictionary;info[NSLocalizedDescriptionKey]=@"本地更新已保留，尚未推送";info[@"SSPendingPush"]=@YES;if(error)info[NSUnderlyingErrorKey]=error;return [NSError errorWithDomain:@"SSGit" code:error ? error.code:2 userInfo:info];}
 static NSString *Trim(NSString *value) { return [value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]; }
 static NSString *ScanIdentity(NSDictionary *course,NSString *branch) {
     NSArray *parts=@[[course[@"upstream"] lowercaseString] ?: @"",[course[@"path"] stringByStandardizingPath] ?: @"",branch ?: @"",course[@"timeZone"] ?: NSTimeZone.localTimeZone.name];
@@ -39,17 +47,16 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
 @property NSString *diagnostic;
 @end
 @implementation SSGitResult @end
+#import "AMGitProcess.inc"
 
 @interface SSGit ()
 @property NSString *temporaryIndex;
-@property NSTask *activeTask;
+@property pid_t activePID;
 @property NSData *commandInput;
+@property NSDate *commandDeadline;
 @end
 @implementation SSGit
-- (void)cancelCurrentOperation {
-    self.operationCancelled=YES;NSTask *task=nil;@synchronized(self){task=self.activeTask;}
-    if(task.running){pid_t pid=task.processIdentifier;kill(getpgid(pid)==pid && pid!=getpgrp() ? -pid:pid,SIGKILL);}
-}
+- (void)cancelCurrentOperation {self.operationCancelled=YES;@synchronized(self){pid_t pid=self.activePID;if(pid>0 && getpgid(pid)==pid)kill(-pid,SIGKILL);}}
 - (SSGitResult *)run:(NSArray *)arguments input:(NSData *)input in:(NSString *)path token:(NSString *)token error:(NSError **)error {
     self.commandInput=input;@try{return [self run:arguments in:path token:token error:error];}@finally{self.commandInput=nil;}
 }
@@ -59,12 +66,9 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSUInteger commandIndex = 0; while (commandIndex + 1 < arguments.count && [arguments[commandIndex] isEqual:@"-c"]) commandIndex += 2;
     NSString *phase = commandIndex < arguments.count ? phases[arguments[commandIndex]] : nil; if (self.progress && phase) self.progress(phase);
     if(self.operationCancelled || (operationStop && operationStop()) || (self.readsCancellable && self.cancelledReads)){if(error)*error=[NSError errorWithDomain:@"SSGit" code:NSUserCancelledError userInfo:@{NSLocalizedDescriptionKey:@"操作已终止，现有文件和提交记录保留。",@"SSIssue":@"cancelled"}];return nil;}
-    NSTask *task = NSTask.new;
-    task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/git"];
     NSMutableArray *args = [@[@"-c", @"core.hooksPath=/dev/null", @"-c", @"protocol.ext.allow=never", @"-c", @"http.followRedirects=false", @"-c", @"core.askPass=/usr/bin/false", @"-c", @"commit.gpgSign=false", @"-c", @"tag.gpgSign=false", @"-c", @"credential.helper=", @"-c", @"credential.useHttpPath=true"] mutableCopy];
     if (!token.length) [args addObjectsFromArray:@[@"-c", @"credential.helper=osxkeychain"]];
-    [args addObjectsFromArray:arguments]; task.arguments = args;
-    if (path.length) task.currentDirectoryURL = [NSURL fileURLWithPath:path isDirectory:YES];
+    [args addObjectsFromArray:arguments];
     NSMutableDictionary *environment = NSProcessInfo.processInfo.environment.mutableCopy;
     for (NSString *key in environment.allKeys) if ([key hasPrefix:@"GIT_"] || [key hasPrefix:@"SS_GIT_"]) [environment removeObjectForKey:key];
     environment[@"GIT_CONFIG_GLOBAL"] = @"/dev/null";
@@ -82,40 +86,24 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
         if(!destination || ![@[@"clone",@"fetch",@"push",@"ls-remote"] containsObject:arguments.firstObject]){if(error)*error=GitError(@"此操作不可使用网络凭据");return nil;}
         environment[@"GIT_ASKPASS"] = askpass; environment[@"SS_GIT_TOKEN"] = token;environment[@"SS_GIT_REPOSITORY"] = [@"github.com/" stringByAppendingString:SSCanonicalRepository(destination)];
     }
-    task.environment = environment;
-    NSPipe *output = NSPipe.pipe, *diagnostic = NSPipe.pipe,*input=self.commandInput ? NSPipe.pipe:nil;
-    task.standardOutput = output; task.standardError = diagnostic;
-    task.standardInput=input ?: NSFileHandle.fileHandleWithNullDevice;
-    if (![task launchAndReturnError:error]) return nil;
-    @synchronized(self){self.activeTask=task;}
-    dispatch_group_t reading = dispatch_group_create();
-    __block NSData *errorData,*data;NSData *inputData=self.commandInput;
-    dispatch_group_async(reading, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ errorData = [diagnostic.fileHandleForReading readDataToEndOfFile]; });
-    dispatch_group_async(reading, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ data = [output.fileHandleForReading readDataToEndOfFile]; });
-    if(input){fcntl(input.fileHandleForWriting.fileDescriptor,F_SETNOSIGPIPE,1);dispatch_group_async(reading,dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{@try{[input.fileHandleForWriting writeData:inputData];}@catch(NSException *exception){(void)exception;}@finally{[input.fileHandleForWriting closeFile];}});}
-    dispatch_source_t timeout = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
-    NSDate *launched=NSDate.date;NSTimeInterval limit=self.commandTimeout>0 ? self.commandTimeout:([@[@"fetch",@"clone",@"push",@"ls-remote"] containsObject:arguments[commandIndex]] ? 180:90);
-    pid_t pid=task.processIdentifier;BOOL isolated=getpgid(pid)==pid && pid!=getpgrp();__block BOOL timedOut=NO;
-    dispatch_source_set_timer(timeout,dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),100*NSEC_PER_MSEC,10*NSEC_PER_MSEC);
-    dispatch_source_set_event_handler(timeout, ^{if(-launched.timeIntervalSinceNow>limit || self.operationCancelled || (operationStop && operationStop()) || (self.readsCancellable && self.cancelledReads)){@synchronized(task){timedOut=-launched.timeIntervalSinceNow>limit;}kill(isolated ? -pid:pid,SIGKILL);} });
-    dispatch_resume(timeout);
-    [task waitUntilExit];
-    dispatch_group_wait(reading, DISPATCH_TIME_FOREVER);
-    dispatch_source_cancel(timeout);@synchronized(self){if(self.activeTask==task)self.activeTask=nil;}
-    BOOL expired=NO;@synchronized(task){expired=timedOut;}
-    if(expired || self.operationCancelled || (operationStop && operationStop()) || (self.readsCancellable && self.cancelledReads)){if(error)*error=[NSError errorWithDomain:@"SSGit" code:expired ? NSURLErrorTimedOut:NSUserCancelledError userInfo:@{NSLocalizedDescriptionKey:expired ? @"当前步骤超时，已终止。文件和本地提交保留；可在提交记录核验后重试。":@"当前步骤已终止。文件和本地提交保留；推送结果请到提交记录核验。",@"SSIssue":expired ? @"timeout":@"cancelled"}];return nil;}
-    SSGitResult *result = SSGitResult.new;
-    result.status = task.terminationStatus; result.data = data ?: NSData.data;
-    NSString *text = [[NSString alloc] initWithData:errorData encoding:NSUTF8StringEncoding] ?: @"";
-    if (token.length) text = [text stringByReplacingOccurrencesOfString:token withString:@"[已隐藏凭据]"];
-    result.diagnostic = SSRedactedText(text); return result;
+    NSTimeInterval limit=self.commandTimeout>0 ? self.commandTimeout:([@[@"fetch",@"clone",@"push",@"ls-remote"] containsObject:arguments[commandIndex]] ? 180:90);
+    if(self.commandDeadline)limit=MIN(limit,MAX(.01,self.commandDeadline.timeIntervalSinceNow));NSDate *started=NSDate.date;NSError *failure=nil;
+    SSGitResult *result=AMRunGitProcess(args,environment,path,self.commandInput,limit,^BOOL{return self.operationCancelled || (operationStop && operationStop()) || (self.readsCancellable && self.cancelledReads);},^(pid_t pid){@synchronized(self){self.activePID=pid;}},&failure);
+    NSString *category=[@[@"fetch",@"push",@"clone",@"ls-remote"] containsObject:arguments[commandIndex]] ? @"git-network":@"git-local";SSWorkflowDiagnostic(category,failure ? @"failed":(result.status ? @"failed":@"success"),failure ? AMWorkflowIssue(failure):@"",-started.timeIntervalSinceNow);if(failure && error)*error=failure;
+    if(result && token.length)result.diagnostic=[result.diagnostic stringByReplacingOccurrencesOfString:token withString:@"[已隐藏凭据]"];return result;
 }
+
 - (NSString *)string:(SSGitResult *)result { return [[NSString alloc] initWithData:result.data encoding:NSUTF8StringEncoding] ?: @""; }
 - (SSGitResult *)checked:(NSArray *)args in:(NSString *)path token:(NSString *)token error:(NSError **)error {
-    SSGitResult *result = [self run:args in:path token:token error:error];
-    if (!result) return nil;
-    if (result.status != 0) { if (error) *error = GitError(Trim(result.diagnostic).length ? Trim(result.diagnostic) : @"Git 操作未成功；请检查仓库状态与本机访问权限。"); return nil; }
-    return result;
+    NSUInteger index=0;while(index+1<args.count && [args[index] isEqual:@"-c"])index+=2;
+    BOOL retryable=index<args.count && [@[@"fetch",@"ls-remote"] containsObject:args[index]];NSTimeInterval saved=self.commandTimeout;NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:saved>0 ? saved:(retryable ? 180:90)];
+    @try{for(NSUInteger attempt=0;attempt<2;attempt++){
+        self.commandTimeout=MAX(.01,deadline.timeIntervalSinceNow);NSError *failure=nil;SSGitResult *result=[self run:args in:path token:token error:&failure];
+        if(result && result.status==0)return result;
+        if(result)failure=GitError(Trim(result.diagnostic).length ? Trim(result.diagnostic):@"Git 未返回有效结果");if(!failure)failure=AMWorkflowError(@"unknown",@"Git 未返回有效结果",nil);
+        if(attempt==0 && retryable && AMWorkflowTransient(failure) && AMWorkflowRetryDelay(1,deadline,^BOOL{return self.operationCancelled || self.cancelledReads || AMCurrentOperationCancelled();})){if(self.progress)self.progress(@"连接失败，重试一次…");continue;}
+        if(error)*error=failure;return nil;
+    }}@finally{self.commandTimeout=saved;}return nil;
 }
 - (BOOL)safeConfiguration:(NSString *)path error:(NSError **)error {
     SSGitResult *config = [self checked:@[@"config", @"--local", @"--no-includes", @"--name-only", @"--list"] in:path token:nil error:error]; if (!config) return NO;
@@ -272,8 +260,8 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
 - (NSDictionary *)readCourseDocuments:(NSDictionary *)course paths:(NSArray *)paths fetch:(BOOL)fetch cache:(NSMutableDictionary *)cache error:(NSError **)error {
     if (![self validateCourse:course error:error]) return nil;
     NSString *path = course[@"path"];
-    NSString *url=[self teacherURL:course path:path error:error];if(!url)return nil;
-    NSString *branch=[self teacherBranch:url course:course error:error];if(!branch)return nil;
+    if(self.progress)self.progress(@"核验课程来源…");NSString *url=fetch ? [self teacherURL:course path:path error:error]:nil;if(fetch && !url)return nil;
+    NSString *branch=fetch ? [self teacherBranch:url course:course error:error]:course[@"upstreamBranch"];if(!SSValidBranch(branch ?: @""))return nil;
     if(fetch && ![self teacherRequest:@[@"fetch",@"--no-tags",@"--",url,[@"refs/heads/" stringByAppendingString:branch]] course:course error:error])return nil;
     SSGitResult *tip=[self checked:@[@"rev-parse",@"FETCH_HEAD"] in:path token:nil error:error];NSString *head=tip ? Trim([self string:tip]) : nil;if(!head)return nil;
     NSString *snapshotKey=[@"document-snapshot-v1|" stringByAppendingString:ScanIdentity(course,branch)];
@@ -317,6 +305,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     if(!paths)cache[snapshotKey]=snapshot;return snapshot;
 }
 - (NSDictionary *)scanCourse:(NSDictionary *)course cache:(NSMutableDictionary *)cache error:(NSError **)error {
+    if(self.progress)self.progress(@"获取老师更新…");
     NSDictionary *snapshot=[self readCourseDocuments:course paths:nil fetch:YES cache:cache error:error];if(!snapshot)return nil;
     NSArray *documents=snapshot[@"documents"],*skipped=snapshot[@"skipped"];NSString *head=snapshot[@"commit"],*branch=snapshot[@"branch"],*path=course[@"path"];
     NSDictionary *settings=SSCourseRecognitionSettings(self.recognitionSettings ?: @{@"mode":@"rules"},course);
@@ -330,7 +319,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSMutableArray *candidates=NSMutableArray.array,*materials=NSMutableArray.array,*recognitionMessages=NSMutableArray.array;
     NSMutableSet *dedup=NSMutableSet.set;NSCalendar *calendar=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];
     calendar.timeZone=[NSTimeZone timeZoneWithName:course[@"timeZone"] ?: NSTimeZone.localTimeZone.name] ?: NSTimeZone.localTimeZone;
-    BOOL referencesComplete=YES;
+    BOOL referencesComplete=YES;NSError *checkpointFailure=nil;
     for(NSDictionary *document in documents){if(self.readsCancellable && self.cancelledReads){if(error)*error=GitError(@"检查已取消，已完成的文档保留。");return nil;}NSString *text=document[@"text"],*file=document[@"path"],*blob=document[@"blobSHA"];
         NSError *recognitionError = nil;
         if (self.progress && !SSCachedRecognition(course[@"upstream"],file,blob,calendar,settings,cache)) self.progress([NSString stringWithFormat:@"正在识别新材料：%@",file]);
@@ -344,10 +333,10 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
             if([candidate[@"relative"] boolValue] && ![candidate[@"needsTime"] boolValue]){NSMutableDictionary *scopedCandidate=candidate.mutableCopy;scopedCandidate[@"timeZone"]=calendar.timeZone.name;referenced=[self cachedDateReference:scopedCandidate head:head branch:branch path:path cache:cache];if(!referenced[@"dateBasis"])referencesComplete=NO;}
             NSMutableDictionary *copy = candidate.mutableCopy;for(NSString *field in @[@"suggestedDue",@"dateBasis"])if(referenced[field])copy[field]=referenced[field]; if (!copy[@"timeZone"]) copy[@"timeZone"] = calendar.timeZone.name; [candidates addObject:copy];
         }
-        if(self.scanCheckpoint && !self.scanCheckpoint(cache,error))return nil;
+        if(self.scanCheckpoint){NSError *saveError=nil;if(!self.scanCheckpoint(cache,&saveError))checkpointFailure=saveError;}
     }
     NSDictionary *result=@{@"candidates":SSAttachLinkedDocuments(SSConsolidateAssignments(candidates),documents), @"materials":SSGroupMaterials(materials), @"documents":documents, @"recognitionMessages":recognitionMessages, @"skipped":skipped, @"commit":head, @"branch":branch, @"date":NSDate.date,@"recognitionSignature":signature,@"referencesComplete":@(referencesComplete && !recognitionMessages.count),@"scanSummary":snapshot[@"scanSummary"]};
-    cache[resultKey]=result;if(self.scanCheckpoint && !self.scanCheckpoint(cache,error))return nil;return result;
+    cache[resultKey]=result;if(self.scanCheckpoint){NSError *saveError=nil;if(!self.scanCheckpoint(cache,&saveError))checkpointFailure=saveError;}if(checkpointFailure){if(error)*error=AMWorkflowError(@"storage",@"检查结果尚未保存",checkpointFailure);NSMutableDictionary *partial=result.mutableCopy;partial[@"persistenceIssue"]=SSRedactedText(checkpointFailure.localizedDescription);return partial;}return result;
 }
 - (NSDictionary *)resolveSkillDates:(NSDictionary *)validated scans:(NSDictionary *)scans courses:(NSArray *)courses {
     NSMutableDictionary *result=validated.mutableCopy,*records=NSMutableDictionary.dictionary;
@@ -361,7 +350,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSDictionary *scoped=SSCourseRecognitionSettings(settings,course);if([scoped[@"mode"] isEqual:@"rules"])return scan;
     NSMutableDictionary *byID=NSMutableDictionary.dictionary;for(NSDictionary *record in scan[@"candidates"])byID[record[@"id"]]=record;
     for(NSDictionary *group in scan[@"materials"])for(NSDictionary *record in group[@"documents"] ?: @[group])byID[record[@"id"]]=record;
-    NSMutableArray *messages=NSMutableArray.array;NSMutableDictionary *failures=[scan[@"modelFailures"] mutableCopy] ?: NSMutableDictionary.dictionary;NSUInteger processed=0,reused=0,pending=0;
+    NSMutableArray *messages=NSMutableArray.array;NSMutableDictionary *failures=[scan[@"modelFailures"] mutableCopy] ?: NSMutableDictionary.dictionary;NSUInteger processed=0,reused=0,pending=0;NSError *persistenceFailure=nil;
     for(NSDictionary *document in scan[@"documents"]){if(paths && ![paths containsObject:document[@"path"]])continue;
         if(self.readsCancellable && self.cancelledReads){[messages addObject:@"分析已取消，已完成的材料保留。"];break;}
         NSCalendar *calendar=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];calendar.timeZone=[NSTimeZone timeZoneWithName:document[@"timeZone"]] ?: NSTimeZone.localTimeZone;
@@ -381,7 +370,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
             if(cached)found=SSRecognizeDocument(document[@"text"],document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,scoped,cache,&failure);
             else found=AMPerformModelOperation(SSRecognitionCacheKey(document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,scoped),document[@"path"],[scoped[@"manualLocal"] boolValue] || [scoped[@"manualCloud"] boolValue],^BOOL{return self.readsCancellable && self.cancelledReads;},^id(NSError **problem){return SSRecognizeDocument(document[@"text"],document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,scoped,cache,problem);},&failure);
             if(!failure && found){completed=@{@"records":found,@"model":scoped[@"model"] ?: @"",@"prompt":AMCoursePromptVersion(),@"validation":AMCourseValidationVersion(),@"date":NSDate.date};cache[completedKey]=completed;if(cached)reused++;else processed++;}
-            if(self.scanCheckpoint && !self.scanCheckpoint(cache,&failure))found=nil;
+            if(self.scanCheckpoint){NSError *saveError=nil;if(!self.scanCheckpoint(cache,&saveError))persistenceFailure=saveError;}
         }
         if(failure){
             [cache removeObjectForKey:completedKey];
@@ -403,14 +392,14 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     for(NSDictionary *document in scan[@"documents"]){NSString *path=document[@"path"];[live addObject:path];if(failures[path] && ![failures[path][@"blobSHA"] isEqual:document[@"blobSHA"]])[failures removeObjectForKey:path];NSString *done=[NSString stringWithFormat:@"model-complete-v1|%@|%@|%@|%@",[document[@"repository"] lowercaseString],path,document[@"blobSHA"],document[@"timeZone"]];if(!cache[done] && !failures[path])pending++;}
     for(NSString *path in failures.allKeys)if(![live containsObject:path])[failures removeObjectForKey:path];
     for(NSString *path in [failures.allKeys sortedArrayUsingSelector:@selector(compare:)])[messages addObject:[NSString stringWithFormat:@"%@：%@",path,[failures[path][@"issues"] firstObject][@"reason"] ?: @"识别未完成"]];
-    result[@"recognitionMessages"]=messages;result[@"modelFailures"]=failures;result[@"modelCompleted"]=@(failures.count==0 && pending==0);result[@"modelSummary"]=@{@"processed":@(processed),@"reused":@(reused),@"failed":@(failures.count),@"pending":@(pending)};return result;
+    if(persistenceFailure)result[@"persistenceIssue"]=SSRedactedText(persistenceFailure.localizedDescription);result[@"recognitionMessages"]=messages;result[@"modelFailures"]=failures;result[@"modelCompleted"]=@(failures.count==0 && pending==0);result[@"modelSummary"]=@{@"processed":@(processed),@"reused":@(reused),@"failed":@(failures.count),@"pending":@(pending)};return result;
 }
 - (BOOL)cleanWorktree:(NSString *)path error:(NSError **)error {
     SSGitResult *status = [self checked:@[@"status", @"--porcelain=v1", @"-z", @"--untracked-files=all"] in:path token:nil error:error]; if (!status) return NO;
     if (status.data.length) { if (error) *error = GitError(@"本地有未提交修改；请先提交或自行处理，再拉取上游。"); return NO; } return YES;
 }
 - (NSArray<NSDictionary *> *)changesForCourse:(NSDictionary *)course error:(NSError **)error {
-    NSTimeInterval previousTimeout=self.commandTimeout;self.commandTimeout=previousTimeout>0 ? MIN(previousTimeout,15):15;
+    NSTimeInterval previousTimeout=self.commandTimeout;NSDate *previousDeadline=self.commandDeadline;self.commandDeadline=[NSDate dateWithTimeIntervalSinceNow:15];if(previousDeadline && [previousDeadline compare:self.commandDeadline]==NSOrderedAscending)self.commandDeadline=previousDeadline;self.commandTimeout=previousTimeout>0 ? MIN(previousTimeout,15):15;
     @try{
     if (![self validateCourse:course error:error]) return nil;
     SSGitResult *status = [self checked:@[@"status", @"--porcelain=v1", @"-z", @"--untracked-files=all"] in:course[@"path"] token:nil error:error]; if (!status) return nil;
@@ -422,7 +411,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
         [changes addObject:@{@"path":file, @"status":code, @"sensitive":@(SSSensitivePath(file))}];
     }
     return changes;
-    }@finally{self.commandTimeout=previousTimeout;}
+    }@finally{self.commandTimeout=previousTimeout;self.commandDeadline=previousDeadline;}
 }
 - (NSString *)previewForCourse:(NSDictionary *)course path:(NSString *)file error:(NSError **)error {
     NSArray *changes = [self changesForCourse:course error:error]; if (!changes) return nil;
@@ -452,7 +441,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
 - (BOOL)pushCourse:(NSDictionary *)course token:(NSString *)token error:(NSError **)error {
     if (![self authorize:course error:error] || ![self validateCourse:course error:error] || ![self submissionBranch:course error:error]) return NO;
     NSString *path = course[@"path"], *url = [NSString stringWithFormat:@"https://github.com/%@.git", course[@"fork"]];
-    NSString *base = [self fetch:url branch:course[@"branch"] path:path token:token error:error]; if (!base) return NO;
+    if(self.progress)self.progress([NSString stringWithFormat:@"更新个人分支：%@ · %@",course[@"fork"],course[@"branch"]]);NSString *base = [self fetch:url branch:course[@"branch"] path:path token:token error:error]; if (!base) return NO;
     SSGitResult *tip = [self checked:@[@"rev-parse", @"HEAD"] in:path token:nil error:error]; if (!tip) return NO;
     NSString *head = Trim([self string:tip]);
     SSGitResult *ancestor = [self run:@[@"merge-base", @"--is-ancestor", base, head] in:path token:nil error:error];
@@ -464,12 +453,18 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     if(self.submissionCheckpoint){SSGitResult *files=[self checked:@[@"diff-tree",@"--root",@"-m",@"--no-commit-id",@"--name-only",@"-r",@"-z",head,@"--"] in:path token:nil error:error];if(!files || !self.submissionCheckpoint(@{@"state":@"uncertain",@"commit":head,@"files":[NSOrderedSet orderedSetWithArray:NonemptyParts([self string:files],@"\0")].array},error))return NO;}
     NSArray *push=[self remoteArguments:@[@"push",@"--",url,ref] course:course role:@"personalPush" error:error];return push && [self checked:push in:path token:token error:error] != nil;
 }
+- (NSString *)differencesForCourse:(NSDictionary *)course token:(NSString *)token error:(NSError **)error {
+    if(![self authorize:course error:error] || ![self validateCourse:course error:error] || ![self submissionBranch:course error:error])return nil;
+    NSString *remote=[self fetch:[NSString stringWithFormat:@"https://github.com/%@.git",course[@"fork"]] branch:course[@"branch"] path:course[@"path"] token:token error:error];if(!remote)return nil;
+    SSGitResult *diff=[self checked:@[@"diff",@"--stat",@"HEAD",remote,@"--"] in:course[@"path"] token:nil error:error];return diff ? [NSString stringWithFormat:@"%@ · %@\n本地与个人远端的差异\n%@",course[@"fork"],course[@"branch"],[self string:diff]]:nil;
+}
 - (NSDictionary *)syncCourse:(NSDictionary *)course token:(NSString *)token error:(NSError **)error {
-    NSDictionary *user = [self authorize:course error:error];
+    if(self.progress)self.progress(@"检查本地状态…");NSDictionary *user = [self authorize:course error:error];
     if (!user || ![self validateCourse:course error:error] || ![self submissionBranch:course error:error] || ![self cleanWorktree:course[@"path"] error:error]) return nil;
     NSString *path = course[@"path"], *url = [NSString stringWithFormat:@"https://github.com/%@.git", course[@"fork"]];
     NSString *base = [self fetch:url branch:course[@"branch"] path:path token:token error:error]; if (!base) return nil;
     if (![self checked:[[self authorArguments:user] arrayByAddingObjectsFromArray:@[@"merge", @"--ff-only", base]] in:path token:nil error:error]) return nil;
+    if(self.submissionCheckpoint && !self.submissionCheckpoint(@{@"localUpdated":@YES,@"workflowStage":@"merge",@"workflowResult":@"partial"},error))return nil;
     NSString *teacherURL=[self teacherURL:course path:path error:error];if(!teacherURL)return nil;
     NSString *teacherBranch=[self teacherBranch:teacherURL course:course error:error];if(!teacherBranch)return nil;
     if(![self teacherRequest:@[@"fetch",@"--no-tags",@"--",teacherURL,[@"refs/heads/" stringByAppendingString:teacherBranch]] course:course error:error])return nil;
@@ -481,7 +476,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
         if (error) *error = GitError(@"合并产生冲突。请打开冲突引导，编辑文件、标记解决后再继续。");
         return @{@"conflicts":files, @"mergeHead":teacher};
     }
-    if(self.submissionCheckpoint){SSGitResult *tip=[self checked:@[@"rev-parse",@"HEAD"] in:path token:nil error:error];NSString *commit=tip ? Trim([self string:tip]):nil;NSDictionary *details=commit ? [self submissionDetailsForCourse:course commit:commit error:error]:nil;if(!details || !self.submissionCheckpoint(@{@"commit":commit,@"files":details[@"files"],@"state":@"local"},error))return nil;}
+    if(self.submissionCheckpoint){SSGitResult *tip=[self checked:@[@"rev-parse",@"HEAD"] in:path token:nil error:error];NSString *commit=tip ? Trim([self string:tip]):nil;NSDictionary *details=commit ? [self submissionDetailsForCourse:course commit:commit error:error]:nil;if(!details || !self.submissionCheckpoint(@{@"commit":commit,@"files":details[@"files"],@"state":@"local",@"workflowStage":@"push"},error))return nil;}
     if (![self pushCourse:course token:token error:error]) { if (error) *error = PendingPushError(*error); return nil; }
     return @{@"success":@YES};
 }
@@ -524,7 +519,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
         }
         if(![self validatePreflightIndex:paths course:course error:error])return NO;
         SSGitResult *previous=[self checked:@[@"rev-parse",@"HEAD"] in:path token:nil error:error];
-        if(!previous || (self.submissionCheckpoint && !self.submissionCheckpoint(@{@"before":Trim([self string:previous]),@"files":actual},error)))return NO;
+        if(!previous || (self.submissionCheckpoint && !self.submissionCheckpoint(@{@"before":Trim([self string:previous]),@"files":actual,@"workflowStage":@"commit"},error)))return NO;
         committed = [self checked:[[self authorArguments:user] arrayByAddingObjectsFromArray:@[@"commit", @"-m", commitMessage]] in:path token:nil error:error] != nil;
     } @finally {
         self.temporaryIndex = nil; [NSFileManager.defaultManager removeItemAtPath:index error:NULL];

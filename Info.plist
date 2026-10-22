@@ -19,9 +19,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.14.3</string>
+	<string>1.14.4</string>
 	<key>CFBundleVersion</key>
-	<string>39</string>
+	<string>40</string>
 	<key>DDLArchiveName</key>
 	<string>AM-Homework-Helper</string>
 	<key>DDLRepositoryURL</key>

@@ -14,6 +14,7 @@ static NSArray *AMPresentedOperations(void){NSMutableArray *visible=NSMutableArr
 @property NSPopover *detailPopover;
 @property NSDictionary *presentation;
 @property(copy) void (^recovery)(void);
+@property NSString *recoveryTitle;
 @end
 @implementation AMOperationView
 @synthesize hidesCancellation=_hidesCancellation,showsHeading=_showsHeading,allowsDismissal=_allowsDismissal;
@@ -42,7 +43,7 @@ static NSArray *AMPresentedOperations(void){NSMutableArray *visible=NSMutableArr
 - (void)refresh{
     NSDictionary *row=nil;for(NSDictionary *candidate in AMOperations())if([candidate[@"id"] isEqual:self.operationID]){row=candidate;break;}
     if(!row){self.stage.stringValue=@"暂无后台操作";self.amount.hidden=YES;self.bar.hidden=YES;self.heading.hidden=YES;self.cancelButton.hidden=YES;return;}
-    NSDictionary *display=AMActivityPresentation(row);self.presentation=display;self.recovery=row[@"recovery"];BOOL running=[row[@"state"] isEqual:@"running"],queued=[row[@"state"] isEqual:@"queued"];
+    NSDictionary *display=AMActivityPresentation(row);self.presentation=display;self.recovery=row[@"recovery"];self.recoveryTitle=row[@"recoveryTitle"];BOOL running=[row[@"state"] isEqual:@"running"],queued=[row[@"state"] isEqual:@"queued"];
     self.heading.title=display[@"heading"];self.heading.hidden=!self.showsHeading;self.heading.toolTip=display[@"heading"];
     self.stage.maximumNumberOfLines=self.showsHeading ? 3:2;self.stage.stringValue=self.showsHeading ? display[@"phase"]:[NSString stringWithFormat:@"%@ · %@",display[@"heading"],display[@"phase"]];self.stage.toolTip=self.stage.stringValue;self.stage.textColor=([row[@"state"] isEqual:@"failed"] || [row[@"warning"] boolValue]) ? NSColor.systemOrangeColor:Ink();
     NSInteger total=[row[@"total"] integerValue],done=[row[@"completed"] integerValue];self.bar.hidden=!running;self.bar.indeterminate=total<=0;if(total>0){[self.bar stopAnimation:nil];self.bar.doubleValue=MIN(1,(double)done/total);}else if(running)[self.bar startAnimation:nil];else [self.bar stopAnimation:nil];
@@ -54,7 +55,7 @@ static NSArray *AMPresentedOperations(void){NSMutableArray *visible=NSMutableArr
 - (void)showDetails:(id)sender {
     NSViewController *controller=NSViewController.new;NSScrollView *scroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,420,240)];scroll.hasVerticalScroller=YES;scroll.autohidesScrollers=YES;
     NSTextView *text=[[NSTextView alloc] initWithFrame:NSMakeRect(0,0,420,240)];text.editable=NO;text.selectable=YES;text.font=[NSFont systemFontOfSize:13];text.textContainerInset=NSMakeSize(12,12);text.autoresizingMask=NSViewWidthSizable;text.textContainer.widthTracksTextView=YES;text.string=self.presentation[@"details"] ?: @"";text.textColor=Ink();text.backgroundColor=NSColor.textBackgroundColor;scroll.documentView=text;controller.view=scroll;
-    if(self.recovery){NSView *root=[[NSView alloc] initWithFrame:NSMakeRect(0,0,420,280)];scroll.frame=NSMakeRect(0,40,420,240);[root addSubview:scroll];NSButton *button=[NSButton buttonWithTitle:@"查看与恢复…" target:self action:@selector(recover:)];button.bezelStyle=NSBezelStyleRounded;button.frame=NSMakeRect(12,6,160,28);[root addSubview:button];controller.view=root;}
+    if(self.recovery){NSView *root=[[NSView alloc] initWithFrame:NSMakeRect(0,0,420,280)];scroll.frame=NSMakeRect(0,40,420,240);[root addSubview:scroll];NSButton *button=[NSButton buttonWithTitle:self.recoveryTitle ?: @"查看" target:self action:@selector(recover:)];button.bezelStyle=NSBezelStyleRounded;button.frame=NSMakeRect(12,6,160,28);[root addSubview:button];controller.view=root;}
     self.detailPopover=NSPopover.new;self.detailPopover.behavior=NSPopoverBehaviorTransient;self.detailPopover.contentViewController=controller;NSView *anchor=self.heading.hidden ? self.stage:self.heading;[self.detailPopover showRelativeToRect:anchor.bounds ofView:anchor preferredEdge:NSRectEdgeMaxY];
 }
 - (void)recover:(id)sender{[self.detailPopover close];if(self.recovery)self.recovery();}
