@@ -4,7 +4,7 @@
 // Private workflow vocabulary. Exchange files and stored task schemas are unchanged.
 typedef NS_ENUM(NSInteger, AMCourseWorkKind){AMCourseWorkGit,AMCourseWorkLocal,AMCourseWorkModel,AMCourseWorkSubmission};
 static inline NSError *AMWorkflowError(NSString *issue,NSString *message,NSError *underlying){
-    NSMutableDictionary *info=[@{NSLocalizedDescriptionKey:message,@"SSIssue":issue,@"SSDetail":SSRedactedText(underlying.userInfo[@"SSDetail"] ?: underlying.localizedDescription ?: message)} mutableCopy];if(underlying)info[NSUnderlyingErrorKey]=underlying;return [NSError errorWithDomain:@"AMWorkflow" code:underlying ? underlying.code:1 userInfo:info];
+    NSMutableDictionary *info=[@{NSLocalizedDescriptionKey:message,@"SSIssue":issue,@"SSDetail":SSRedactedText(underlying.userInfo[@"SSDetail"] ?: underlying.localizedDescription ?: message)} mutableCopy];if(underlying)info[NSUnderlyingErrorKey]=underlying;return [NSError errorWithDomain:@"AMWorkflow" code:[issue isEqual:@"cancelled"] ? NSUserCancelledError:([issue isEqual:@"timeout"] ? NSURLErrorTimedOut:(underlying ? underlying.code:1)) userInfo:info];
 }
 static inline NSString *AMWorkflowIssue(NSError *error){
     NSString *issue=error.userInfo[@"SSIssue"];if(issue.length)return issue;

@@ -650,7 +650,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     [self layoutContent]; self.refreshing = NO;
     if (self.stateChanged) self.stateChanged();
 }
-- (void)cancelReadOperation:(id)sender {AMCourseOperationContext *context=self.workflowContexts[_operationID];if(context){AMOperationCancel(context.identifier);return;}if(self.busy){self.git.cancelledReads=YES;[self.git cancelCurrentOperation];self.github.requestsCancelled=YES;self.cancelReadButton.enabled=NO;[self status:@"正在停止…"];} }
+- (void)cancelReadOperation:(id)sender {AMCourseOperationContext *context=self.workflowContexts[_operationID];if(context){AMOperationCancel(context.identifier);self.cancelReadButton.enabled=NO;[self status:@"正在停止…"];return;}if(self.busy){self.git.cancelledReads=YES;[self.git cancelCurrentOperation];self.github.requestsCancelled=YES;self.cancelReadButton.enabled=NO;[self status:@"正在停止…"];} }
 - (NSDictionary *)checkPresentationForFork:(NSString *)fork {
     NSMutableSet *pending=NSMutableSet.set;for(NSDictionary *record in [self discoveriesForFork:fork])if([record[@"kind"] isEqual:@"assignment"] && ![record[@"reviewDeleted"] boolValue] && ![[self stateForCandidate:record] isEqual:@"已导入"] && record[@"id"])[pending addObject:record[@"id"]];
     return AMCourseCheckPresentation(self.reports[fork] ?: @{},pending.count);
@@ -705,11 +705,11 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSString *scheduled=AMScheduleCourseWorkflow(key,message,course[@"fork"] ?: @"所有课程",resources,priority,YES,^(NSString *identifier){
         context.identifier=identifier;dispatch_async(dispatch_get_main_queue(),^{
             if(![self workflowSourceMatches:context]){NSError *error=AMWorkflowError(@"source-changed",@"课程关联已变化，原请求未执行",nil);[self finishWorkflow:context value:nil error:error completion:completion retry:operation message:message scope:scope priority:priority];return;}
-            self.workflowContexts[identifier]=context;SSWorkflowDiagnostic(@"workflow-wait",@"success",@"",-context.enqueued.timeIntervalSinceNow);self.busy=YES;self.operationID=identifier;self.operationFork=course[@"fork"];self.workGeneration++;context.git.readsCancellable=YES;SSDiagnostic(@"operation",@"started",0);
+            self.workflowContexts[identifier]=context;self.cancelReadButton.enabled=YES;SSWorkflowDiagnostic(@"workflow-wait",@"success",@"",-context.enqueued.timeIntervalSinceNow);self.busy=YES;self.operationID=identifier;self.operationFork=course[@"fork"];self.workGeneration++;context.git.readsCancellable=YES;SSDiagnostic(@"operation",@"started",0);
             dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{@autoreleasepool{__block NSError *failure=nil;__block id value=nil;NSDate *started=NSDate.date;
                 AMWithCourseContext(context,^{@try{if(context.cancelled)failure=AMWorkflowError(@"cancelled",@"已停止",nil);else value=operation(&failure);}@catch(NSException *exception){failure=AMWorkflowError(@"unknown",SSRedactedText(exception.reason),nil);}});
                 if(!failure && (!value || ([value isKindOfClass:NSNumber.class] && ![value boolValue])))failure=AMWorkflowError(@"unknown",@"操作未返回有效结果",nil);
-                if(context.cancelled && !failure)failure=AMWorkflowError(@"cancelled",@"已停止",nil);
+                if(context.cancelled && (!failure || [AMWorkflowIssue(failure) isEqual:@"unknown"]))failure=AMWorkflowError(@"cancelled",@"已停止",failure);
                 SSDiagnostic(@"operation",[AMWorkflowIssue(failure) isEqual:@"cancelled"] ? @"cancelled":(failure ? @"failed":@"success"),-started.timeIntervalSinceNow);
                 dispatch_async(dispatch_get_main_queue(),^{[self finishWorkflow:context value:value error:failure completion:completion retry:operation message:message scope:scope priority:priority];});
             }});
