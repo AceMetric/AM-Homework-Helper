@@ -204,25 +204,20 @@ NSArray<NSDictionary *> *SSGroupMaterials(NSArray<NSDictionary *> *records) {
     return result;
 }
 NSArray<NSDictionary *> *SSConsolidateAssignments(NSArray<NSDictionary *> *records) {
-    NSMutableArray *assignments = NSMutableArray.array;
-    for (NSDictionary *record in records) if ([record[@"kind"] isEqual:@"assignment"]) [assignments addObject:record.mutableCopy];
-    NSMutableSet *attachments = NSMutableSet.set;
-    for (NSMutableDictionary *record in assignments) {
-        if (record[@"dateText"] || record[@"due"] || record[@"dateOnly"] || [[[record[@"path"] lastPathComponent] stringByDeletingPathExtension].lowercaseString isEqual:@"readme"]) continue;
-        NSString *name = Normalized([[record[@"path"] lastPathComponent] stringByDeletingPathExtension]);
-        name = Replace(name, @"\\s+", @"");
-        for (NSMutableDictionary *announcement in assignments) {
-            if (announcement == record || ![announcement[@"repository"] isEqual:record[@"repository"]] || ![[announcement[@"path"] stringByDeletingLastPathComponent] isEqual:[record[@"path"] stringByDeletingLastPathComponent]]) continue;
-            if (![[[announcement[@"path"] lastPathComponent] stringByDeletingPathExtension].lowercaseString isEqual:@"readme"] || !announcement[@"dateText"]) continue;
-            NSString *source = Replace(Normalized([announcement[@"snippet"] stringByRemovingPercentEncoding] ?: announcement[@"snippet"]), @"\\s+", @"");
-            if (!name.length || [source rangeOfString:name].location == NSNotFound) continue;
-            NSMutableArray *docs = [announcement[@"attachments"] mutableCopy] ?: NSMutableArray.array;
-            [docs addObject:record]; announcement[@"attachments"] = docs; [attachments addObject:record[@"id"]]; break;
+    NSMutableArray *assignments=NSMutableArray.array;for(NSDictionary *record in records)if([record[@"kind"] isEqual:@"assignment"])[assignments addObject:record.mutableCopy];NSMutableSet *attached=NSMutableSet.set;NSMutableDictionary *ownership=NSMutableDictionary.dictionary;
+    for(NSMutableDictionary *child in assignments){NSString *childText=child[@"relationText"] ?: child[@"snippet"] ?: @"";if(child[@"due"] || child[@"dateText"] || child[@"dateOnly"] || Match(childText,@"独立提交|单独提交|separate submission|submit separately"))continue;NSMutableArray *parents=NSMutableArray.array;
+        NSString *file=Normalized([child[@"path"] lastPathComponent]),*name=Replace(Normalized([[child[@"path"] lastPathComponent] stringByDeletingPathExtension]),@"\\s+",@"");
+        for(NSMutableDictionary *parent in assignments){if(parent==child || ![parent[@"repository"] isEqual:child[@"repository"]])continue;BOOL linked=NO;
+            for(NSDictionary *link in parent[@"sourceLinks"] ?: @[])if([link[@"path"] isEqual:child[@"path"]] && [link[@"relationship"] isEqual:@"part"])linked=YES;
+            // Plain-text attachment declarations remain supported, but a shared
+            // directory, generic basename or code example is not ownership.
+            if(!linked && [[parent[@"path"] stringByDeletingLastPathComponent] isEqual:[child[@"path"] stringByDeletingLastPathComponent]] && [[[parent[@"path"] lastPathComponent].lowercaseString stringByDeletingPathExtension] isEqual:@"readme"]){NSString *prose=parent[@"relationText"] ?: parent[@"snippet"] ?: @"";for(NSString *line in [prose componentsSeparatedByString:@"\n"]){NSString *compact=Replace(Normalized(line),@"\\s+",@"");BOOL specific=[compact containsString:file] || (!GenericTitle(name) && !Match(name,@"^(?:assignment|homework|project|lab)$") && name.length>2 && [compact containsString:name]);if(specific && Match(line,@"附件|附录|完成|attached|worksheet|complete|solve"))linked=YES;}}
+            if(linked)[parents addObject:parent];
         }
+        if(parents.count==1)ownership[child[@"id"]]=parents[0];else if(parents.count>1){child[@"requiresReview"]=@YES;child[@"identityUncertain"]=@YES;}
     }
-    for(NSMutableDictionary *child in assignments){if([attachments containsObject:child[@"id"]] || child[@"due"] || child[@"dateText"])continue;NSMutableArray *parents=NSMutableArray.array;for(NSMutableDictionary *parent in assignments){if(parent==child || ![parent[@"repository"] isEqual:child[@"repository"]])continue;for(NSDictionary *link in parent[@"sourceLinks"] ?: @[])if([link[@"path"] isEqual:child[@"path"]]){[parents addObject:parent];break;}}if(parents.count==1){NSMutableDictionary *parent=parents[0];NSMutableArray *docs=[parent[@"attachments"] mutableCopy] ?: NSMutableArray.array;[docs addObject:child];parent[@"attachments"]=docs;[attachments addObject:child[@"id"]];}}
-    [assignments filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *item, NSDictionary *bindings) { return ![attachments containsObject:item[@"id"]]; }]];
-    return assignments;
+    for(NSMutableDictionary *child in assignments){NSMutableDictionary *parent=ownership[child[@"id"]];if(!parent)continue;NSMutableSet *visited=[NSMutableSet setWithObject:child[@"id"]];NSDictionary *cursor=parent;BOOL cycle=NO;while(cursor){if([visited containsObject:cursor[@"id"]]){cycle=YES;break;}[visited addObject:cursor[@"id"]];cursor=ownership[cursor[@"id"]];}if(cycle){child[@"requiresReview"]=@YES;child[@"identityUncertain"]=@YES;continue;}NSMutableArray *docs=[parent[@"attachments"] mutableCopy] ?: NSMutableArray.array;[docs addObject:child];parent[@"attachments"]=docs;[attached addObject:child[@"id"]];}
+    [assignments filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *record,NSDictionary *bindings){(void)bindings;return ![attached containsObject:record[@"id"]];}]];return assignments;
 }
 NSDictionary *SSApplyDateReference(NSDictionary *candidate, NSDate *referenceDate, NSString *commit, NSCalendar *calendar) {
     if (![candidate[@"relative"] boolValue] || ![candidate[@"clock"] length] || [candidate[@"warnings"] count]) return candidate;
