@@ -1714,6 +1714,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         NSDictionary *live=[self.courseWindow reviewSourceWithID:record[@"id"]];
         if (!live || ![live[@"blobSHA"] isEqual:record[@"blobSHA"]]) {trace(@"source",@"changed");return @"老师原文已变化，整批未保存。填写内容已保留，请刷新来源并重新核对。";}
         if (![live[@"kind"] ?: @"assignment" isEqual:@"assignment"]) {trace(@"source",@"classification");return @"材料类型已变化，整批未保存。请先确认属于作业。";}
+        if(![SSRecordSourceVersion(live) isEqual:SSRecordSourceVersion(record)])return @"关联原文已变化，请核对后保存。填写内容已保留。";
+        if(![SSSubtaskProposalVersion(live) isEqual:SSSubtaskProposalVersion(record)])return @"子任务建议已更新，请核对后保存。填写内容已保留。";
         for(NSString *key in @[@"dateText",@"due",@"suggestedDue",@"needsDate",@"needsTime"]){if(![(live[key] ?: NSNull.null) isEqual:(record[key] ?: NSNull.null)]){trace(@"source",@"recognition-changed");return @"截止时间识别结果已变化，整批未保存。请刷新来源并重新核对。";}}
         if([live[@"sourceType"] isEqual:@"local"]){
             if(automatic)continue;BOOL alreadySaved=NO;for(NSDictionary *task in next)if([task[@"entryID"] isEqual:live[@"id"]])alreadySaved=YES;if(alreadySaved)continue;NSMutableDictionary *entry=live.mutableCopy;

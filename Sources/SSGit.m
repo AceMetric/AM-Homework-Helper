@@ -378,12 +378,15 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
             if(!found)found=state[@"records"];
             if(![state[@"issues"] count]){NSMutableDictionary *next=[state mutableCopy] ?: NSMutableDictionary.dictionary;next[@"issues"]=@[@{@"field":@"request",@"code":@"storage-or-request",@"reason":failure.localizedDescription}];next[@"complete"]=@NO;next[@"state"]=[next[@"records"] count] ? @"partial":@"failed";cache[stateKey]=next;state=next;}
             failures[document[@"path"]]=@{@"path":document[@"path"],@"blobSHA":document[@"blobSHA"],@"issues":state[@"issues"] ?: failure.userInfo[@"validationIssues"] ?: @[@{@"field":@"request",@"code":@"request",@"reason":failure.localizedDescription}],@"state":state[@"state"] ?: @"failed"};
-        }else {[failures removeObjectForKey:document[@"path"]];
-            // Replace only this successfully reanalysed source. Saved tasks and
-            // review decisions live elsewhere and are reconciled by stable IDs.
-            for(NSString *identifier in byID.allKeys){NSDictionary *old=byID[identifier];if([old[@"repository"] isEqual:document[@"repository"]] && [old[@"path"] isEqual:document[@"path"]] && ![old[@"recognizer"] hasPrefix:@"rules"] && ![old[@"recognizer"] hasPrefix:@"template"])[byID removeObjectForKey:identifier];}
-        }
-        for(NSDictionary *record in found){NSMutableDictionary *copy=record.mutableCopy;copy[@"timeZone"]=calendar.timeZone.name;NSDictionary *old=byID[record[@"id"]];
+        }else [failures removeObjectForKey:document[@"path"]];
+        NSMutableDictionary *rulesRequest=scoped.mutableCopy;rulesRequest[@"mode"]=@"rules";NSArray *freshRules=SSRecognizeDocument(document[@"text"],document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,rulesRequest,cache,NULL);
+        found=[freshRules arrayByAddingObjectsFromArray:found ?: @[]];
+        NSDictionary *previousByID=byID.copy;
+        // Rules are freshly parsed for the entire source even when enhancement
+        // is partial. Complete reanalysis replaces all corresponding machine
+        // proposals; confirmed tasks and review decisions are stored separately.
+        for(NSString *identifier in byID.allKeys){NSDictionary *old=byID[identifier];BOOL rule=[old[@"recognizer"] hasPrefix:@"rules"] || [old[@"recognizer"] hasPrefix:@"template"];if([old[@"repository"] isEqual:document[@"repository"]] && [old[@"path"] isEqual:document[@"path"]] && (rule || (!failure && ![old[@"recognizer"] hasPrefix:@"skill"]))) [byID removeObjectForKey:identifier];}
+        for(NSDictionary *record in found){NSMutableDictionary *copy=record.mutableCopy;copy[@"timeZone"]=calendar.timeZone.name;NSDictionary *old=previousByID[record[@"id"]];
             copy[@"analysisModel"]=completed[@"model"] ?: scoped[@"model"] ?: @"";
             copy[@"analysisPrompt"]=completed[@"prompt"] ?: AMCoursePromptVersion();
             if([record[@"recognizer"] hasPrefix:@"rules"] || [record[@"recognizer"] hasPrefix:@"template"]){if(!byID[record[@"id"]])byID[record[@"id"]]=copy;continue;}
