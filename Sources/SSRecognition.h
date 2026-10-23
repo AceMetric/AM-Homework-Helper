@@ -26,6 +26,8 @@ NSDictionary * _Nullable SSReviewedTask(NSDictionary *record, NSDictionary *draf
 NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSError **error);
 /// Internal evidence contract: records, issues (index/field/code/reason), complete.
 NSDictionary *SSModelValidationReport(id results, NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar);
+/// Preserve per-document failure causes in workflow/activity presentation.
+NSError * _Nullable SSRecognitionFailureError(NSDictionary *failures);
 id _Nullable SSRecognitionJSONObject(NSString *content, BOOL local);
 NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings, NSMutableDictionary *cache, NSError **error);
 /// Network transport is replaceable for isolated tests; responses are never logged.

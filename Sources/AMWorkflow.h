@@ -31,7 +31,7 @@ static inline NSDictionary *AMWorkflowProblem(NSError *error,NSString *stage,NSD
     else if([issue isEqual:@"merge-conflict"]){title=@"课程文件存在冲突";action=@"处理冲突";command=@"conflicts";}
     else if([issue isEqual:@"diverged"]){title=@"个人远端已有更新";action=@"查看差异";command=@"difference";}
     else if([@[@"source-changed",@"files-changed"] containsObject:issue]){title=@"材料版本已变化";action=@"刷新并检查";command=@"refresh";}
-    else if([issue isEqual:@"recognition"]){title=@"部分材料未完成增强";effect=@"可用结果已保留";action=@"重试失败项";command=@"recognition";}
+    else if([issue isEqual:@"recognition"]){title=error.userInfo[@"AMRecognitionSummary"] ?: @"部分材料未完成增强";effect=@"可用结果已保留";action=@"重试失败项";command=@"recognition";}
     else if([issue isEqual:@"storage"]){title=@"结果尚未保存";action=@"重试保存";command=@"save";}
     else if([issue isEqual:@"cancelled"]){title=@"已停止";action=@"";command=@"none";}
     if([record[@"localUpdated"] boolValue])effect=@"本地已更新，老师更新尚未合并";
