@@ -7,13 +7,13 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         <title>AM's Homework Helper</title>
         <item>
             <title>1.15.0</title>
-            <pubDate>Fri, 23 Oct 2026 20:57:22 +0800</pubDate>
+            <pubDate>Fri, 23 Oct 2026 22:28:16 +0800</pubDate>
             <sparkle:version>42</sparkle:version>
             <sparkle:shortVersionString>1.15.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <sparkle:releaseNotesLink sparkle:edSignature="wuRF8E95eutFM9bWL6Rb90ImBj+LO9H+vO7b1TphYLGPdNV4zHLuT1MBk49IzPIl7pxxlWrMRsCE0rrel1ChAQ==" sparkle:length="2649">https://acemetric.github.io/AM-Homework-Helper/updates/AM-Homework-Helper-1.15.0-macOS-arm64.md</sparkle:releaseNotesLink>
-            <enclosure url="https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.15.0/AM-Homework-Helper-1.15.0-macOS-arm64.zip" length="75081966" type="application/octet-stream" sparkle:edSignature="1F4L0RRi/OzRzre35FKtwI02urdC9Z/vzuuJRuc9So9kYNl0ilgTSth/pHBDkhWcFihH6I/fYG0SkjBjQ9WvAQ=="/>
+            <sparkle:releaseNotesLink sparkle:edSignature="JluqMK7PnFiygo6zXQQ8yAQXpQ+Zlrth34s0n8fZC4+LN7nUxEeYI8iX0Sq5nR6huXzxDo5cRwovuXk2G1i1AA==" sparkle:length="2644">https://acemetric.github.io/AM-Homework-Helper/updates/AM-Homework-Helper-1.15.0-macOS-arm64.md</sparkle:releaseNotesLink>
+            <enclosure url="https://github.com/AceMetric/AM-Homework-Helper/releases/download/v1.15.0/AM-Homework-Helper-1.15.0-macOS-arm64.zip" length="75091719" type="application/octet-stream" sparkle:edSignature="GeR+hPRN6m4AFWVZHFRL6jcp41p0pmKZ+jjdkG+5X3AYb6LdYPikDsz5NggnYlpTkHl5CfK+MMcVojhFpVgnCQ=="/>
         </item>
         <item>
             <title>1.14.5</title>
@@ -38,6 +38,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: xYhrBOmFgZGY7+zZNVPGe2hXWJbL7+ee7cv4Kz3+cpCRMCIV8h7UgvRUCfvbCcEHrvrvT85DaqgltVDckU4MDA==
+edSignature: MyqxYyP81iKYnmwRtyF/DrHwYbaI11Drd3UlfSbfcVSX0EiTqdSLEP44n6/jP4RHm7HKtfOhGXLnXM2FOs9jAw==
 length: 3483
 -->
