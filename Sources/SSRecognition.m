@@ -10,6 +10,13 @@
 #include <math.h>
 
 static NSError *RError(NSString *message) { return [NSError errorWithDomain:@"AMRecognition" code:1 userInfo:@{NSLocalizedDescriptionKey:message}]; }
+// A non-streaming local response includes prompt processing and generation.
+// Keep one bounded deadline for the initial request, capability fallback and repair.
+static NSTimeInterval RDocumentBudget(NSString *text,NSDictionary *settings){return [settings[@"mode"] isEqual:@"local"] ? MIN(180,90+ceil(text.length/2000.0)*15):70;}
+static NSError *RRequestError(NSError *error,BOOL cloud){
+    NSString *message=error.code==NSURLErrorTimedOut ? (cloud ? @"云端识别超时，请稍后重试":@"本地模型识别超时，请检查模型负载后重试"):(cloud ? @"无法连接识别服务，请检查网络后重试":@"无法连接本地模型，请确认服务已启动");
+    return [NSError errorWithDomain:error.domain code:error.code userInfo:@{NSLocalizedDescriptionKey:message,NSUnderlyingErrorKey:error}];
+}
 static BOOL RMatch(NSString *text, NSString *pattern) { NSRegularExpression *r = [NSRegularExpression regularExpressionWithPattern:pattern options:NSRegularExpressionCaseInsensitive error:NULL]; return [r firstMatchInString:text ?: @"" options:0 range:NSMakeRange(0, text.length)] != nil; }
 static NSString *RTrim(NSString *text) { return [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]; }
 static NSString *RHash(NSString *text) { NSData *data = [text dataUsingEncoding:NSUTF8StringEncoding]; unsigned char digest[CC_SHA256_DIGEST_LENGTH]; CC_SHA256(data.bytes, (CC_LONG)data.length, digest); NSMutableString *value = NSMutableString.string; for (NSUInteger i=0;i<sizeof(digest);i++) [value appendFormat:@"%02x",digest[i]]; return value; }
@@ -170,6 +177,18 @@ static NSString *RCanonicalText(NSString *text){return [[text stringByReplacingO
 static BOOL RLineNumber(id value){return [value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value)!=CFBooleanGetTypeID() && isfinite([value doubleValue]) && [value doubleValue]==floor([value doubleValue]);}
 static NSDictionary *RIssue(NSUInteger index,NSString *field,NSString *code,NSString *reason){return @{@"index":@(index),@"field":field,@"code":code,@"reason":reason};}
 static NSError *RValidationError(NSDictionary *report){return [NSError errorWithDomain:@"AMRecognition" code:2 userInfo:@{NSLocalizedDescriptionKey:[report[@"issues"] firstObject][@"reason"] ?: @"结果未通过核验",@"validationIssues":report[@"issues"] ?: @[]}];}
+NSError *SSRecognitionFailureError(NSDictionary *failures){
+    if(![failures isKindOfClass:NSDictionary.class] || !failures.count)return nil;
+    NSMutableArray *details=NSMutableArray.array;NSUInteger timeouts=0;
+    for(NSString *path in [failures.allKeys sortedArrayUsingSelector:@selector(compare:)]){
+        NSDictionary *row=failures[path];NSMutableOrderedSet *reasons=NSMutableOrderedSet.orderedSet;BOOL timeout=NO;
+        for(NSDictionary *issue in row[@"issues"]){NSString *reason=issue[@"reason"] ?: @"识别未完成";timeout|=[issue[@"code"] isEqual:@"timeout"] || [reason containsString:@"-1001"] || [reason containsString:@"超时"];[reasons addObject:reason];}
+        if(timeout)timeouts++;[details addObject:[NSString stringWithFormat:@"%@\n%@",path,[reasons.array componentsJoinedByString:@"\n"]]];
+    }
+    NSString *summary=[NSString stringWithFormat:timeouts==failures.count ? @"%lu 份材料识别超时":@"%lu 份材料未完成增强",(unsigned long)failures.count];
+    if(failures.count==1 && !timeouts){NSString *reason=[failures.allValues.firstObject[@"issues"] firstObject][@"reason"];if(reason.length)summary=reason;}
+    return [NSError errorWithDomain:@"AMRecognition" code:timeouts==failures.count ? NSURLErrorTimedOut:2 userInfo:@{NSLocalizedDescriptionKey:summary,@"AMRecognitionSummary":summary,@"SSIssue":@"recognition",@"SSDetail":SSRedactedText([details componentsJoinedByString:@"\n\n"])}];
+}
 id SSRecognitionJSONObject(NSString *content,BOOL local){
     if(![content isKindOfClass:NSString.class] || content.length>1024*1024)return nil;
     content=RTrim(content);
@@ -277,7 +296,7 @@ NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repositor
 }
 - (id)extract:(NSString *)text settings:(NSDictionary *)settings error:(NSError **)error {
     static NSLock *lock;static dispatch_once_t once;dispatch_once(&once,^{lock=NSLock.new;});
-    NSMutableDictionary *bounded=settings.mutableCopy;if(![bounded[@"requestDeadline"] isKindOfClass:NSDate.class])bounded[@"requestDeadline"]=[NSDate dateWithTimeIntervalSinceNow:70];
+    NSMutableDictionary *bounded=settings.mutableCopy;if(![bounded[@"requestDeadline"] isKindOfClass:NSDate.class])bounded[@"requestDeadline"]=[NSDate dateWithTimeIntervalSinceNow:RDocumentBudget(text,settings)];
     while(![lock lockBeforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]])if(AMCurrentOperationCancelled() || [bounded[@"requestDeadline"] timeIntervalSinceNow]<=0){if(error)*error=[NSError errorWithDomain:@"AMRecognition" code:AMCurrentOperationCancelled() ? NSUserCancelledError:NSURLErrorTimedOut userInfo:@{NSLocalizedDescriptionKey:AMCurrentOperationCancelled() ? @"识别已取消":@"识别超时"}];return nil;}
     @try {return [self extractSerial:text settings:bounded error:error];}@finally{[lock unlock];}
 }
@@ -296,26 +315,28 @@ NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repositor
             if (!SSWritePlist(@"recognition-usage.plist",@{@"day":day,@"count":@(used+1)},error)) return nil;
         }
     }
-    NSDate *budget=settings[@"requestDeadline"] ?: [NSDate dateWithTimeIntervalSinceNow:70];
+    NSDate *budget=settings[@"requestDeadline"] ?: [NSDate dateWithTimeIntervalSinceNow:RDocumentBudget(text,settings)];
     if(AMCurrentOperationCancelled() || budget.timeIntervalSinceNow<=0){if(error)*error=[NSError errorWithDomain:@"AMRecognition" code:AMCurrentOperationCancelled() ? NSUserCancelledError:NSURLErrorTimedOut userInfo:@{NSLocalizedDescriptionKey:AMCurrentOperationCancelled() ? @"识别已取消":@"识别超时"}];return nil;}
     text=RCanonicalText(text);NSMutableArray *numbered=NSMutableArray.array;NSUInteger line=0;for(NSString *row in [text componentsSeparatedByString:@"\n"])[numbered addObject:@{@"line":@(++line),@"text":row}];
     NSMutableDictionary *material=[@{@"text":text,@"lines":numbered} mutableCopy];
+    NSString *sourcePath=settings[@"sourcePath"] ?: @"";material[@"sourcePath"]=sourcePath;
+    NSMutableArray *scopes=NSMutableArray.array;for(NSDictionary *block in SSActivityBlocks(text,sourcePath,NO))[scopes addObject:@{@"startLine":block[@"line"],@"endLine":block[@"endLine"]}];material[@"sourceScopes"]=scopes;
     NSString *system=AMCoursePrompt();
-    if(settings[@"repairIssues"]){material[@"repairIssues"]=settings[@"repairIssues"];material[@"previousActivities"]=settings[@"previousActivities"] ?: @[];material[@"acceptedIndices"]=settings[@"acceptedIndices"] ?: @[];system=[system stringByAppendingString:@"\nCORRECTION: Correct only the rejected fields/items using the original text. Return the complete activities array in the same order and count as previousActivities. Copy items at acceptedIndices unchanged. Do not add activities or broaden the source scope. Each rejection names its original zero-based index. If previousActivities is empty because parsing failed, extract again from the same original only."];}
+    if(settings[@"repairIssues"]){material[@"repairIssues"]=settings[@"repairIssues"];material[@"previousActivities"]=settings[@"previousActivities"] ?: @[];material[@"acceptedIndices"]=settings[@"acceptedIndices"] ?: @[];system=[system stringByAppendingString:@"\nCORRECTION: Correct only the rejected fields/items using the original text. Return the complete activities array in the same order and count as previousActivities. Copy items at acceptedIndices unchanged. Do not add activities or broaden the source scope. Each rejection names its original zero-based index. For rejected summaryEvidence or requirementsEvidence, copy ONE short original line exactly, including Markdown and punctuation. If you cannot identify a matching line, set BOTH the generated field (summary or submissionRequirements) and its evidence to empty strings; retain the grounded activity and all other valid fields. Do not stitch quotations or rewrite source formulas. If previousActivities is empty because parsing failed, extract again from the same original only."];}
     NSString *input=[[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:material options:NSJSONWritingSortedKeys error:NULL] encoding:NSUTF8StringEncoding];
     NSArray *messages=@[@{@"role":@"system",@"content":system},@{@"role":@"user",@"content":input}];
     NSMutableDictionary *body=[@{@"model":settings[@"model"],@"messages":messages,@"stream":@NO} mutableCopy];
     if (!cloud) body[@"think"]=@NO;
-    if (cloud) body[@"response_format"]=@{@"type":@"json_object"}; else { body[@"format"]=AMCourseOutputSchema(); body[@"options"]=@{@"temperature":@0}; }
+    if (cloud) body[@"response_format"]=@{@"type":@"json_object"}; else { body[@"format"]=AMCourseOutputSchema(); body[@"options"]=@{@"temperature":@0,@"num_predict":@4096}; }
     NSString *base=[settings[@"endpoint"] stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/"]];
     NSURL *url=[NSURL URLWithString:[base stringByAppendingString:cloud ? @"/chat/completions" : @"/api/chat"]];
-    NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:url]; request.HTTPMethod=@"POST"; request.timeoutInterval=MAX(0.1,MIN(60,budget.timeIntervalSinceNow)); [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:url]; request.HTTPMethod=@"POST"; request.timeoutInterval=MAX(0.1,budget.timeIntervalSinceNow); [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
     if (key) [request setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
     request.HTTPBody=[NSJSONSerialization dataWithJSONObject:body options:0 error:error];
     __block NSData *data=nil; __block NSError *failure=nil;
     if (self.transport) data=self.transport(request,&failure);
     else {
-        NSURLSessionConfiguration *configuration=NSURLSessionConfiguration.ephemeralSessionConfiguration; configuration.URLCache=nil; configuration.HTTPCookieStorage=nil; configuration.URLCredentialStorage=nil; configuration.timeoutIntervalForResource=65;
+        NSURLSessionConfiguration *configuration=NSURLSessionConfiguration.ephemeralSessionConfiguration; configuration.URLCache=nil; configuration.HTTPCookieStorage=nil; configuration.URLCredentialStorage=nil; configuration.timeoutIntervalForResource=MAX(0.1,budget.timeIntervalSinceNow);
         NSURLSession *session=[NSURLSession sessionWithConfiguration:configuration delegate:self delegateQueue:nil]; dispatch_semaphore_t done=dispatch_semaphore_create(0);
         // Some Ollama-compatible local backends cannot constrain JSON generation.
         // Retry only that explicit capability error, on the same loopback endpoint;
@@ -325,7 +346,7 @@ NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repositor
             NSURLSessionDataTask *task=[session dataTaskWithRequest:request completionHandler:^(NSData *response, NSURLResponse *metadata, NSError *networkError) {
                 NSInteger status=[(NSHTTPURLResponse *)metadata statusCode];
                 unsupported=!cloud && attempt==0 && status==501;
-                if (networkError) failure=RError([NSString stringWithFormat:@"模型连接失败（网络代码 %ld），继续使用规则。请检查服务和连接。",(long)networkError.code]);
+                if (networkError) failure=RRequestError(networkError,cloud);
                 else if (status!=200) failure=RError([NSString stringWithFormat:@"模型服务返回 HTTP %ld，继续使用规则。请检查模型名称及服务能力。",(long)status]);
                 else if (response.length>1024*1024) failure=RError(@"模型响应过大，继续使用规则。");
                 else {data=response;failure=nil;}
@@ -343,6 +364,7 @@ NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repositor
     if(data.length>1024*1024){if(error)*error=RError(@"模型响应过大");return nil;}
     if (failure || !data) { if(error)*error=failure ?: RError(@"模型响应为空。"); return nil; }
     id envelope=[NSJSONSerialization JSONObjectWithData:data options:0 error:NULL]; if (![envelope isKindOfClass:NSDictionary.class]) { if(error)*error=RError(@"模型响应不是JSON对象。"); return nil; }
+    if([envelope[@"done_reason"] isEqual:@"length"]){if(error)*error=RError(@"模型输出过长，识别未完成；请缩小材料范围后重试");return nil;}
     id choices=envelope[@"choices"]; id first=[choices isKindOfClass:NSArray.class] && [choices count] ? choices[0] : nil;
     id message=cloud ? ([first isKindOfClass:NSDictionary.class] ? first[@"message"] : nil) : envelope[@"message"];
     NSString *content=[message isKindOfClass:NSDictionary.class] ? message[@"content"] : nil;
@@ -363,7 +385,7 @@ NSArray *SSCachedRecognition(NSString *repository,NSString *path,NSString *blob,
     NSString *key=SSRecognitionCacheKey(repository,path,blob,calendar,settings);
     if ([cache[key] isKindOfClass:NSArray.class]) return cache[key];
     {
-        NSMutableDictionary *legacy=settings.mutableCopy;for(NSString *field in @[@"forceRecognition",@"manualLocal",@"localAutomatic",@"manualCloud",@"cacheOnly"])[legacy removeObjectForKey:field];
+        NSMutableDictionary *legacy=settings.mutableCopy;for(NSString *field in @[@"forceRecognition",@"manualLocal",@"localAutomatic",@"manualCloud",@"cacheOnly",@"requestDeadline",@"sourcePath",@"repairIssues",@"previousActivities",@"acceptedIndices"])[legacy removeObjectForKey:field];
         NSString *configuration=[[NSJSONSerialization dataWithJSONObject:legacy options:NSJSONWritingSortedKeys error:NULL] base64EncodedStringWithOptions:0];
         NSString *old=[NSString stringWithFormat:@"recognition-v9|%@|%@|%@|%@|%@|%@|%@",repository,path,blob,calendar.timeZone.name,RHash(configuration ?: @""),AMCoursePromptVersion(),AMCourseValidationVersion()];
         if([cache[old] isKindOfClass:NSArray.class]){cache[key]=cache[old];return cache[key];}
@@ -391,7 +413,7 @@ NSArray *SSRecognizeDocumentWithClient(NSString *text, NSString *repository, NSS
     NSError *failure=nil;NSDictionary *report=nil;
     NSString *stateKey=[@"recognition-state|" stringByAppendingString:key];NSDictionary *prior=cache[stateKey];
     if (![settings[@"mode"] isEqual:@"rules"]) {
-        NSMutableDictionary *request=settings.mutableCopy;request[@"requestDeadline"]=[NSDate dateWithTimeIntervalSinceNow:70];
+        NSMutableDictionary *request=settings.mutableCopy;NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:RDocumentBudget(text,settings)];if([settings[@"requestDeadline"] isKindOfClass:NSDate.class] && [settings[@"requestDeadline"] compare:deadline]==NSOrderedAscending)deadline=settings[@"requestDeadline"];request[@"requestDeadline"]=deadline;request[@"sourcePath"]=path;
         id output=[client extract:text settings:request error:&failure];
         if(output)report=SSModelValidationReport(output,text,repository,path,blob,calendar);
         BOOL formatFailure=!output && ([failure.localizedDescription containsString:@"未返回有效结构化结果"] || [failure.localizedDescription containsString:@"响应不是JSON对象"]);
@@ -409,7 +431,7 @@ NSArray *SSRecognizeDocumentWithClient(NSString *text, NSString *repository, NSS
         if(failure && [prior[@"records"] count]){NSMutableDictionary *retained=NSMutableDictionary.dictionary;for(NSDictionary *record in prior[@"records"])retained[record[@"id"]]=record;for(NSDictionary *record in report[@"records"] ?: @[])retained[record[@"id"]]=record;NSMutableDictionary *combined=[report mutableCopy] ?: NSMutableDictionary.dictionary;combined[@"records"]=[[retained.allValues sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"id"] compare:b[@"id"]];}] copy];report=combined;}
         for(NSDictionary *record in report[@"records"] ?: @[]){NSUInteger index=[found indexOfObjectPassingTest:^BOOL(NSDictionary *item,NSUInteger i,BOOL *stop){return [item[@"id"] isEqual:record[@"id"]];}];if(index==NSNotFound)[found addObject:record];else found[index]=record;}
         NSMutableArray *issues=[report[@"issues"] mutableCopy] ?: NSMutableArray.array;
-        if(failure && !issues.count)[issues addObject:RIssue(0,@"request",failure.code==NSUserCancelledError ? @"cancelled":@"request",failure.localizedDescription)];
+        if(failure && (!issues.count || !failure.userInfo[@"validationIssues"]))[issues addObject:RIssue(0,@"request",failure.code==NSUserCancelledError ? @"cancelled":failure.code==NSURLErrorTimedOut ? @"timeout":@"request",failure.localizedDescription)];
         cache[stateKey]=@{@"records":report[@"records"] ?: @[],@"issues":issues,@"complete":@(!failure && [report[@"complete"] boolValue]),@"state":failure.code==NSUserCancelledError ? @"cancelled":failure ? ([report[@"records"] count] ? @"partial":@"failed"):@"completed",@"model":settings[@"model"] ?: @"",@"prompt":AMCoursePromptVersion(),@"validation":AMCourseValidationVersion()};
     }
     // Completion never depends on whether a caller requested NSError details.

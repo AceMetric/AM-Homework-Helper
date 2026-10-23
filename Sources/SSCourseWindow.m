@@ -723,7 +723,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if(context.git.lastWorkflowRecord)context.record=context.git.lastWorkflowRecord;
     __block NSError *failure=error;AMWithCourseContext(context,^{@try{completion(failure && !([value isKindOfClass:NSDictionary.class] && ((value[@"conflicts"] && [AMWorkflowIssue(failure) isEqual:@"merge-conflict"]) || [AMWorkflowIssue(failure) isEqual:@"storage"])) ? nil:value,failure);}@catch(NSException *exception){failure=AMWorkflowError(@"unknown",SSRedactedText(exception.reason),failure);}});
     if(context.failure)failure=context.failure;
-    if(!failure && [value isKindOfClass:NSDictionary.class]){NSDictionary *report=value;NSDictionary *failed=report[@"modelFailures"];if([failed isKindOfClass:NSDictionary.class] && failed.count)failure=AMWorkflowError(@"recognition",@"部分材料未完成增强",nil);
+    if(!failure && [value isKindOfClass:NSDictionary.class]){NSDictionary *report=value;failure=SSRecognitionFailureError(report[@"modelFailures"]);
         if(!failure)for(NSString *key in report){id entry=report[key];if([entry isKindOfClass:NSDictionary.class] && entry[@"error"]){failure=AMWorkflowError(entry[@"issue"] ?: @"unknown",entry[@"detail"] ?: entry[@"error"],nil);break;}}}
     if([AMWorkflowIssue(failure) isEqual:@"storage"] && !context.record){NSDictionary *envelope=[self.discoveryEnvelope copy];BOOL (^priorSave)(NSError **)=context.saveResult;context.saveResult=^BOOL(NSError **issue){return (!priorSave || priorSave(issue)) && SSWritePlist(@"discoveries.plist",envelope,issue);};}
     if(!failure && [context.record[@"state"] isEqual:@"uncertain"])failure=AMWorkflowError(@"verification-pending",@"推送结果待核验",nil);
