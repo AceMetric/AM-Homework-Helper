@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 
 NS_ASSUME_NONNULL_BEGIN
+NSArray *SSRecognitionSlices(NSString *text,NSString *path);
 NSString *SSRecognitionCacheKey(NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings);
 NSArray * _Nullable SSCachedRecognition(NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings, NSMutableDictionary *cache);
 NSArray *AMQuickParse(NSString *text, NSString *sourceID, NSDate *reference, NSCalendar *calendar);

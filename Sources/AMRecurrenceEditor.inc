@@ -13,7 +13,7 @@
     self.repeatEnd=[[NSPopUpButton alloc] initWithFrame:NSZeroRect];[self.repeatEnd addItemsWithTitles:@[@"一直重复",@"截至日期",@"限定次数（从本次起）"]];[self.repeatEnd selectItemAtIndex:saved[@"until"] ? 1:(saved[@"count"] ? 2:0)];add(self.repeatEnd);
     self.repeatUntil=NSDatePicker.new;self.repeatUntil.datePickerElements=NSDatePickerElementFlagYearMonthDay;self.repeatUntil.dateValue=saved[@"until"] ?: [calendar dateByAddingUnit:NSCalendarUnitYear value:1 toDate:self.selectedDate options:0];self.repeatUntil.target=self;self.repeatUntil.action=@selector(recurrenceChanged:);add(self.repeatUntil);
     self.repeatCount=[[PastelTextField alloc] initWithFrame:NSZeroRect];self.repeatCount.stringValue=saved[@"count"] ? [@(MAX(1,[saved[@"count"] integerValue]-[self.task[@"occurrenceIndex"] integerValue])) stringValue]:@"10";self.repeatCount.delegate=self;self.repeatCount.accessibilityLabel=@"重复总次数";add(self.repeatCount);
-    self.seriesScope=[[NSPopUpButton alloc] initWithFrame:NSZeroRect];[self.seriesScope addItemsWithTitles:@[@"仅修改本次",@"修改本次及以后"]];if(saved)add(self.seriesScope);
+    self.seriesScope=[[NSPopUpButton alloc] initWithFrame:NSZeroRect];[self.seriesScope addItemsWithTitles:@[@"仅修改本次",@"修改本次及以后",@"修改整个系列"]];if(saved)add(self.seriesScope);
     self.repeatPreview=Text(@"",12,NSFontWeightRegular,Muted());self.repeatPreview.maximumNumberOfLines=0;self.repeatPreview.selectable=YES;add(self.repeatPreview);
     for(NSPopUpButton *p in @[self.repeatMode,self.repeatUnit,self.holidayPolicy,self.repeatEnd,self.seriesScope]){p.target=self;p.action=@selector(recurrenceChanged:);}
     self.allowedUnknownYears=saved[@"allowedUnknownYears"] ?: @[];

@@ -3,7 +3,7 @@ static NSString *AMCompletionPath(id value){
     if(![value isKindOfClass:NSString.class] || ![value length] || [value hasPrefix:@"/"] || [value containsString:@"\\"] || SSSensitivePath(value))return nil;
     for(NSString *part in [value componentsSeparatedByString:@"/"])if(!part.length || [@[@".",@".."] containsObject:part])return nil;return value;
 }
-BOOL AMTaskBelongsToCourse(NSDictionary *task,NSDictionary *course){if([task[@"courseRepository"] length])return [task[@"courseRepository"] isEqual:course[@"fork"]];return [task[@"sourceRepository"] isEqual:course[@"upstream"]];}
+BOOL AMTaskBelongsToCourse(NSDictionary *task,NSDictionary *course){if(!course)return NO;if(task[@"courseID"]){NSArray *catalog=AMCourseCatalog(course[@"fork"] ? @[course]:@[]);NSDictionary *linked=AMCourseForTask(task,catalog);NSString *identifier=course[@"courseID"] ?: course[@"id"] ?: ([course[@"fork"] length] ? AMRepositoryCourseID(course[@"fork"]):@"");return [task[@"courseID"] length] && ([task[@"courseID"] isEqual:identifier] || ([linked[@"fork"] length] && [linked[@"fork"] isEqual:course[@"fork"]]));}if([task[@"courseRepository"] length])return [task[@"courseRepository"] isEqual:course[@"fork"]];return [task[@"sourceRepository"] length] && [task[@"sourceRepository"] isEqual:course[@"upstream"]];}
 static NSString *AMCompletionIdentity(NSDictionary *record){return [NSString stringWithFormat:@"%@|%@|%@",[record[@"repository"] lowercaseString],record[@"branch"],record[@"commit"] ?: @""];}
 static BOOL AMCompletionAnswerFile(NSString *file){
     for(NSString *component in file.pathComponents)if([component hasPrefix:@"."] || [@[@"node_modules",@"build",@"dist",@"vendor",@"__pycache__"] containsObject:component.lowercaseString])return NO;

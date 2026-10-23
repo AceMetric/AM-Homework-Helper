@@ -19,7 +19,7 @@ int main(void) {
         }
         for (NSString *bad in @[@"", @"明天 25:00", @"明天 20:99", @"明天 20:00 垃圾", @"2026-02-29", @"2026-02-30", @"2026-13-01", @"2026-00-01", @"2026-10-01 24:00", @"99:99", @"99999周后", @"明天abc", @"下周五20:000"]) Check(DDLParseDate(bad, now, calendar) == nil, [@"reject " stringByAppendingString:bad]);
         Check([DDLRemaining([now dateByAddingTimeInterval:-180], now, NO) isEqual:@"逾期 3 分钟"], @"minute-accurate overdue");
-        Check([DDLRemaining([now dateByAddingTimeInterval:7200], now, NO) isEqual:@"剩余 2 小时"], @"hour countdown");
+        Check([DDLRemaining([now dateByAddingTimeInterval:7200], now, NO) isEqual:@"剩余 2 小时 0 分钟"], @"hour countdown");
         Check([DDLRemaining(now, now, YES) isEqual:@"已完成"], @"completed status");
         NSMutableDictionary *task = [@{@"id":@"task-1", @"title":@"报告", @"subject":@"数学", @"due":[now dateByAddingTimeInterval:5 * 86400], @"completed":@NO, @"archived":@NO, @"reminder":@3, @"notes":@"论文"} mutableCopy];
         Check(DDLReminderPlan(task, now, calendar).count == 4, @"all reminder slots");

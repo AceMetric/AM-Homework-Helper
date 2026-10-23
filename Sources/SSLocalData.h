@@ -4,6 +4,15 @@ NS_ASSUME_NONNULL_BEGIN
 NSURL *SSDataDirectory(void);
 id _Nullable SSReadPlist(NSString *name);
 BOOL SSWritePlist(NSString *name, id value, NSError **error);
+void AMUseTransientCourses(void);
+NSString *AMRepositoryCourseID(NSString *repository);
+NSArray * _Nullable AMStoredCourses(NSError **error);
+NSArray *AMCourseCatalog(NSArray *repositories);
+BOOL AMSaveCourseCatalog(NSArray *courses,NSError **error);
+NSDictionary * _Nullable AMCourseForTask(NSDictionary *task,NSArray *catalog);
+NSDictionary * _Nullable AMCourseForName(NSString *name,NSArray *catalog);
+NSArray *AMCourseDisplayTasks(NSArray *tasks,NSArray *catalog);
+NSDictionary *AMNewCourse(NSString *name);
 NSMutableDictionary * _Nullable AMScanCacheLoad(NSError **error);
 BOOL AMScanCacheSave(NSMutableDictionary *cache, NSError **error);
 NSDictionary * _Nullable AMReviewDecisions(NSError **error);

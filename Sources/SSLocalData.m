@@ -2,6 +2,7 @@
 #import "DDLCore.h"
 #import "SSSecurity.h"
 #import <Security/Security.h>
+#import <CommonCrypto/CommonDigest.h>
 
 NSURL *SSDataDirectory(void) {
 #ifdef DDL_TESTING
@@ -32,6 +33,7 @@ BOOL SSWritePlist(NSString *name, id value, NSError **error) {
     return ok;
 }
 
+#import "AMCourses.inc"
 #import "AMScanCache.inc"
 #import "AMReviewDecisions.inc"
 

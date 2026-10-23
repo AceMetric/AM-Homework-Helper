@@ -2,7 +2,7 @@
 - (void)renderWeekly {
     if(!self.weeklyController){self.weeklyController=AMWeeklyPlanningController.new;__weak typeof(self) owner=self;self.weeklyController.actionHandler=^(NSString *action,NSString *task,NSString *sub,NSString *date){[owner planningAction:action task:task subtask:sub value:date];};[self.root addSubview:self.weeklyController.view];}
     self.weeklyController.view.frame=self.scroll.frame;self.weeklyController.view.hidden=NO;
-    NSMutableArray *sections=NSMutableArray.array;for(NSDictionary *section in DDLWeekSections(self.tasks,NSDate.date,self.weekOffset,Cal(),self.query ?: @"")){NSMutableDictionary *copy=section.mutableCopy;if(section[@"date"])copy[@"dayInfo"]=DDLChinaDayInfo(section[@"date"],Cal(),self.preview ? @{}:SSCalendarOverrides());[sections addObject:copy];}[self.weeklyController updateSections:sections notice:@""];
+    NSMutableArray *sections=NSMutableArray.array;for(NSDictionary *section in DDLWeekSections([self presentationTasks],NSDate.date,self.weekOffset,Cal(),self.query ?: @"")){NSMutableDictionary *copy=section.mutableCopy;if(section[@"date"])copy[@"dayInfo"]=DDLChinaDayInfo(section[@"date"],Cal(),self.preview ? @{}:SSCalendarOverrides());[sections addObject:copy];}[self.weeklyController updateSections:sections notice:@""];
 }
 - (BOOL)confirmLatePlan:(NSString *)key task:(NSDictionary *)task {
     if([key compare:DDLPlanKey(task[@"due"],Cal())]!=NSOrderedDescending)return YES;
@@ -20,7 +20,7 @@
     else if([action isEqual:@"delete"] && subID.length)[children removeObjectAtIndex:index];
     else if(([action isEqual:@"up"] || [action isEqual:@"down"]) && subID.length){NSInteger destination=(NSInteger)index+([action isEqual:@"up"] ? -1:1);if(destination<0 || destination>=(NSInteger)children.count)return YES;[children exchangeObjectAtIndex:index withObjectAtIndex:(NSUInteger)destination];}
     else return NO;
-    task[@"subtasks"]=children;if(task[@"seriesID"])task[@"occurrenceEdited"]=@YES;
+    task[@"subtasks"]=children;if(task[@"seriesID"]){task[@"occurrenceEdited"]=@YES;NSMutableSet *fields=[NSMutableSet setWithArray:task[@"occurrenceOverrides"] ?: @[]];[fields addObject:subID.length || ![action isEqual:@"set-plan"] ? @"subtasks":@"plannedDate"];task[@"occurrenceOverrides"]=fields.allObjects;}
     NSMutableArray *tasks=[[self snapshot] mutableCopy];NSUInteger position=[tasks indexOfObjectPassingTest:^BOOL(NSDictionary *item,NSUInteger i,BOOL *stop){return [item[@"id"] isEqual:identifier];}];if(position==NSNotFound)return NO;tasks[position]=task;
     NSError *error=nil;BOOL saved=[self replaceTasks:tasks action:[action isEqual:@"set-plan"] ? @"调整计划":@"修改子任务" error:&error];self.notice=saved ? @"已保存，可按 ⌘Z 撤销。":(error.localizedDescription ?: @"未能保存，请重试。");[self render];return saved;
 }

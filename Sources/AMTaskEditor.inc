@@ -19,7 +19,7 @@
     self.importStatus=Text(@"",12,NSFontWeightRegular,Muted());self.importStatus.maximumNumberOfLines=0;
     if(!task){add(row(@[Button(@"粘贴并识别",self,@selector(importClipboard:),0),Button(@"选择截图…",self,@selector(chooseScreenshot:),0)]));add(self.importStatus);}
     self.titleField=[[PastelTextField alloc] initWithFrame:NSZeroRect];self.titleField.stringValue=task[@"title"] ?: @"";self.titleField.placeholderString=@"例如：完成实验报告";add(field(@"任务名称",self.titleField));
-    self.subjectField=[[PastelTextField alloc] initWithFrame:NSZeroRect];self.subjectField.stringValue=task[@"subject"] ?: @"";self.subjectField.placeholderString=@"选填";
+    self.subjectField=[[PastelTextField alloc] initWithFrame:NSZeroRect];self.subjectField.stringValue=AMCourseForTask(task ?: @{},AMCourseCatalog(owner.courseWindow.submissionCourses ?: @[]))[@"name"] ?: task[@"subject"] ?: @"";self.subjectField.placeholderString=@"选填";
     self.priority=[[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];[self.priority addItemsWithTitles:@[@"普通",@"重要",@"紧急"]];[self.priority selectItemAtIndex:[task[@"priority"] integerValue]];
     NSStackView *subject=field(@"课程／分类",self.subjectField),*priority=field(@"优先级",self.priority);add(row(@[subject,priority]));[priority.widthAnchor constraintEqualToConstant:140].active=YES;
     self.selectedDate=task[@"due"] ?: DDLParseDate(@"明天 23:59",NSDate.date,Cal());

@@ -320,6 +320,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (NSArray<NSString *> *)toolbarActionIdentifiers {
     if(self.inbox)return @[];
+    if(self.selectedFork && ![self course])return @[@"AMCourseMore"];
     return [self course] ? @[@"AMCourseScan",@"AMCourseSync",@"AMCourseSubmit",@"AMCourseMore"]:@[@"AMCourseScan",@"AMCourseMore"];
 }
 - (NSToolbarItem *)toolbarItemForIdentifier:(NSString *)identifier {
@@ -420,6 +421,21 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     [alert addButtonWithTitle:@"选择已有文件夹"]; [alert addButtonWithTitle:@"下载课程仓库"]; [alert addButtonWithTitle:@"稍后"];
     NSModalResponse answer = [alert runModal]; if (answer == NSAlertFirstButtonReturn) [self linkFolder:nil]; else if (answer == NSAlertSecondButtonReturn) [self cloneFork:nil];
 }
+- (void)newStandaloneCourse:(id)sender {
+    NSAlert *alert=NSAlert.new;alert.messageText=@"新建课程";NSTextField *name=[NSTextField textFieldWithString:@""];name.frame=NSMakeRect(0,0,300,24);name.placeholderString=@"课程名称";alert.accessoryView=name;[alert addButtonWithTitle:@"创建"];[alert addButtonWithTitle:@"取消"];
+    if([alert runModal]!=NSAlertFirstButtonReturn)return;NSString *title=[name.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];if(!title.length)return;
+    NSMutableArray *catalog=[AMCourseCatalog(self.courses) mutableCopy];NSDictionary *entry=AMNewCourse(title);[catalog addObject:entry];NSError *error=nil;if(!AMSaveCourseCatalog(catalog,&error)){[self showError:error];return;}[self selectCourseID:entry[@"id"]];[self refreshPresentation];
+}
+- (void)renameCatalogCourse:(id)sender {
+    NSMutableArray *catalog=[AMCourseCatalog(self.courses) mutableCopy];NSUInteger index=[catalog indexOfObjectPassingTest:^BOOL(NSDictionary *row,NSUInteger i,BOOL *stop){return [row[@"id"] isEqual:self.selectedFork] || [row[@"fork"] isEqual:self.selectedFork];}];if(index==NSNotFound)return;
+    NSAlert *alert=NSAlert.new;alert.messageText=@"重命名课程";NSTextField *name=[NSTextField textFieldWithString:catalog[index][@"name"]];name.frame=NSMakeRect(0,0,300,24);alert.accessoryView=name;[alert addButtonWithTitle:@"保存"];[alert addButtonWithTitle:@"取消"];if([alert runModal]!=NSAlertFirstButtonReturn)return;
+    NSString *title=[name.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];if(!title.length)return;NSMutableDictionary *entry=[catalog[index] mutableCopy];entry[@"name"]=title;catalog[index]=entry;NSError *error=nil;if(!AMSaveCourseCatalog(catalog,&error)){[self showError:error];return;}[self refreshPresentation];
+}
+- (void)linkCatalogCourse:(id)sender {
+    if(!self.courses.count){[self addFork:sender];return;}NSMutableArray *catalog=[AMCourseCatalog(self.courses) mutableCopy];NSDictionary *local=nil;for(NSDictionary *row in catalog)if([row[@"id"] isEqual:self.selectedFork])local=row;if(!local)return;
+    NSAlert *alert=NSAlert.new;alert.messageText=@"关联课程仓库";NSPopUpButton *picker=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(0,0,340,28)];for(NSDictionary *course in self.courses)[picker addItemWithTitle:course[@"fork"]];alert.accessoryView=picker;[alert addButtonWithTitle:@"关联"];[alert addButtonWithTitle:@"取消"];if([alert runModal]!=NSAlertFirstButtonReturn)return;
+    NSDictionary *repository=self.courses[picker.indexOfSelectedItem];NSMutableDictionary *entry=local.mutableCopy;NSMutableSet *aliases=[NSMutableSet setWithArray:entry[@"aliases"] ?: @[]];for(NSDictionary *row in catalog.copy)if([row[@"fork"] isEqual:repository[@"fork"]]){[aliases addObject:row[@"id"]];[aliases addObjectsFromArray:row[@"aliases"] ?: @[]];[catalog removeObject:row];}[catalog removeObject:local];[aliases removeObject:entry[@"id"]];entry[@"aliases"]=aliases.allObjects;entry[@"fork"]=repository[@"fork"];if(repository[@"upstream"])entry[@"upstream"]=repository[@"upstream"];[catalog addObject:entry];NSError *error=nil;if(!AMSaveCourseCatalog(catalog,&error)){[self showError:error];return;}[self selectCourseID:repository[@"fork"]];[self refreshPresentation];
+}
 - (NSMenu *)courseActionsMenu {
     NSMenu *menu=NSMenu.new;menu.autoenablesItems=NO;NSDictionary *course=[self course];
     void (^add)(NSMenu *,NSString *,SEL,BOOL)=^(NSMenu *target,NSString *title,SEL action,BOOL enabled){NSMenuItem *item=[target addItemWithTitle:title action:action keyEquivalent:@""];item.target=self;item.enabled=enabled && !self.operationsPaused;};
@@ -429,7 +445,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     add(menu,@"识别批次与进度…",@selector(showSkillJobs:),YES);
     add(menu,@"重新分析材料…",@selector(exportAllSkillContext:),YES);
     [menu addItem:NSMenuItem.separatorItem];
-    add(menu,@"添加课程…",@selector(addFork:),YES);add(menu,@"关联文件夹…",@selector(linkFolder:),course!=nil);add(menu,@"下载课程…",@selector(cloneFork:),course!=nil);add(menu,@"打开文件夹",@selector(openFolder:),[course[@"path"] length]>0);
+    add(menu,@"新建课程…",@selector(newStandaloneCourse:),YES);add(menu,@"添加仓库课程…",@selector(addFork:),YES);add(menu,@"重命名课程…",@selector(renameCatalogCourse:),course!=nil);add(menu,@"关联文件夹…",@selector(linkFolder:),course!=nil);add(menu,@"下载课程…",@selector(cloneFork:),course!=nil);add(menu,@"打开文件夹",@selector(openFolder:),[course[@"path"] length]>0);
     if([course[@"pendingMergeTip"] length])add(menu,@"处理冲突…",@selector(continueMerge:),YES);
     if([course[@"pushFailed"] boolValue])add(menu,@"重试推送",@selector(push:),YES);
     if([self.errorDetails[self.selectedFork ?: @"all"] length])add(menu,@"操作详情…",@selector(operationDetails:),YES);
@@ -441,6 +457,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     return menu;
 }
 - (void)more:(id)sender {
+    if(self.selectedFork && ![self course]){NSMenu *menu=NSMenu.new;for(NSArray *entry in @[@[@"新建课程…",@"newStandaloneCourse:"],@[@"重命名课程…",@"renameCatalogCourse:"],@[@"关联课程仓库…",@"linkCatalogCourse:"]]){NSMenuItem *item=[menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""];item.target=self;}[menu popUpMenuPositioningItem:nil atLocation:NSZeroPoint inView:self.moreButton];return;}
     NSMenu *menu=[self courseActionsMenu];NSView *anchor=[sender isKindOfClass:NSView.class] ? sender:self.view;
     [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0,anchor==self.view ? 0:NSHeight(anchor.bounds)) inView:anchor];
 }
@@ -509,8 +526,9 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (NSArray *)visible {
     NSMutableArray *result = NSMutableArray.array; NSMutableSet *seen = NSMutableSet.set;
-    if (!self.inbox && self.sections.selectedSegment == 1) {
-        for (NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[]) if (![task[@"deleted"] boolValue] && AMTaskBelongsToCourse(task,[self course])) {
+    NSDictionary *local=nil;if(!self.inbox && self.selectedFork && ![self course])for(NSDictionary *row in AMCourseCatalog(self.courses))if([row[@"id"] isEqual:self.selectedFork])local=row;
+    if(local || (!self.inbox && self.sections.selectedSegment == 1)) {
+        for (NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[]) if (![task[@"deleted"] boolValue] && AMTaskBelongsToCourse(task,local ?: [self course])) {
             NSMutableDictionary *copy = task.mutableCopy; copy[@"confirmed"] = @YES; copy[@"path"] = task[@"sourcePath"] ?: @""; copy[@"line"] = task[@"sourceLine"] ?: @0; [result addObject:copy];
         }
     } else {
@@ -533,7 +551,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if(self.inbox && self.reviewFilter.indexOfSelectedItem==3){[result removeAllObjects];for(NSDictionary *record in AMReviewDeletedRecords())if(!self.selectedFork || [record[@"repository"] isEqual:[self course][@"upstream"]])[result addObject:record];}
     NSString *query = [self.query stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (query.length) [result filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *item, NSDictionary *bindings) { NSString *text = [NSString stringWithFormat:@"%@ %@ %@", item[@"title"], item[@"path"], item[@"repository"] ?: item[@"subject"]]; return [text rangeOfString:query options:NSCaseInsensitiveSearch].location != NSNotFound; }]];
-    return result;
+    return AMCourseDisplayTasks(result,AMCourseCatalog(self.courses));
 }
 - (NSArray<NSDictionary *> *)pendingReviewCandidates {
     return [[self visible] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *item, NSDictionary *bindings) {
@@ -555,7 +573,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     return nil;
 }
 - (void)refreshCourses {
-    if(self.selectedFork && ![self savedCourse:@{@"fork":self.selectedFork}])self.selectedFork=nil;
+    if(self.selectedFork && ![self savedCourse:@{@"fork":self.selectedFork}]){BOOL found=NO;for(NSDictionary *row in AMCourseCatalog(self.courses))if([row[@"id"] isEqual:self.selectedFork])found=YES;if(!found)self.selectedFork=nil;}
     [self refreshPresentation];
 }
 - (NSString *)selectedCourseID {return self.selectedFork;}
@@ -566,10 +584,12 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         if([course[@"pendingMergeTip"] length] || [course[@"pushFailed"] boolValue] || self.reports[course[@"fork"]][@"error"])symbol=@"exclamationmark.triangle";
         if(self.busy && [self.operationFork isEqual:course[@"fork"]])symbol=@"arrow.triangle.2.circlepath";
         [result addObject:@{@"id":course[@"fork"],@"name":[course[@"fork"] lastPathComponent],@"pending":@(pending),@"newCount":@(pending-updates),@"updateCount":@(updates),@"symbol":symbol,@"linked":@([course[@"path"] length]>0),@"status":(self.busy && [self.operationFork isEqual:course[@"fork"]]) ? @"检查中":(self.reports[course[@"fork"]] ? AMCourseCheckPresentation(self.reports[course[@"fork"]],pending)[@"summary"]:(self.statuses[course[@"fork"]] ?: ([course[@"path"] length] ? @"已关联":@"待关联目录")))}];
-    }return result;
+    }
+    NSArray *catalog=AMCourseCatalog(self.courses);for(NSUInteger i=0;i<result.count;i++){NSMutableDictionary *row=[result[i] mutableCopy];for(NSDictionary *c in catalog)if([c[@"fork"] isEqual:row[@"id"]])row[@"name"]=c[@"name"];result[i]=row;}
+    for(NSDictionary *c in catalog){BOOL represented=NO;for(NSDictionary *repository in self.courses)if([repository[@"fork"] isEqual:c[@"fork"]])represented=YES;if(!represented)[result addObject:@{@"id":c[@"id"],@"name":c[@"name"],@"pending":@0,@"symbol":@"book.closed",@"linked":@NO,@"status":@""}];}return result;
 }
 - (BOOL)selectCourseID:(NSString *)identifier {
-    if(identifier && ![self savedCourse:@{@"fork":identifier}])return NO;
+    if(identifier && ![self savedCourse:@{@"fork":identifier}]){BOOL exists=NO;for(NSDictionary *row in AMCourseCatalog(self.courses))if([row[@"id"] isEqual:identifier])exists=YES;if(!exists)return NO;}
     if(self.showingSkillJobs){self.showingSkillJobs=NO;[self refreshPresentation];}
     if([self.selectedFork isEqual:identifier] || (!identifier && !self.selectedFork))return YES;
     if(self.hasUnsavedReview && ![self resolveUnsavedReview])return NO;
@@ -582,6 +602,10 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if (self.refreshing || !self.table) return; self.refreshing = YES;
     if(!self.hasUnsavedReview && self.deferredScans.count){for(NSString *fork in self.deferredScans){NSDictionary *scan=self.deferredScans[fork];self.candidates[fork]=[self retainingSkill:self.candidates[fork] current:scan[@"candidates"] documents:scan[@"documents"]];self.materials[fork]=[self retainingSkill:self.materials[fork] current:scan[@"materials"] ?: @[] documents:scan[@"documents"]];}[self.deferredScans removeAllObjects];if(!self.preview)SSWritePlist(@"discoveries.plist",self.discoveryEnvelope,NULL);}
     NSDictionary *course = [self course]; NSString *key = self.selectedFork ?: @"all";
+    NSDictionary *localCourse=nil;if(!self.inbox && !course && self.selectedFork)for(NSDictionary *c in AMCourseCatalog(self.courses))if([c[@"id"] isEqual:self.selectedFork])localCourse=c;
+    if(localCourse){self.sections.segmentCount=1;[self.sections setLabel:@"任务" forSegment:0];self.sections.selectedSegment=0;self.accountLabel.stringValue=localCourse[@"name"];self.setupButton.hidden=YES;self.scanButton.hidden=YES;self.syncButton.hidden=YES;self.commitButton.hidden=YES;self.typeFilter.hidden=YES;self.typeButton.hidden=YES;self.recoveryButton.hidden=YES;self.moreButton.enabled=!self.operationsPaused;NSMutableArray *records=NSMutableArray.array;for(NSDictionary *task in self.tasksProvider ? self.tasksProvider():@[])if(![task[@"deleted"] boolValue] && [AMCourseForTask(task,AMCourseCatalog(self.courses))[@"id"] isEqual:localCourse[@"id"]] && (!self.query.length || [task[@"title"] localizedCaseInsensitiveContainsString:self.query])){NSMutableDictionary *row=task.mutableCopy;row[@"confirmed"]=@YES;row[@"subject"]=localCourse[@"name"];[records addObject:row];}[records sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"due"] compare:b[@"due"]];}];[self.courseWorkspace showCourseSummaries:@[] visible:NO];[self.courseWorkspace updateRecords:records selected:self.selectedCandidateID ?: @"" information:@"" empty:@"暂无任务" paused:self.operationsPaused];[self layoutContent];self.refreshing=NO;if(self.stateChanged)self.stateChanged();return;}
+    if(self.sections.segmentCount!=4){self.sections.segmentCount=4;NSArray *labels=@[@"课程内容",@"已加入任务",@"仓库信息",@"提交记录"];for(NSInteger i=0;i<4;i++)[self.sections setLabel:labels[i] forSegment:i];self.sections.selectedSegment=0;}self.scanButton.hidden=NO;
+
     if(self.workflowNoticeContext)self.workflowNotice.hidden=[self.dismissedWorkflowNotices containsObject:self.workflowNoticeContext.identifier] || (self.workflowNoticeContext.course && ![self.workflowNoticeContext.course[@"fork"] isEqual:key]);
     NSDate *last = course[@"lastScan"];
     NSString *context = course ? [NSString stringWithFormat:@"%@ · 上次成功检查：%@%@", course[@"upstream"], last ? DDLFormatDate(last, @"M月d日 HH:mm") : @"尚未检查", [course[@"enabled"] isEqual:@NO] ? @" · 自动检查已停用" : @""] : @"所有课程的发现结果集中在这里";
