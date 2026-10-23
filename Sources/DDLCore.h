@@ -1,6 +1,9 @@
 #import <Foundation/Foundation.h>
 
 NS_ASSUME_NONNULL_BEGIN
+NSDictionary *DDLSeriesPatch(NSDictionary *original,NSDictionary *edited);
+NSString *DDLSeriesFamily(NSString * _Nullable identifier,NSArray *series);
+NSDictionary *DDLSeriesEdit(NSArray *tasks,NSArray *series,NSDictionary *original,NSDictionary *edited,NSInteger scope,BOOL overwrite);
 NSDate * _Nullable DDLParseDate(NSString *input, NSDate *now, NSCalendar *calendar);
 NSString *DDLFormatDate(NSDate *date, NSString *format);
 NSString *DDLRemaining(NSDate *due, NSDate *now, BOOL completed);

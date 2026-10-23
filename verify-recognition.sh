@@ -24,3 +24,5 @@ clang -DDDL_TESTING=1 -fobjc-arc -fblocks -Wall -Wextra -Werror -Wno-unused-para
  -framework Foundation -framework Cocoa -framework Vision -framework Security \
  Sources/SSRecognition.m Sources/SSAssignments.m Sources/SSLocalData.m Sources/SSSecurity.m Sources/DDLCore.m Sources/DDLImport.m Sources/SSGit.m Tests/LocalModelIntegration.m -o build/tests/local-model-integration
 python3 Tests/LocalModelIntegration.py
+clang -DDDL_TESTING=1 -fobjc-arc -fblocks -Wall -Wextra -Werror -Wno-unused-parameter -mmacosx-version-min=13.0 -framework Foundation -framework Cocoa -framework Vision -framework Security Sources/SSRecognition.m Sources/SSAssignments.m Sources/SSLocalData.m Sources/SSSecurity.m Sources/DDLCore.m Sources/DDLImport.m Tests/RecognitionSlicesTests.m -o build/tests/recognition-slices-tests
+AM_TEST_DATA=$(mktemp -d "$TASK_DIR/build/tests/slices-data.XXXXXX") build/tests/recognition-slices-tests

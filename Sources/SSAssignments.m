@@ -22,7 +22,7 @@ static NSString *CleanTitle(NSString *raw) {
     return title.length > 90 ? [title substringToIndex:90] : title;
 }
 static BOOL GenericTitle(NSString *title) {
-    return !title.length || Match(title, @"^(?:规则|要求|提交(?:规则|要求|说明)?|说明|任务|作业(?:目标|要求|内容|说明|规则)?|截止时间|时间|日期|rules?|requirements?|instructions?|tasks?|readme|[0-9]+[.)]?)$");
+    return !title.length || Match(title, @"^(?:备注|注意事项|提示|参考|参考资料|答案|解答|目标|步骤|实验步骤|评分标准|总结|notes?|remarks?|objectives?|steps?|deliverables?|submission(?: requirements?)?|规则|要求|提交(?:规则|要求|说明)?|说明|任务|作业(?:目标|要求|内容|说明|规则)?|截止时间|时间|日期|rules?|requirements?|instructions?|tasks?|readme|[0-9]+[.)]?)$");
 }
 static NSString *DocumentTitle(NSArray *lines, NSString *path) {
     BOOL fence = NO;
@@ -110,6 +110,7 @@ static NSArray<NSDictionary *> *LegacyDiscoveries(NSString *text, NSString *repo
         if ([raw hasPrefix:@"~~~"] || [raw hasPrefix:@"```"]) { fence = !fence; continue; }
         NSString *line = Normalized(raw);
         if (fence || !line.length) continue;
+        if (Match(line,@"本(?:次|周)(?:不布置|没有|无)作业|(?:作业|任务).{0,12}(?:已取消|取消提交|无需提交|不需要提交)|取消.{0,10}(?:作业|任务)|no (?:homework|assignment)(?: is)? (?:assigned|due)|(?:assignment|homework).{0,12}(?:cancelled|canceled)")) continue;
         if ([line hasPrefix:@"#"] && !GenericTitle(CleanTitle(line))) { heading = CleanTitle(line); headingLine = index + 1; }
         if ([line hasPrefix:@"#"] && !GenericTitle(CleanTitle(line)) && Match(CleanTitle(line), @"考试|测验|课上|课堂|随堂|作业|homework|assignment|exam|quiz")) [sections addObject:@{@"line":@(index), @"heading":CleanTitle(line)}];
         if(![line hasPrefix:@"#"] && !Match(line,@"^(?:[-*+]\\s*)?(?:发布|更新|published|updated|created|release)\\s*[:：]") && !Match(line,@"^[-*+]?\\s*\\[.*\\]\\(.*\\)\\s*$") && Match(line,@"[A-Za-z一-龥]{3,}"))substantive=YES;
@@ -219,6 +220,7 @@ NSArray<NSDictionary *> *SSConsolidateAssignments(NSArray<NSDictionary *> *recor
             [docs addObject:record]; announcement[@"attachments"] = docs; [attachments addObject:record[@"id"]]; break;
         }
     }
+    for(NSMutableDictionary *child in assignments){if([attachments containsObject:child[@"id"]] || child[@"due"] || child[@"dateText"])continue;NSMutableArray *parents=NSMutableArray.array;for(NSMutableDictionary *parent in assignments){if(parent==child || ![parent[@"repository"] isEqual:child[@"repository"]])continue;for(NSDictionary *link in parent[@"sourceLinks"] ?: @[])if([link[@"path"] isEqual:child[@"path"]]){[parents addObject:parent];break;}}if(parents.count==1){NSMutableDictionary *parent=parents[0];NSMutableArray *docs=[parent[@"attachments"] mutableCopy] ?: NSMutableArray.array;[docs addObject:child];parent[@"attachments"]=docs;[attachments addObject:child[@"id"]];}}
     [assignments filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *item, NSDictionary *bindings) { return ![attachments containsObject:item[@"id"]]; }]];
     return assignments;
 }

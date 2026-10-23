@@ -132,6 +132,8 @@ final class ReviewState: ObservableObject {
     @Published var searchToken = 0
     @Published var title = ""
     @Published var subject = ""
+    @Published var courseIdentity = ""
+    @Published var proposedSubtasks:[NSDictionary] = []
     @Published var priority = 0
     @Published var notes = ""
     @Published var date = Date()
@@ -141,7 +143,7 @@ final class ReviewState: ObservableObject {
     @Published var reminderOffsets: Set<Int> = [10080,4320,1440,60,0]
     private var baseline:NSDictionary=[:]
     private var savedValues:NSDictionary {
-        ["title":title.trimmingCharacters(in:.whitespacesAndNewlines),"notes":notes,"subject":subject.trimmingCharacters(in:.whitespacesAndNewlines),"priority":priority,"date":hasDate ? date as Any:NSNull(),"hasDate":hasDate,"dateConfirmed":dateConfirmed,"reminders":reminders ? reminderOffsets.sorted():[]] as NSDictionary
+        ["subtasks":proposedSubtasks,"courseID":courseIdentity,"title":title.trimmingCharacters(in:.whitespacesAndNewlines),"notes":notes,"subject":subject.trimmingCharacters(in:.whitespacesAndNewlines),"priority":priority,"date":hasDate ? date as Any:NSNull(),"hasDate":hasDate,"dateConfirmed":dateConfirmed,"reminders":reminders ? reminderOffsets.sorted():[]] as NSDictionary
     }
     var dirty:Bool {get{!savedValues.isEqual(baseline)}set{if !newValue {baseline=savedValues}}}
     @Published var message = ""
@@ -238,7 +240,10 @@ final class ReviewState: ObservableObject {
         reminders = ((task?["reminderOffsets"] as? [NSNumber])?.isEmpty == false) || task == nil
         reminderOffsets = Set((task?["reminderOffsets"] as? [NSNumber])?.map(\.intValue) ?? [10080,4320,1440,60,0])
         subject=task?["subject"] as? String ?? (string(record,"sourceType")=="local" ? string(record,"subject"):(string(record,"repository") as NSString).lastPathComponent)
+        courseIdentity=(task?["courseID"] as? String) ?? string(record,"courseID");if courseIdentity.isEmpty {let rows=CourseDirectoryState.shared.records.filter{!string($0,"upstream").isEmpty && string($0,"upstream")==string(record,"repository")};if rows.count==1 {courseIdentity=identifier(rows[0])}}
+        if let course=CourseDirectoryState.shared.records.first(where:{identifier($0)==courseIdentity}){subject=string(course,"name")}
         priority=(task?["priority"] as? NSNumber)?.intValue ?? (record["priority"] as? NSNumber)?.intValue ?? 0
+        proposedSubtasks=task?["subtasks"] as? [NSDictionary] ?? record["suggestedSubtasks"] as? [NSDictionary] ?? []
         originalTitle = title; originalNotes = notes; dirty = false
     }
     // Explicit re-review preserves user edits but updates the version being reviewed.
@@ -285,7 +290,7 @@ final class ReviewState: ObservableObject {
         let due=editing ? date : (task?["due"] as? Date ?? (flag(record,"relative") ? suggestion(record) : record["due"] as? Date))
         guard let due else{return nil}
         let proposedTitle=string(record,"suggestedTitle").isEmpty ? string(record,"title"):string(record,"suggestedTitle")
-        var draft: [String:Any] = ["title":editing ? title : (task?["title"] as? String ?? proposedTitle),"assignmentDue":due,"dateConfirmed":true]
+        var draft: [String:Any] = ["subtasks":editing ? proposedSubtasks:(task?["subtasks"] as? [NSDictionary] ?? record["suggestedSubtasks"] as? [NSDictionary] ?? []),"courseID":courseIdentity,"title":editing ? title : (task?["title"] as? String ?? proposedTitle),"assignmentDue":due,"dateConfirmed":true]
         if editing {draft["subject"]=subject;draft["priority"]=priority;draft["notes"]=notes;draft["reminderOffsets"]=reminders ? reminderOffsets.sorted(by:>) : [Int]()}
         return ["record":record,"draft":draft] as NSDictionary
     }
@@ -339,6 +344,13 @@ final class ReviewState: ObservableObject {
     }
 }
 
+private struct SuggestedSubtasks:View {
+    @Binding var children:[NSDictionary]
+    private func change(_ id:String,_ title:String){guard let i=children.firstIndex(where:{identifier($0)==id})else{return};let copy=children[i].mutableCopy() as! NSMutableDictionary;copy["title"]=title;children[i]=copy.copy() as! NSDictionary}
+    private func move(_ id:String,_ direction:Int){guard let i=children.firstIndex(where:{identifier($0)==id}),children.indices.contains(i+direction)else{return};children.swapAt(i,i+direction)}
+    var body:some View {ForEach(workspaceRows(children)){row in HStack(alignment:.top){TextField("子任务",text:Binding(get:{string(children.first{identifier($0)==row.id} ?? row.record,"title")},set:{change(row.id,$0)}));Menu{Button("上移"){move(row.id,-1)};Button("下移"){move(row.id,1)};Button("删除",role:.destructive){children.removeAll{identifier($0)==row.id}}}label:{Image(systemName:"ellipsis")}.menuStyle(.borderlessButton).frame(width:24)}.help(string(row.record,"evidence"))}}
+}
+
 private struct ReviewDetails: View {
     @ObservedObject var state:ReviewState
     let record:NSDictionary
@@ -347,7 +359,9 @@ private struct ReviewDetails: View {
     }
     var body:some View {
         Form {
-            TaskFields(title:editing(\.title),subject:editing(\.subject),date:Binding(get:{state.date},set:{state.editDate($0)}),notes:editing(\.notes),offsets:Binding(get:{state.reminders ? Array(state.reminderOffsets).sorted(by:>):[]},set:{state.reminders = !$0.isEmpty;state.reminderOffsets=Set($0)}),priority:editing(\.priority),recurrence:.constant([:]),seriesScope:.constant(0),hasDate:state.hasDate && state.dateConfirmed,confirmDate:{state.hasDate=true;state.dateConfirmed=true},recurrenceEnabled:false,dateHint:string(record,"dateText"),notesHeight:120)
+            TaskFields(title:editing(\.title),subject:editing(\.subject),courseID:editing(\.courseIdentity),date:Binding(get:{state.date},set:{state.editDate($0)}),notes:editing(\.notes),offsets:Binding(get:{state.reminders ? Array(state.reminderOffsets).sorted(by:>):[]},set:{state.reminders = !$0.isEmpty;state.reminderOffsets=Set($0)}),priority:editing(\.priority),recurrence:.constant([:]),seriesScope:.constant(0),hasDate:state.hasDate && state.dateConfirmed,confirmDate:{state.hasDate=true;state.dateConfirmed=true},recurrenceEnabled:false,dateHint:string(record,"dateText"),notesHeight:120)
+            if !state.proposedSubtasks.isEmpty {Section("子任务"){SuggestedSubtasks(children:editing(\.proposedSubtasks))}}
+            if let suggestions=record["suggestedSubtasks"] as? [NSDictionary] {let additions=suggestions.filter{proposal in !state.proposedSubtasks.contains{string($0,"sourceKey")==string(proposal,"sourceKey")}};if !additions.isEmpty {Section {Button("添加 \(additions.count) 项子任务建议"){state.proposedSubtasks.append(contentsOf:additions)}}}}
             if !((record["warnings"] as? [String] ?? [])+(record["contentWarnings"] as? [String] ?? [])).isEmpty {Section("需核对"){ForEach(Array(((record["warnings"] as? [String] ?? [])+(record["contentWarnings"] as? [String] ?? [])).enumerated()),id:\.offset){Text($0.element).foregroundStyle(.orange)}}}
             Section {WorkspaceDisclosure("老师原文与来源") {
                 Text("\(string(record,"repository")) / \(string(record,"path"))").font(.caption).foregroundStyle(.secondary)
@@ -1139,8 +1153,7 @@ private struct QuickEntryView:View {
     }
     private var details:some View {
         Form {if let r=state.current {
-            TaskFields(title:state.field("title"),subject:state.field("subject"),date:state.dateBinding,notes:state.field("notes"),offsets:Binding(get:{(state.current?["reminderOffsets"] as? [NSNumber] ?? []).map(\.intValue)},set:{state.change("reminderOffsets",$0)}),priority:Binding(get:{(state.current?["priority"] as? NSNumber)?.intValue ?? 0},set:{state.change("priority",$0)}),recurrence:.constant([:]),seriesScope:.constant(0),hasDate:state.knownDate != nil,confirmDate:{state.confirmDate()},recurrenceEnabled:false,dateHint:string(r,"hint"))
-            if !state.courses.isEmpty {Section {Menu("关联课程"){Button("不关联"){state.change("courseRepository","")};ForEach(workspaceRows(state.courses)){row in Button(string(row.record,"name")){state.change("courseRepository",identifier(row.record));state.change("subject",string(row.record,"name"))}}}}}
+            TaskFields(title:state.field("title"),subject:state.field("subject"),courseID:Binding(get:{string(state.current ?? [:],"courseID")},set:{state.change("courseID",$0)}),date:state.dateBinding,notes:state.field("notes"),offsets:Binding(get:{(state.current?["reminderOffsets"] as? [NSNumber] ?? []).map(\.intValue)},set:{state.change("reminderOffsets",$0)}),priority:Binding(get:{(state.current?["priority"] as? NSNumber)?.intValue ?? 0},set:{state.change("priority",$0)}),recurrence:.constant([:]),seriesScope:.constant(0),hasDate:state.knownDate != nil,confirmDate:{state.confirmDate()},recurrenceEnabled:false,dateHint:string(r,"hint"))
             Section {WorkspaceDisclosure("老师原文与来源"){Text(string(r,"evidence")).textSelection(.enabled)}}
         }else{Text("未选择作业").foregroundStyle(.secondary)}}.formStyle(.grouped).controlSize(.regular).textFieldStyle(.roundedBorder).environment(\.timeZone,TimeZone(identifier:state.current.map{string($0,"timeZone")} ?? "") ?? .current)
     }
@@ -1353,14 +1366,41 @@ private struct TaskRecurrenceEditor:View {
                 if (rule["endMode"] as? Int)==1 {DatePicker("截至",selection:field("until",Date()),displayedComponents:.date)}
                 if (rule["endMode"] as? Int)==2 {TextField("次数",text:field("countText","10"))}
             }
-            if series {Picker("应用范围",selection:$scope){Text("仅本次").tag(0);Text("本次及以后").tag(1)}}
+
             if !preview.isEmpty {Text(preview).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}
+        }
+    }
+}
+@MainActor private final class CourseDirectoryState:ObservableObject {
+    static let shared=CourseDirectoryState()
+    @Published var records:[NSDictionary]=[]
+    var create:((String)->NSDictionary?)?
+}
+@objc(AMCourseDirectory) @MainActor public final class AMCourseDirectory:NSObject {
+    @objc public static func updateRecords(_ records:[NSDictionary]) {if !CourseDirectoryState.shared.records.elementsEqual(records,by:{$0.isEqual($1)}) {CourseDirectoryState.shared.records=workspaceRecords(records)}}
+    @objc public static var createHandler:((String)->NSDictionary?)? {get{CourseDirectoryState.shared.create}set{CourseDirectoryState.shared.create=newValue}}
+}
+private struct CourseSelector:View {
+    @Binding var subject:String
+    @Binding var courseID:String
+    @ObservedObject private var directory=CourseDirectoryState.shared
+    @TaskValueState<Bool> private var expanded=false
+    @TaskValueState<String> private var error=""
+    private var chosen:NSDictionary? {directory.records.first{identifier($0)==courseID}}
+    private var matches:[NSDictionary] {let query=subject.trimmingCharacters(in:.whitespacesAndNewlines);return directory.records.filter{query.isEmpty || string($0,"name").localizedCaseInsensitiveContains(query)}}
+    private func choose(_ row:NSDictionary){courseID=identifier(row);subject=string(row,"name");error="";expanded=false}
+    private var input:Binding<String> {Binding(get:{subject},set:{value in subject=value;let rows=directory.records.filter{string($0,"name")==value.trimmingCharacters(in:.whitespacesAndNewlines)};if rows.count==1{courseID=identifier(rows[0])}else if chosen.map({string($0,"name") != value}) ?? false{courseID=""}})}
+    var body:some View {
+        HStack(spacing:6){TextField("课程／分类",text:input).accessibilityIdentifier("task-subject")
+            Button{expanded.toggle()}label:{Image(systemName:chosen == nil ? "chevron.down":"checkmark.circle")}.buttonStyle(.borderless).accessibilityLabel("选择课程").popover(isPresented:$expanded){VStack(alignment:.leading,spacing:10){TextField("搜索课程或填写新名称",text:input).textFieldStyle(.roundedBorder);ScrollView{VStack(alignment:.leading,spacing:4){Button("不关联"){courseID="";subject="其他";expanded=false};ForEach(workspaceRows(matches)){row in Button{choose(row.record)}label:{HStack{Text(string(row.record,"name"));Spacer();if !string(row.record,"fork").isEmpty{Text(string(row.record,"fork")).font(.caption).foregroundStyle(.secondary)};if identifier(row.record)==courseID{Image(systemName:"checkmark")}}}.buttonStyle(.plain).padding(.vertical,5)}}}.frame(maxHeight:240)
+                Button("新建课程…"){let name=subject.trimmingCharacters(in:.whitespacesAndNewlines);guard !name.isEmpty,name != "其他" else{error="请填写课程名称";return};if let row=directory.create?(name){choose(row)}else{error="课程未能保存，请检查名称后重试"}};if !error.isEmpty{Text(error).foregroundStyle(.red).font(.caption)}}.padding(14).frame(width:330)}
         }
     }
 }
 private struct TaskFields:View {
     @Binding var title:String
     @Binding var subject:String
+    var courseID:Binding<String> = .constant("")
     @Binding var date:Date
     @Binding var notes:String
     @Binding var offsets:[Int]
@@ -1388,7 +1428,7 @@ private struct TaskFields:View {
     var body:some View {
         Section {
             VStack(alignment:.leading,spacing:5){LabeledContent("名称"){TextField("任务名称",text:$title).focused($focus,equals:"title").accessibilityIdentifier("task-title")};problem("title")}
-            LabeledContent("课程"){TextField("课程／分类",text:$subject).accessibilityIdentifier("task-subject")}
+            VStack(alignment:.leading,spacing:5){LabeledContent("课程"){CourseSelector(subject:$subject,courseID:courseID)};problem("course")}
             VStack(alignment:.leading,spacing:5){
                 if compact {VStack(alignment:.leading,spacing:6){Text("截止时间").foregroundStyle(.secondary);DatePicker("截止时间",selection:$date,displayedComponents:[.date,.hourAndMinute]).labelsHidden().accessibilityIdentifier("task-deadline")}}else{DatePicker("截止时间",selection:$date,displayedComponents:[.date,.hourAndMinute]).accessibilityIdentifier("task-deadline")}
                 if !dateHint.isEmpty {Text(dateHint).font(.caption).foregroundStyle(.secondary)}
@@ -1427,7 +1467,7 @@ private struct TaskFields:View {
             else {var rule=recurrence as! [String:Any];if string(recurrence,"unit") != "week" || string(recurrence,"mode") != "fixed" {rule.removeValue(forKey:"weekdays")};let end=recurrence["endMode"] as? Int ?? 0;if end != 1 {rule.removeValue(forKey:"until")};if end != 2 {rule.removeValue(forKey:"countText")};result["recurrence"]=rule}
         }
 
-        for key in ["recurrencePreview","dateHint","saveTitle","evidence","isNew","sourceLocked","series","supplementaryHeight","planningSummary"] {result.removeValue(forKey:key)}
+        for key in ["recurrencePreview","dateHint","saveTitle","evidence","isNew","sourceLocked","series","supplementaryHeight","planningSummary","seriesImpact","courses"] {result.removeValue(forKey:key)}
         return result as NSDictionary
     }
     var dirty:Bool {!effectiveValues.isEqual(baseline)}
@@ -1449,7 +1489,9 @@ private struct TaskDraftView:View {
     @ObservedObject var state:TaskDraftState
     var body:some View {GeometryReader{geo in VStack(spacing:0){
         Form {
-            TaskFields(title:state.field("title",""),subject:state.field("subject",""),date:state.field("due",Date()),notes:state.field("notes",""),offsets:state.field("reminderOffsets",[10080,4320,1440,60,0]),priority:state.field("priority",0),recurrence:state.field("recurrence",[:]),seriesScope:state.field("seriesScope",0),hasDate:flag(state.values,"dateConfirmed"),confirmDate:{let next=state.values.mutableCopy() as! NSMutableDictionary;next["dateConfirmed"]=true;state.values=next;state.action?("change",next)},recurrenceEnabled:!flag(state.values,"sourceLocked"),recurrencePreview:string(state.values,"recurrencePreview"),series:flag(state.values,"series"),error:state.error,errorField:state.errorField,dateHint:string(state.values,"dateHint"),notesHeight:max(90,geo.size.height-(geo.size.width<430 ? 560:460)),compact:geo.size.width<430,focusTitle:flag(state.values,"isNew"))
+            if flag(state.values,"reviewCandidate"),!(state.values["subtasks"] as? [NSDictionary] ?? []).isEmpty {Section("子任务"){SuggestedSubtasks(children:state.field("subtasks",[NSDictionary]()))}}
+            if flag(state.values,"series") {Section("修改范围") {Picker("应用于",selection:state.field("seriesScope",0)){Text("仅本次").tag(0);Text("本次及以后").tag(1);Text("整个系列").tag(2)};if (state.values["seriesScope"] as? Int ?? 0)>0 {Toggle("包含单独修改的字段",isOn:state.field("overwriteSeriesExceptions",false));Text(string(state.values,"seriesImpact")).font(.caption).foregroundStyle(.secondary)}}}
+            TaskFields(title:state.field("title",""),subject:state.field("subject",""),courseID:state.field("courseID",""),date:state.field("due",Date()),notes:state.field("notes",""),offsets:state.field("reminderOffsets",[10080,4320,1440,60,0]),priority:state.field("priority",0),recurrence:state.field("recurrence",[:]),seriesScope:state.field("seriesScope",0),hasDate:flag(state.values,"dateConfirmed"),confirmDate:{let next=state.values.mutableCopy() as! NSMutableDictionary;next["dateConfirmed"]=true;state.values=next;state.action?("change",next)},recurrenceEnabled:!flag(state.values,"sourceLocked"),recurrencePreview:string(state.values,"recurrencePreview"),series:flag(state.values,"series"),error:state.error,errorField:state.errorField,dateHint:string(state.values,"dateHint"),notesHeight:max(90,geo.size.height-(geo.size.width<430 ? 560:460)),compact:geo.size.width<430,focusTitle:flag(state.values,"isNew"))
             if !string(state.values,"evidence").isEmpty {Section{WorkspaceDisclosure("老师原文与来源"){Text(string(state.values,"evidence")).textSelection(.enabled)}}}
             if let supplementary=state.supplementary {Section {TaskSummaryRow(title:"计划与子任务",summary:string(state.values,"planningSummary")){ScrollView{TaskNativeSupplement(content:supplementary).frame(height:CGFloat((state.values["supplementaryHeight"] as? NSNumber)?.doubleValue ?? 190))}.frame(height:min(420,CGFloat((state.values["supplementaryHeight"] as? NSNumber)?.doubleValue ?? 190)))}}}
         }.formStyle(.grouped).controlSize(.regular).textFieldStyle(.roundedBorder).environment(\.timeZone,TimeZone(identifier:string(state.values,"timeZone")) ?? .current)

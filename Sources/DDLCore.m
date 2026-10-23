@@ -78,13 +78,16 @@ NSString *DDLFormatDate(NSDate *date, NSString *format) {
 NSString *DDLRemaining(NSDate *due, NSDate *now, BOOL completed) {
     if (completed) return @"已完成";
     NSTimeInterval interval = [due timeIntervalSinceDate:now];
-    NSInteger minutes = MAX(1, (NSInteger)ceil(fabs(interval) / 60));
+    if(interval==0)return @"已到期";
+    if(fabs(interval)<60)return interval<0 ? @"逾期不足 1 分钟":@"剩余不足 1 分钟";
+    NSInteger minutes = (NSInteger)floor(fabs(interval) / 60);
     NSString *amount;
     if (minutes < 60) amount = [NSString stringWithFormat:@"%ld 分钟", (long)minutes];
-    else if (minutes < 1440) amount = [NSString stringWithFormat:@"%ld 小时", (long)(minutes / 60)];
-    else amount = [NSString stringWithFormat:@"%ld 天", (long)(minutes / 1440)];
+    else if (minutes < 1440) amount = [NSString stringWithFormat:@"%ld 小时 %ld 分钟", (long)(minutes / 60),(long)(minutes % 60)];
+    else amount = [NSString stringWithFormat:@"%ld 天 %ld 小时", (long)(minutes / 1440),(long)((minutes % 1440)/60)];
     return [NSString stringWithFormat:interval < 0 ? @"逾期 %@" : @"剩余 %@", amount];
 }
+#include "AMSeriesEditing.inc"
 
 static NSArray<NSNumber *> *LegacyReminderOffsets(NSInteger mode) {
     if (mode == 0) return @[@0];
@@ -229,7 +232,7 @@ NSArray<NSDictionary *> *DDLTaskListItems(NSArray<NSDictionary *> *items, NSDate
     }];
     NSMutableDictionary<NSString *,NSNumber *> *counts=NSMutableDictionary.dictionary;
     NSHashTable *hidden=[NSHashTable hashTableWithOptions:NSPointerFunctionsStrongMemory|NSPointerFunctionsObjectPointerPersonality];
-    for(NSDictionary *task in upcoming){NSString *series=task[@"seriesID"];NSUInteger count=[counts[series] unsignedIntegerValue]+1;counts[series]=@(count);if(count>2)[hidden addObject:task];}
+    for(NSDictionary *task in upcoming){NSString *series=task[@"seriesFamilyID"] ?: task[@"seriesID"];NSUInteger count=[counts[series] unsignedIntegerValue]+1;counts[series]=@(count);if(count>2)[hidden addObject:task];}
     // Preserve the caller's order and objects. No occurrence is deleted or changed.
     return [items filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *task,NSDictionary *bindings){(void)bindings;return ![hidden containsObject:task];}]];
 }
