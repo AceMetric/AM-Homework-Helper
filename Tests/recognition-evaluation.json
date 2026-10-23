@@ -1,7 +1,50 @@
 [
-  {"id":"sheet-with-steps","path":"assignment-2/README.md","text":"# Assignment 2\n1. Complete the theory exercises.\n2. Run the supplied simulation and submit a plot.\n## Remarks\nKeep your answers concise.\nDeadline: 2027-04-20 18:00","kinds":["assignment"],"subtasks":2},
-  {"id":"no-deadline","path":"Project-1/README.md","text":"# Project 1: Sensor\nBuild a light sensor.\n## Deliverables\n1. Implement the sensor reader.\n2. Write an experiment report.\nNo deadline has been announced.","kinds":["assignment"],"subtasks":2},
-  {"id":"independent-peers","path":"notice.md","text":"# Assignment A\nSubmit a report.\nDue: 2027-04-20 18:00\n# Assignment B\nSubmit a diagram.\nDue: 2027-04-20 18:00","kinds":["assignment","assignment"]},
-  {"id":"cancelled","path":"assignment-3/README.md","text":"# Assignment 3\n本次作业已取消。无需提交。","kinds":[]},
-  {"id":"student-answer","path":"assignment-4/assignment.md","text":"# Assignment 4\n## Solution\n我的答案：平方非负，因为实数的平方大于等于零。","kinds":[]}
+  {
+    "id": "sheet-with-steps",
+    "path": "assignment-2/README.md",
+    "text": "# Assignment 2\n1. Complete the theory exercises.\n2. Run the supplied simulation and submit a plot.\n## Remarks\nKeep your answers concise.\nDeadline: 2027-04-20 18:00",
+    "kinds": [
+      "assignment"
+    ],
+    "subtasks": 2
+  },
+  {
+    "id": "no-deadline",
+    "path": "Project-1/README.md",
+    "text": "# Project 1: Sensor\nBuild a light sensor.\n## Deliverables\n1. Implement the sensor reader.\n2. Write an experiment report.\nNo deadline has been announced.",
+    "kinds": [
+      "assignment"
+    ],
+    "subtasks": 2
+  },
+  {
+    "id": "independent-peers",
+    "path": "notice.md",
+    "text": "# Assignment A\nSubmit a report.\nDue: 2027-04-20 18:00\n# Assignment B\nSubmit a diagram.\nDue: 2027-04-20 18:00",
+    "kinds": [
+      "assignment",
+      "assignment"
+    ]
+  },
+  {
+    "id": "cancelled",
+    "path": "assignment-3/README.md",
+    "text": "# Assignment 3\n本次作业已取消。无需提交。",
+    "kinds": []
+  },
+  {
+    "id": "student-answer",
+    "path": "assignment-4/assignment.md",
+    "text": "# Assignment 4\n## Solution\n我的答案：平方非负，因为实数的平方大于等于零。",
+    "kinds": []
+  },
+  {
+    "id": "one-sheet-part-deadlines",
+    "path": "assignment-7/README.md",
+    "text": "# Assignment 7\n## Task 1\nComplete theory exercises.\nDue: 2027-04-20 18:00\n## Task 2\nRun simulation and submit a plot.\nDue: 2027-04-21 18:00",
+    "kinds": [
+      "assignment"
+    ],
+    "subtasks": 2
+  }
 ]

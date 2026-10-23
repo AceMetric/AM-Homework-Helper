@@ -1085,8 +1085,11 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (NSString *)stateForCandidate:(NSDictionary *)candidate {
     if (candidate[@"kind"] && ![candidate[@"kind"] isEqual:@"assignment"]) return SSActivityKindLabel(candidate[@"kind"]);
-    for (NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[]) if ([task[@"sourceID"] isEqual:candidate[@"id"]])
-        return [task[@"sourceBlobSHA"] isEqual:candidate[@"blobSHA"]] ? @"已导入" : @"有更新";
+    for (NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[]) if ([task[@"sourceID"] isEqual:candidate[@"id"]]){
+        if(![task[@"sourceBlobSHA"] isEqual:candidate[@"blobSHA"]])return @"有更新";
+        if(task[@"sourceContextVersion"] && ![task[@"sourceContextVersion"] isEqual:SSRecordSourceVersion(candidate)])return @"有更新";
+        if((candidate[@"suggestedSubtasks"] || candidate[@"additionalSubtaskSuggestions"]) && ![(task[@"sourceSubtaskVersion"] ?: @"") isEqual:SSSubtaskProposalVersion(candidate)])return @"有更新";return @"已导入";
+    }
     return @"待审核";
 }
 - (void)tableViewSelectionDidChange:(NSNotification *)notification { if (!self.refreshing) [self candidateSelected:nil]; }

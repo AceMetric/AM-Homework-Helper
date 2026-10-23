@@ -33,7 +33,7 @@ static NSArray *RHydrateActivities(id output,NSString *text,NSUInteger lower,NSU
 static NSArray *RMergeModelRecords(NSArray *records){
     NSMutableArray *ordered=NSMutableArray.array;NSMutableDictionary *index=NSMutableDictionary.dictionary;
     for(NSDictionary *record in records){NSString *key=record[@"id"];NSMutableDictionary *existing=index[key];if(!existing){existing=record.mutableCopy;index[key]=existing;[ordered addObject:existing];continue;}
-        NSMutableArray *children=[existing[@"suggestedSubtasks"] mutableCopy] ?: NSMutableArray.array;for(NSDictionary *child in record[@"suggestedSubtasks"] ?: @[]){BOOL seen=NO;for(NSDictionary *old in children)if([old[@"sourceKey"] isEqual:child[@"sourceKey"]])seen=YES;if(!seen)[children addObject:child];}existing[@"suggestedSubtasks"]=children;
+        NSMutableArray *children=[existing[@"suggestedSubtasks"] mutableCopy] ?: NSMutableArray.array;for(NSDictionary *child in record[@"suggestedSubtasks"] ?: @[]){BOOL seen=NO;for(NSDictionary *old in children)if([old[@"sourceKey"] isEqual:child[@"sourceKey"]])seen=YES;if(!seen)[children addObject:child];}[children sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"sourceStartLine"] compare:b[@"sourceStartLine"]];}];existing[@"suggestedSubtasks"]=children;if([existing[@"sourceTitle"] length])existing[@"suggestedTitle"]=existing[@"sourceTitle"];
         for(NSString *field in @[@"summary",@"submissionRequirements"])if(![existing[field] length] && [record[field] length])existing[field]=record[field];
     }return ordered;
 }

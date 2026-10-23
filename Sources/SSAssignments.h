@@ -5,6 +5,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// Rules return evidence-backed candidates; the task service decides import eligibility.
 NSArray<NSDictionary<NSString *, id> *> *SSAssignmentsFromDocument(NSString *text,
     NSString *repository, NSString *path, NSString *blobSHA, NSDate *now, NSCalendar *calendar);
+BOOL SSSeparateSubmission(NSString *text);
 NSString *SSProseText(NSString *text);
 NSDictionary *SSSourceAnalysis(NSString *text, NSString *path);
 NSArray *SSActivityBlocks(NSString *text, NSString *path, BOOL local);
