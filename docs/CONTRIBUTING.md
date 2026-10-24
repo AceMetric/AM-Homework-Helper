@@ -97,3 +97,5 @@ SwiftUI 通过 `Tools/prepare-swiftui.py` 编译为应用内 `libAMUI.dylib`，�
 提交记录测试使用临时 Git 仓库与模拟个人远端，覆盖已提交未推送、重试不重复提交、异常退出及备份事务。快速录入测试不需要真实 GitHub：`verify-quick-entry.sh` 校验日期、时区与材料证据；`QuickUsage` 驱动真实控制器和保存入口，模拟磁盘写入失败。`AM_UI_TEST=QuickForeground zsh verify-hybrid-ui.sh` 是显式前台测试，只使用模拟通知和隔离目录，可检查原生输入、按钮、两种外观与窄窗口。测试截图不提交仓库。
 
 文件夹检查使用描述符限定递归边界，不跟随符号链接；单文件5 MB、总量64 MB、最多256个文件及10,000项目录枚举。`GuideUsage` 验证本机开始、一次关联检查及关闭引导后不重新弹出；显式前台 `TaskCheckForeground` 使用合成文件夹检查真实按钮、原生选择器、范围预览和报告。发布回归可用 `AM_FOREGROUND_QA=1 zsh release.sh`，均不使用真实课程或账户。
+
+报告材料回归：`zsh verify-review-materials.sh` 覆盖独立题目快照、PDF选页、引用身份与缺题覆盖状态；`verify-online-review.sh` 覆盖有界拆分、完整单元持久化、跨批次续查与真实结束原因。材料仅供检查，不能修改提交清单；所有新增材料须确认后才发送。

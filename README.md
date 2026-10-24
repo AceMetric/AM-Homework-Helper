@@ -21,9 +21,9 @@
 - 应用内检查新版本、查看更新说明、确认下载与重启；未保存内容和正在执行的作业操作受到退出保护。
 - **作业只推送到经核验属于当前登录用户的个人 fork，绝不推送到老师仓库，也不强推。**
 
-## 1.15.1
+## 1.16.0
 
-修复后台提交记录核验的网络时限、重复重试及活动报错堆积；失败退避、重启恢复和手动重试保持一致。详见[版本说明](docs/releases/1.15.1.md)。
+修复暗色报告白边，补齐 Markdown 图片上下文；可关联 Markdown、PDF 和图片题目，并在确认的请求限额内自动续查未完成部分。题目材料不加入提交清单。详见[版本说明](docs/releases/1.16.0.md)。
 
 ## 1.15.0
 
@@ -31,7 +31,7 @@
 
 ## 安装与使用
 
-从 [GitHub Releases](https://github.com/AceMetric/AM-Homework-Helper/releases/latest) 下载 **1.15.1** 的 `AM-Homework-Helper-1.15.1-macOS-arm64.zip`，安装说明与校验文件作为独立附件提供。当前构建使用临时签名，**未经 Apple 公证**。
+从 [GitHub Releases](https://github.com/AceMetric/AM-Homework-Helper/releases/latest) 下载 **1.16.0** 的 `AM-Homework-Helper-1.16.0-macOS-arm64.zip`，安装说明与校验文件作为独立附件提供。当前构建使用临时签名，**未经 Apple 公证**。
 
 解压后将 `AM's Homework Helper.app` 放入“应用程序”。首次打开若被系统阻止，可在“系统设置 → 隐私与安全性”按系统提示选择“仍要打开”。更新前退出正在运行的旧测试版。
 
