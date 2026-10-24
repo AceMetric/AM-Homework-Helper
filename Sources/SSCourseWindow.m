@@ -13,6 +13,7 @@
 #import "AMUI-Swift.h"
 #import "AMRenderer.h"
 #import "AMActivityPresentation.h"
+#import "AMHistoryPolling.h"
 
 #import "SSSubmission.inc"
 
@@ -59,6 +60,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property SSGitHub *externalAPI;
 #ifdef DDL_TESTING
 @property(copy) SSGit *(^externalReaderFactory)(NSDictionary *course);
+@property(copy) SSGitHub *(^externalAPIFactory)(void);
 #endif
 @property AMCourseController *courseWorkspace;
 @property NSPopUpButton *reviewFilter;
@@ -117,6 +119,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property BOOL discoveringExternal;
 @property NSDate *lastExternalDiscovery;
 @property NSMutableDictionary *externalOffsets;
+@property NSMutableDictionary *externalPolling;
 @property NSMutableDictionary *completionReverifyTimes;
 #ifdef DDL_TESTING
 @property(copy) NSArray * (^recognitionScopeSelector)(PFMaterials *materials);
@@ -136,6 +139,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property AMReviewController *reviewWorkspace;
 @property BOOL resolvingReview;
 @property (readwrite) BOOL submissionFailedDuringExit;
+- (void)discoverExternalSubmissions:(BOOL)loadMore forCourses:(NSArray *)courses manual:(BOOL)manual;
 @end
 
 @implementation SSCourseController

@@ -59,7 +59,7 @@ void AMDismissUIMessage(NSString *scope,NSString *identifier){for(NSMutableDicti
     if(self.refreshing)return;self.refreshing=YES;
     if(!self.rows)self.rows=NSMutableDictionary.dictionary;
     NSMutableArray *descriptors=NSMutableArray.array;
-    for(NSString *state in @[@"running",@"queued",@"failed",@"success",@"completed",@"cancelled"])for(NSDictionary *op in AMPresentedOperations())if([op[@"state"] isEqual:state] && ![AMHiddenActivityOperations() containsObject:op[@"id"]]) [descriptors addObject:@{@"key":[@"op/" stringByAppendingString:op[@"id"]],@"operation":op}];
+    for(NSString *state in @[@"running",@"queued",@"failed",@"success",@"completed",@"cancelled"])for(NSDictionary *op in AMPresentedOperations())if([op[@"state"] isEqual:state] && !AMActivityOperationHidden(op)) [descriptors addObject:@{@"key":[@"op/" stringByAppendingString:op[@"id"]],@"operation":op}];
     for(NSDictionary *message in AMUIMessages())if(![message[@"dismissed"] boolValue])[descriptors addObject:@{@"key":[NSString stringWithFormat:@"message/%@/%@",message[@"scope"],message[@"id"]],@"message":message}];
     NSMutableSet *wanted=NSMutableSet.set;for(NSDictionary *entry in descriptors)[wanted addObject:entry[@"key"]];
     for(NSString *key in self.rows.allKeys.copy)if(![wanted containsObject:key]){NSView *view=self.rows[key];[self.body removeArrangedSubview:view];[view removeFromSuperview];[self.rows removeObjectForKey:key];}
@@ -104,7 +104,7 @@ void AMDismissUIMessage(NSString *scope,NSString *identifier){for(NSMutableDicti
     if((self=[super initWithFrame:frame])){self.title=@"活动";self.bezelStyle=NSBezelStyleRounded;self.imagePosition=NSImageLeft;self.target=self;self.action=@selector(showActivity:);self.accessibilityLabel=@"活动与提示";[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:AMUIMessagesChanged object:nil];[NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh) name:AMOperationsChanged object:nil];__weak typeof(self) owner=self;self.refreshTimer=[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer){[owner refresh];}];[self refresh];}return self;
 }
 - (void)refresh {
-    NSUInteger active=0;BOOL failed=NO;for(NSDictionary *op in AMPresentedOperations()){if([@[@"queued",@"running"] containsObject:op[@"state"]])active++;if(([op[@"state"] isEqual:@"failed"] || [op[@"warning"] boolValue]) && ![AMHiddenActivityOperations() containsObject:op[@"id"]])failed=YES;}
+    NSUInteger active=0;BOOL failed=NO;for(NSDictionary *op in AMPresentedOperations()){if([@[@"queued",@"running"] containsObject:op[@"state"]])active++;if(([op[@"state"] isEqual:@"failed"] || [op[@"warning"] boolValue]) && !AMActivityOperationHidden(op))failed=YES;}
     NSDictionary *latest=nil,*warning=nil;for(NSDictionary *message in AMUIMessages())if(![message[@"dismissed"] boolValue]){if(!latest)latest=message;if(!warning && [message[@"severity"] integerValue]>=AMUIMessageWarning)warning=message;}
     BOOL recent=latest && [latest[@"severity"] integerValue]==AMUIMessageSuccess && -[latest[@"date"] timeIntervalSinceNow]<4;NSString *symbol=active ? @"arrow.triangle.2.circlepath":(failed || warning!=nil ? @"exclamationmark.circle":recent ? @"checkmark.circle":@"clock");
     self.image=[NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil];self.toolTip=active ? [NSString stringWithFormat:@"%lu 项后台操作",(unsigned long)active]:(warning[@"text"] ?: latest[@"text"] ?: @"活动与最近记录");self.accessibilityValue=self.toolTip;

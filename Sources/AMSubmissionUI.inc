@@ -9,7 +9,7 @@
     self.inbox=NO;self.sections.selectedSegment=3;[self refreshPresentation];
 }
 - (void)submissionAction:(NSString *)action identifier:(NSString *)identifier {
-    if([action isEqual:@"refresh-external"] || [action isEqual:@"more-external"]){self.lastExternalDiscovery=nil;[self discoverExternalSubmissions:[action isEqual:@"more-external"]];return;}
+    if([action isEqual:@"refresh-external"] || [action isEqual:@"more-external"]){NSArray *courses=[self course] ? @[[self course].copy]:[[NSArray alloc] initWithArray:self.courses copyItems:YES];[self discoverExternalSubmissions:[action isEqual:@"more-external"] forCourses:courses manual:YES];return;}
     NSDictionary *record=nil;for(NSDictionary *row in AMSubmissionRecords(NULL) ?: @[])if([row[@"id"] isEqual:identifier])record=row;
     NSDictionary *course=record ? [self savedCourse:@{@"fork":record[@"repository"]}].copy:[self course].copy;
     if([action isEqual:@"associate"] && record){[self associateExternalRecord:record];return;}

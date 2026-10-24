@@ -2,6 +2,7 @@
 @interface AMCourseOperationContext:NSObject
 @property(weak) SSCourseController *owner;
 @property NSString *identifier;
+@property NSString *noticeKey;
 @property NSDictionary *course;
 @property NSString *authType;
 @property NSDictionary *authenticationIdentity;

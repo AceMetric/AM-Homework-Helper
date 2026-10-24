@@ -66,6 +66,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSUInteger commandIndex = 0; while (commandIndex + 1 < arguments.count && [arguments[commandIndex] isEqual:@"-c"]) commandIndex += 2;
     NSString *phase = commandIndex < arguments.count ? phases[arguments[commandIndex]] : nil; if (self.progress && phase) self.progress(phase);
     if(self.operationCancelled || (operationStop && operationStop()) || (self.readsCancellable && self.cancelledReads)){if(error)*error=[NSError errorWithDomain:@"SSGit" code:NSUserCancelledError userInfo:@{NSLocalizedDescriptionKey:@"操作已终止，现有文件和提交记录保留。",@"SSIssue":@"cancelled"}];return nil;}
+    if(self.commandDeadline && self.commandDeadline.timeIntervalSinceNow<=0){if(error)*error=AMWorkflowError(@"timeout",@"当前步骤超时",nil);return nil;}
     NSMutableArray *args = [@[@"-c", @"core.hooksPath=/dev/null", @"-c", @"protocol.ext.allow=never", @"-c", @"http.followRedirects=false", @"-c", @"core.askPass=/usr/bin/false", @"-c", @"commit.gpgSign=false", @"-c", @"tag.gpgSign=false", @"-c", @"credential.helper=", @"-c", @"credential.useHttpPath=true"] mutableCopy];
     if (!token.length) [args addObjectsFromArray:@[@"-c", @"credential.helper=osxkeychain"]];
     [args addObjectsFromArray:arguments];
@@ -96,8 +97,10 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
 - (NSString *)string:(SSGitResult *)result { return [[NSString alloc] initWithData:result.data encoding:NSUTF8StringEncoding] ?: @""; }
 - (SSGitResult *)checked:(NSArray *)args in:(NSString *)path token:(NSString *)token error:(NSError **)error {
     NSUInteger index=0;while(index+1<args.count && [args[index] isEqual:@"-c"])index+=2;
-    BOOL retryable=index<args.count && [@[@"fetch",@"ls-remote"] containsObject:args[index]];NSTimeInterval saved=self.commandTimeout;NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:saved>0 ? saved:(retryable ? 180:90)];
+    BOOL retryable=index<args.count && [@[@"fetch",@"ls-remote"] containsObject:args[index]];NSTimeInterval saved=self.commandTimeout;NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:saved>0 ? saved:(retryable ? 180:90)];if(self.commandDeadline && [self.commandDeadline compare:deadline]==NSOrderedAscending)deadline=self.commandDeadline;
     @try{for(NSUInteger attempt=0;attempt<2;attempt++){
+        if(self.operationCancelled || self.cancelledReads || AMCurrentOperationCancelled()){if(error)*error=AMWorkflowError(@"cancelled",@"当前步骤已停止",nil);return nil;}
+        if(deadline.timeIntervalSinceNow<=0){if(error)*error=AMWorkflowError(@"timeout",@"当前步骤超时",nil);return nil;}
         self.commandTimeout=MAX(.01,deadline.timeIntervalSinceNow);NSError *failure=nil;SSGitResult *result=[self run:args in:path token:token error:&failure];
         if(result && result.status==0)return result;
         if(result)failure=GitError(Trim(result.diagnostic).length ? Trim(result.diagnostic):@"Git 未返回有效结果");if(!failure)failure=AMWorkflowError(@"unknown",@"Git 未返回有效结果",nil);
