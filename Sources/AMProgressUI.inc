@@ -2,7 +2,10 @@
 #import "AMActivityPresentation.h"
 #import <objc/runtime.h>
 static NSMutableSet *AMHiddenActivityOperations(void){static NSMutableSet *hidden;static dispatch_once_t once;dispatch_once(&once,^{hidden=NSMutableSet.set;});return hidden;}
-static NSArray *AMPresentedOperations(void){NSMutableArray *visible=NSMutableArray.array;for(NSDictionary *row in AMOperations())if(!row[@"parent"])[visible addObject:row];return visible;}
+static NSMutableDictionary *AMHiddenActivityGroups(void){static NSMutableDictionary *rows;static dispatch_once_t once;dispatch_once(&once,^{rows=NSMutableDictionary.dictionary;});return rows;}
+static NSString *AMActivityRevision(NSDictionary *row){return [NSString stringWithFormat:@"%@|%@|%@",row[@"state"] ?: @"",row[@"workflowIssue"] ?: @"",row[@"summary"] ?: row[@"stage"] ?: @""];}
+static BOOL AMActivityOperationHidden(NSDictionary *row){return [AMHiddenActivityOperations() containsObject:row[@"id"]] || (![@[@"running",@"queued"] containsObject:row[@"state"]] && row[@"presentationKey"] && [AMHiddenActivityGroups()[row[@"presentationKey"]] isEqual:AMActivityRevision(row)]);}
+static NSArray *AMPresentedOperations(void){NSMutableArray *visible=NSMutableArray.array;NSMutableSet *groups=NSMutableSet.set;for(NSDictionary *row in AMOperations())if(!row[@"parent"]){NSString *key=row[@"presentationKey"];if(key && [groups containsObject:key])continue;if(key)[groups addObject:key];[visible addObject:row];}return visible;}
 @interface AMOperationView ()
 @property NSProgressIndicator *bar;
 @property NSTextField *stage;
@@ -51,7 +54,7 @@ static NSArray *AMPresentedOperations(void){NSMutableArray *visible=NSMutableArr
     NSDate *start=row[@"started"] ?: NSDate.date;NSTimeInterval seconds=row[@"finished"] ? [row[@"finished"] timeIntervalSinceDate:start]:-[start timeIntervalSinceNow];self.amount.hidden=NO;self.amount.stringValue=[NSString stringWithFormat:queued ? @"%@等待 %.0f 秒":@"%@已用 %.0f 秒",total>0 ? [NSString stringWithFormat:@"%ld／%ld · ",(long)done,(long)total]:@"",MAX(0,seconds)];self.needsLayout=YES;
 }
 - (void)cancelOperation:(id)sender{AMOperationCancel(self.operationID);}
-- (void)dismissOperation:(id)sender{for(NSDictionary *row in AMOperations())if([row[@"id"] isEqual:self.operationID] && ![@[@"running",@"queued"] containsObject:row[@"state"]]){[AMHiddenActivityOperations() addObject:self.operationID];[NSNotificationCenter.defaultCenter postNotificationName:AMOperationsChanged object:nil];break;}}
+- (void)dismissOperation:(id)sender{for(NSDictionary *row in AMOperations())if([row[@"id"] isEqual:self.operationID] && ![@[@"running",@"queued"] containsObject:row[@"state"]]){[AMHiddenActivityOperations() addObject:self.operationID];if(row[@"presentationKey"])AMHiddenActivityGroups()[row[@"presentationKey"]]=AMActivityRevision(row);[NSNotificationCenter.defaultCenter postNotificationName:AMOperationsChanged object:nil];break;}}
 - (void)showDetails:(id)sender {
     NSViewController *controller=NSViewController.new;NSScrollView *scroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,420,240)];scroll.hasVerticalScroller=YES;scroll.autohidesScrollers=YES;
     NSTextView *text=[[NSTextView alloc] initWithFrame:NSMakeRect(0,0,420,240)];text.editable=NO;text.selectable=YES;text.font=[NSFont systemFontOfSize:13];text.textContainerInset=NSMakeSize(12,12);text.autoresizingMask=NSViewWidthSizable;text.textContainer.widthTracksTextView=YES;text.string=self.presentation[@"details"] ?: @"";text.textColor=Ink();text.backgroundColor=NSColor.textBackgroundColor;scroll.documentView=text;controller.view=scroll;
@@ -82,9 +85,9 @@ static NSArray *AMPresentedOperations(void){NSMutableArray *visible=NSMutableArr
     }return self;
 }
 - (void)refreshRows {
-    NSArray *all=AMPresentedOperations();NSUInteger running=0,queued=0,failed=0,completed=0;for(NSDictionary *row in all){if([row[@"state"] isEqual:@"running"])running++;else if([row[@"state"] isEqual:@"queued"])queued++;else if([row[@"state"] isEqual:@"failed"])failed++;else completed++;}
+    NSArray *all=self.showsHistory ? [AMOperations() filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *row,NSDictionary *bindings){return !row[@"parent"];}]]:AMPresentedOperations();NSUInteger running=0,queued=0,failed=0,completed=0;for(NSDictionary *row in all){if([row[@"state"] isEqual:@"running"])running++;else if([row[@"state"] isEqual:@"queued"])queued++;else if([row[@"state"] isEqual:@"failed"])failed++;else completed++;}
     self.history.title=[NSString stringWithFormat:@"%@历史记录（%lu）",self.showsHistory ? @"收起":@"显示",(unsigned long)(completed+failed)];self.history.hidden=(completed+failed)==0;
-    NSMutableArray *rows=NSMutableArray.array;for(NSString *state in @[@"running",@"queued",@"failed"])for(NSDictionary *row in all)if([row[@"state"] isEqual:state] && ![AMHiddenActivityOperations() containsObject:row[@"id"]])[rows addObject:row];if(self.showsHistory)for(NSDictionary *row in all)if(![@[@"running",@"queued"] containsObject:row[@"state"]] && ![rows containsObject:row])[rows addObject:row];
+    NSMutableArray *rows=NSMutableArray.array;for(NSString *state in @[@"running",@"queued",@"failed"])for(NSDictionary *row in all)if([row[@"state"] isEqual:state] && !AMActivityOperationHidden(row))[rows addObject:row];if(self.showsHistory)for(NSDictionary *row in all)if(![@[@"running",@"queued"] containsObject:row[@"state"]] && ![rows containsObject:row])[rows addObject:row];
     NSMutableArray *parts=NSMutableArray.array;if(running)[parts addObject:[NSString stringWithFormat:@"%lu 项进行中",(unsigned long)running]];if(queued)[parts addObject:[NSString stringWithFormat:@"%lu 项排队",(unsigned long)queued]];if(failed)[parts addObject:[NSString stringWithFormat:@"%lu 项未完成",(unsigned long)failed]];self.summary.stringValue=parts.count ? [parts componentsJoinedByString:@" · "]:@"暂无进行中的任务";
     NSMutableArray *identifiers=NSMutableArray.array;for(NSDictionary *row in rows)[identifiers addObject:[NSString stringWithFormat:@"%@/%@",row[@"id"],row[@"stage"]]];if([identifiers isEqual:self.identifiers])return;self.identifiers=identifiers;
     NSScrollView *scroll=self.operationScroll;NSPoint position=scroll.contentView.bounds.origin;CGFloat width=MAX(400,scroll.contentSize.width);

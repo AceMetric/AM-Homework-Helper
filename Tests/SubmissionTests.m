@@ -4,6 +4,13 @@
 #import "../Sources/SSLocalData.h"
 #include "SubmissionCompletionTests.inc"
 #include "SubmissionPipelineTests.inc"
+@interface HistoryBudgetGit:FixtureGit
+@property NSTimeInterval observedNetworkBudget;
+@property BOOL expireAfterFetch;
+@end
+@implementation HistoryBudgetGit
+- (SSGitResult *)run:(NSArray *)args in:(NSString *)path token:(NSString *)token error:(NSError **)error{BOOL network=[args.firstObject isEqual:@"fetch"];if(network)self.observedNetworkBudget=self.commandTimeout;SSGitResult *result=[super run:args in:path token:token error:error];if(network && self.expireAfterFetch)self.commandDeadline=[NSDate dateWithTimeIntervalSinceNow:-1];return result;}
+@end
 int main(void){@autoreleasepool{
     NSString *data=NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"];Check(data.length>0,@"isolated submission storage");
     NSMutableDictionary *f=Fixture();FixtureGit *service=Service(f);NSError *error=nil;NSString *before=Git(f[@"teacherBare"],@[@"rev-parse",@"main"]);
@@ -27,6 +34,7 @@ int main(void){@autoreleasepool{
     NSMutableDictionary *externalRecord=[external.firstObject mutableCopy];externalRecord[@"id"]=NSUUID.UUID.UUIDString;externalRecord[@"repository"]=f[@"fork"];externalRecord[@"branch"]=f[@"branch"];externalRecord[@"taskIDs"]=@[];externalRecord[@"state"]=@"uncertain";
     NSArray *verified=[service verifyExternalRecords:@[externalRecord] course:f token:@"test" error:&error];Check([verified.firstObject[@"state"] isEqual:@"local"],@"un-pushed terminal commit is local only");
     Git(f[@"path"],@[@"push",f[@"forkBare"],@"HEAD:main"]);verified=[service verifyExternalRecords:verified course:f token:@"test" error:&error];Check([verified.firstObject[@"state"] isEqual:@"confirmed"] && verified.firstObject[@"confirmedAt"],@"terminal push becomes remotely confirmed");
+    HistoryBudgetGit *budget=HistoryBudgetGit.new;budget.fixture=f;error=nil;Check([budget verifyExternalRecords:@[] course:f token:@"test" error:&error]!=nil && budget.observedNetworkBudget>30 && budget.observedNetworkBudget<=180,@"history verification uses network budget instead of thirty-second local cap");Check(budget.commandTimeout==0 && !budget.commandDeadline,@"history verification restores caller timeout and deadline");NSDictionary *previousBaseline=AMSubmissionBaseline(f,NULL);budget.expireAfterFetch=YES;error=nil;Check(![budget verifyExternalRecords:@[] course:f token:@"test" error:&error] && error.code==NSURLErrorTimedOut && [AMSubmissionBaseline(f,NULL) isEqual:previousBaseline],@"expired shared history budget returns without erasing baseline or claiming success");Check(budget.commandTimeout==0 && !budget.commandDeadline,@"failed history verification also restores caller budget");
     Check([Git(f[@"teacherBare"],@[@"rev-parse",@"main"]) isEqual:before],@"external discovery and verification never push teacher");
     Git(f[@"path"],@[@"checkout",@"-b",@"unrelated"]);external=[service externalCommits:f offset:0 error:&error];Check([external.firstObject[@"commit"] isEqual:terminal],@"discovery reads configured branch without switching current branch");Git(f[@"path"],@[@"checkout",@"main"]);
     NSMutableDictionary *malicious=record.mutableCopy;malicious[@"repository"]=@"teacher/course";NSUInteger pushes=service.pushTargets.count;Check(![service verifySubmission:malicious course:f token:@"test" retry:YES error:&error] && service.pushTargets.count==pushes,@"teacher record cannot become push target");

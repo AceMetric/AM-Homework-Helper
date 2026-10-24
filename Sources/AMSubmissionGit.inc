@@ -48,13 +48,15 @@
     BOOL fresh=!course[@"completionTeacherFresh"] || [course[@"completionTeacherFresh"] boolValue];record[@"teacherHistoryKnown"]=@(fresh && ancestor && ancestor.status<=1);record[@"teacherHistoryExcluded"]=@([record[@"teacherHistoryExcluded"] boolValue] || merge || priorTeacher || (ancestor && ancestor.status==0));
 }
 - (NSArray *)verifyExternalRecords:(NSArray *)records course:(NSDictionary *)course token:(NSString *)token error:(NSError **)error {
+    NSTimeInterval savedTimeout=self.commandTimeout;NSDate *savedDeadline=self.commandDeadline;NSTimeInterval budget=savedTimeout>0 ? MIN(savedTimeout,180):180;self.commandDeadline=[NSDate dateWithTimeIntervalSinceNow:budget];if(savedDeadline && [savedDeadline compare:self.commandDeadline]==NSOrderedAscending)self.commandDeadline=savedDeadline;
+    @try{self.commandTimeout=15;
     if(![self authorize:course error:error] || ![self validateCourse:course error:error])return nil;
-    NSString *remote=[self fetch:[NSString stringWithFormat:@"https://github.com/%@.git",course[@"fork"]] branch:course[@"branch"] path:course[@"path"] token:token error:error];if(!remote)return nil;
+    self.commandTimeout=budget;NSString *remote=[self fetch:[NSString stringWithFormat:@"https://github.com/%@.git",course[@"fork"]] branch:course[@"branch"] path:course[@"path"] token:token error:error];if(!remote)return nil;self.commandTimeout=15;
     NSDictionary *automation=AMSubmissionAutomation(error),*baseline=AMSubmissionBaseline(course,error);if(!automation || !baseline)return nil;NSString *epoch=automation[@"epoch"] ?: @"initial";
     BOOL reset=!baseline.count;
-    if(!reset){SSGitResult *ancestry=[self run:@[@"merge-base",@"--is-ancestor",baseline[@"tip"],remote] in:course[@"path"] token:nil error:NULL];reset=!ancestry || ancestry.status!=0;}
+    if(!reset){SSGitResult *ancestry=[self run:@[@"merge-base",@"--is-ancestor",baseline[@"tip"],remote] in:course[@"path"] token:nil error:error];if(!ancestry)return nil;reset=ancestry.status!=0;}
     NSString *anchor=reset ? remote:baseline[@"anchor"];
-    NSDictionary *source=records.count ? [self completionSourceCourse:course]:course;
+    self.commandTimeout=budget;NSDictionary *source=records.count ? [self completionSourceCourse:course]:course;self.commandTimeout=15;
     NSMutableArray *verified=NSMutableArray.array;
     for(NSDictionary *record in records){if(![record[@"repository"] isEqual:course[@"fork"]] || ![record[@"branch"] isEqual:course[@"branch"]])continue;NSString *commit=record[@"commit"];if(![commit isKindOfClass:NSString.class] || [commit rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location==NSNotFound)continue;
         SSGitResult *contains=[self run:@[@"merge-base",@"--is-ancestor",commit,remote] in:course[@"path"] token:nil error:error];if(!contains || contains.status>1)return nil;NSMutableDictionary *next=record.mutableCopy;self.lastWorkflowRecord=next;next[@"checkedAt"]=NSDate.date;next[@"remoteCommit"]=remote;next[@"completionAnchor"]=anchor;next[@"completionEpoch"]=[record[@"completionEligibility"] isEqual:@"associated"] ? (record[@"completionEpoch"] ?: @"initial"):epoch;[self classifyCompletionOwnership:next course:source];next[@"state"]=contains.status==0 ? @"confirmed":@"local";
@@ -65,6 +67,7 @@
         NSArray *completion=[self completionFiles:course commit:commit error:error];if(!completion)return nil;next[@"completionFiles"]=[completion filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSString *file,NSDictionary *bindings){return [record[@"files"] containsObject:file];}]];
         if(contains.status==0){next[@"confirmedAt"]=record[@"confirmedAt"] ?: NSDate.date;[next removeObjectForKey:@"issue"];}else next[@"issue"]=record[@"confirmedAt"] ? @"remote-changed":@"not-on-remote";[verified addObject:next];
     }if(!AMStoreSubmissionBaseline(course,@{@"anchor":anchor,@"tip":remote},baseline,epoch,error))return nil;return verified;
+    }@finally{self.commandTimeout=savedTimeout;self.commandDeadline=savedDeadline;}
 }
 - (NSArray *)classifyExternalRecords:(NSArray *)records course:(NSDictionary *)course {
     NSString *teacher=course[@"teacherCommit"];if(![self validateCourse:course error:NULL] || ![teacher isKindOfClass:NSString.class] || [teacher rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location==NSNotFound)return @[];

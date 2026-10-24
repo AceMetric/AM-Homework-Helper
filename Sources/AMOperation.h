@@ -3,6 +3,8 @@ NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT NSNotificationName const AMOperationsChanged;
 NSString *AMOperationBegin(NSString *kind,NSString *target,BOOL cancellable,void (^ _Nullable cancel)(void));
 NSString *AMOperationBeginWithExitPolicy(NSString *kind,NSString *target,BOOL cancellable,BOOL blocksExit,void (^ _Nullable cancel)(void));
+// Only presentation coalesces; execution, cancellation and history retain their IDs.
+void AMOperationSetPresentationKey(NSString *identifier,NSString *key);
 void AMOperationProgress(NSString * _Nullable identifier,NSString *stage,NSInteger completed,NSInteger total);
 void AMOperationFinish(NSString * _Nullable identifier,NSString *state,NSString *message);
 void AMOperationCancel(NSString *identifier);
