@@ -966,7 +966,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if(self.page==2)return [[self visibleTasks] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *task,NSDictionary *bindings){return ![task[@"deleted"] boolValue];}]];
     if(self.page==1){NSMutableArray *result=NSMutableArray.array;for(NSDictionary *task in DDLCalendarTasks([self presentationTasks],self.calendarStatus.selectedSegment,self.query))if([Cal() isDate:task[@"due"] inSameDayAsDate:self.selectedDay])[result addObject:task];return result;}
     if(self.page==0 && self.weeklyMode){NSMutableSet *ids=NSMutableSet.set;for(NSDictionary *section in DDLWeekSections([self presentationTasks],NSDate.date,self.weekOffset,Cal(),self.query ?: @""))for(NSDictionary *item in section[@"items"])[ids addObject:item[@"taskID"]];return [self.tasks filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *task,NSDictionary *bindings){return [ids containsObject:task[@"id"]];}]];}
-    if(self.page==0){NSDate *end=[Cal() dateByAddingUnit:NSCalendarUnitDay value:8 toDate:[Cal() startOfDayForDate:NSDate.date] options:0];NSMutableArray *result=NSMutableArray.array;for(NSDictionary *task in self.tasks)if(![task[@"completed"] boolValue] && ![task[@"archived"] boolValue] && ![task[@"deleted"] boolValue] && [task[@"due"] compare:end]==NSOrderedAscending && (!self.query.length || DDLMatchesFilter(task,0,self.query,NSDate.date,Cal())))[result addObject:task];return [result sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"due"] compare:b[@"due"]];}];}
+    if(self.page==0){NSMutableArray *result=NSMutableArray.array;for(NSDictionary *task in DDLTaskListItems([self presentationTasks],NSDate.date))if(DDLMatchesFilter(task,0,self.query ?: @"",NSDate.date,Cal()))[result addObject:task];return [result sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"due"] compare:b[@"due"]];}];}
     return @[];
 }
 - (void)validateTaskSelection {
@@ -977,7 +977,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)selectTask:(NSButton *)sender {
     if(![self.selectedTaskID isEqual:sender.identifier] && ![self resolveTaskEditor]){[self.nativeTasks focusSelection];return;}
     self.selectedTaskID=sender.identifier;if(self.calendarMode)self.focusedTaskID=sender.identifier;
-    [self render];[self focusSelectedTaskRow];
+    // Selecting an existing row changes only selection, inspector and geometry.
+    // Rebuilding every course, filter count and task row repeats unrelated work.
+    if((self.page==2 || (self.page==0 && !self.weeklyMode)) && [self.nativeTasks selectTaskIdentifier:self.selectedTaskID]){[self layoutTaskArea];[self renderTaskDetailsIn:self.taskDetails];}
+    else [self render];[self focusSelectedTaskRow];
 }
 - (void)focusSelectedTaskRow {
     if(self.page==2 || (self.page==0 && !self.weeklyMode)){[self.nativeTasks focusSelection];return;}

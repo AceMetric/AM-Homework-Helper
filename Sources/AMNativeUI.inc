@@ -102,6 +102,10 @@
 - (void)toggle:(NSButton *)sender {if(self.actionHandler)self.actionHandler(@"toggle",sender.identifier);}
 - (void)more:(NSButton *)sender {NSMenu *menu=self.menuProvider ? self.menuProvider(sender.identifier):nil;if(menu)[menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0,NSHeight(sender.bounds)) inView:sender];}
 - (void)editSelected:(id)sender {NSInteger row=self.table.clickedRow>=0 ? self.table.clickedRow:self.table.selectedRow;if(row>=0 && ![self.tasks[row][@"group"] boolValue] && self.actionHandler)self.actionHandler(@"edit",self.tasks[row][@"id"]);}
+- (BOOL)selectTaskIdentifier:(NSString *)identifier {
+    (void)self.view;NSInteger row=-1;for(NSUInteger index=0;index<self.tasks.count;index++)if(![self.tasks[index][@"group"] boolValue] && [self.tasks[index][@"id"] isEqual:identifier]){row=(NSInteger)index;break;}if(row<0)return NO;
+    self.updating=YES;if(![self.table.selectedRowIndexes containsIndex:row] || self.table.selectedRowIndexes.count<=1)[self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];self.updating=NO;return YES;
+}
 - (void)focusSelection {[self.view.window makeFirstResponder:self.table];if(self.table.selectedRow>=0)[self.table scrollRowToVisible:self.table.selectedRow];}
 @end
 
