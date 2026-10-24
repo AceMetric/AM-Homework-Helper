@@ -10,6 +10,13 @@ NSString * _Nullable AMPreflightResolveImage(NSString *document, NSString *refer
 NSArray *AMPreflightListSelectedFiles(NSURL *folder, NSArray *paths);
 NSString * _Nullable AMPreflightExcludedReason(NSString *path);
 NSString *AMPreflightFileStamp(NSURL *folder, NSString *path);
+// Reference snapshots never change the selected submission paths.
+NSDictionary * _Nullable AMReviewImportMaterial(NSURL *url, NSIndexSet * _Nullable pages, NSError **error);
+NSArray *AMReviewRelations(NSDictionary *links, NSString *path);
+BOOL AMReviewMaterialsCurrent(NSDictionary *snapshot, NSError **error);
+NSArray *AMReviewImageOccurrences(NSDictionary *snapshot);
+NSArray<NSURL *> *AMReviewMaterialCandidates(NSDictionary *snapshot, NSURL *root);
+NSUInteger AMOnlineReviewRemainingRequests(void);
 NSDictionary * _Nullable AMPreflightListFolder(NSURL *folder, BOOL (^ _Nullable cancelled)(void), void (^ _Nullable progress)(NSUInteger), NSError **error);
 NSDictionary *AMPreflightCheckWithProgress(NSDictionary *snapshot,NSString *requirements,NSMutableDictionary *cache,BOOL (^ _Nullable cancelled)(void),void (^ _Nullable progress)(NSUInteger,NSUInteger));
 NSDictionary *AMPreflightCheck(NSDictionary *snapshot, NSString *requirements, NSMutableDictionary *cache, BOOL (^ _Nullable cancelled)(void));
@@ -40,12 +47,15 @@ NSUInteger AMOnlineReviewPendingUploads(void);
 BOOL AMOnlineReviewRegisterWithModel(NSDictionary *context,NSDictionary *report,NSString *courseID,NSString *model,NSError **error);
 BOOL AMOnlineReviewRegister(NSDictionary *context,NSDictionary *report,NSString *courseID,NSError **error);
 void AMOnlineReviewFailed(NSString *batch);
+void AMOnlineReviewRecordFailure(NSString *batch, NSError * _Nullable error);
 void AMShowOnlineReviewSettings(NSWindow * _Nullable parent);
 @interface AMOnlineReviewClient : NSObject <NSURLSessionTaskDelegate>
 @property(atomic) BOOL cancelled;
 @property BOOL forceCleanup;
 @property(nullable) NSString *operationID;
 @property(nullable) NSString *model;
+@property NSUInteger requestLimit;
+@property(readonly) NSUInteger requestsUsed;
 - (void)cancelImmediately;
 #ifdef DDL_TESTING
 @property(copy,nullable) NSString * _Nullable (^credentialProvider)(void);

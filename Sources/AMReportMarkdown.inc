@@ -32,6 +32,7 @@ NSString *AMPreflightReportMarkdown(NSDictionary *report,NSDictionary *snapshot,
     NSDictionary *rank=@{@"error":@0,@"warning":@1,@"info":@2};[issues sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [rank[a[@"severity"]] ?: @2 compare:rank[b[@"severity"]] ?: @2];}];
     NSMutableString *text=[NSMutableString stringWithFormat:@"# 检查报告\n\n## 概况\n\n- 建议：%lu 条\n- 在线已检查：%lu 个文件\n- 检查未覆盖：%lu 项\n- 未选择发送：%lu 项\n\n",(unsigned long)issues.count,(unsigned long)[review[@"checked"] count],(unsigned long)[scope[@"unverified"] count],(unsigned long)[scope[@"excluded"] count]];
     if(!review){NSRange end=[text rangeOfString:@"\n- 在线已检查："];if(end.location!=NSNotFound)[text deleteCharactersInRange:NSMakeRange(end.location,text.length-end.location)];[text appendString:@"\n- 在线复核：尚未进行\n\n"];}
+    if(review[@"failure"])[text appendFormat:@"## 在线复核未完成\n\n%@\n\n可继续检查；已有完整结果保留。上传副本可在在线设置管理。\n\n",PFMarkdownLiteral(review[@"failure"][@"reason"])];
     [text appendString:@"## 问题与建议\n\n"];
     if(!issues.count)[text appendString:@"本次已检查范围内未发现建议。\n\n"];
     for(NSDictionary *issue in issues)[text appendFormat:@"%@\n",PFFindingMarkdown(issue,snapshot,YES)];

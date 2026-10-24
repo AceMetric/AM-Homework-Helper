@@ -10,7 +10,7 @@
 .am-note-body{position:fixed;z-index:100;width:min(360px,calc(100vw - 48px));max-height:calc(70vh - 24px);overflow:auto;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--paper);color:var(--ink);box-shadow:0 5px 24px #0004;font-size:13px;line-height:1.5;cursor:auto;box-sizing:border-box}.am-note-body[hidden]{display:none}.am-note-body>:first-child{margin-top:0}.am-note-body>:last-child{margin-bottom:0}.am-note-body h2,.am-note-body h3{font-size:14px}.am-note[data-selected=true]{z-index:2}.am-note[data-selected=true]>.am-note-trigger{outline:2px solid var(--paper);outline-offset:1px}
 `;document.head.append(style);
   window.AMRender=async function(input){
-    const ticket=++sequence;
+    const ticket=++sequence;document.documentElement.dataset.appearance=input.dark?'dark':'light';
     const source=String(input.text||'');const issues=[];const formulas=[];if(source.length>1000000){document.getElementById('content').textContent='内容超过安全预览限制，请查看源码。';return {completed:false,issues:[],formulaCount:0};}
     const md=markdownit({html:true,linkify:false,typographer:false});
     const blockOpen=md.renderer.rules.paragraph_open;md.renderer.rules.paragraph_open=(tokens,i,options,env,self)=>{if(tokens[i].map)tokens[i].attrSet('data-line',String(tokens[i].map[0]+1));return blockOpen?blockOpen(tokens,i,options,env,self):self.renderToken(tokens,i,options);};

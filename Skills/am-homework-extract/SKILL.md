@@ -71,6 +71,16 @@ Write the same atomic `results.local.json` file in the supplied batch folder. Ke
 
 Distinguish teacher requirements, student answers and references. `assignment-X/README.md` usually holds requirements, `assignment.md` often holds the answer, and `Project-X` may include code; content and links decide the actual roles. A requirement alone never proves an unfinished answer. Recheck prior findings independently and withdraw unsupported ones.
 
+Optional `role`, `questionLinks`, `imageOccurrences`, and PDF `page` metadata preserve
+requirements/question/answer/reference ownership. Read embedded images in Markdown
+order with their heading and surrounding passage; one image may have several uses.
+Use actual linked problem statements, not just README checklist items. PDF snapshots
+contain only approved pages and keep original page numbers. Never label a teacher
+question or reference as unfinished student work. Without a resolved actual problem,
+mark answer-to-question matching and completeness unverified; internal reasoning may
+still be checked. Existing results remain readable, but do not imply new reference
+materials were inspected unless their exact versions appear in `checked`.
+
 For `am-preflight-context-v1`, review only the supplied `documents`, selected
 `images[].resource`, and `requirements`. This mode returns review findings, not
 activities. Read referenced image files directly: OCR is not authoritative for

@@ -16,10 +16,15 @@ static NSTextView *PFText(NSView *root,NSRect frame,BOOL editable){
 @end
 // A real resizable reader instead of a concatenated NSAlert accessory.
 @interface PFMaterials:NSWindowController<NSTableViewDataSource,NSTableViewDelegate,NSOutlineViewDataSource,NSOutlineViewDelegate,NSWindowDelegate>
+@property NSURL *materialRoot;
+@property NSMutableDictionary *roles,*links,*origins;
+@property NSPopUpButton *roleControl,*limitControl;
+@property NSButton *linkControl,*addControl,*findControl;
 @property NSMutableArray *rows;
 @property NSMutableArray *treeRoots;
 @property NSMutableSet *excluded;
 @property NSDictionary *snapshot;
+@property NSDictionary *originalSnapshot;
 @property NSString *requirements;
 @property NSTableView *table;
 @property NSTextView *text;
@@ -35,6 +40,8 @@ static NSTextView *PFText(NSView *root,NSRect frame,BOOL editable){
 - (NSArray *)selectedImages;
 - (NSDictionary *)selectedSnapshot;
 - (void)layout;
+- (void)configureMaterials;
+- (void)updateSummary;
 - (void)rebuildTree:(NSString *)selectedPath;
 - (NSDictionary *)selectedNode;
 - (NSInteger)selectedIndex;
@@ -43,11 +50,11 @@ static NSTextView *PFText(NSView *root,NSRect frame,BOOL editable){
 - (instancetype)initWithSnapshot:(NSDictionary *)snapshot report:(NSDictionary *)report requirements:(NSString *)requirements {
     DDLFormPanel *panel=[[DDLFormPanel alloc] initWithContentRect:NSMakeRect(0,0,1040,720) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
     if((self=[super initWithWindow:panel])){
-        panel.delegate=self;panel.title=@"预览交给助手的材料";panel.minSize=NSMakeSize(820,580);panel.releasedWhenClosed=NO;self.snapshot=snapshot;self.requirements=requirements;self.excluded=NSMutableSet.set;self.fit=YES;self.zoom=1;
+        panel.delegate=self;panel.title=@"预览交给助手的材料";panel.minSize=NSMakeSize(820,580);panel.releasedWhenClosed=NO;self.snapshot=snapshot;self.originalSnapshot=snapshot;self.requirements=snapshot[@"reviewRequirements"] ?: requirements;self.excluded=[NSMutableSet setWithArray:snapshot[@"materialExcluded"] ?: @[]];self.fit=YES;self.zoom=1;
         self.rows=NSMutableArray.array;if(requirements.length)[self.rows addObject:@{@"path":@"题目与评分要求",@"requirements":@YES}];
         NSMutableArray *documents=NSMutableArray.array;for(NSString *path in snapshot[@"paths"])if(snapshot[@"files"][path][@"text"])[documents addObject:@{@"path":path}];
         [documents sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){BOOL am=[@[@"md",@"markdown",@"mdx"] containsObject:[a[@"path"] pathExtension].lowercaseString],bm=[@[@"md",@"markdown",@"mdx"] containsObject:[b[@"path"] pathExtension].lowercaseString];return am!=bm ? (am ? NSOrderedAscending:NSOrderedDescending):[a[@"path"] localizedStandardCompare:b[@"path"]];}];
-        [self.rows addObjectsFromArray:documents];for(NSDictionary *row in report[@"images"]){NSMutableDictionary *image=row.mutableCopy;image[@"image"]=@YES;[self.rows addObject:image];}
+        [self.rows addObjectsFromArray:documents];for(NSDictionary *row in report[@"images"]){NSMutableDictionary *image=row.mutableCopy;image[@"image"]=@YES;[self.rows addObject:image];}NSMutableSet *known=[NSMutableSet setWithArray:[self.rows valueForKey:@"path"]];for(NSString *p in snapshot[@"files"])if([snapshot[@"files"][p][@"image"] boolValue] && [p hasPrefix:@"references/"] && ![known containsObject:p])[self.rows addObject:@{@"path":p,@"image":@YES,@"document":p,@"line":@1}];
         Surface *root=Box(Canvas(),0);root.frame=NSMakeRect(0,0,1040,720);root.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;panel.contentView=root;
         Put(root,Text(@"确认交给助手的文件",20,NSFontWeightSemibold,Ink()),20,16,900,30);
         Put(root,Text(@"仅使用已勾选材料，不会自动发送或提交。",13,NSFontWeightRegular,Muted()),20,54,980,24);
@@ -61,36 +68,37 @@ static NSTextView *PFText(NSView *root,NSRect frame,BOOL editable){
         self.destination=NSPopUpButton.new;[self.destination addItemsWithTitles:@[@"网页／聊天助手：上传附件",@"本机助手：读取文件并自动接回"]];Put(root,self.destination,20,620,360,30);
         NSButton *cancel=Button(@"取消",self,@selector(cancel:),0);cancel.identifier=@"material-cancel";cancel.keyEquivalent=@"\033";cancel.keyEquivalentModifierMask=0;Put(root,cancel,796,656,88,32);
         NSButton *prepare=Button(@"准备材料",self,@selector(prepare:),1);prepare.identifier=@"material-prepare";Put(root,prepare,900,656,120,32);panel.defaultButtonCell=prepare.cell;
-        __weak typeof(self) owner=self;panel.onCancel=^{[owner cancel:nil];};panel.onConfirm=^{[owner prepare:nil];};root.onResize=^{[owner layout];};[self rebuildTree:nil];if(self.table.numberOfRows)[self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];[self layout];
+        __weak typeof(self) owner=self;panel.onCancel=^{[owner cancel:nil];};panel.onConfirm=^{[owner prepare:nil];};root.onResize=^{[owner layout];};[self configureMaterials];[self rebuildTree:nil];if(self.table.numberOfRows)[self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];[self layout];
     }return self;
 }
 - (void)layout {
     CGFloat w=NSWidth(self.window.contentView.bounds),h=NSHeight(self.window.contentView.bounds),x=MIN(290,w*.28)+18,body=h-246;NSView *root=self.window.contentView;
     self.table.enclosingScrollView.frame=NSMakeRect(20,120,x-38,body);self.table.tableColumns.firstObject.width=x-58;
     self.heading.frame=NSMakeRect(x,120,w-x-20,24);self.include.frame=NSMakeRect(x,152,120,28);
-    for(NSView *v in root.subviews){if([v.identifier hasPrefix:@"material-tool-"]){NSInteger tag=[v.identifier substringFromIndex:14].integerValue;v.frame=NSMakeRect(x+128+tag*MAX(55,(w-x-148)/6),152,MAX(50,(w-x-148)/6-4),28);}else if([v.identifier isEqual:@"material-cancel"])v.frame=NSMakeRect(w-244,h-64,88,32);else if([v.identifier isEqual:@"material-prepare"])v.frame=NSMakeRect(w-140,h-64,120,32);}
-    self.text.enclosingScrollView.frame=self.imageScroll.frame=NSMakeRect(x,192,w-x-20,MAX(100,body-72));self.destination.frame=NSMakeRect(20,h-106,MIN(430,w-40),30);[self sizeImage];
+    for(NSView *v in root.subviews){if([v.identifier isEqual:@"material-requirements-edit"])v.frame=NSMakeRect(x+270,186,MIN(120,w-x-290),26);if([v.identifier hasPrefix:@"material-tool-"]){NSInteger tag=[v.identifier substringFromIndex:14].integerValue;v.frame=NSMakeRect(x+128+tag*MAX(55,(w-x-148)/6),152,MAX(50,(w-x-148)/6-4),28);}else if([v.identifier isEqual:@"material-cancel"])v.frame=NSMakeRect(w-244,h-64,88,32);else if([v.identifier isEqual:@"material-prepare"])v.frame=NSMakeRect(w-140,h-64,120,32);}
+    self.roleControl.frame=NSMakeRect(x,186,110,26);self.linkControl.frame=NSMakeRect(x+120,186,140,26);self.addControl.frame=NSMakeRect(20,h-64,112,32);self.findControl.frame=NSMakeRect(142,h-64,112,32);self.limitControl.frame=NSMakeRect(w-240,h-106,220,30);self.text.enclosingScrollView.frame=self.imageScroll.frame=NSMakeRect(x,220,w-x-20,MAX(100,body-100));self.destination.frame=NSMakeRect(20,h-106,MIN(430,w-40),30);[self sizeImage];
 }
 - (void)sizeImage {if(!self.image.image)return;NSSize size=self.image.image.size,viewport=self.imageScroll.contentSize;CGFloat scale=self.fit ? MIN(viewport.width/MAX(1,size.width),viewport.height/MAX(1,size.height)):self.zoom;self.image.frame=NSMakeRect(0,0,MAX(viewport.width,size.width*scale),MAX(viewport.height,size.height*scale));self.image.needsDisplay=YES;}
 - (NSDictionary *)selectedNode {NSInteger index=self.table.selectedRow;return index>=0 ? [(NSOutlineView *)self.table itemAtRow:index]:nil;}
 - (NSInteger)selectedIndex {NSDictionary *row=[self selectedNode][@"material"];NSUInteger index=row ? [self.rows indexOfObjectIdenticalTo:row]:NSNotFound;return index==NSNotFound ? -1:(NSInteger)index;}
+- (BOOL)node:(NSDictionary *)node containsPath:(NSString *)path {if([node[@"material"][@"path"] isEqual:path])return YES;for(NSDictionary *child in node[@"children"])if([self node:child containsPath:path])return YES;return NO;}
 - (void)rebuildTree:(NSString *)selectedPath {
     NSOutlineView *outline=(NSOutlineView *)self.table;NSMutableSet *expanded=NSMutableSet.set;BOOL first=self.treeRoots==nil;
     for(NSInteger i=0;i<outline.numberOfRows;i++){NSDictionary *node=[outline itemAtRow:i];if(node[@"children"] && [outline isItemExpanded:node])[expanded addObject:node[@"path"]];}
     self.treeRoots=NSMutableArray.array;NSMutableDictionary *folders=NSMutableDictionary.dictionary,*leaves=NSMutableDictionary.dictionary;
-    for(NSDictionary *row in self.rows){NSString *path=row[@"path"];NSMutableArray *children=self.treeRoots;NSArray *parts=path.pathComponents;NSString *prefix=@"";
+    for(NSDictionary *row in self.rows){NSString *path=row[@"path"];NSMutableArray *children=self.treeRoots;NSString *role=row[@"requirements"] ? @"要求":(@{@"answer":@"解答",@"question":@"题目",@"reference":@"参考",@"result":@"解答",@"requirements":@"要求",@"unknown":@"未确定"}[self.roles[path] ?: self.snapshot[@"files"][path][@"role"] ?: @"answer"] ?: @"未确定");NSArray *parts=[@[role] arrayByAddingObjectsFromArray:path.pathComponents];NSString *prefix=@"";
         for(NSUInteger i=0;i+1<parts.count;i++){prefix=prefix.length ? [prefix stringByAppendingPathComponent:parts[i]]:parts[i];NSMutableDictionary *node=folders[prefix];if(!node){node=[@{@"path":prefix,@"children":NSMutableArray.array} mutableCopy];folders[prefix]=node;[children addObject:node];}children=node[@"children"];}
         NSDictionary *leaf=@{@"path":path,@"material":row};[children addObject:leaf];leaves[path]=leaf;
     }
     [outline reloadData];if(first)[outline expandItem:nil expandChildren:YES];else for(NSString *path in [[folders allKeys] sortedArrayUsingSelector:@selector(compare:)])if([expanded containsObject:path])[outline expandItem:folders[path]];
-    if(selectedPath){id leaf=leaves[selectedPath];NSInteger index=[outline rowForItem:leaf];if(index>=0)[outline selectRowIndexes:[NSIndexSet indexSetWithIndex:index] byExtendingSelection:NO];}
+    if(selectedPath){id leaf=leaves[selectedPath];NSMutableArray *parents=NSMutableArray.array;for(id parent=[outline parentForItem:leaf];parent;parent=[outline parentForItem:parent])[parents insertObject:parent atIndex:0];for(id parent in parents)[outline expandItem:parent];NSInteger index=[outline rowForItem:leaf];if(index>=0)[outline selectRowIndexes:[NSIndexSet indexSetWithIndex:index] byExtendingSelection:NO];}
 }
 - (NSInteger)outlineView:(NSOutlineView *)outline numberOfChildrenOfItem:(id)item {return item ? [item[@"children"] count]:self.treeRoots.count;}
 - (id)outlineView:(NSOutlineView *)outline child:(NSInteger)index ofItem:(id)item {return item ? item[@"children"][index]:self.treeRoots[index];}
 - (BOOL)outlineView:(NSOutlineView *)outline isItemExpandable:(id)item {return item[@"children"]!=nil;}
 - (NSView *)outlineView:(NSOutlineView *)outline viewForTableColumn:(NSTableColumn *)column item:(id)item {
     if(item[@"material"]){NSUInteger index=[self.rows indexOfObjectIdenticalTo:item[@"material"]];return [self tableView:outline viewForTableColumn:column row:(NSInteger)index];}
-    NSUInteger count=0,selected=0;NSString *prefix=[item[@"path"] stringByAppendingString:@"/"];for(NSDictionary *row in self.rows)if([row[@"path"] hasPrefix:prefix]){count++;if(![self.excluded containsObject:row[@"path"]])selected++;}
+    NSUInteger count=0,selected=0;for(NSDictionary *row in self.rows)if([self node:item containsPath:row[@"path"]]){count++;if(![self.excluded containsObject:row[@"path"]])selected++;}
     NSTextField *label=Text([NSString stringWithFormat:@"%@ %@\n%lu／%lu 个文件",selected==count ? @"✓":(selected ? @"−":@"○"),[item[@"path"] lastPathComponent],(unsigned long)selected,(unsigned long)count],12,NSFontWeightMedium,Ink());label.maximumNumberOfLines=2;label.toolTip=item[@"path"];return label;
 }
 - (void)outlineViewSelectionDidChange:(NSNotification *)notification {[self tableViewSelectionDidChange:notification];}
@@ -99,18 +107,18 @@ static NSTextView *PFText(NSView *root,NSRect frame,BOOL editable){
 - (void)tableViewSelectionDidChange:(NSNotification *)notification {
     NSDictionary *node=[self selectedNode];if(!node)return;NSDictionary *row=node[@"material"];
     self.include.title=row ? @"包含此文件":@"包含此目录";
-    if(!row){NSString *prefix=[node[@"path"] stringByAppendingString:@"/"];NSUInteger count=0,selected=0;NSMutableString *listing=NSMutableString.string;for(NSDictionary *leaf in self.rows)if([leaf[@"path"] hasPrefix:prefix]){count++;BOOL included=![self.excluded containsObject:leaf[@"path"]];if(included)selected++;[listing appendFormat:@"%@ %@\n",included ? @"✓":@"○",leaf[@"path"]];}self.heading.stringValue=node[@"path"];self.heading.toolTip=node[@"path"];self.include.enabled=YES;self.include.allowsMixedState=YES;self.include.state=selected==count ? NSControlStateValueOn:(selected ? NSControlStateValueMixed:NSControlStateValueOff);self.image.image=nil;self.imageScroll.hidden=YES;self.text.enclosingScrollView.hidden=NO;self.text.string=[@"可展开目录逐文件审阅，或一次排除此目录。\n\n" stringByAppendingString:listing];[self.text scrollRangeToVisible:NSMakeRange(0,0)];[self updateSummary];return;}
-    self.include.allowsMixedState=NO;NSString *path=row[@"path"];BOOL picture=[row[@"image"] boolValue];self.heading.stringValue=path;self.heading.toolTip=path;self.include.enabled=![row[@"requirements"] boolValue];self.include.state=[self.excluded containsObject:path] ? NSControlStateValueOff:NSControlStateValueOn;
+    if(!row){NSUInteger count=0,selected=0;NSMutableString *listing=NSMutableString.string;for(NSDictionary *leaf in self.rows)if([self node:node containsPath:leaf[@"path"]]){count++;BOOL included=![self.excluded containsObject:leaf[@"path"]];if(included)selected++;[listing appendFormat:@"%@ %@\n",included ? @"✓":@"○",leaf[@"path"]];}self.heading.stringValue=node[@"path"];self.heading.toolTip=node[@"path"];self.include.enabled=YES;self.include.allowsMixedState=YES;self.include.state=selected==count ? NSControlStateValueOn:(selected ? NSControlStateValueMixed:NSControlStateValueOff);self.image.image=nil;self.imageScroll.hidden=YES;self.text.enclosingScrollView.hidden=NO;self.text.string=[@"可展开目录逐文件审阅，或一次排除此目录。\n\n" stringByAppendingString:listing];[self.text scrollRangeToVisible:NSMakeRange(0,0)];[self updateSummary];return;}
+    self.include.allowsMixedState=NO;self.roleControl.enabled=![row[@"requirements"] boolValue];self.linkControl.enabled=![row[@"requirements"] boolValue];NSString *path=row[@"path"];NSString *role=self.roles[path] ?: self.snapshot[@"files"][path][@"role"] ?: @"answer";NSInteger roleIndex=[@[@"answer",@"requirements",@"question",@"reference",@"result",@"unknown"] indexOfObject:role];[self.roleControl selectItemAtIndex:roleIndex==NSNotFound ? 5:roleIndex];NSUInteger linked=AMReviewRelations(self.links,path).count;self.linkControl.title=linked ? [NSString stringWithFormat:@"已关联 %lu 项…",(unsigned long)linked]:@"关联解答…";self.linkControl.enabled=[role isEqual:@"question"];self.linkControl.toolTip=@"选中题目后，选择对应解答及原文行范围。";BOOL picture=[row[@"image"] boolValue];self.heading.stringValue=path;self.heading.toolTip=path;self.include.enabled=![row[@"requirements"] boolValue];self.include.state=[self.excluded containsObject:path] ? NSControlStateValueOff:NSControlStateValueOn;
     self.imageScroll.hidden=!picture;self.text.enclosingScrollView.hidden=picture;self.image.image=picture ? [[NSImage alloc] initWithData:self.snapshot[@"files"][path][@"data"]]:nil;self.fit=YES;self.zoom=1;
     if(picture){[self sizeImage];[self.imageScroll.documentView scrollPoint:NSZeroPoint];}else {NSString *value=[row[@"requirements"] boolValue] ? self.requirements:self.snapshot[@"files"][path][@"text"];NSArray *lines=[value componentsSeparatedByString:@"\n"];NSMutableString *display=NSMutableString.string;BOOL csv=[path.pathExtension.lowercaseString isEqual:@"csv"];NSUInteger limit=csv ? MIN(200,lines.count):lines.count;
         if(csv)[display appendFormat:@"数据表：共 %lu 行，预览前 %lu 行；发送时包含完整数据。\n\n",(unsigned long)lines.count,(unsigned long)limit];
         for(NSUInteger n=0;n<limit;n++)[display appendFormat:@"%4lu  %@\n",(unsigned long)n+1,lines[n]];self.text.string=display;self.text.selectedRange=NSMakeRange(0,0);[self.text scrollRangeToVisible:NSMakeRange(0,0)];}
     [self updateSummary];
 }
-- (void)updateSummary {NSUInteger count=0,images=0;for(NSDictionary *row in self.rows)if(![row[@"requirements"] boolValue] && ![self.excluded containsObject:row[@"path"]]){count++;if([row[@"image"] boolValue])images++;}self.summary.stringValue=[NSString stringWithFormat:@"已选 %lu 个文件 · %lu 张图片",(unsigned long)count,(unsigned long)images];}
+- (void)updateSummary {NSUInteger count=0,images=0,unlinked=0;for(NSDictionary *row in self.rows)if(![row[@"requirements"] boolValue] && ![self.excluded containsObject:row[@"path"]]){count++;if([row[@"image"] boolValue])images++;NSString *role=self.roles[row[@"path"]] ?: self.snapshot[@"files"][row[@"path"]][@"role"];if([role isEqual:@"question"] && !self.links[row[@"path"]])unlinked++;}self.summary.stringValue=[NSString stringWithFormat:@"已选 %lu 个文件 · %lu 张图片 · %lu 项题目未关联",(unsigned long)count,(unsigned long)images,(unsigned long)unlinked];}
 - (void)toggle:(id)sender {
-    NSDictionary *node=[self selectedNode];if(!node)return;BOOL include=self.include.state!=NSControlStateValueOff;NSString *path=node[@"path"],*prefix=[path stringByAppendingString:@"/"];
-    for(NSDictionary *row in self.rows)if(![row[@"requirements"] boolValue] && ([row[@"path"] isEqual:path] || (!node[@"material"] && [row[@"path"] hasPrefix:prefix]))){if(include)[self.excluded removeObject:row[@"path"]];else [self.excluded addObject:row[@"path"]];}
+    NSDictionary *node=[self selectedNode];if(!node)return;BOOL include=self.include.state!=NSControlStateValueOff;NSString *path=node[@"path"];
+    for(NSDictionary *row in self.rows)if(![row[@"requirements"] boolValue] && ([row[@"path"] isEqual:path] || (!node[@"material"] && [self node:node containsPath:row[@"path"]]))){if(include)[self.excluded removeObject:row[@"path"]];else [self.excluded addObject:row[@"path"]];}
     NSOutlineView *outline=(NSOutlineView *)self.table;[outline reloadItem:node reloadChildren:YES];for(NSDictionary *parent=[outline parentForItem:node];parent;parent=[outline parentForItem:parent])[outline reloadItem:parent];[self tableViewSelectionDidChange:[NSNotification notificationWithName:NSTableViewSelectionDidChangeNotification object:self.table]];[self updateSummary];
 }
 - (void)tool:(NSButton *)sender {
@@ -118,8 +126,9 @@ static NSTextView *PFText(NSView *root,NSRect frame,BOOL editable){
     if(!self.image.image)return;if(sender.tag==0)self.fit=YES;else{if(self.fit)self.zoom=NSWidth(self.image.bounds)/MAX(1,self.image.image.size.width);self.fit=NO;self.zoom=sender.tag==1 ? 1:MIN(4,MAX(.1,self.zoom*(sender.tag==2 ? 1.4:1/1.4)));}[self sizeImage];
 }
 - (NSArray *)selectedImages {NSMutableArray *images=NSMutableArray.array;for(NSDictionary *row in self.rows)if([row[@"image"] boolValue] && ![self.excluded containsObject:row[@"path"]])[images addObject:row];return images;}
-- (NSDictionary *)selectedSnapshot {NSMutableDictionary *snapshot=self.snapshot.mutableCopy;NSMutableArray *paths=NSMutableArray.array;for(NSDictionary *row in self.rows)if(![row[@"requirements"] boolValue] && ![row[@"image"] boolValue] && ![self.excluded containsObject:row[@"path"]])[paths addObject:row[@"path"]];snapshot[@"paths"]=paths;return snapshot;}
-- (void)prepare:(id)sender {if(![self selectedImages].count && ![[self selectedSnapshot][@"paths"] count]){self.summary.stringValue=@"至少保留一个文档或图片。";return;}[NSApp stopModalWithCode:NSModalResponseOK];[self.window orderOut:nil];}
+- (NSDictionary *)selectedSnapshot {NSMutableDictionary *snapshot=self.snapshot.mutableCopy;NSMutableArray *paths=NSMutableArray.array;for(NSDictionary *row in self.rows)if(![row[@"requirements"] boolValue] && ![row[@"image"] boolValue] && ![self.excluded containsObject:row[@"path"]])[paths addObject:row[@"path"]];snapshot[@"paths"]=paths;snapshot[@"reviewRequirements"]=self.requirements ?: @"";snapshot[@"reviewRoles"]=self.roles;snapshot[@"questionLinks"]=self.links;NSMutableSet *selected=[NSMutableSet setWithArray:paths];[selected addObjectsFromArray:[[self selectedImages] valueForKey:@"path"]];NSMutableDictionary *origins=NSMutableDictionary.dictionary;for(NSString *p in selected)if(self.origins[p])origins[p]=self.origins[p];snapshot[@"materialAllOrigins"]=self.origins;snapshot[@"materialOrigins"]=origins;snapshot[@"materialExcluded"]=self.excluded.allObjects;snapshot[@"requestLimit"]=@(MAX(1,self.limitControl.indexOfSelectedItem+1));return snapshot;}
+#include "AMMaterialsControls.inc"
+- (void)prepare:(id)sender {if(![self selectedImages].count && ![[self selectedSnapshot][@"paths"] count]){self.summary.stringValue=@"至少保留一个文档或图片。";return;}NSError *error=nil;if(!AMReviewMaterialsCurrent([self selectedSnapshot],&error)){self.summary.stringValue=error.localizedDescription;return;}[NSApp stopModalWithCode:NSModalResponseOK];[self.window orderOut:nil];}
 - (void)cancel:(id)sender {[NSApp stopModalWithCode:NSModalResponseCancel];[self.window orderOut:nil];}
 - (BOOL)windowShouldClose:(NSWindow *)window {[self cancel:nil];return NO;}
 @end

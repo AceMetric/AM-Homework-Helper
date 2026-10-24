@@ -24,7 +24,7 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 /usr/bin/ditto "$RENDERER_DIR" "$CONTENTS/Resources/Renderer"
 mkdir -p "$SCRIPT_DIR/build/DDL.iconset"
 
-clang -arch arm64 -fobjc-arc -mmacosx-version-min=13.0 -framework Cocoa -framework WebKit "$SCRIPT_DIR/Tools/Icon.m" -o "$SCRIPT_DIR/build/render-icon"
+clang -arch arm64 -fobjc-arc -mmacosx-version-min=13.0 -framework Cocoa -framework PDFKit -framework WebKit "$SCRIPT_DIR/Tools/Icon.m" -o "$SCRIPT_DIR/build/render-icon"
 "$SCRIPT_DIR/build/render-icon" "$SCRIPT_DIR/build/DDL.iconset" "$CONTENTS/Resources/AppIcon.icns"
 
 clang \
@@ -35,7 +35,7 @@ clang \
   -mmacosx-version-min=13.0 \
   -I"$SWIFTUI_DIR" -L"$SWIFTUI_DIR" -lAMUI \
   -O2 \
-  -framework Cocoa -framework WebKit \
+  -framework Cocoa -framework PDFKit -framework WebKit \
   -framework UserNotifications \
   -framework Vision \
   -framework UniformTypeIdentifiers \
@@ -76,7 +76,7 @@ cp "$GITHUB_CLI_DIR/LICENSE" "$CONTENTS/Resources/GitHub-CLI-LICENSE.txt"
 # Keep the official Developer ID signature and every byte of the pinned helper.
 codesign --verify --strict "$CONTENTS/Helpers/gh"
 cp "$REMINDER_CAPSULE" "$CONTENTS/Resources/ReminderIdentities.zip"
-clang -arch arm64 -fobjc-arc -fblocks -dynamiclib -Wl,-install_name,@rpath/ReminderMaintenance.dylib -Wall -Wextra -Werror -mmacosx-version-min=13.0 -framework Cocoa -framework UserNotifications "$SCRIPT_DIR/Tools/ReminderMaintenance.m" -o "$CONTENTS/Resources/ReminderMaintenance.dylib"
+clang -arch arm64 -fobjc-arc -fblocks -dynamiclib -Wl,-install_name,@rpath/ReminderMaintenance.dylib -Wall -Wextra -Werror -mmacosx-version-min=13.0 -framework Cocoa -framework PDFKit -framework UserNotifications "$SCRIPT_DIR/Tools/ReminderMaintenance.m" -o "$CONTENTS/Resources/ReminderMaintenance.dylib"
 codesign --force --sign - "$CONTENTS/Resources/ReminderMaintenance.dylib"
 codesign --verify --strict "$CONTENTS/Resources/ReminderMaintenance.dylib"
 # Preserve Sparkle component signatures; sign the host last.
