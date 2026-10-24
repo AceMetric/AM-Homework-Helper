@@ -12,6 +12,8 @@ NSString * _Nullable AMPreflightExcludedReason(NSString *path);
 NSString *AMPreflightFileStamp(NSURL *folder, NSString *path);
 // Reference snapshots never change the selected submission paths.
 NSDictionary * _Nullable AMReviewImportMaterial(NSURL *url, NSIndexSet * _Nullable pages, NSError **error);
+BOOL AMReviewSaveSelection(NSDictionary *snapshot, NSString *binding, NSError **error);
+NSDictionary * _Nullable AMReviewSavedSelection(NSDictionary *snapshot, NSString *binding, NSError **error);
 NSArray *AMReviewRelations(NSDictionary *links, NSString *path);
 BOOL AMReviewMaterialsCurrent(NSDictionary *snapshot, NSError **error);
 NSArray *AMReviewImageOccurrences(NSDictionary *snapshot);
