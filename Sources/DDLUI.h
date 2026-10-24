@@ -96,5 +96,7 @@ NSWindow *AMMakeCheckWorkspace(NSWindow *parent);
 @property(copy) NSMenu *(^menuProvider)(NSString *identifier);
 - (void)updateGroups:(NSArray<NSDictionary *> *)groups selected:(NSString *)identifier heading:(NSString *)heading;
 - (void)updateTasks:(NSArray<NSDictionary *> *)tasks selected:(NSString *)identifier heading:(NSString *)heading;
+// Changes selection without rebuilding unchanged rows or their presentation data.
+- (BOOL)selectTaskIdentifier:(NSString *)identifier;
 - (void)focusSelection;
 @end

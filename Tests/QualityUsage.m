@@ -5,11 +5,14 @@
 #import "../Sources/SSCourseWindow.m"
 static NSUInteger checks;
 static void Check(BOOL ok,NSString *text){checks++;if(!ok){fprintf(stderr,"FAIL: %s\n",text.UTF8String);exit(1);}}
-@interface QualityApp:AppDelegate @end
+@interface QualityApp:AppDelegate
+@property NSUInteger contentRenders;
+@end
 @implementation QualityApp
 - (void)loadPreview {
     for(NSUInteger i=0;i<2000;i++)[self.tasks addObject:[@{@"id":[NSString stringWithFormat:@"task-%lu",(unsigned long)i],@"title":@"模拟任务与长标题",@"due":[NSDate dateWithTimeIntervalSinceNow:3600+i*20],@"subject":@"模拟课程",@"notes":[@"长备注\n" stringByPaddingToLength:4000 withString:@"备注文本\n" startingAtIndex:0],@"completed":@NO,@"archived":@NO,@"reminderOffsets":@[]} mutableCopy]];
 }
+- (void)renderContent {self.contentRenders++;[super renderContent];}
 - (void)refreshReminders {}
 @end
 int main(void){@autoreleasepool{
@@ -23,8 +26,9 @@ int main(void){@autoreleasepool{
     // First hosting-view creation includes one-time AppKit/SwiftUI setup. Measure
     // it separately from common selection; never benchmark the cached same row.
     NSButton *selection=NSButton.new;selection.identifier=app.tasks[450][@"id"];start=NSDate.date;[app selectTask:selection];NSTimeInterval coldSelect=-start.timeIntervalSinceNow;
-    NSMutableArray<NSNumber *> *samples=NSMutableArray.array;
+    NSUInteger beforeSelections=app.contentRenders;NSMutableArray<NSNumber *> *samples=NSMutableArray.array;
     for(NSUInteger i=1;i<=7;i++){selection.identifier=app.tasks[450+i][@"id"];start=NSDate.date;[app selectTask:selection];[samples addObject:@(-start.timeIntervalSinceNow)];Check([app.selectedTaskID isEqual:selection.identifier],@"consecutive selections preserve stable identity");}
+    Check(app.contentRenders==beforeSelections,@"switching existing rows does not rebuild unrelated task presentation");
     NSArray<NSNumber *> *ordered=[samples sortedArrayUsingSelector:@selector(compare:)];NSTimeInterval select=ordered[ordered.count/2].doubleValue;
     printf("TIMING: first detail %.4fs; seven distinct selections median %.4fs, maximum %.4fs\n",coldSelect,select,ordered.lastObject.doubleValue);
     Check(coldSelect<2 && ordered.lastObject.doubleValue<2,@"initial and subsequent detail operations do not stall for two seconds");Check(select<0.1,@"typical long-note selection below one hundred milliseconds");Check([app.selectedTaskID isEqual:selection.identifier],@"stable selected identity");
