@@ -4,8 +4,8 @@
     NSMutableDictionary *clean=result.mutableCopy;for(NSString *key in result)if([result[key] isKindOfClass:NSDictionary.class] && result[key][@"persistenceIssue"])clean[key]=AMWorkflowSavedScan(result[key]);return clean;
 }
 - (NSDictionary *)workflowDocuments:(NSDictionary *)course paths:(NSArray *)paths fetch:(BOOL)fetch cache:(NSMutableDictionary *)cache error:(NSError **)error {
-    AMCourseOperationContext *context=AMCourseContext(self);SSGit *reader=self.git;if(!context)return [reader readCourseDocuments:course paths:paths fetch:fetch cache:cache error:error];
-    return AMPerformResourceOperationInTask(context.identifier,NSUUID.UUID.UUIDString,@"核验材料版本",course[@"fork"],@[@"git-write"],100,^BOOL{return context.cancelled;},^id(NSError **failure){return [reader readCourseDocuments:course paths:paths fetch:fetch cache:cache error:failure];},error);
+    AMCourseOperationContext *context=AMCourseContext(self);SSGit *reader=self.git;if(!fetch && context.sourceCommit.length){NSMutableDictionary *bound=course.mutableCopy;bound[@"teacherCommit"]=context.sourceCommit;course=bound;}
+    return [reader readCourseDocuments:course paths:paths fetch:fetch cache:cache error:error];
 }
 - (NSArray *)recognitionFailures {
     NSMutableArray *rows=NSMutableArray.array;
@@ -37,7 +37,7 @@
     NSDictionary *settings=SSRecognitionSettings();BOOL cloud=[settings[@"mode"] isEqual:@"cloud"];
     if([settings[@"mode"] isEqual:@"rules"] || (cloud && ![settings[@"cloudCourses"] containsObject:course[@"fork"]])){[self status:@"请先在设置中配置识别服务，并选择允许增强的课程。免费规则识别仍可用。" ];return;}
     if(self.hasUnsavedReview && ![self resolveUnsavedReview])return;
-    [self work:@"准备老师材料与本机识别结果…" forCourse:course operation:^id(NSError **error){self.git.recognitionSettings=@{@"mode":@"rules"};NSMutableDictionary *cache=AMScanCacheLoad(error);if(!cache)return nil;return [self.git scanCourse:course cache:cache error:error];} completion:^(NSDictionary *scan,NSError *error){
+    [self work:@"准备老师材料与本机识别结果…" forCourse:course requestKey:@"prepare-enhancement" priority:100 kind:AMCourseWorkScan operation:^id(NSError **error){self.git.recognitionSettings=@{@"mode":@"rules"};NSMutableDictionary *cache=AMScanCacheLoad(error);if(!cache)return nil;return [self.git scanCourse:course cache:cache error:error];} completion:^(NSDictionary *scan,NSError *error){
         if(!scan){[self showError:error];return;}
         if(!self.hasUnsavedReview){self.candidates[course[@"fork"]]=[self retainingSkill:self.candidates[course[@"fork"]] current:scan[@"candidates"] documents:scan[@"documents"]];self.materials[course[@"fork"]]=scan[@"materials"] ?: @[];[self refreshPresentation];}
         NSMutableDictionary *files=NSMutableDictionary.dictionary;NSMutableArray *paths=NSMutableArray.array;for(NSDictionary *document in scan[@"documents"]){NSString *path=document[@"path"];if(!path || !document[@"text"])continue;files[path]=@{@"text":document[@"text"],@"version":document[@"blobSHA"] ?: @""};[paths addObject:path];}

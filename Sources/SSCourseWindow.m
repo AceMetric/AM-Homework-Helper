@@ -181,6 +181,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         self.git.identityVerifier = ^NSDictionary *(NSDictionary *course, NSError **error) { return [weakSelf.github verifyCourse:course error:error]; };
         [self configureCredentialAccess];
         self.git.progress = ^(NSString *phase) { dispatch_async(dispatch_get_main_queue(), ^{ if (weakSelf.busy) [weakSelf status:phase]; }); };
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(workflowOperationsChanged:) name:AMOperationsChanged object:nil];
         self.queue = dispatch_queue_create("ddl.course-work", DISPATCH_QUEUE_SERIAL);
         self.externalQueue=dispatch_queue_create("ddl.external-history",DISPATCH_QUEUE_SERIAL);
         NSError *decisionError=nil;if(!preview)AMReviewDecisions(&decisionError);[self buildUI];[self refreshCourses];if(decisionError)[self showError:decisionError];
@@ -188,6 +189,10 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)configureCredentialAccess { __weak typeof(self) weakSelf=self;self.git.teacherCredentialProvider=[@[@"oauth",@"githubCLI"] containsObject:self.github.authType] ? ^NSString *(NSDictionary *course,NSError **error){if(![weakSelf.github readableTeacher:course error:error])return nil;return [weakSelf.github accessToken:error];} : nil; }
 - (NSWindow *)window { return self.view.window; }
+- (void)workflowOperationsChanged:(NSNotification *)notification {
+    AMCourseOperationContext *chosen=nil;for(AMCourseOperationContext *context in self.workflowContexts.allValues)if(!context.finished && (!context.course || !self.selectedFork || [context.course[@"fork"] isEqual:self.selectedFork]))if(!chosen || context.priority>chosen.priority || (context.priority==chosen.priority && [context.enqueued compare:chosen.enqueued]==NSOrderedDescending))chosen=context;
+    _operationID=chosen.identifier;self.operationFork=chosen.course[@"fork"];self.busy=self.workflowContexts.count>0;[self refreshPresentation];
+}
 - (BOOL)operationBusy {return self.busy || self.workflowContexts.count>0;}
 - (NSSegmentedControl *)navigationControl {return self.sections;}
 - (BOOL)hasCheckWorkspace {return self.checkScopeWindow!=nil;}
@@ -388,7 +393,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     }
     self.timer = [NSTimer scheduledTimerWithTimeInterval:6 * 3600 target:self selector:@selector(scanAll:) userInfo:nil repeats:YES];
 }
-- (void)dealloc { [self.timer invalidate];[self.skillTimer invalidate];for(dispatch_source_t source in self.skillWatchers)dispatch_source_cancel(source); }
+- (void)dealloc { [NSNotificationCenter.defaultCenter removeObserver:self];[self.timer invalidate];[self.skillTimer invalidate];for(dispatch_source_t source in self.skillWatchers)dispatch_source_cancel(source); }
 - (NSUInteger)pendingCount {
     NSUInteger count = 0; NSMutableSet *seen = NSMutableSet.set;
     for (NSDictionary *course in self.courses) for (NSDictionary *candidate in [self discoveriesForFork:course[@"fork"]]) if ([candidate[@"kind"] isEqual:@"assignment"] && ![seen containsObject:candidate[@"id"]] && ![candidate[@"reviewDeleted"] boolValue] && ![[self stateForCandidate:candidate] isEqual:@"已导入"]) { [seen addObject:candidate[@"id"]]; count++; }
@@ -586,8 +591,9 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     for(NSDictionary *course in self.courses){NSUInteger pending=0,updates=0;for(NSDictionary *record in [self discoveriesForFork:course[@"fork"]])if([record[@"kind"] isEqual:@"assignment"] && ![record[@"reviewDeleted"] boolValue] && ![[self stateForCandidate:record] isEqual:@"已导入"]){pending++;if([[self stateForCandidate:record] isEqual:@"有更新"])updates++;}
         NSString *symbol=[course[@"path"] length] ? @"book.closed":@"folder.badge.questionmark";
         if([course[@"pendingMergeTip"] length] || [course[@"pushFailed"] boolValue] || self.reports[course[@"fork"]][@"error"])symbol=@"exclamationmark.triangle";
-        if(self.busy && [self.operationFork isEqual:course[@"fork"]])symbol=@"arrow.triangle.2.circlepath";
-        [result addObject:@{@"id":course[@"fork"],@"name":[course[@"fork"] lastPathComponent],@"pending":@(pending),@"newCount":@(pending-updates),@"updateCount":@(updates),@"symbol":symbol,@"linked":@([course[@"path"] length]>0),@"status":(self.busy && [self.operationFork isEqual:course[@"fork"]]) ? @"检查中":(self.reports[course[@"fork"]] ? AMCourseCheckPresentation(self.reports[course[@"fork"]],pending)[@"summary"]:(self.statuses[course[@"fork"]] ?: ([course[@"path"] length] ? @"已关联":@"待关联目录")))}];
+        NSDictionary *activity=nil;for(NSDictionary *row in AMOperations())if(self.workflowContexts[row[@"id"]] && [row[@"target"] isEqual:course[@"fork"]] && [@[@"running",@"queued"] containsObject:row[@"state"]]){activity=row;break;}
+        if(activity)symbol=@"arrow.triangle.2.circlepath";
+        [result addObject:@{@"id":course[@"fork"],@"name":[course[@"fork"] lastPathComponent],@"pending":@(pending),@"newCount":@(pending-updates),@"updateCount":@(updates),@"symbol":symbol,@"linked":@([course[@"path"] length]>0),@"status":activity ? (activity[@"waitReason"] ?: activity[@"stage"]):(self.reports[course[@"fork"]] ? AMCourseCheckPresentation(self.reports[course[@"fork"]],pending)[@"summary"]:(self.statuses[course[@"fork"]] ?: ([course[@"path"] length] ? @"已关联":@"待关联目录")))}];
     }
     NSArray *catalog=AMCourseCatalog(self.courses);for(NSUInteger i=0;i<result.count;i++){NSMutableDictionary *row=[result[i] mutableCopy];for(NSDictionary *c in catalog)if([c[@"fork"] isEqual:row[@"id"]])row[@"name"]=c[@"name"];result[i]=row;}
     for(NSDictionary *c in catalog){BOOL represented=NO;for(NSDictionary *repository in self.courses)if([repository[@"fork"] isEqual:c[@"fork"]])represented=YES;if(!represented)[result addObject:@{@"id":c[@"id"],@"name":c[@"name"],@"pending":@0,@"symbol":@"book.closed",@"linked":@NO,@"status":@""}];}return result;
@@ -615,7 +621,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSString *context = course ? [NSString stringWithFormat:@"%@ · 上次成功检查：%@%@", course[@"upstream"], last ? DDLFormatDate(last, @"M月d日 HH:mm") : @"尚未检查", [course[@"enabled"] isEqual:@NO] ? @" · 自动检查已停用" : @""] : @"所有课程的发现结果集中在这里";
     self.accountLabel.stringValue = context;
     self.statusLabel.stringValue = self.statuses[key] ?: @"";
-    if (self.busy) self.statusLabel.stringValue = [NSString stringWithFormat:@"%@：%@", self.operationFork ?: @"课程检查", self.statuses[self.operationFork ?: @"all"] ?: @"正在处理…"];
+    for(NSDictionary *operation in AMOperations())if(self.workflowContexts[operation[@"id"]] && (!course || [operation[@"target"] isEqual:course[@"fork"]]) && [@[@"queued",@"running"] containsObject:operation[@"state"]]){self.statusLabel.stringValue=operation[@"waitReason"] ?: operation[@"stage"];break;}
     self.statusLabel.toolTip = self.statusLabel.stringValue; self.accountLabel.toolTip = context;
     BOOL local = [course[@"path"] length] > 0;
     self.setupButton.title = !self.connected ? @"连接 GitHub" : (course && !local ? @"关联文件夹…" : @"添加课程…");
@@ -688,7 +694,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)status:(NSString *)message {
     AMCourseOperationContext *context=AMCourseContext(self);NSString *key=context.course[@"fork"] ?: self.statusFork ?: self.selectedFork ?: @"all";self.statuses[key]=message ?: @"";if(context)context.lastStatus=message;
-    if(context || self.busy){self.operationPhase=message;AMOperationProgress(self.operationID,message,0,0);}
+    if(context){context.stage=message;AMOperationProgress(context.identifier,message,0,0);}
     if(message.length && !self.operationID.length){__weak typeof(self) owner=self;NSString *scope=[@"course:" stringByAppendingString:key];BOOL failed=[message hasPrefix:@"⚠"] || [message containsString:@"失败"] || [message containsString:@"无法"];
         AMPostUIMessage(scope,@"status",message,failed ? AMUIMessageError:AMUIMessageInformation,failed ? @"查看":nil,failed ? ^{if(![key isEqual:@"all"] && ![owner selectCourseID:key])return;[owner operationDetails:nil];}:nil);
     }
@@ -713,9 +719,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)work:(NSString *)message forCourse:(NSDictionary *)course requestKey:(NSString *)scope priority:(NSInteger)priority kind:(AMCourseWorkKind)kind operation:(id (^)(NSError **))operation completion:(void (^)(id,NSError *))completion {
     if(self.preview){[self status:@"模拟预览不会操作真实账户或仓库"];return;}if(self.operationsPaused && !self.allowingExitSubmission)return;
-    if(kind!=AMCourseWorkModel && priority>=100 && self.discoveringExternal){[self.discoveryCancellation cancel];[self.externalReader cancelCurrentOperation];}
     if(!self.workflowContexts)self.workflowContexts=NSMutableDictionary.dictionary;if(!self.workflowFailures)self.workflowFailures=NSMutableDictionary.dictionary;
-    AMCourseOperationContext *context=AMCourseOperationContext.new;context.owner=self;context.course=course.copy;context.authType=_github.authType.copy;context.authenticationIdentity=_github.authenticationIdentity;context.kind=kind;context.enqueued=NSDate.date;context.stage=message;context.sourceCommit=self.reports[course[@"fork"] ?: @"all"][@"commit"];
+    AMCourseOperationContext *context=AMCourseOperationContext.new;context.owner=self;context.course=course.copy;context.authType=_github.authType.copy;context.authenticationIdentity=_github.authenticationIdentity;context.kind=kind;context.priority=priority;context.enqueued=NSDate.date;context.stage=message;context.sourceCommit=self.reports[course[@"fork"] ?: @"all"][@"commit"];
     if((kind==AMCourseWorkLocal || kind==AMCourseWorkSubmission) && [self.submission.course[@"fork"] isEqual:course[@"fork"]] && [self.submission.course[@"branch"] isEqual:course[@"branch"]] && [self.submission.course[@"path"] isEqual:course[@"path"]])context.submissionDraft=self.submission;
     context.git=SSGit.new;context.api=SSGitHub.new;context.api.authType=_github.authType;context.api.clientID=_github.clientID;context.api.installationURL=_github.installationURL;
 #ifdef DDL_TESTING
@@ -729,11 +734,13 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 #endif
     __weak typeof(self) owner=self;__weak AMCourseOperationContext *weakContext=context;
     context.git.progress=^(NSString *phase){AMCourseOperationContext *current=weakContext;if(!current)return;current.stage=phase;AMOperationProgress(current.identifier,phase,0,0);};
-    NSString *key=[NSString stringWithFormat:@"course|%@|%@|%@|%@",message,course ?: self.courses,scope,SSRecognitionSettings()];NSArray *resources=kind==AMCourseWorkModel ? @[[NSString stringWithFormat:@"model-course:%@",course[@"fork"] ?: @"all"]]:(self.loginActive && !course ? @[@"account-login"]:@[@"git-write"]);
+    NSString *key=[NSString stringWithFormat:@"course|%@|%@|%@|%@",message,course ?: self.courses,scope,SSRecognitionSettings()];NSArray *resources=kind==AMCourseWorkModel ? @[[NSString stringWithFormat:@"model-course:%@",course[@"fork"] ?: @"all"]]:(kind==AMCourseWorkScan ? (priority<100 ? @[@"limit:background-course"]:@[]):(self.loginActive && !course ? @[@"account-login"]:AMRepositoryResources(course,kind==AMCourseWorkLocal ? @"read":@"write")));
+    if(!course && kind==AMCourseWorkGit && !self.loginActive){NSMutableOrderedSet *claims=NSMutableOrderedSet.orderedSet;for(NSDictionary *target in [self.courses arrayByAddingObjectsFromArray:self.setupRecords ?: @[]])[claims addObjectsFromArray:AMRepositoryResources(target,@"write")];resources=claims.array;}
+    context.resources=resources;
     NSString *scheduled=AMScheduleCourseWorkflow(key,message,course[@"fork"] ?: @"所有课程",resources,priority,YES,^(NSString *identifier){
         context.identifier=identifier;dispatch_async(dispatch_get_main_queue(),^{
-            if(![self workflowSourceMatches:context]){NSError *error=AMWorkflowError(@"source-changed",@"课程关联已变化，原请求未执行",nil);[self finishWorkflow:context value:nil error:error completion:completion retry:operation message:message scope:scope priority:priority];return;}
-            self.workflowContexts[identifier]=context;self.cancelReadButton.enabled=YES;SSWorkflowDiagnostic(@"workflow-wait",@"success",@"",-context.enqueued.timeIntervalSinceNow);self.busy=YES;self.operationID=identifier;self.operationFork=course[@"fork"];self.workGeneration++;context.git.readsCancellable=YES;SSDiagnostic(@"operation",@"started",0);
+            if(![self workflowSourceMatches:context] || ((kind==AMCourseWorkLocal || kind==AMCourseWorkGit || kind==AMCourseWorkSubmission) && course && ![context.resources isEqual:AMRepositoryResources(course,kind==AMCourseWorkLocal ? @"read":@"write")])){NSError *error=AMWorkflowError(@"source-changed",@"课程关联已变化，原请求未执行",nil);[self finishWorkflow:context value:nil error:error completion:completion retry:operation message:message scope:scope priority:priority];return;}
+            self.workflowContexts[identifier]=context;self.cancelReadButton.enabled=YES;SSWorkflowDiagnostic(@"workflow-wait",@"success",@"",-context.enqueued.timeIntervalSinceNow);self.busy=YES;self.workGeneration++;context.git.readsCancellable=YES;SSDiagnostic(@"operation",@"started",0);
             dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{@autoreleasepool{__block NSError *failure=nil;__block id value=nil;NSDate *started=NSDate.date;
                 AMWithCourseContext(context,^{@try{if(context.cancelled)failure=AMWorkflowError(@"cancelled",@"已停止",nil);else value=operation(&failure);}@catch(NSException *exception){failure=AMWorkflowError(@"unknown",SSRedactedText(exception.reason),nil);}});
                 if(!failure && (!value || ([value isKindOfClass:NSNumber.class] && ![value boolValue])))failure=AMWorkflowError(@"unknown",@"操作未返回有效结果",nil);
@@ -759,7 +766,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     else if(!context.customResult){NSString *summary=context.lastStatus ?: @"操作完成";NSDictionary *check=context.course ? [self checkPresentationForFork:context.course[@"fork"]]:nil;AMOperationSetResult(context.identifier,summary,self.errorDetails[context.course[@"fork"] ?: @"all"] ?: @"",[check[@"warning"] boolValue],nil,nil);}
     if(!failure && [context.record[@"state"] isEqual:@"local"]){__weak typeof(self) owner=self;AMOperationSetResult(context.identifier,@"本地提交尚未推送",[NSString stringWithFormat:@"%@ · %@\n%@",context.record[@"repository"],context.record[@"branch"],context.record[@"commit"] ?: @""],YES,@"重试推送",^{if([owner workflowRecoveryAllowed:context])[owner submissionAction:@"retry" identifier:context.record[@"id"]];});}
     NSString *state=failure ? ([AMWorkflowIssue(failure) isEqual:@"cancelled"] ? @"cancelled":@"failed"):@"success";AMOperationSetWorkflowResult(context.identifier,failure ? context.problem[@"result"]:([context.record[@"state"] isEqual:@"local"] ? @"needs-action":@"completed"),failure ? context.problem[@"issue"]:@"",context.stage);AMOperationFinish(context.identifier,state,failure ? [NSString stringWithFormat:@"%@ · %@",context.problem[@"title"],context.problem[@"effect"]]:(context.lastStatus ?: @"操作完成"));[self.workflowContexts removeObjectForKey:context.identifier];self.busy=self.workflowContexts.count>0;
-    AMCourseOperationContext *active=self.workflowContexts.allValues.firstObject;_operationID=active.identifier;self.operationFork=active.course[@"fork"];_statusFork=nil;[self refreshPresentation];if(self.verifiedSubmissionsChanged)self.verifiedSubmissionsChanged();if(self.operationStateChanged)self.operationStateChanged();
+    _statusFork=nil;[self workflowOperationsChanged:nil];if(self.verifiedSubmissionsChanged)self.verifiedSubmissionsChanged();if(self.operationStateChanged)self.operationStateChanged();
 }
 
 - (void)setClientID:(id)sender {
@@ -848,7 +855,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if ([alert runModal] != NSAlertFirstButtonReturn) return;
     [self.courses removeObjectAtIndex:index]; [self saveCourses]; [self refreshCourses];
 }
-- (void)scan:(id)sender { if (![self course]) [self scanAll:nil]; else if ([self course]) [self scanCourses:@[[[self course] copy]]]; }
+- (void)scan:(id)sender { if (![self course]) [self scanAll:sender ?: self.scanButton]; else if ([self course]) [self scanCourses:@[[[self course] copy]]]; }
 - (void)toggleCourse:(id)sender {
     NSMutableDictionary *course = [self savedCourse:[self course]]; if (!course) return;
     course[@"enabled"] = @(course[@"enabled"] ? ![course[@"enabled"] boolValue] : NO); [self saveCourses]; [self refreshCourses];
@@ -862,20 +869,22 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     if(!self.connected || self.setupWindow.sheetParent)return;
     NSMutableArray *enabled = NSMutableArray.array;
     for (NSDictionary *course in self.courses) if (!course[@"enabled"] || [course[@"enabled"] boolValue]) [enabled addObject:[course copy]];
-    [self scanCourses:enabled];
+    [self scanCourses:enabled automatic:!sender || sender==self.timer];
 }
-- (void)scanCourses:(NSArray *)courses {
+- (void)scanCourses:(NSArray *)courses {[self scanCourses:courses automatic:NO];}
+- (void)scanCourses:(NSArray *)courses automatic:(BOOL)automatic {
     if (!courses.count) return;
+    if(courses.count>1){for(NSDictionary *course in courses)[self scanCourses:@[course] automatic:automatic];return;}
     courses = [[NSArray alloc] initWithArray:courses copyItems:YES];
     NSDictionary *recognitionSettings = self.preview ? @{@"mode":@"rules",@"automaticImport":@NO} : SSRecognitionSettings();
-    [self work:@"正在扫描老师仓库…" forCourse:courses.count == 1 ? courses.firstObject : nil operation:^id(NSError **error) {
+    [self work:@"获取老师更新" forCourse:courses.firstObject requestKey:@"teacher-scan" priority:automatic ? 0:100 kind:AMCourseWorkScan operation:^id(NSError **error) {
         self.git.recognitionSettings = @{@"mode":@"rules"};
         NSMutableDictionary *cache = AMScanCacheLoad(error);if(!cache)return nil;
         NSMutableDictionary *result = NSMutableDictionary.dictionary;
         for (NSDictionary *course in courses) {
             if(self.git.cancelledReads)break;
             if (![course[@"path"] length]){result[course[@"fork"]]=@{@"error":@"尚未关联目录",@"issue":@"directory"};continue;}
-            AMCourseOperationContext *scanContext=AMCourseContext(self);dispatch_async(dispatch_get_main_queue(),^{AMWithCourseContext(scanContext,^{self.operationFork=course[@"fork"];self.statusFork=course[@"fork"];[self status:@"获取老师内容并进行规则识别…"];if(self.firstCheckRunning){for(NSMutableDictionary *row in self.setupRecords)if([row[@"fork"] isEqual:course[@"fork"]])row[@"status"]=@"正在获取老师内容并识别…";[self updateCourseSetup:@"正在逐门检查；可收起引导，后台继续。"];}});});
+            AMCourseOperationContext *scanContext=AMCourseContext(self);dispatch_async(dispatch_get_main_queue(),^{AMWithCourseContext(scanContext,^{[self status:@"获取老师内容并进行规则识别…"];if(self.firstCheckRunning){for(NSMutableDictionary *row in self.setupRecords)if([row[@"fork"] isEqual:course[@"fork"]])row[@"status"]=@"正在获取老师内容并识别…";[self updateCourseSetup:@"正在逐门检查；可收起引导，后台继续。"];}});});
             NSError *scanError = nil;
             NSDictionary *scan = [self.git scanCourse:course cache:cache error:&scanError];
             if(scan){NSDictionary *rules=scan;dispatch_async(dispatch_get_main_queue(),^{if(scanContext.cancelled || ![self workflowSourceMatches:scanContext])return;AMWithCourseContext(scanContext,^{if(self.hasUnsavedReview || self.git.cancelledReads)return;self.candidates[course[@"fork"]]=[self retainingSkill:self.candidates[course[@"fork"]] current:rules[@"candidates"] documents:rules[@"documents"]];self.materials[course[@"fork"]]=[self retainingSkill:self.materials[course[@"fork"]] current:rules[@"materials"] documents:rules[@"documents"]];[self status:[SSCourseRecognitionSettings(recognitionSettings,course)[@"mode"] isEqual:@"rules"] ? @"规则结果已显示，正在整理结果…":@"规则结果已显示，正在补充模型分析…"];});});
@@ -997,7 +1006,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     __weak SSSubmissionController *weakSheet=sheet;
     sheet.performCheck=^NSDictionary *(NSArray *paths,NSArray *ids,NSString *extra,NSMutableDictionary *cache,BOOL(^cancelled)(void),NSError **error){
         SSCourseController *self=owner;if(!self || cancelled())return nil;
-        return AMPerformResourceOperation(NSUUID.UUID.UUIDString,@"检查文件",course[@"fork"] ?: @"本机项目",@[@"git-write"],100,cancelled,^id(NSError **problem){
+        return AMPerformResourceOperation(NSUUID.UUID.UUIDString,@"检查文件",course[@"fork"] ?: @"本机项目",AMRepositoryResources(course,@"read"),100,cancelled,^id(NSError **problem){
         __block NSDictionary *snapshot=nil;__block NSString *requirements=nil;__block NSError *failure=nil;
         dispatch_sync(readQueue,^{if(cancelled())return;SSGit *reader=SSGit.new;reader.readsCancellable=YES;dispatch_source_t cancellation=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_global_queue(QOS_CLASS_UTILITY,0));dispatch_source_set_timer(cancellation,dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),100*NSEC_PER_MSEC,10*NSEC_PER_MSEC);dispatch_source_set_event_handler(cancellation,^{if(cancelled())reader.cancelledReads=YES;});dispatch_resume(cancellation);NSMutableArray *selected=NSMutableArray.array;for(NSDictionary *task in tasks)if([ids containsObject:task[@"id"]])[selected addObject:task];snapshot=[reader preflightSnapshotForCourse:course paths:paths error:&failure];requirements=[reader preflightRequirementsForCourse:course tasks:selected];dispatch_source_cancel(cancellation);});
         if(!snapshot || cancelled()){if(problem)*problem=failure;return nil;}
@@ -1026,26 +1035,30 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 }
 - (void)openSubmissionForCourse:(NSDictionary *)course preserving:(SSSubmissionController *)previous {
     if(previous)for(NSString *field in @[@"fork",@"branch",@"path"])if(![(previous.course[field] ?: NSNull.null) isEqual:course[field] ?: NSNull.null]){previous=nil;break;}
+    if(!previous && self.submission && !self.submission.closed && [self.submission.course isEqual:course]){[self.submission.window makeKeyAndOrderFront:nil];return;}
     if(self.submission && !self.submission.closed && self.submission!=previous && self.window.attachedSheet){[self status:@"请先完成或关闭当前提交窗口，输入已保留"];return;}
-    if(previous){[previous cancel:nil];previous.preserveClosedDraft=YES;}
-    [self work:@"正在读取本地修改…" forCourse:course requestKey:@"local-files" priority:100 kind:AMCourseWorkLocal operation:^id(NSError **error) { return [self.git changesForCourse:course error:error]; } completion:^(NSArray *changes, NSError *error) {
-        if (!changes) { [self showError:error]; return; }
-        if (self.operationsPaused) return;
-        if (!changes.count && !previous) { [self showNoChanges:course];return; }
-        if (self.window.attachedSheet) { [self status:@"请先关闭当前编辑弹窗，再打开“提交作业”。"]; return; }
-        if(previous && self.submission!=previous)return;
-        self.submission = [[SSSubmissionController alloc] initWithCourse:course changes:changes];
-        NSMutableArray *related=NSMutableArray.array;for(NSDictionary *task in self.tasksProvider ? self.tasksProvider():@[])if(![task[@"deleted"] boolValue] && AMTaskBelongsToCourse(task,course))[related addObject:task];
-        [self configurePreflight:self.submission course:course tasks:related];
-        [self.submission configureTasks:related selected:previous ? [previous chosenTasks]:(self.submissionTaskID ? @[self.submissionTaskID]:@[])];self.submissionTaskID=nil;
-        if(previous){self.submission.reviewMaterialsSnapshot=previous.reviewMaterialsSnapshot;self.submission.reviewMaterialImages=previous.reviewMaterialImages;self.submission.checkCache=previous.checkCache.mutableCopy;self.submission.report=previous.report;self.submission.snapshot=previous.snapshot;self.submission.reviewSummary=previous.reviewSummary;self.submission.requirements=previous.requirements;self.submission.message.stringValue=previous.message.stringValue;self.submission.pendingSupplement=previous.supplement.string ?: previous.pendingSupplement;NSSet *chosen=[NSSet setWithArray:[previous chosenPaths]];for(NSButton *check in self.submission.checks)check.state=check.enabled && [chosen containsObject:changes[check.tag][@"path"]] ? NSControlStateValueOn:NSControlStateValueOff;self.submission.filesValidation.stringValue=changes.count ? @"文件列表已刷新。":@"没有待提交修改，请核验提交记录。";}
+    if(self.submission && !self.submission.closed && self.submission.filesPreparing && [self.submission.course isEqual:course]){[self.submission.window makeKeyAndOrderFront:nil];return;}
+    SSSubmissionController *sheet=previous ?: [[SSSubmissionController alloc] initWithCourse:course changes:@[]];self.submission=sheet;sheet.closed=NO;sheet.preserveClosedDraft=NO;
+    if(sheet.checkPage){[sheet backToFiles:nil];sheet.reportStale=YES;}
+    NSMutableArray *related=NSMutableArray.array;for(NSDictionary *task in self.tasksProvider ? self.tasksProvider():@[])if(![task[@"deleted"] boolValue] && AMTaskBelongsToCourse(task,course))[related addObject:task];
+    [self configurePreflight:sheet course:course tasks:related];[sheet configureTasks:related selected:previous ? [previous chosenTasks]:(self.submissionTaskID ? @[self.submissionTaskID]:@[])];self.submissionTaskID=nil;
+    __weak typeof(self) preparationOwner=self;__weak SSSubmissionController *preparingSheet=sheet;
+    sheet.refreshFiles=^{SSCourseController *owner=preparationOwner;SSSubmissionController *current=preparingSheet;if(owner && current && owner.submission==current && !current.filesPreparing)[owner openSubmissionForCourse:course preserving:current];};
+    sheet.viewExistingSubmissions=^{SSCourseController *owner=preparationOwner;SSSubmissionController *current=preparingSheet;if(!owner || !current || ![owner selectCourseID:course[@"fork"]])return;[current cancel:nil];current.preserveClosedDraft=YES;owner.sections.selectedSegment=3;[owner refreshPresentation];};
+    [sheet beginFilePreparation];NSUInteger generation=++sheet.filesReadGeneration;
+    if(!sheet.window.sheetParent){if(self.window.attachedSheet){[sheet finishFilePreparation:AMWorkflowError(@"busy",@"请先关闭当前编辑窗口",nil)];return;}[self.window beginSheet:sheet.window completionHandler:nil];}
+    [self work:@"读取本地文件" forCourse:course requestKey:@"local-files" priority:100 kind:AMCourseWorkLocal operation:^id(NSError **error) { return [self.git changesForCourse:course error:error]; } completion:^(NSArray *changes, NSError *error) {
+        if(sheet.closed || sheet.filesReadGeneration!=generation || self.submission!=sheet)return;
+        sheet.filesReadOperation=nil;if(!changes){NSError *failure=error ?: AMWorkflowError(@"directory",@"无法读取课程文件",nil);[sheet finishFilePreparation:failure];AMCourseOperationContext *context=AMCourseContext(self);NSDictionary *problem=AMWorkflowProblem(failure,context.stage,nil);BOOL distinct=![@[@"retry",@"none"] containsObject:problem[@"command"]];sheet.fileRecoveryButton.hidden=!distinct;sheet.fileRecoveryButton.title=problem[@"action"];__weak AMCourseOperationContext *recoveryContext=context;sheet.fileRecovery=^{SSSubmissionController *current=preparingSheet;AMCourseOperationContext *failed=recoveryContext;if(current && failed.recovery){[current cancel:nil];current.preserveClosedDraft=YES;failed.recovery();}};return;}
+        if(self.operationsPaused){[sheet finishFilePreparation:AMWorkflowError(@"cancelled",@"已停止",nil)];return;}
+        [sheet replaceFileChanges:changes];[sheet finishFilePreparation:nil];
         __weak typeof(self) weakSelf = self;__weak SSSubmissionController *originalSheet=self.submission;
         self.submission.refreshFiles=^{SSCourseController *owner=weakSelf;SSSubmissionController *sheet=originalSheet;if(owner && sheet && owner.submission==sheet)[owner openSubmissionForCourse:course preserving:sheet];};
         self.submission.readPreview = ^(NSString *file, void (^ready)(NSString *)) {
             SSSubmissionController *sheet=originalSheet;if(!sheet)return;NSUInteger generation=sheet.previewGeneration;SSGit *reader=SSGit.new;reader.readsCancellable=YES;
             NSString *operation=AMOperationBegin(@"读取变更预览",file,YES,^{[reader cancelCurrentOperation];});sheet.previewCancellation=^{AMOperationCancel(operation);};
             dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{NSError *problem=nil;
-                NSString *text=AMPerformResourceOperation(NSUUID.UUID.UUIDString,@"读取预览",file,@[@"git-write"],100,^BOOL{return reader.operationCancelled || !originalSheet || originalSheet.closed || originalSheet.previewGeneration!=generation;},^id(NSError **issue){return [reader previewForCourse:course path:file error:issue];},&problem);
+                NSString *text=AMPerformResourceOperation(NSUUID.UUID.UUIDString,@"读取预览",file,AMRepositoryResources(course,@"read"),100,^BOOL{return reader.operationCancelled || !originalSheet || originalSheet.closed || originalSheet.previewGeneration!=generation;},^id(NSError **issue){return [reader previewForCourse:course path:file error:issue];},&problem);
                 AMOperationFinish(operation,reader.operationCancelled ? @"cancelled":(problem ? @"failed":@"success"),problem.localizedDescription ?: @"预览读取完成");
                 dispatch_async(dispatch_get_main_queue(),^{ready(text ?: problem.localizedDescription);});
             });
@@ -1074,8 +1087,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             }
         }];
         };
-        [self.window beginSheet:self.submission.window completionHandler:nil];
     }];
+    for(AMCourseOperationContext *context in self.workflowContexts.allValues)if(context.kind==AMCourseWorkLocal && [context.course isEqual:course]){sheet.filesReadOperation=context.identifier;sheet.preparationOperationView.operationID=context.identifier;context.submissionDraft=sheet;break;}
 }
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView { return self.visible.count; }
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)column row:(NSInteger)row {

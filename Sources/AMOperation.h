@@ -1,6 +1,9 @@
 #import <Foundation/Foundation.h>
 NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT NSNotificationName const AMOperationsChanged;
+// Worktree readers can overlap a fetch; writers also own the shared Git directory.
+NSArray<NSString *> *AMRepositoryResources(NSDictionary *course,NSString *access);
+NSInteger AMCurrentOperationPriority(void);
 NSString *AMOperationBegin(NSString *kind,NSString *target,BOOL cancellable,void (^ _Nullable cancel)(void));
 NSString *AMOperationBeginWithExitPolicy(NSString *kind,NSString *target,BOOL cancellable,BOOL blocksExit,void (^ _Nullable cancel)(void));
 // Only presentation coalesces; execution, cancellation and history retain their IDs.

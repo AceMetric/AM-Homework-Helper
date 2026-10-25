@@ -265,9 +265,16 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSString *path = course[@"path"];
     if(self.progress)self.progress(@"核验课程来源…");NSString *url=fetch ? [self teacherURL:course path:path error:error]:nil;if(fetch && !url)return nil;
     NSString *branch=fetch ? [self teacherBranch:url course:course error:error]:course[@"upstreamBranch"];if(!SSValidBranch(branch ?: @""))return nil;
-    if(fetch && ![self teacherRequest:@[@"fetch",@"--no-tags",@"--",url,[@"refs/heads/" stringByAppendingString:branch]] course:course error:error])return nil;
-    SSGitResult *tip=[self checked:@[@"rev-parse",@"FETCH_HEAD"] in:path token:nil error:error];NSString *head=tip ? Trim([self string:tip]) : nil;if(!head)return nil;
     NSString *snapshotKey=[@"document-snapshot-v1|" stringByAppendingString:ScanIdentity(course,branch)];
+    NSString *head=nil;
+    if(fetch){
+        AMCancellationCheck inherited=AMCurrentCancellationCheck();
+        head=AMPerformResourceOperation(NSUUID.UUID.UUIDString,@"获取老师更新",course[@"fork"],AMRepositoryResources(course,@"fetch"),AMCurrentOperationPriority(),^BOOL{return self.operationCancelled || self.cancelledReads || (inherited && inherited());},^id(NSError **problem){
+            if(![self teacherRequest:@[@"fetch",@"--no-tags",@"--no-auto-maintenance",@"--",url,[@"refs/heads/" stringByAppendingString:branch]] course:course error:problem])return nil;
+            SSGitResult *tip=[self checked:@[@"rev-parse",@"FETCH_HEAD"] in:path token:nil error:problem];return tip ? Trim([self string:tip]):nil;
+        },error);
+    }else head=course[@"teacherCommit"] ?: cache[snapshotKey][@"commit"];
+    if(!head.length){if(error && !*error)*error=AMWorkflowError(@"source-changed",@"老师材料版本不可用，请重新检查课程",nil);return nil;}
     NSDictionary *previous=cache[snapshotKey];
     if([previous[@"commit"] isEqual:head]){
         NSMutableDictionary *reused=previous.mutableCopy;reused[@"date"]=NSDate.date;
@@ -415,10 +422,13 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     SSGitResult *status = [self checked:@[@"status", @"--porcelain=v1", @"-z", @"--untracked-files=all"] in:course[@"path"] token:nil error:error]; if (!status) return nil;
     NSArray *entries = [[self string:status] componentsSeparatedByString:@"\0"]; NSMutableArray *changes = NSMutableArray.array;
     for (NSUInteger i = 0; i < entries.count; i++) {
+        if(self.operationCancelled || self.cancelledReads || AMCurrentOperationCancelled()){if(error)*error=AMWorkflowError(@"cancelled",@"读取文件已停止",nil);return nil;}if(self.commandDeadline.timeIntervalSinceNow<=0){if(error)*error=AMWorkflowError(@"timeout",@"读取文件超时，请减少范围后重试",nil);return nil;}
         NSString *entry = entries[i]; if (entry.length < 4) continue;
         NSString *code = [entry substringToIndex:2], *file = [entry substringFromIndex:3];
         if ([code containsString:@"R"] || [code containsString:@"C"]) i++;
-        [changes addObject:@{@"path":file, @"status":code, @"sensitive":@(SSSensitivePath(file))}];
+        BOOL excluded=SSSensitivePath(file);NSString *reason=excluded ? @"敏感文件，已排除":@"";
+        if(!excluded && [file.pathExtension.lowercaseString isEqual:@"gz"] && ![code containsString:@"D"]){NSDictionary *entry=[self preflightWorkingFile:file root:course[@"path"]];if(!entry[@"data"] || !SSValidatedTrainingData(entry[@"data"])){excluded=YES;reason=entry[@"problem"] ?: @"压缩文件格式未通过核验";}}
+        [changes addObject:@{@"path":file,@"status":code,@"sensitive":@(excluded),@"exclusionReason":reason}];
     }
     return changes;
     }@finally{self.commandTimeout=previousTimeout;self.commandDeadline=previousDeadline;}
@@ -427,7 +437,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSArray *changes = [self changesForCourse:course error:error]; if (!changes) return nil;
     NSDictionary *change = nil; for (NSDictionary *item in changes) if ([item[@"path"] isEqual:file]) { change = item; break; }
     if (!change) { if (error) *error = GitError(@"文件已不在变更列表，请重新打开提交窗口。"); return nil; }
-    if ([change[@"sensitive"] boolValue]) return @"此文件可能包含凭据或无法检查的内容，不能通过应用提交。请先排除或修复。";
+    if ([change[@"sensitive"] boolValue]) return [change[@"exclusionReason"] length] ? [change[@"exclusionReason"] stringByAppendingString:@"。请核对文件格式与完整性后刷新；凭据文件不能提交。"]:@"此文件属于凭据或无法检查的内容，请先排除或修复。";
     NSString *root = [course[@"path"] stringByResolvingSymlinksInPath]; NSString *absolute = [[root stringByAppendingPathComponent:file] stringByResolvingSymlinksInPath];
     if (![absolute hasPrefix:[root stringByAppendingString:@"/"]]) { if (error) *error = GitError(@"文件指向仓库之外，已阻止预览。"); return nil; }
     NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:absolute error:NULL];
@@ -443,6 +453,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     }
     if (!data) { if (error) *error = GitError(@"文件在读取期间发生变化，请重新打开提交窗口。"); return nil; }
     if (SSContainsSecret(data)) return @"检测到疑似凭据，预览已隐藏。请移除敏感内容，并轮换真实凭据后再提交。";
+    if(SSValidatedTrainingData(data))return @"IDX 训练数据 · 格式已核验 · 不发送给模型";
     NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     if (!text) return @"这是非 UTF-8 文本或二进制文件，请在对应应用中查看。";
     return SSRedactedContent(text.length ? text : @"没有文本差异，可能仅修改了文件属性。");
@@ -522,8 +533,10 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
                 NSRange tab = [record rangeOfString:@"\t"]; if (tab.location == NSNotFound) return NO;
                 NSArray *fields = NonemptyParts([record substringToIndex:tab.location], @" "); if (fields.count < 3) return NO;
                 SSGitResult *size = [self checked:@[@"cat-file", @"-s", fields[1]] in:path token:nil error:error]; if (!size) return NO;
-                if ([Trim([self string:size]) integerValue] > 5 * 1024 * 1024) { if (error) *error = GitError(@"所选文件超过 5 MB，无法完成安全检查。"); return NO; }
+                if ([Trim([self string:size]) integerValue] > 64 * 1024 * 1024) { if (error) *error = GitError(@"所选文件超过64 MB安全检查上限。"); return NO; }
                 SSGitResult *blob = [self checked:@[@"cat-file", @"blob", fields[1]] in:path token:nil error:error]; if (!blob) return NO;
+                BOOL training=SSValidatedTrainingData(blob.data);const unsigned char *bytes=blob.data.bytes;BOOL gzip=blob.data.length>=2 && bytes[0]==0x1f && bytes[1]==0x8b;
+                if(((gzip || [file.pathExtension.lowercaseString isEqual:@"gz"]) || blob.data.length>5*1024*1024) && !training){if(error)*error=GitError(@"压缩文件或大文件不是可核验的训练数据");return NO;}
                 if (SSContainsSecret(blob.data)) { if (error) *error = GitError(@"所选文件含疑似凭据，已停止提交。"); return NO; }
             }
         }

@@ -3,8 +3,8 @@
     NSArray *parts=file.pathComponents;for(NSUInteger i=0;i+1<parts.count;i++){int next=openat(descriptor,[parts[i] fileSystemRepresentation],O_RDONLY|O_DIRECTORY|O_NOFOLLOW);int reason=errno;close(descriptor);descriptor=next;if(descriptor<0)return reason==ENOENT ? @{@"deleted":@YES,@"version":@"deleted"}:@{@"problem":@"符号链接或无法读取的目录已排除",@"version":@"unsafe"};}
     int fd=openat(descriptor,file.lastPathComponent.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_NONBLOCK);int reason=errno;close(descriptor);if(fd<0)return reason==ENOENT ? @{@"deleted":@YES,@"version":@"deleted"}:@{@"problem":@"符号链接或无法读取的文件已排除",@"version":@"unsafe"};
     struct stat info;if(fstat(fd,&info)!=0 || !S_ISREG(info.st_mode)){close(fd);return @{@"problem":@"非普通文件未读取",@"version":@"unsafe"};}
-    if(info.st_size<0 || info.st_size>5*1024*1024){close(fd);return @{@"problem":@"文件超过5 MB检查限制",@"version":@"oversized"};}
-    NSMutableData *data=NSMutableData.data;char buffer[8192];ssize_t count;while((count=read(fd,buffer,sizeof(buffer)))>0){if(data.length+(NSUInteger)count>5*1024*1024){close(fd);return @{@"problem":@"文件在读取时增长，超过检查限制",@"version":@"oversized"};}[data appendBytes:buffer length:(NSUInteger)count];}close(fd);if(count<0)return @{@"problem":@"文件无法完整读取",@"version":@"unreadable"};return @{@"data":data,@"mode":(info.st_mode&0111) ? @"100755":@"100644"};
+    if(info.st_size<0 || info.st_size>64*1024*1024){close(fd);return @{@"problem":@"文件超过64 MB读取限制",@"version":@"oversized"};}
+    NSMutableData *data=NSMutableData.data;char buffer[8192];ssize_t count;while((count=read(fd,buffer,sizeof(buffer)))>0){if(data.length+(NSUInteger)count>64*1024*1024){close(fd);return @{@"problem":@"文件在读取时增长，超过64 MB读取限制",@"version":@"oversized"};}[data appendBytes:buffer length:(NSUInteger)count];}close(fd);if(count<0)return @{@"problem":@"文件无法完整读取",@"version":@"unreadable"};return @{@"data":data,@"mode":(info.st_mode&0111) ? @"100755":@"100644"};
 }
 - (NSDictionary *)preflightSnapshotForCourse:(NSDictionary *)course paths:(NSArray *)paths error:(NSError **)error {
     BOOL local=[course[@"preflightLocal"] boolValue] || [course[@"preflightMode"] isEqual:@"working"];
@@ -25,6 +25,10 @@
             SSGitResult *blob=[self checked:@[@"cat-file",@"blob",object[@"oid"]] in:root token:nil error:NULL];data=blob.data;
         }
         if(!data)return @{@"path":file,@"problem":@"文件无法读取",@"version":@"unreadable"};
+        BOOL training=SSValidatedTrainingData(data);BOOL gzip=data.length>=2 && ((const unsigned char *)data.bytes)[0]==0x1f && ((const unsigned char *)data.bytes)[1]==0x8b;
+        if((gzip || [file.pathExtension.lowercaseString isEqual:@"gz"]) && !training)return @{@"path":file,@"problem":@"压缩文件不是可核验的 IDX 训练数据",@"version":@"unsupported-archive"};
+        if(data.length>5*1024*1024 && !training)return @{@"path":file,@"problem":@"非训练数据超过5 MB检查限制",@"version":@"oversized"};
+        if(training){NSMutableDictionary *entry=[@{@"path":file,@"mode":mode,@"version":AMPreflightHash(data),@"trainingData":@YES,@"bytes":@(data.length)} mutableCopy];if(stamp)entry[@"stamp"]=stamp;return entry;}
         if(SSContainsSecret(data))return @{@"path":file,@"problem":@"文件含疑似凭据，禁止交给助手",@"version":@"secret"};
         NSMutableDictionary *entry=[@{@"path":file,@"mode":mode,@"data":data,@"version":AMPreflightHash(data)} mutableCopy];if(stamp)entry[@"stamp"]=stamp;NSString *ext=file.pathExtension.lowercaseString;
         if([@[@"png",@"jpg",@"jpeg",@"heic",@"tiff",@"tif",@"gif",@"bmp",@"webp"] containsObject:ext])entry[@"image"]=@YES;

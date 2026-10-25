@@ -14,12 +14,13 @@ static inline NSDictionary *AMActivityPresentation(NSDictionary *row) {
     BOOL queued=[state isEqual:@"queued"],running=[state isEqual:@"running"],stopping=running && [row[@"cancelRequested"] boolValue];
     NSString *shortKind=[AMShortActivityText(kind) stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"… ."]];
     NSString *heading=target.length ? [NSString stringWithFormat:@"%@ · %@",target.lastPathComponent,shortKind]:shortKind;
-    NSString *phase=queued ? @"排队中":stopping ? @"正在停止":AMShortActivityText((!queued && !running && [row[@"summary"] length]) ? row[@"summary"]:stage);
+    NSString *phase=[row[@"waitReason"] length] ? row[@"waitReason"]:queued ? @"排队中":stopping ? @"正在停止":AMShortActivityText((!queued && !running && [row[@"summary"] length]) ? row[@"summary"]:stage);
     if([phase isEqual:kind] || !phase.length)phase=running ? @"进行中":@"已结束";
     NSString *action=(queued || running) ? ([row[@"cancellable"] boolValue] && !stopping ? (queued ? @"取消排队":@"停止"):@""):@"关闭记录";
     NSMutableArray *details=[NSMutableArray arrayWithObjects:[NSString stringWithFormat:@"操作：%@",kind],nil];
     if(target.length)[details addObject:[NSString stringWithFormat:@"目标：%@",target]];
     [details addObject:queued ? @"状态：排队中，等待占用资源的操作结束":[NSString stringWithFormat:@"阶段：%@",stage]];
+    if([row[@"waitDetails"] length])[details addObject:row[@"waitDetails"]];
     if([row[@"details"] length])[details addObject:row[@"details"]];
     return @{@"heading":heading,@"phase":phase,@"action":action,@"details":[details componentsJoinedByString:@"\n"],@"active":@(queued || running)};
 }

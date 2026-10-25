@@ -15,6 +15,8 @@
 @property SSGit *git;
 @property SSGitHub *api;
 @property AMCourseWorkKind kind;
+@property NSInteger priority;
+@property NSArray *resources;
 @property(atomic) BOOL cancelled;
 @property NSDate *enqueued;
 @property NSString *stage;

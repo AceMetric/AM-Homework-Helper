@@ -55,8 +55,8 @@ int main(void) { @autoreleasepool {
     AMQuietReplace(NSOpenPanel.class,@selector(URL),imp_implementationWithBlock(^NSURL *(NSOpenPanel *panel){return panel.canChooseDirectories ? [NSURL fileURLWithPath:checkRoot]:reportURL;}));
     [checkTask removeObjectForKey:@"courseRepository"];[checkTask removeObjectForKey:@"sourceRepository"];
     Route(app,2);app.selectedTaskID=checkTask[@"id"];[app render];
-    // Reproduce a long automatic scan: its course queue remains occupied throughout the check.
-    dispatch_suspend(courses.queue);courses.busy=YES;courses.git.readsCancellable=YES;courses.operationPhase=@"正在扫描老师文档";
+    // Keep a real activity identity throughout the check; busy is derived from contexts.
+    NSString *scanActivity=AMOperationBegin(@"模拟老师扫描",course[@"fork"],NO,nil);AMCourseOperationContext *scanContext=AMCourseOperationContext.new;scanContext.owner=courses;scanContext.identifier=scanActivity;scanContext.course=course;scanContext.kind=AMCourseWorkScan;scanContext.enqueued=NSDate.date;if(!courses.workflowContexts)courses.workflowContexts=NSMutableDictionary.dictionary;courses.workflowContexts[scanActivity]=scanContext;courses.busy=YES;courses.git.readsCancellable=YES;courses.operationPhase=@"正在扫描老师文档";
     checkTask[@"completed"]=@YES;app.filter=3;[app render];
     checkButton.identifier=checkTask[@"id"];if(app.editor.sharedForm)app.editor.sharedForm.actionHandler(@"check",app.editor.sharedForm.snapshot);else [checkButton performClick:nil];
     Await(^BOOL{return courses.checkScope && !courses.checkScope.preparing;});
@@ -70,7 +70,7 @@ int main(void) { @autoreleasepool {
     NSDictionary *localCourse=@{@"fork":@"student/fixture",@"branch":@"main",@"path":checkRoot,@"preflightMode":@"working",@"preflightLocal":@YES};
     SSSubmissionController *parallel=[[SSSubmissionController alloc] initWithCourse:localCourse changes:@[@{@"path":@"report.md",@"status":@"M",@"sensitive":@NO}]];[courses configurePreflight:parallel course:localCourse tasks:@[]];parallel.message.stringValue=@"Synthetic submission check";[parallel.checks[0] performClick:nil];[parallel.filesPrimary performClick:nil];Await(^BOOL{return !parallel.checking && parallel.report!=nil;});Check(parallel.report && !parallel.checkPage.hidden && courses.busy,@"submission Next reaches real local report while the teacher scan queue remains suspended");[parallel cancel:nil];
     courses.git.readsCancellable=NO;dispatch_semaphore_t writeStarted=dispatch_semaphore_create(0),writeReleased=dispatch_semaphore_create(0);
-    AMOperationEnqueue(@"synthetic-write",@"模拟写入",@"fixture",@[@"git-write"],100,^(NSString *identifier){dispatch_semaphore_signal(writeStarted);dispatch_semaphore_wait(writeReleased,DISPATCH_TIME_FOREVER);AMOperationFinish(identifier,@"success",@"");},nil);
+    AMOperationEnqueue(@"synthetic-write",@"模拟写入",@"fixture",AMRepositoryResources(localCourse,@"write"),100,^(NSString *identifier){dispatch_semaphore_signal(writeStarted);dispatch_semaphore_wait(writeReleased,DISPATCH_TIME_FOREVER);AMOperationFinish(identifier,@"success",@"");},nil);
     Check(dispatch_semaphore_wait(writeStarted,dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC))==0,@"synthetic Git write owns the shared barrier");
     SSSubmissionController *writing=[[SSSubmissionController alloc] initWithCourse:localCourse changes:@[@{@"path":@"report.md",@"status":@"M",@"sensitive":@NO}]];[courses configurePreflight:writing course:localCourse tasks:@[]];writing.message.stringValue=@"Keep while writing";[writing.checks[0] performClick:nil];[writing.filesPrimary performClick:nil];
     Await(^BOOL{return AMQueuedOperationCount()>0;});Check(writing.checking && !writing.report && [writing.message.stringValue isEqual:@"Keep while writing"],@"concurrent write queues inspection and preserves inputs");
@@ -78,7 +78,7 @@ int main(void) { @autoreleasepool {
 
     [taskCheckSheet.primary performClick:nil];Check(!app.window.attachedSheet && taskCheckSheet.closed,@"check-only completion closes without committing or pushing");
     Check([[NSString stringWithContentsOfURL:reportURL encoding:NSUTF8StringEncoding error:NULL] isEqual:reportText],@"task check leaves the selected file unchanged");
-    courses.submission=nil;dispatch_resume(courses.queue);courses.busy=NO;courses.git.readsCancellable=NO;
+    courses.submission=nil;scanContext.finished=YES;[courses.workflowContexts removeObjectForKey:scanActivity];AMOperationFinish(scanActivity,@"success",@"done");courses.busy=NO;courses.git.readsCancellable=NO;
     courses.operationsPaused=YES;
     checkButton.identifier=checkTask[@"id"];Check(checkButton!=nil,@"task check remains available for an actionable pause explanation");[AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];if(app.editor.sharedForm)app.editor.sharedForm.actionHandler(@"check",app.editor.sharedForm.snapshot);else [checkButton performClick:nil];
     Check(!courses.submission && [[courses taskCheckBlockReason] containsString:@"更新"] && AMQuietDialogChoices.count==0,@"exit or update still prevents a new check and explains why");courses.operationsPaused=NO;
@@ -145,8 +145,8 @@ int main(void) { @autoreleasepool {
     courses.sections.selectedSegment = 0; course[@"pendingMergeTip"] = @"synthetic-merge"; course[@"pendingConflicts"] = @[@"answers.md"]; [courses refreshPresentation];
     Check(!courses.recoveryButton.hidden && [courses.recoveryButton.title containsString:@"冲突"], @"conflicts expose recovery entry");
     [course removeObjectForKey:@"pendingMergeTip"]; [course removeObjectForKey:@"pendingConflicts"]; course[@"pushFailed"] = @YES; [courses refreshPresentation]; Check([courses.recoveryButton.title isEqual:@"重试推送"], @"failed push exposes retry");
-    courses.busy = YES; courses.operationFork = course[@"fork"]; courses.statuses[course[@"fork"]] = @"正在合并老师更新…"; courses.selectedFork = other[@"fork"]; [courses refreshCourses];
-    Check([courses.statusLabel.stringValue containsString:@"student/physics"] && courses.commitButton.enabled && courses.courseSnapshots.count == 2, @"browsing another course retains operation target and permits queued actions"); courses.busy = NO;
+    NSString *syncActivity=AMOperationBegin(@"同步课程文件",course[@"fork"],NO,nil);AMCourseOperationContext *syncContext=AMCourseOperationContext.new;syncContext.owner=courses;syncContext.identifier=syncActivity;syncContext.course=course;syncContext.enqueued=NSDate.date;courses.workflowContexts[syncActivity]=syncContext;AMOperationProgress(syncActivity,@"正在合并老师更新…",0,0);courses.selectedFork=other[@"fork"];[courses refreshCourses];
+    Check(![courses.statusLabel.stringValue containsString:@"student/physics"] && courses.commitButton.enabled && courses.courseSnapshots.count==2 && [courses.courseSnapshots[0][@"status"] containsString:@"合并"],@"another course stays usable without displaying the original course operation as its own");[courses.workflowContexts removeObjectForKey:syncActivity];AMOperationFinish(syncActivity,@"success",@"done");courses.busy=NO;
     SSSubmissionController *submission = [[SSSubmissionController alloc] initWithCourse:course changes:@[@{@"path":@"answers.md", @"status":@" M", @"sensitive":@NO}, @{@"path":@".env", @"status":@"??", @"sensitive":@YES}]];
     [submission configureTasks:@[@{@"id":@"related-task",@"title":@"关联模拟作业"},@{@"id":@"other-task",@"title":@"另一份模拟作业"}] selected:@[@"related-task"]];
     Check(submission.taskChecks[0].state==NSControlStateValueOn && submission.taskChecks[1].state==NSControlStateValueOff && NSMinY([submission.fileListScroll convertRect:submission.fileListScroll.bounds toView:submission.filesPage])>=NSMaxY(submission.taskSection.frame),@"task association does not overlap file controls or select files");

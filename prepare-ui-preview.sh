@@ -27,7 +27,7 @@ AM_BUILD_OUTPUT_DIR="$PREVIEW_ROOT/.base" zsh build.sh
 export CLANG_MODULE_CACHE_PATH="$TASK_DIR/build/module-cache"
 clang -DDDL_TESTING=1 -fobjc-arc -fblocks -Wall -Wextra -Werror -Wno-unused-parameter -O2 -mmacosx-version-min=13.0 \
  -I"$SWIFTUI_DIR" -L"$SWIFTUI_DIR" -lAMUI -Wl,-rpath,@executable_path/../Frameworks \
- -framework Cocoa -framework PDFKit -framework WebKit -framework UserNotifications -framework Vision -framework UniformTypeIdentifiers -framework Security -F"$SPARKLE_DIR" -framework Sparkle \
+ -framework Cocoa -framework PDFKit -framework WebKit -framework UserNotifications -framework Vision -framework UniformTypeIdentifiers -framework Security -lz -F"$SPARKLE_DIR" -framework Sparkle \
  Tests/NativeChromePreview.m Sources/DDLCore.m Sources/DDLImport.m Sources/SSRecognition.m Sources/SSAssignments.m Sources/SSLocalData.m Sources/SSGitHub.m Sources/SSGit.m Sources/SSSecurity.m Sources/DDLUI.m Sources/SSUpdateController.m Sources/SSExitCoordinator.m \
  -o "$PREVIEW_APP/Contents/MacOS/DDLManager"
 python3 - "$PREVIEW_APP/Contents/Info.plist" "$PREVIEW_ROOT/data" "$PREVIEW_REVISION" "$SDK_VERSION" <<'PY'

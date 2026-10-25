@@ -39,7 +39,7 @@ clang \
   -framework UserNotifications \
   -framework Vision \
   -framework UniformTypeIdentifiers \
-  -framework Security \
+  -framework Security -lz \
   -F"$SPARKLE_DIR" -framework Sparkle \
   -Wl,-rpath,@executable_path/../Frameworks \
   "$SCRIPT_DIR/Sources/App.m" \

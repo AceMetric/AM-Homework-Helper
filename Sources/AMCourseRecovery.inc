@@ -34,7 +34,7 @@
     if([command isEqual:@"none"]){action=nil;context.recovery=nil;}
     if(!context.customResult)AMOperationSetResult(context.identifier,[NSString stringWithFormat:@"%@ · %@",problem[@"title"],problem[@"effect"]],details,![command isEqual:@"none"],action,context.recovery);
     self.errorDetails[target]=details;
-    if(![command isEqual:@"none"]){
+    if(![command isEqual:@"none"] && !(context.submissionDraft && !context.submissionDraft.closed && context.submissionDraft.window.sheetParent)){
         if(!self.dismissedWorkflowNotices)self.dismissedWorkflowNotices=NSMutableSet.set;self.workflowNoticeContext=context;
         if(!self.workflowNotice){AMWorkflowNotice *notice=[[AMWorkflowNotice alloc] initWithFrame:NSZeroRect];notice.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:notice];self.workflowNotice=notice;NSLayoutConstraint *width=[notice.widthAnchor constraintEqualToAnchor:self.view.widthAnchor constant:-32];width.priority=NSLayoutPriorityDefaultHigh;[NSLayoutConstraint activateConstraints:@[[notice.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-16],[notice.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor constant:-16],[notice.widthAnchor constraintLessThanOrEqualToConstant:560],width]];}
         self.workflowNotice.label.stringValue=[NSString stringWithFormat:@"%@ · %@",problem[@"title"],problem[@"effect"]];self.workflowNotice.actionButton.title=action;self.workflowNotice.performRecovery=context.recovery;

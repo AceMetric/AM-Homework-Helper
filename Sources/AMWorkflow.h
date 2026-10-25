@@ -2,7 +2,7 @@
 #import <Foundation/Foundation.h>
 #import "SSSecurity.h"
 // Private workflow vocabulary. Exchange files and stored task schemas are unchanged.
-typedef NS_ENUM(NSInteger, AMCourseWorkKind){AMCourseWorkGit,AMCourseWorkLocal,AMCourseWorkModel,AMCourseWorkSubmission};
+typedef NS_ENUM(NSInteger, AMCourseWorkKind){AMCourseWorkGit,AMCourseWorkLocal,AMCourseWorkModel,AMCourseWorkSubmission,AMCourseWorkScan};
 static inline NSError *AMWorkflowError(NSString *issue,NSString *message,NSError *underlying){
     NSMutableDictionary *info=[@{NSLocalizedDescriptionKey:message,@"SSIssue":issue,@"SSDetail":SSRedactedText(underlying.userInfo[@"SSDetail"] ?: underlying.localizedDescription ?: message)} mutableCopy];if(underlying)info[NSUnderlyingErrorKey]=underlying;return [NSError errorWithDomain:@"AMWorkflow" code:[issue isEqual:@"cancelled"] ? NSUserCancelledError:([issue isEqual:@"timeout"] ? NSURLErrorTimedOut:(underlying ? underlying.code:1)) userInfo:info];
 }

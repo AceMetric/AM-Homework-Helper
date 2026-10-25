@@ -163,6 +163,7 @@ NSDictionary *AMPreflightCheckWithProgress(NSDictionary *snapshot,NSString *requ
         NSString *key=[NSString stringWithFormat:@"preflight-v3-renderer4|%@|%@",path,entry[@"version"] ?: @""];NSDictionary *cached=cache[key];
         if(!cached){NSMutableArray *found=NSMutableArray.array;NSDictionary *math=nil;NSString *text=entry[@"text"],*ext=path.pathExtension.lowercaseString,*status=@"未检查：不支持的文件类型";
             if(entry[@"problem"])[found addObject:PFIssue(@"format",@"error",path,@1,entry[@"problem"],@"",@"检查文件格式与大小后重新检查。")];
+            else if([entry[@"trainingData"] boolValue]){status=@"已检查：训练数据格式与凭据；不发送给模型";}
             else if(text){status=@"已检查：文本结构与明显未完成项";NSArray *lines=[text componentsSeparatedByString:@"\n"];BOOL markdown=[@[@"md",@"markdown",@"mdx"] containsObject:ext];NSString *visible=markdown ? PFVisible(text):text;NSArray *viewLines=[visible componentsSeparatedByString:@"\n"];
                 if(!RTrim(text).length)[found addObject:PFIssue(@"incomplete",@"warning",path,@1,@"文件为空",@"",@"确认是否遗漏作答。")];
                 for(NSUInteger i=0;i<lines.count;i++){NSString *line=lines[i],*v=viewLines[i];if(PFMatches(line,@"^(?:<{7} |={7}$|>{7} )").count)[found addObject:PFIssue(@"format",@"error",path,@(i+1),@"发现合并冲突标记",line,@"先解决合并冲突。")];
@@ -181,7 +182,7 @@ NSDictionary *AMPreflightCheckWithProgress(NSDictionary *snapshot,NSString *requ
             if(cancelled && cancelled())return @{@"cancelled":@YES};
             cached=@{@"issues":found,@"status":status,@"math":math ?: @{}};if(!math || [math[@"completed"] boolValue])cache[key]=cached;
         }
-        [issues addObjectsFromArray:cached[@"issues"]];[coverage addObject:@{@"path":path,@"status":cached[@"status"]}];if([cached[@"math"] count])[coverage addObject:@{@"path":path,@"kind":@"math",@"status":[cached[@"math"][@"completed"] boolValue] ? [NSString stringWithFormat:@"已渲染：%lu 个公式（GitHub风格）",(unsigned long)[cached[@"math"][@"formulaCount"] unsignedIntegerValue]]:@"未完成：公式渲染超时、内容超限或渲染器不可用"}];
+        [issues addObjectsFromArray:cached[@"issues"]];[coverage addObject:@{@"path":path,@"status":cached[@"status"]}];if([cached[@"math"] count])[coverage addObject:@{@"path":path,@"kind":@"math",@"status":[cached[@"math"][@"completed"] boolValue] ? [NSString stringWithFormat:@"已渲染：%lu 个公式",(unsigned long)[cached[@"math"][@"formulaCount"] unsignedIntegerValue]]:@"未完成：公式渲染超时、内容超限或渲染器不可用"}];
         if([entry[@"image"] boolValue] && !entry[@"problem"] && PFImage(entry[@"data"]))[images addObject:@{@"path":path,@"document":path,@"line":@1,@"version":entry[@"version"]}];
         NSString *text=entry[@"text"];
         if([@[@"md",@"markdown",@"mdx"] containsObject:path.pathExtension.lowercaseString])for(NSDictionary *ref in AMPreflightImageReferences(text ?: @"")){

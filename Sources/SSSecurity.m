@@ -1,4 +1,5 @@
 #import "SSSecurity.h"
+#import <zlib.h>
 
 static NSArray<NSString *> *SecretPatterns(void) {
     return @[@"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----",
@@ -31,7 +32,18 @@ BOOL SSSensitivePath(NSString *path) {
     NSString *name = path.lastPathComponent.lowercaseString;
     if ([@[@".env", @".npmrc", @".pypirc", @".netrc", @"id_rsa", @"id_ed25519", @"id_ecdsa", @"credentials", @"credentials.json", @"auth.json"] containsObject:name]) return YES;
     if ([name hasPrefix:@".env."] && ![@[@"example", @"sample", @"template"] containsObject:name.pathExtension]) return YES;
-    return [@[@"pem", @"p12", @"pfx", @"key", @"mobileprovision", @"zip", @"7z", @"rar", @"gz", @"tar"] containsObject:name.pathExtension];
+    return [@[@"pem", @"p12", @"pfx", @"key", @"mobileprovision", @"zip", @"7z", @"rar", @"tar"] containsObject:name.pathExtension];
+}
+BOOL SSValidatedTrainingData(NSData *data){
+    if(!data.length || data.length>64*1024*1024)return NO;const unsigned char *bytes=data.bytes;NSData *decoded=data;
+    if(data.length>=2 && bytes[0]==0x1f && bytes[1]==0x8b){if(data.length<18)return NO;NSUInteger n=data.length;uint32_t expanded=((uint32_t)bytes[n-1]<<24)|((uint32_t)bytes[n-2]<<16)|((uint32_t)bytes[n-3]<<8)|bytes[n-4];if(expanded>64*1024*1024)return NO;z_stream stream={0};stream.next_in=(Bytef *)data.bytes;stream.avail_in=(uInt)data.length;if(inflateInit2(&stream,15+16)!=Z_OK)return NO;NSMutableData *output=NSMutableData.data;unsigned char block[65536];int state=Z_OK;
+        while(state==Z_OK){stream.next_out=block;stream.avail_out=sizeof(block);state=inflate(&stream,Z_NO_FLUSH);NSUInteger count=sizeof(block)-stream.avail_out;if(output.length+count>64*1024*1024){inflateEnd(&stream);return NO;}[output appendBytes:block length:count];}
+        BOOL valid=state==Z_STREAM_END && stream.avail_in==0;inflateEnd(&stream);if(!valid)return NO;decoded=output;
+    }
+    bytes=decoded.bytes;if(decoded.length<8 || bytes[0] || bytes[1] || bytes[2]!=8 || bytes[3]<1 || bytes[3]>4)return NO;
+    NSUInteger header=4+4*bytes[3];if(decoded.length<header)return NO;uint64_t count=1;
+    for(NSUInteger i=0;i<bytes[3];i++){NSUInteger offset=4+i*4;uint32_t dimension=((uint32_t)bytes[offset]<<24)|((uint32_t)bytes[offset+1]<<16)|((uint32_t)bytes[offset+2]<<8)|bytes[offset+3];if(!dimension || dimension>64*1024*1024/count)return NO;count*=dimension;}
+    return decoded.length==header+count && !SSContainsSecret(data) && (decoded==data || !SSContainsSecret(decoded));
 }
 BOOL SSContainsSecret(NSData *data) {
     if (!data.length) return NO;

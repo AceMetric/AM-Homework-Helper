@@ -24,12 +24,12 @@
     if(!self.preview && !SSWritePlist(@"courses.plist",next,error))return NO;self.courses=next;return YES;
 }
 - (void)finishSetupScan:(NSDictionary *)result error:(NSError *)error courses:(NSArray *)courses {
-    if(!self.firstCheckRunning)return;self.firstCheckRunning=NO;
+    if(!self.firstCheckRunning)return;
     for(NSMutableDictionary *row in self.setupRecords){BOOL involved=NO;for(NSDictionary *course in courses)if([row[@"fork"] isEqual:course[@"fork"]])involved=YES;if(!involved)continue;
         NSDictionary *scan=result[row[@"fork"]];BOOL failed=!scan || [scan[@"error"] length]>0;row[@"checkFailed"]=@(failed);
         row[@"status"]=failed ? [@"未完成检查：" stringByAppendingString:scan[@"error"] ?: error.localizedDescription ?: @"本次检查未完成，可重试"]:(self.statuses[row[@"fork"]] ?: @"检查已完成");row[@"detail"]=scan[@"detail"] ?: error.localizedDescription ?: @"";
     }
-    [self updateCourseSetup:@"首次检查已结束。"];
+    BOOL pending=NO;for(AMCourseOperationContext *context in self.workflowContexts.allValues)if(!context.finished && context.kind==AMCourseWorkScan)pending=YES;self.firstCheckRunning=pending;[self updateCourseSetup:pending ? @"正在检查其他课程…":@"首次检查已结束。"];
 }
 - (void)handleSetupAction:(NSDictionary *)request {
     NSString *action=request[@"action"];

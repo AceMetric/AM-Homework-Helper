@@ -2,7 +2,7 @@
     NSDictionary *course=[self course].copy;if(!course || self.preview || self.operationsPaused)return;
     NSMutableDictionary *settings=SSRecognitionSettings().mutableCopy;settings[@"mode"]=@"local";settings[@"manualLocal"]=@YES;settings[@"forceRecognition"]=@YES;
     NSError *invalid=nil;if(!SSValidateRecognitionSettings(settings,&invalid)){[self status:@"请先在设置选择本地模型；可关闭自动分析，仅使用手动识别。"];return;}
-    [self work:@"正在准备老师来源文件…" forCourse:course operation:^id(NSError **error){self.git.recognitionSettings=@{@"mode":@"rules"};NSMutableDictionary *cache=AMScanCacheLoad(error);if(!cache)return nil;return [self.git scanCourse:course cache:cache error:error];} completion:^(NSDictionary *scan,NSError *error){
+    [self work:@"正在准备老师来源文件…" forCourse:course requestKey:@"prepare-source" priority:100 kind:AMCourseWorkScan operation:^id(NSError **error){self.git.recognitionSettings=@{@"mode":@"rules"};NSMutableDictionary *cache=AMScanCacheLoad(error);if(!cache)return nil;return [self.git scanCourse:course cache:cache error:error];} completion:^(NSDictionary *scan,NSError *error){
         if(!scan){[self showError:error];return;}if(self.operationsPaused)return;
         NSArray *documents=scan[@"documents"];if(!documents.count){[self status:@"没有可识别的老师文本文件。"];return;}
         NSAlert *choose=NSAlert.new;choose.messageText=@"用本地模型重新识别";choose.informativeText=@"勾选老师来源文件。只重新分析选中文档，不清空其他缓存，也不会自动加入模型新增的作业。";
