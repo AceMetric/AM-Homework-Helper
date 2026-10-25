@@ -1,0 +1,18 @@
+<!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires updating signatures in appcasts that reference this file! This will involve re-running generate_appcast or sign_update.
+-->
+# AM Helper 1.16.1
+
+构建 45 · 2026-10-25
+
+- 点击“提交作业”立即打开窗口，文件列表在原窗口加载；重复点击聚焦已有窗口。
+- 老师更新与本地文件选择、预览安全并行。不同本地仓库独立调度，同一仓库的写入保持互斥。
+- 启动和定时检查按课程独立执行，最多并行两门课程；手动请求优先，不中断正在进行的安全写入。
+- 等待时直接显示原因、已等待时间和取消入口。取消只影响本次请求；文件选择、提交说明和已有报告保留。
+- 文件为空或读取失败时提供刷新、打开文件夹及对应恢复操作。老师材料固定到原始提交，个人远端获取不会混入老师来源。
+
+- 文件列表增加全选与取消全选；排除项不会被选入。报告直接显示渲染结果。
+- 修复关联检查材料后反复误报文件变化、无法提交的问题；真正的文件变化仍需重新核对。
+- 支持通过格式和凭据检查的 IDX／MNIST 训练数据及单成员 gzip，最多64 MB；数据只用于提交，不自动发送给模型。其他压缩包仍需单独处理。
+
+当前构建为 Apple Silicon 版本，使用临时签名，未经 Apple 公证。
