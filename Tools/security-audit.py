@@ -22,12 +22,12 @@ PATTERNS = {
     'secret-value': rb'''(?i)["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|aws_secret_access_key)["']?\s*[:=]\s*["'][A-Za-z0-9_./+=-]{12,}["']''',
     'url-credentials': rb'https?://[^\x00\s/<>"\']+:[^\x00\s/<>"\']+@',
     'personal-home-path': rb'/Users/(?!Shared(?:/|$)|USER(?:/|$)|username(?:/|$))[A-Za-z0-9_.-]+/',
-    'personal-email': rb'(?i)(?<![A-Z0-9_.+-])(?!(?:git@github\.com|[A-Z0-9_]+@2x\.png)\b)[A-Z0-9_.+-]+@(?![A-Z0-9.-]*(?:example\.(?:com|org)|\.invalid|noreply\.github\.com|users\.noreply\.github\.com)\b)[A-Z0-9.-]+\.[A-Z]{2,}',
+    'personal-email': rb'(?i)(?<![A-Z0-9_.+-])(?!(?:git@github\.com|noreply@github\.com|[A-Z0-9_]+@2x\.png)\b)[A-Z0-9_.+-]+@(?![A-Z0-9.-]*(?:example\.(?:com|org)|\.invalid|noreply\.github\.com|users\.noreply\.github\.com)\b)[A-Z0-9.-]+\.[A-Z]{2,}',
 }
 REGEXES = {k: re.compile(v) for k, v in PATTERNS.items()}
 SENSITIVE_NAMES = re.compile(r'(?i)(?:^|/)(?:\.env(?:\.(?!example$|sample$|template$)[^/]+)?|id_rsa|id_ed25519|\.netrc|credentials(?:\.json)?)(?:$|/)|\.(?:pem|p12|pfx|key)$')
 findings = set()
-counts = {'files': 0, 'history_objects': 0, 'archives': 0, 'images_ocr': 0, 'legacy_commit_email_objects': 0}
+counts = {'files': 0, 'history_objects': 0, 'archives': 0, 'images_ocr': 0, 'personal_commit_email_objects': 0}
 seen = set()
 # Official, immutable GitHub CLI contains public upstream crypto fixtures and contacts.
 # Accept only the exact signed distribution bytes; any modification is scanned normally.
@@ -121,9 +121,8 @@ def inspect(data, label, depth=0, commit=False):
         eligible = privacy_texts if category in ('personal-email', 'personal-home-path') else texts
         if any(regex.search(text) for text in eligible):
             if category == 'personal-email' and commit:
-                counts['legacy_commit_email_objects'] += 1
-            else:
-                findings.add((label, category))
+                counts['personal_commit_email_objects'] += 1
+            findings.add((label, category))
     if data.startswith(b'PK\x03\x04'):
         counts['archives'] += 1
         if depth >= 4:

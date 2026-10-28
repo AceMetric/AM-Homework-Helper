@@ -43,6 +43,29 @@ class AuditTests(unittest.TestCase):
         SCAN(tag, 'history/tag/v1.0.0')
         self.assertEqual(GLOBALS['findings'], set())
 
+    def test_personal_author_and_committer_emails_block_history_audit(self):
+        safe = b'42+student@users.noreply.github.com'
+        for author, committer in [(self.address, safe), (safe, self.address)]:
+            with self.subTest(author_is_private=author == self.address):
+                GLOBALS['findings'].clear()
+                commit = (b'tree ' + b'a' * 40 + b'\nauthor Student <' + author +
+                          b'> 1 +0000\ncommitter Student <' + committer + b'> 1 +0000\n\nInitial commit\n')
+                SCAN(commit, 'history/commit', commit=True)
+                self.assertIn(('history/commit', 'personal-email'), GLOBALS['findings'])
+
+    def test_github_noreply_commit_is_safe(self):
+        address = b'42+student@users.noreply.github.com'
+        commit = (b'tree ' + b'a' * 40 + b'\nauthor Student <' + address +
+                  b'> 1 +0000\ncommitter Student <' + address + b'> 1 +0000\n\nInitial commit\n')
+        SCAN(commit, 'history/commit', commit=True)
+        self.assertEqual(GLOBALS['findings'], set())
+
+    def test_github_web_committer_email_is_safe_without_allowing_private_noreply(self):
+        SCAN(b'committer GitHub <noreply@github.com> 1 +0000\n', 'history/commit', commit=True)
+        self.assertEqual(GLOBALS['findings'], set())
+        SCAN(b'committer Student <noreply@' + b'private.test> 1 +0000\n', 'history/commit', commit=True)
+        self.assertIn(('history/commit', 'personal-email'), GLOBALS['findings'])
+
     def test_compressed_metadata_is_still_checked(self):
         SCAN(png(b'zTXt', b'Author\0\0' + zlib.compress(self.address)), 'preview.png')
         self.assertIn(('preview.png', 'personal-email'), GLOBALS['findings'])
