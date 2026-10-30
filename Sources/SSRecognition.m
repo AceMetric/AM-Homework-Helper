@@ -420,7 +420,7 @@ NSArray *SSCachedRecognition(NSString *repository,NSString *path,NSString *blob,
     }
     return nil;
 }
-BOOL SSExamOnlySource(NSString *text,NSString *path){NSArray *blocks=SSSourceAnalysis(text,path)[@"activities"];if(!blocks.count)return NO;for(NSDictionary *block in blocks)if(![block[@"role"] isEqual:@"exam"])return NO;return YES;}
+BOOL SSExamOnlySource(NSString *text,NSString *path){BOOL exam=NO;for(NSDictionary *block in SSSourceAnalysis(text,path)[@"activities"]){if([block[@"role"] isEqual:@"exam"])exam=YES;else if([block[@"role"] isEqual:@"requirements"])return NO;}return exam;}
 // 对完整旧缓存同样应用新归属规则。只重算规则，不重发模型，不修改任务数据库或审核草稿。
 NSArray *SSApplyActivityPolicy(NSArray *records,NSString *text,NSString *repository,NSString *path,NSString *blob,NSCalendar *calendar){
     NSArray *blocks=SSSourceAnalysis(text,path)[@"activities"];NSMutableArray *result=NSMutableArray.array;
