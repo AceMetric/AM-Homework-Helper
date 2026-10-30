@@ -2,6 +2,20 @@
 
 NS_ASSUME_NONNULL_BEGIN
 NSURL *SSDataDirectory(void);
+BOOL AMValidTimeEntries(id value);
+NSArray * _Nullable AMTimeEntries(NSError **error);
+BOOL AMSaveTimeEntries(NSArray *entries,NSError **error);
+@interface AMTimeTracker : NSObject
+@property(readonly,nullable) NSString *taskID;
+@property(readonly,nullable) NSError *lastError;
+@property(readonly) BOOL running;
++ (instancetype)shared;
+- (BOOL)startTask:(NSString *)identifier error:(NSError **)error;
+- (BOOL)pause:(NSError **)error;
+- (BOOL)checkpoint:(NSError **)error;
+- (NSTimeInterval)secondsForTask:(NSString *)identifier;
+- (void)tasksChanged:(NSArray *)tasks;
+@end
 id _Nullable SSReadPlist(NSString *name);
 BOOL SSWritePlist(NSString *name, id value, NSError **error);
 void AMUseTransientCourses(void);

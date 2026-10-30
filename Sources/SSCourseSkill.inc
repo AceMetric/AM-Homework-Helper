@@ -23,8 +23,8 @@
 }
 - (void)adjustSkillCourses:(id)sender {if(self.preview || self.operationsPaused)return;BOOL all=NO;[self chooseSkillCourses:&all];}
 - (NSArray *)retainingSkill:(NSArray *)previous current:(NSArray *)current documents:(NSArray *)documents {
-    NSMutableDictionary *byID=NSMutableDictionary.dictionary;for(NSDictionary *record in SSReconcileDiscoveryIDs(previous,current))if(record[@"id"])byID[record[@"id"]]=record;
-    for(NSDictionary *record in previous)if([record[@"recognizer"] isEqual:@"skill-v1"])for(NSDictionary *document in documents)if([record[@"path"] isEqual:document[@"path"]] && [record[@"repository"] isEqual:document[@"repository"]] && [record[@"blobSHA"] isEqual:document[@"blobSHA"]]){byID[record[@"id"]]=record;break;}
+    NSMutableDictionary *byID=NSMutableDictionary.dictionary;for(NSDictionary *record in SSReconcileDiscoveryIDs(previous,current))if(record[@"id"] && ![record[@"kind"] isEqual:@"exam"])byID[record[@"id"]]=record;
+    for(NSDictionary *record in previous)if([record[@"recognizer"] isEqual:@"skill-v1"] && ![record[@"kind"] isEqual:@"exam"])for(NSDictionary *document in documents)if([record[@"path"] isEqual:document[@"path"]] && [record[@"repository"] isEqual:document[@"repository"]] && [record[@"blobSHA"] isEqual:document[@"blobSHA"]]){byID[record[@"id"]]=record;break;}
     return [byID.allValues sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"id"] compare:b[@"id"]];}];
 }
 - (NSDictionary *)readSkillCourses:(NSArray *)courses result:(NSDictionary *)result {
@@ -39,7 +39,7 @@
         NSString *zone=course[@"timeZone"] ?: NSTimeZone.localTimeZone.name;
         for(NSDictionary *document in snapshot[@"documents"])if(![document[@"repository"] isEqual:course[@"upstream"]] || ![document[@"timeZone"] isEqual:zone])reuse=NO;
         NSDictionary *scan=reuse ? snapshot:[self.git readCourseDocuments:course paths:paths fetch:YES cache:cache error:&failure];
-        if(scan){NSMutableDictionary *withReferences=scan.mutableCopy;withReferences[@"candidates"]=self.candidates[course[@"fork"]] ?: @[];withReferences[@"materials"]=self.materials[course[@"fork"]] ?: @[];scan=withReferences;}
+        if(scan){NSMutableDictionary *withReferences=scan.mutableCopy;withReferences[@"documents"]=[scan[@"documents"] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *doc,NSDictionary *bindings){(void)bindings;return !SSExamOnlySource(doc[@"text"],doc[@"path"]);}]];withReferences[@"candidates"]=self.candidates[course[@"fork"]] ?: @[];withReferences[@"materials"]=self.materials[course[@"fork"]] ?: @[];scan=withReferences;}
         scans[course[@"fork"]]=scan ?: @{@"error":failure.localizedDescription ?: @"无法读取老师内容"};
     }
     if(!AMScanCacheSave(cache,&cacheError))for(NSDictionary *course in courses)scans[course[@"fork"]]=@{@"error":cacheError.localizedDescription ?: @"检查记录保存失败"};return scans;

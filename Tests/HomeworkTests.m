@@ -167,12 +167,12 @@ static void ParserTests(void) {
     NSArray *conflictingLines = SSAssignmentsFromDocument(@"# 作业五\n截止：2027-04-14 21:00\n最晚：2027-04-15 21:00", @"t/r", @"a.md", @"v", now, cal);
     Check(conflictingLines.count == 1 && !conflictingLines[0][@"due"] && [conflictingLines[0][@"warnings"] count], @"conflicting dates on separate lines cannot silently become two tasks");
     NSArray *exam = SSDiscoveriesFromDocument(@"# 开放题：资源安排\n请分析问题并提交答案。", @"t/r", @"intro_exam/Q4_project_assignment.md", @"v", now, cal);
-    Check(exam.count == 1 && [exam[0][@"kind"] isEqual:@"exam"], @"exam folder overrides assignment word in question filename");
+    Check(exam.count == 0, @"actual exam folders produce no recognition proposals");
     Check(SSAssignmentsFromDocument(@"# 考试\n截止：2027-04-14 21:00", @"t/r", @"exam/Q1.md", @"v", now, cal).count == 0, @"exam never enters homework inbox even with a deadline");
     NSMutableArray *questions = exam.mutableCopy;
     [questions addObjectsFromArray:SSDiscoveriesFromDocument(@"# 问题一\n请解答以下问题。", @"t/r", @"intro_exam/Q1.md", @"v", now, cal)];
     NSArray *groups = SSGroupMaterials(questions);
-    Check(groups.count == 1 && [groups[0][@"documents"] count] == 2, @"question documents group under one exam");
+    Check(groups.count == 0, @"actual exam questions are not retained as course activities");
     NSArray *classroom = SSDiscoveriesFromDocument(@"# 课堂练习\n请完成讨论题。", @"t/r", @"lesson.md", @"v", now, cal);
     Check(classroom.count == 1 && [classroom[0][@"kind"] isEqual:@"classroom"] && SSAssignmentsFromDocument(@"# 课堂练习\n请完成讨论题。", @"t/r", @"lesson.md", @"v", now, cal).count == 0, @"classroom tasks only belong to course materials");
     NSArray *mixed = SSDiscoveriesFromDocument(@"# 本周安排\n## 课堂练习\n请完成讨论题。\n## 课后作业\n截止：2027-04-14 21:00\n", @"t/r", @"README.md", @"v", now, cal);

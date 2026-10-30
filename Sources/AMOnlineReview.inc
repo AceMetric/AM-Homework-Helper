@@ -180,6 +180,21 @@ NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
 - (BOOL)hasBudget:(NSError **)error {
     NSDictionary *old=SSReadPlist(@"online-review-usage.plist");if(old && (![old isKindOfClass:NSDictionary.class] || ![old[@"day"] isKindOfClass:NSString.class] || ![old[@"count"] isKindOfClass:NSNumber.class])){if(error)*error=ORError(@"本机用量记录无法读取，已停止请求。",1);return NO;}if([old isKindOfClass:NSDictionary.class] && [old[@"day"] isEqual:DDLFormatDate(NSDate.date,@"yyyy-MM-dd")] && [old[@"count"] unsignedIntegerValue]>=20){if(error)*error=ORError(@"今日已达本机20次生成请求上限，未上传新材料。",429);return NO;}return YES;
 }
+- (NSDictionary *)scoreJSON:(NSDictionary *)input instruction:(NSString *)instruction images:(NSArray *)images error:(NSError **)error {
+    if(!AMScoringImagesValid(images)){if(error)*error=ORError(@"评分图片无效、重复或超过24MB，未发送",1);return nil;}
+    if(!ORClaim(error))return nil;@try{
+        if(self.cancelled){if(error)*error=ORError(@"评分已停止",NSUserCancelledError);return nil;}self.cleaning=NO;self.key=[self credential];if(!ORKey(self.key)){if(error)*error=ORError(ORKeyHint(),1);return nil;}
+        NSData *data=[NSJSONSerialization dataWithJSONObject:input options:0 error:error];if(!data || data.length>500000 || SSContainsSecret(data)){if(error && !*error)*error=ORError(@"评分材料过大或含疑似凭据，未发送",1);return nil;}
+        NSMutableArray *parts=NSMutableArray.array;for(NSDictionary *segment in AMScoringSegments(input,images)){if(segment[@"text"])[parts addObject:segment];else{NSDictionary *image=segment[@"image"];[parts addObject:@{@"inlineData":@{@"mimeType":image[@"mime"],@"data":image[@"base64"]}}];}}
+        NSDictionary *body=@{@"systemInstruction":@{@"parts":@[@{@"text":instruction}]},@"contents":@[@{@"role":@"user",@"parts":parts}],@"generationConfig":@{@"responseMimeType":@"application/json",@"temperature":@0,@"maxOutputTokens":@8192}};
+        if(self.cancelled){if(error)*error=ORError(@"评分已停止，未发送请求",NSUserCancelledError);return nil;}if(![self consume:error])return nil;self.requestsUsed++;
+        NSDictionary *envelope=[self json:@"POST" path:[NSString stringWithFormat:@"/v1beta/models/%@:generateContent",self.model ?: AMOnlineReviewCurrentModel()] body:body error:error];
+        NSArray *candidates=[envelope[@"candidates"] isKindOfClass:NSArray.class] ? envelope[@"candidates"]:@[];NSDictionary *candidate=candidates.firstObject;
+        if(![candidate isKindOfClass:NSDictionary.class] || ![candidate[@"finishReason"] isEqual:@"STOP"]){if(error && !*error)*error=ORError(@"评分未完整结束，未计入排名",1);return nil;}
+        NSMutableString *content=NSMutableString.string;for(NSDictionary *part in candidate[@"content"][@"parts"])if([part[@"text"] isKindOfClass:NSString.class] && ![part[@"thought"] boolValue])[content appendString:part[@"text"]];
+        id value=[NSJSONSerialization JSONObjectWithData:[content dataUsingEncoding:NSUTF8StringEncoding] options:0 error:error];if(![value isKindOfClass:NSDictionary.class] || self.cancelled){if(error && !*error)*error=ORError(@"评分格式无效或已取消",1);return nil;}return value;
+    }@finally{[self.session invalidateAndCancel];self.session=nil;self.key=nil;ORRelease();}
+}
 - (BOOL)consume:(NSError **)error {
     if(![self hasBudget:error])return NO;
     @synchronized(AMOnlineReviewClient.class){NSString *day=DDLFormatDate(NSDate.date,@"yyyy-MM-dd");NSDictionary *old=SSReadPlist(@"online-review-usage.plist");NSUInteger count=[old[@"day"] isEqual:day] ? [old[@"count"] unsignedIntegerValue]:0;if(count>=20){if(error)*error=ORError(@"今日已达本机20次生成请求上限，已停止；供应商免费额度可能更低。",429);return NO;}return SSWritePlist(@"online-review-usage.plist",@{@"day":day,@"count":@(count+1)},error);}
@@ -245,7 +260,7 @@ NSUInteger AMOnlineReviewPendingUploads(void){return ORUploads().count;}
         // Only validated evidence is persisted; discard invalid or secret-bearing provider fields.
         NSMutableArray *safeFindings=NSMutableArray.array;for(NSDictionary *issue in validated[@"issues"]){NSMutableDictionary *copy=NSMutableDictionary.dictionary;for(NSString *field in @[@"path",@"version",@"category",@"severity",@"message",@"reason",@"suggestion",@"line",@"evidence",@"region"])if(issue[field])copy[field]=issue[field];[safeFindings addObject:copy];}
         NSMutableArray *checked=NSMutableArray.array;for(NSString *path in validated[@"checked"]){for(NSDictionary *source in [context[@"documents"] arrayByAddingObjectsFromArray:context[@"images"]])if([source[@"path"] isEqual:path]){[checked addObject:@{@"path":path,@"version":source[@"version"]}];break;}}
-        NSDictionary *safe=@{@"format":@"am-preflight-results-v1",@"batchID":context[@"batchID"],@"reportVersion":context[@"reportVersion"],@"findings":safeFindings,@"checked":checked,@"unverified":validated[@"unverified"]};
+        NSDictionary *safe=@{@"requirementChecks":validated[@"requirementChecks"] ?: @[],@"format":@"am-preflight-results-v1",@"batchID":context[@"batchID"],@"reportVersion":context[@"reportVersion"],@"findings":safeFindings,@"checked":checked,@"unverified":validated[@"unverified"]};
         if([validated[@"completedUnits"] isEqual:validated[@"totalUnits"]] && !SSWritePlist(cacheName,@{@"result":safe,@"date":NSDate.date},error))return nil;
         if(!PFWrite([NSJSONSerialization dataWithJSONObject:safe options:0 error:error],[folder URLByAppendingPathComponent:@"results.local.json"],error))return nil;
         complete=!retryable;NSMutableDictionary *answer=validated.mutableCopy;answer[@"requestsUsed"]=@(self.requestsUsed);answer[@"model"]=self.model ?: AMOnlineReviewCurrentModel();answer[@"cached"]=@NO;return answer;

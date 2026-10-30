@@ -59,6 +59,7 @@ void AMShowOnlineReviewSettings(NSWindow * _Nullable parent);
 @property NSUInteger requestLimit;
 @property(readonly) NSUInteger requestsUsed;
 - (void)cancelImmediately;
+- (NSDictionary * _Nullable)scoreJSON:(NSDictionary *)input instruction:(NSString *)instruction images:(NSArray *)images error:(NSError **)error;
 #ifdef DDL_TESTING
 @property(copy,nullable) NSString * _Nullable (^credentialProvider)(void);
 @property(copy,nullable) BOOL (^waitForRetry)(NSTimeInterval seconds);

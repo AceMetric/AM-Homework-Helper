@@ -16,6 +16,8 @@ zsh verify-planning.sh
 zsh verify-schedules.sh
 zsh verify-submissions.sh
 zsh verify-workflows.sh
+zsh verify-peer-workflows.sh
+AM_UI_TEST=PeerWorkspaceUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=WorkflowUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=AIEnhancementUsage zsh verify-hybrid-ui.sh
 zsh verify-preflight.sh

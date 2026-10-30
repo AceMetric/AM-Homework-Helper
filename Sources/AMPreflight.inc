@@ -160,7 +160,7 @@ NSDictionary *AMPreflightCheckWithProgress(NSDictionary *snapshot,NSString *requ
     NSUInteger processed=0,total=[snapshot[@"paths"] count];
     NSMutableArray *issues=NSMutableArray.array,*coverage=NSMutableArray.array,*images=NSMutableArray.array;NSDictionary *files=snapshot[@"files"];
     for(NSString *path in snapshot[@"paths"]){if(progress)progress(processed++,total);if(cancelled && cancelled())return @{@"cancelled":@YES};NSDictionary *entry=files[path];if([entry[@"deleted"] boolValue])continue;
-        NSString *key=[NSString stringWithFormat:@"preflight-v3-renderer4|%@|%@",path,entry[@"version"] ?: @""];NSDictionary *cached=cache[key];
+        NSString *key=[NSString stringWithFormat:@"preflight-v4-renderer5|%@|%@",path,entry[@"version"] ?: @""];NSDictionary *cached=cache[key];
         if(!cached){NSMutableArray *found=NSMutableArray.array;NSDictionary *math=nil;NSString *text=entry[@"text"],*ext=path.pathExtension.lowercaseString,*status=@"未检查：不支持的文件类型";
             if(entry[@"problem"])[found addObject:PFIssue(@"format",@"error",path,@1,entry[@"problem"],@"",@"检查文件格式与大小后重新检查。")];
             else if([entry[@"trainingData"] boolValue]){status=@"已检查：训练数据格式与凭据；不发送给模型";}
@@ -198,7 +198,7 @@ NSDictionary *AMPreflightCheckWithProgress(NSDictionary *snapshot,NSString *requ
     [coverage addObject:@{@"path":@"",@"status":@"未检查：答案、推导、中文语义及程序运行；可交给助手复核"}];
     NSArray *sorted=[issues sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){NSArray *levels=@[@"error",@"warning",@"info"];NSUInteger x=[levels indexOfObject:a[@"severity"]],y=[levels indexOfObject:b[@"severity"]];return x<y ? NSOrderedAscending : x>y ? NSOrderedDescending:NSOrderedSame;}];
     NSMutableArray *uniqueImages=NSMutableArray.array;NSMutableSet *imagePaths=NSMutableSet.set;for(NSDictionary *image in images)if(![imagePaths containsObject:image[@"path"]]){[imagePaths addObject:image[@"path"]];[uniqueImages addObject:image];}
-    return @{@"version":AMPreflightHash([[NSString stringWithFormat:@"preflight-v3-renderer4|%@|%@",snapshot[@"version"],requirements] dataUsingEncoding:NSUTF8StringEncoding]),@"snapshotVersion":snapshot[@"version"],@"issues":sorted,@"coverage":coverage,@"images":uniqueImages,@"date":NSDate.date,@"assistant":@"未检查"};
+    return @{@"requirements":requirements ?: @"",@"version":AMPreflightHash([[NSString stringWithFormat:@"preflight-v4-renderer5|%@|%@",snapshot[@"version"],requirements] dataUsingEncoding:NSUTF8StringEncoding]),@"snapshotVersion":snapshot[@"version"],@"issues":sorted,@"coverage":coverage,@"images":uniqueImages,@"date":NSDate.date,@"assistant":@"未检查"};
 }
 static BOOL PFWrite(NSData *data,NSURL *url,NSError **error){
     if(![url.path isEqual:url.URLByResolvingSymlinksInPath.path]){if(error)*error=RError(@"交换目录不安全。");return NO;}
@@ -246,7 +246,24 @@ NSDictionary *AMPreflightValidateResult(id result,NSDictionary *context,NSError 
     for(id reason in result[@"unverified"])if([reason isKindOfClass:NSString.class] && [reason length]<1000 && !SSContainsSecret([reason dataUsingEncoding:NSUTF8StringEncoding]))[unverified addObject:reason];
     for(NSString *path in [[sources allKeys] sortedArrayUsingSelector:@selector(compare:)])if(![checked containsObject:path]){BOOL explained=NO;for(NSString *reason in unverified)if([reason hasPrefix:[path stringByAppendingString:@"："]] || [reason hasPrefix:[path stringByAppendingString:@":"]]){explained=YES;break;}if(!explained)[unverified addObject:[NSString stringWithFormat:@"%@：未返回检查结果",path]];}
     if(context[@"imageOccurrences"] && ![context[@"questionLinks"] count])[unverified addObject:@"未关联实际题目，尚未核对解答对应关系与要求完整性。"];
-    [unverified addObjectsFromArray:invalid];return @{@"issues":issues,@"unverified":unverified.array,@"excluded":excluded.array,@"checked":[checked.allObjects sortedArrayUsingSelector:@selector(compare:)],@"partial":@(unverified.count>0),@"reportVersion":context[@"reportVersion"]};
+    NSMutableArray *requirementChecks=NSMutableArray.array;
+    for(id check in [result[@"requirementChecks"] isKindOfClass:NSArray.class] ? result[@"requirementChecks"]:@[]){
+        if(![check isKindOfClass:NSDictionary.class] || ![check[@"requirement"] isKindOfClass:NSString.class] || ![check[@"requirement"] length] || ![check[@"reason"] isKindOfClass:NSString.class] || ![@[@"checked",@"issue",@"missing-material",@"unchecked"] containsObject:check[@"status"]] || ![context[@"requirements"] containsString:check[@"requirement"]])continue;
+        NSMutableDictionary *copy=[@{@"requirement":check[@"requirement"],@"status":check[@"status"],@"reason":check[@"reason"]} mutableCopy];
+        NSDictionary *source=[check[@"path"] isKindOfClass:NSString.class] ? sources[check[@"path"]]:nil;
+        BOOL grounded=source && [source[@"version"] isEqual:check[@"version"]];
+        if(grounded && source[@"text"]){
+            NSArray *lines=[source[@"text"] componentsSeparatedByString:@"\n"];id value=check[@"line"];
+            BOOL integer=[value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value)!=CFBooleanGetTypeID() && isfinite([value doubleValue]) && floor([value doubleValue])==[value doubleValue];
+            NSInteger line=integer ? [value integerValue]:0;
+            grounded=[check[@"evidence"] isKindOfClass:NSString.class] && [check[@"evidence"] length] && line>0 && line<=(NSInteger)lines.count && [[[lines subarrayWithRange:NSMakeRange(line-1,lines.count-line+1)] componentsJoinedByString:@"\n"] hasPrefix:check[@"evidence"]];
+        }else grounded=NO;
+        // 要求覆盖必须同时具备实际题目与同版本依据，模型声称“通过”本身不能打勾。
+        if((![context[@"questionLinks"] count] || !grounded) && [@[@"checked",@"issue"] containsObject:copy[@"status"]])copy[@"status"]=@"unchecked";
+        if(grounded)for(NSString *key in @[@"path",@"version",@"line",@"evidence"])copy[key]=check[key];
+        if(!SSContainsSecret([NSJSONSerialization dataWithJSONObject:copy options:0 error:NULL]))[requirementChecks addObject:copy];
+    }
+    [unverified addObjectsFromArray:invalid];return @{@"requirementChecks":requirementChecks,@"issues":issues,@"unverified":unverified.array,@"excluded":excluded.array,@"checked":[checked.allObjects sortedArrayUsingSelector:@selector(compare:)],@"partial":@(unverified.count>0),@"reportVersion":context[@"reportVersion"]};
 }
 #include "AMReportMarkdown.inc"
 static NSData *PFRead(NSURL *url,NSUInteger limit){

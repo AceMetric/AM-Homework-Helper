@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+void AMShowTaskTime(NSDictionary *task,NSWindow *parent);
 
 // Shared, system-adaptive presentation; no persisted theme selection.
 NSColor *RGB(unsigned value);

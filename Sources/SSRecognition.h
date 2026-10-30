@@ -23,6 +23,8 @@ NSDictionary * _Nullable SSSkillValidateBatch(id result, NSArray *courses, NSDic
 NSString *SSSkillProgressKey(NSString *course, NSDictionary *document);
 NSString *SSSkillVersion(NSDictionary *document);
 BOOL SSValidateCourseTemplate(NSDictionary *template, NSError **error);
+BOOL SSExamOnlySource(NSString *text, NSString *path);
+NSArray *SSApplyActivityPolicy(NSArray *records, NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar);
 NSDictionary *SSEnrichDiscovery(NSDictionary *record);
 BOOL SSCanAutomaticallyImport(NSDictionary *record, NSArray *tasks, NSDate *now);
 NSDictionary * _Nullable SSReviewedTask(NSDictionary *record, NSDictionary *draft, NSDictionary * _Nullable existing, NSError **error);
@@ -35,6 +37,9 @@ id _Nullable SSRecognitionJSONObject(NSString *content, BOOL local);
 NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings, NSMutableDictionary *cache, NSError **error);
 /// Network transport is replaceable for isolated tests; responses are never logged.
 @interface SSRecognitionClient : NSObject <NSURLSessionTaskDelegate>
+@property(atomic) BOOL scoringCancelled;
+@property(atomic) NSUInteger scoringRequestsUsed;
+- (id _Nullable)scoreJSON:(NSDictionary *)input instruction:(NSString *)instruction images:(NSArray *)images settings:(NSDictionary *)settings error:(NSError **)error;
 @property (copy, nullable) NSData * _Nullable (^transport)(NSURLRequest *request, NSError **error);
 - (NSArray * _Nullable)localModels:(NSDictionary *)settings error:(NSError **)error;
 - (id _Nullable)extract:(NSString *)text settings:(NSDictionary *)settings error:(NSError **)error;

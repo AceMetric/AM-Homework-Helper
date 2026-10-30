@@ -361,7 +361,9 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSMutableDictionary *byID=NSMutableDictionary.dictionary;for(NSDictionary *record in scan[@"candidates"])byID[record[@"id"]]=record;
     for(NSDictionary *group in scan[@"materials"])for(NSDictionary *record in group[@"documents"] ?: @[group])byID[record[@"id"]]=record;
     NSMutableArray *messages=NSMutableArray.array;NSMutableDictionary *failures=[scan[@"modelFailures"] mutableCopy] ?: NSMutableDictionary.dictionary;NSUInteger processed=0,reused=0,pending=0;NSError *persistenceFailure=nil;NSMutableSet *unsavedDocuments=NSMutableSet.set;
-    for(NSDictionary *document in scan[@"documents"]){if(paths && ![paths containsObject:document[@"path"]])continue;
+    NSMutableArray *eligibleDocuments=NSMutableArray.array;
+    for(NSDictionary *document in scan[@"documents"]){if(SSExamOnlySource(document[@"text"],document[@"path"])){[failures removeObjectForKey:document[@"path"]];for(NSString *identifier in byID.allKeys)if([byID[identifier][@"path"] isEqual:document[@"path"]] && [byID[identifier][@"repository"] isEqual:document[@"repository"]])[byID removeObjectForKey:identifier];continue;}[eligibleDocuments addObject:document];}
+    for(NSDictionary *document in eligibleDocuments){if(paths && ![paths containsObject:document[@"path"]])continue;
         if(self.readsCancellable && self.cancelledReads){[messages addObject:@"分析已取消，已完成的材料保留。"];break;}
         NSCalendar *calendar=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];calendar.timeZone=[NSTimeZone timeZoneWithName:document[@"timeZone"]] ?: NSTimeZone.localTimeZone;
         NSString *completedKey=[NSString stringWithFormat:@"model-complete-v1|%@|%@|%@|%@",[document[@"repository"] lowercaseString],document[@"path"],document[@"blobSHA"],calendar.timeZone.name];
@@ -390,7 +392,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
             failures[document[@"path"]]=@{@"path":document[@"path"],@"blobSHA":document[@"blobSHA"],@"issues":state[@"issues"] ?: failure.userInfo[@"validationIssues"] ?: @[@{@"field":@"request",@"code":@"request",@"reason":failure.localizedDescription}],@"state":state[@"state"] ?: @"failed"};
         }else [failures removeObjectForKey:document[@"path"]];
         NSMutableDictionary *rulesRequest=scoped.mutableCopy;rulesRequest[@"mode"]=@"rules";NSArray *freshRules=SSRecognizeDocument(document[@"text"],document[@"repository"],document[@"path"],document[@"blobSHA"],calendar,rulesRequest,cache,NULL);
-        found=[freshRules arrayByAddingObjectsFromArray:found ?: @[]];
+        found=SSApplyActivityPolicy([freshRules arrayByAddingObjectsFromArray:found ?: @[]],document[@"text"],document[@"repository"],document[@"path"],document[@"blobSHA"],calendar);
         NSDictionary *previousByID=byID.copy;
         // Rules are freshly parsed for the entire source even when enhancement
         // is partial. Complete reanalysis replaces all corresponding machine
@@ -406,7 +408,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     }
     NSMutableArray *assignments=NSMutableArray.array,*materials=NSMutableArray.array;for(NSDictionary *record in byID.allValues)if([record[@"kind"] isEqual:@"assignment"])[assignments addObject:record];else[materials addObject:record];
     NSMutableDictionary *result=scan.mutableCopy;result[@"candidates"]=SSAttachLinkedDocuments(SSConsolidateAssignments(assignments),scan[@"documents"]);result[@"materials"]=SSGroupMaterials(materials);pending=0;NSMutableSet *live=NSMutableSet.set;
-    for(NSDictionary *document in scan[@"documents"]){NSString *path=document[@"path"];[live addObject:path];if(failures[path] && ![failures[path][@"blobSHA"] isEqual:document[@"blobSHA"]])[failures removeObjectForKey:path];NSString *done=[NSString stringWithFormat:@"model-complete-v1|%@|%@|%@|%@",[document[@"repository"] lowercaseString],path,document[@"blobSHA"],document[@"timeZone"]];if(!cache[done] && !failures[path])pending++;}
+    for(NSDictionary *document in eligibleDocuments){NSString *path=document[@"path"];[live addObject:path];if(failures[path] && ![failures[path][@"blobSHA"] isEqual:document[@"blobSHA"]])[failures removeObjectForKey:path];NSString *done=[NSString stringWithFormat:@"model-complete-v1|%@|%@|%@|%@",[document[@"repository"] lowercaseString],path,document[@"blobSHA"],document[@"timeZone"]];if(!cache[done] && !failures[path])pending++;}
     for(NSString *path in failures.allKeys)if(![live containsObject:path])[failures removeObjectForKey:path];
     for(NSString *path in [failures.allKeys sortedArrayUsingSelector:@selector(compare:)])[messages addObject:[NSString stringWithFormat:@"%@：%@",path,[failures[path][@"issues"] firstObject][@"reason"] ?: @"识别未完成"]];
     if(persistenceFailure)result[@"persistenceIssue"]=SSRedactedText(persistenceFailure.localizedDescription);result[@"recognitionMessages"]=messages;result[@"modelFailures"]=failures;result[@"modelCompleted"]=@(failures.count==0 && pending==0 && !persistenceFailure);result[@"modelSummary"]=@{@"processed":@(processed),@"reused":@(reused),@"failed":@(failures.count),@"pending":@(pending),@"unsaved":@(unsavedDocuments.count)};return result;
@@ -432,6 +434,18 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     }
     return changes;
     }@finally{self.commandTimeout=previousTimeout;self.commandDeadline=previousDeadline;}
+}
+- (NSDictionary *)localPushStateForCourse:(NSDictionary *)course remoteCommit:(NSString *)remote error:(NSError **)error {
+    // 使用最近核验的个人远端快照，不把老师提交或全局 FETCH_HEAD 当作个人推送状态。
+    if(![remote isKindOfClass:NSString.class] || [remote rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location==NSNotFound)return @{@"known":@NO};
+    NSTimeInterval prior=self.commandTimeout;NSDate *previousDeadline=self.commandDeadline;self.commandTimeout=prior>0 ? MIN(prior,15):15;self.commandDeadline=[NSDate dateWithTimeIntervalSinceNow:15];if(previousDeadline && [previousDeadline compare:self.commandDeadline]==NSOrderedAscending)self.commandDeadline=previousDeadline;
+    @try{
+        if(![self validateCourse:course error:error])return nil;
+        NSString *range=[NSString stringWithFormat:@"%@...refs/heads/%@",remote,course[@"branch"]];
+        SSGitResult *result=[self checked:@[@"rev-list",@"--left-right",@"--count",range,@"--"] in:course[@"path"] token:nil error:error];if(!result)return nil;
+        NSArray *parts=NonemptyParts(Trim([self string:result]),@"\t");if(parts.count!=2)return @{@"known":@NO};
+        return @{@"known":@YES,@"behind":@([parts[0] integerValue]),@"ahead":@([parts[1] integerValue])};
+    }@finally{self.commandTimeout=prior;self.commandDeadline=previousDeadline;}
 }
 - (NSString *)previewForCourse:(NSDictionary *)course path:(NSString *)file error:(NSError **)error {
     NSArray *changes = [self changesForCourse:course error:error]; if (!changes) return nil;

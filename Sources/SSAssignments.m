@@ -70,19 +70,26 @@ static NSDictionary *Candidate(NSString *title, NSString *repository, NSString *
 NSString *SSActivityKindLabel(NSString *kind) {
     return @{@"assignment":@"作业", @"exam":@"考试", @"classroom":@"课上任务", @"unknown":@"待确认类型"}[kind] ?: @"待确认类型";
 }
-static NSDictionary *Classification(NSString *context, NSString *path) {
-    NSString *evidence = [NSString stringWithFormat:@"%@\n%@", path, context];
-    BOOL exam = Match(evidence, @"考试|测验|(?:^|[/_\\s-])(?:exam(?:ination)?|quiz)(?:[/_\\s.:-]|$)");
-    BOOL classroom = Match(evidence, @"课上(?:任务|练习|实验)|课堂(?:任务|练习|实验)|随堂|当堂|classroom|in[_ -]class");
-    NSString *kind = exam && classroom ? @"unknown" : exam ? @"exam" : classroom ? @"classroom" : Match(evidence, @"作业|课后|homework|assignment|problem[ _-]*set|worksheet|coursework|(?:^|[/_\\s-])hw[0-9]|提交|截止|deadline|\\bdue\\b|\\bsubmit\\b") ? @"assignment" : @"unknown";
+NSDictionary *SSClassifyActivity(NSString *context, NSString *path) {
+    NSString *evidence=[NSString stringWithFormat:@"%@\n%@",path,context];
+    NSArray *lines=[SSProseText(context) componentsSeparatedByString:@"\n"];NSString *head=[[lines subarrayWithRange:NSMakeRange(0,MIN((NSUInteger)2,lines.count))] componentsJoinedByString:@"\n"];
+    // “小测/quiz”描述的是题目形式，不代表现场考试；真正考试只看明确标题或考试目录。
+    BOOL exam=Match(path,@"(?:^|[/_ -])exam(?:ination)?s?(?:[/_. -]|$)|(?:^|/)考试(?:/|$)") || Match(head,@"考试|\\bexam(?:ination)?s?\\b");
+    BOOL classroom=Match(evidence,@"课上(?:任务|练习|实验)|课堂(?:任务|练习|实验)|随堂|当堂|classroom|in[_ -]class");
+    BOOL homework=Match(evidence,@"作业|课后|homework|assignment|problem[ _-]*set|worksheet|coursework|(?:^|[/_\\s-])hw[0-9]|提交|截止|deadline|\\bdue\\b|\\bsubmit\\b");
+    BOOL quiz=Match(evidence,@"小测|测验|\\bquiz(?:zes)?\\b|take[ -]home[ -]test");
+    if(quiz && Match(context,@"完成|提交|解答|回答|\\b(?:complete|solve|submit|answer)\\b"))homework=YES;
+    BOOL quizHomework=quiz && (Match(evidence,@"作业|课后|homework|assignment|take[ -]home") || (!classroom && homework));
+    NSString *kind=exam ? @"exam":quizHomework ? @"assignment":classroom ? @"classroom":homework ? @"assignment":@"unknown";
     if([kind isEqual:@"unknown"] && Match(evidence,@"\\b(?:lab|project)\\b") && Match(context,@"submit|implement|deliver|complete|提交|实现|完成"))kind=@"assignment";
-    return @{@"kind":kind, @"kindReason":exam && classroom ? @"考试与课堂任务线索冲突，请确认类型" : exam ? @"考试标题或所在目录" : classroom ? @"明确的课堂任务说明" : [kind isEqual:@"assignment"] ? @"作业名称或提交要求" : @"未找到明确活动类型，请确认"};
+    return @{@"kind":kind,@"kindReason":exam ? @"明确考试来源，不纳入作业识别":[kind isEqual:@"assignment"] ? @"作业布置或提交要求":classroom ? @"明确的课堂任务说明":@"未找到明确作业布置，请确认"};
 }
+
 static NSString *GroupPath(NSString *path, NSString *kind) {
     if ([kind isEqual:@"exam"] || [kind isEqual:@"classroom"]) {
         NSArray *parts = path.pathComponents;
         for (NSUInteger i = 0; i + 1 < parts.count; i++) {
-            NSDictionary *type = Classification(@"", parts[i]);
+            NSDictionary *type = SSClassifyActivity(@"", parts[i]);
             if ([type[@"kind"] isEqual:kind]) return [[parts subarrayWithRange:NSMakeRange(0, i + 1)] componentsJoinedByString:@"/"];
         }
     }
@@ -112,11 +119,11 @@ static NSArray<NSDictionary *> *LegacyDiscoveries(NSString *text, NSString *repo
         if (fence || !line.length) continue;
         if (Match(line,@"本(?:次|周)(?:不布置|没有|无)作业|(?:作业|任务).{0,12}(?:已取消|取消提交|无需提交|不需要提交)|取消.{0,10}(?:作业|任务)|no (?:homework|assignment)(?: is)? (?:assigned|due)|(?:assignment|homework).{0,12}(?:cancelled|canceled)")) continue;
         if ([line hasPrefix:@"#"] && !GenericTitle(CleanTitle(line))) { heading = CleanTitle(line); headingLine = index + 1; }
-        if ([line hasPrefix:@"#"] && !GenericTitle(CleanTitle(line)) && Match(CleanTitle(line), @"考试|测验|课上|课堂|随堂|作业|homework|assignment|exam|quiz")) [sections addObject:@{@"line":@(index), @"heading":CleanTitle(line)}];
+        if ([line hasPrefix:@"#"] && !GenericTitle(CleanTitle(line)) && Match(CleanTitle(line), @"考试|小测|测验|课上|课堂|随堂|作业|homework|assignment|exam|quiz")) [sections addObject:@{@"line":@(index), @"heading":CleanTitle(line)}];
         if(![line hasPrefix:@"#"] && !Match(line,@"^(?:[-*+]\\s*)?(?:发布|更新|published|updated|created|release)\\s*[:：]") && !Match(line,@"^[-*+]?\\s*\\[.*\\]\\(.*\\)\\s*$") && Match(line,@"[A-Za-z一-龥]{3,}"))substantive=YES;
         if (![line hasPrefix:@"#"] && !Match(line, @"^[-*+]?\\s*\\[.*\\]\\(.*\\)\\s*$") && Match(line, @"完成|提交|解答|实现|回答|必答|分析|solve|implement|submit|answer|deliver|complete|design|build")) actionable = YES;
         NSString *context = [NSString stringWithFormat:@"%@\n%@\n%@\n%@", documentTitle, heading, previous, line];
-        NSDictionary *classification = Classification(context, path);
+        NSDictionary *classification = SSClassifyActivity(context, path);
         BOOL taskCue = ![classification[@"kind"] isEqual:@"unknown"] || Match(context, @"实验|报告|最晚|\\bddl\\b");
         NSArray *matches = [Regex(datePattern) matchesInString:line options:0 range:NSMakeRange(0, line.length)]; NSMutableArray *dates = NSMutableArray.array;
         NSArray *annotations = [Regex(@"\\(\\s*(?:周|星期|礼拜)[一二三四五六日天]\\s*\\)") matchesInString:line options:0 range:NSMakeRange(0, line.length)];
@@ -157,7 +164,7 @@ static NSArray<NSDictionary *> *LegacyDiscoveries(NSString *text, NSString *repo
         if (!dates.count && ![line hasPrefix:@"#"]) previous = line;
     }
     if (!result.count) {
-        NSDictionary *classification = Classification(actionable && Match(documentTitle,@"\\b(?:lab|project)\\b") ? [documentTitle stringByAppendingString:@"\nsubmit"]:documentTitle, path); NSString *kind = classification[@"kind"];
+        NSDictionary *classification = SSClassifyActivity(actionable && Match(documentTitle,@"\\b(?:lab|project)\\b") ? [documentTitle stringByAppendingString:@"\nsubmit"]:documentTitle, path); NSString *kind = classification[@"kind"];
         BOOL explicitAssignment = [kind isEqual:@"assignment"] && Match(documentTitle, @"^(?:assignment|homework|problem[ _-]*set|worksheet|coursework|lab|project|作业)(?:[ _:#-]*[0-9一二三四五六七八九十]+|\\s+[^\\s]+)");
         if ((explicitAssignment && substantive) || (actionable && (![kind isEqual:@"unknown"] || Match(documentTitle, @"任务|练习|题目|项目|exercise|project|lab|task"))) || [kind isEqual:@"exam"] || [kind isEqual:@"classroom"]) {
             NSMutableDictionary *candidate = [Candidate(documentTitle, repository, path, blobSHA, 1, Snippet(lines, 0, @""), nil, YES, YES, counts) mutableCopy];
@@ -170,7 +177,7 @@ static NSArray<NSDictionary *> *LegacyDiscoveries(NSString *text, NSString *repo
         NSString *body = [[lines subarrayWithRange:NSMakeRange(start, end - start)] componentsJoinedByString:@"\n"];
         if (present || !Match(body, @"完成|提交|解答|实现|回答|分析|solve|implement|submit|answer")) continue;
         NSMutableDictionary *record = [Candidate(sections[i][@"heading"], repository, path, blobSHA, start + 1, Snippet(lines, start, @""), nil, YES, YES, counts) mutableCopy];
-        [record addEntriesFromDictionary:Classification(sections[i][@"heading"], path)]; record[@"warnings"] = @[@"未说明截止时间"]; [result addObject:record];
+        [record addEntriesFromDictionary:SSClassifyActivity(sections[i][@"heading"], path)]; record[@"warnings"] = @[@"未说明截止时间"]; [result addObject:record];
     }
     NSMutableArray *merged = NSMutableArray.array; NSMutableDictionary *deadlines = NSMutableDictionary.dictionary;
     for (NSMutableDictionary *record in result) {
@@ -195,7 +202,7 @@ NSArray<NSDictionary *> *SSAssignmentsFromDocument(NSString *text, NSString *rep
 NSArray<NSDictionary *> *SSGroupMaterials(NSArray<NSDictionary *> *records) {
     NSMutableArray *result = NSMutableArray.array; NSMutableDictionary *groups = NSMutableDictionary.dictionary;
     for (NSDictionary *record in records) {
-        if ([record[@"kind"] isEqual:@"assignment"]) continue;
+        if ([@[@"assignment",@"exam"] containsObject:record[@"kind"]]) continue;
         NSString *key = record[@"activityID"] ?: record[@"id"]; NSMutableDictionary *group = groups[key];
         if (!group) { group = record.mutableCopy; group[@"id"] = key; group[@"documents"] = NSMutableArray.array; groups[key] = group; [result addObject:group]; }
         [group[@"documents"] addObject:record];
@@ -211,7 +218,10 @@ static void SSCollectOwnedSubtasks(NSMutableDictionary *parent,NSMutableSet *vis
     if(parent[@"suggestedSubtasks"])parent[@"suggestedSubtasks"]=own;[parent removeObjectForKey:@"additionalSubtaskSuggestions"];if(additional.count){if(!own.count)parent[@"suggestedSubtasks"]=additional;else parent[@"additionalSubtaskSuggestions"]=additional;parent[@"requiresReview"]=@YES;}[visiting removeObject:identifier];
 }
 NSArray<NSDictionary *> *SSConsolidateAssignments(NSArray<NSDictionary *> *records) {
-    NSMutableArray *assignments=NSMutableArray.array;for(NSDictionary *record in records)if([record[@"kind"] isEqual:@"assignment"])[assignments addObject:record.mutableCopy];NSMutableSet *attached=NSMutableSet.set;NSMutableDictionary *ownership=NSMutableDictionary.dictionary;
+    // 同一来源身份只能有一条候选；保留模型增强字段，不按名称或截止时间合并独立活动。
+    NSMutableArray *assignments=NSMutableArray.array;NSMutableDictionary *seen=NSMutableDictionary.dictionary;
+    for(NSDictionary *record in records)if([record[@"kind"] isEqual:@"assignment"]){NSString *key=[NSString stringWithFormat:@"%@|%@|%@",record[@"repository"] ?: @"",record[@"path"] ?: @"",record[@"id"] ?: @""];NSMutableDictionary *existing=seen[key];if(existing){NSMutableOrderedSet *aliases=[NSMutableOrderedSet orderedSetWithArray:existing[@"legacyIDs"] ?: @[]];[aliases addObjectsFromArray:record[@"legacyIDs"] ?: @[]];NSMutableArray *children=[existing[@"suggestedSubtasks"] mutableCopy] ?: NSMutableArray.array;for(NSDictionary *child in record[@"suggestedSubtasks"] ?: @[]){BOOL duplicate=NO;for(NSDictionary *prior in children)if(child[@"sourceKey"] && [prior[@"sourceKey"] isEqual:child[@"sourceKey"]])duplicate=YES;if(!duplicate)[children addObject:child];}BOOL enhanced=![record[@"recognizer"] hasPrefix:@"rules"] && record[@"recognizer"]!=nil;if(enhanced)[existing addEntriesFromDictionary:record];existing[@"legacyIDs"]=aliases.array;if(children.count)existing[@"suggestedSubtasks"]=children;continue;}NSMutableDictionary *copy=record.mutableCopy;seen[key]=copy;[assignments addObject:copy];}
+    NSMutableSet *attached=NSMutableSet.set;NSMutableDictionary *ownership=NSMutableDictionary.dictionary;
     for(NSMutableDictionary *child in assignments){NSString *childText=child[@"relationText"] ?: child[@"snippet"] ?: @"";BOOL separate=SSSeparateSubmission(childText);NSMutableArray *parents=NSMutableArray.array;
         NSString *file=Normalized([child[@"path"] lastPathComponent]),*name=Replace(Normalized([[child[@"path"] lastPathComponent] stringByDeletingPathExtension]),@"\\s+",@"");
         for(NSMutableDictionary *parent in assignments){if(parent==child || ![parent[@"repository"] isEqual:child[@"repository"]])continue;BOOL linked=NO;

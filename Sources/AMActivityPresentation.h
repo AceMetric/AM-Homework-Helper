@@ -28,9 +28,8 @@ static inline NSDictionary *AMCourseCheckPresentation(NSDictionary *scan,NSUInte
     NSMutableArray *brief=NSMutableArray.array,*details=NSMutableArray.array;
     if([scan[@"error"] length])return @{@"summary":@"检查失败",@"details":scan[@"detail"] ?: scan[@"error"],@"warning":@YES};
     if(pending)[brief addObject:[NSString stringWithFormat:@"%lu 项待审核",(unsigned long)pending]];
-    NSUInteger exams=0,classroom=0,unknown=0;
-    for(NSDictionary *material in scan[@"materials"]){if([material[@"kind"] isEqual:@"exam"])exams++;else if([material[@"kind"] isEqual:@"classroom"])classroom++;else unknown++;}
-    if(exams)[brief addObject:[NSString stringWithFormat:@"%lu 项考试",(unsigned long)exams]];
+    NSUInteger classroom=0,unknown=0;
+    for(NSDictionary *material in scan[@"materials"]){if([material[@"kind"] isEqual:@"exam"])continue;else if([material[@"kind"] isEqual:@"classroom"])classroom++;else unknown++;}
     if(classroom)[brief addObject:[NSString stringWithFormat:@"%lu 项课上任务",(unsigned long)classroom]];
     if(unknown)[brief addObject:[NSString stringWithFormat:@"%lu 项类型待确认",(unsigned long)unknown]];
     NSUInteger failed=[scan[@"modelFailures"] count],waiting=[scan[@"modelSummary"][@"pending"] unsignedIntegerValue];
@@ -39,7 +38,6 @@ static inline NSDictionary *AMCourseCheckPresentation(NSDictionary *scan,NSUInte
     if(waiting)[brief addObject:[NSString stringWithFormat:@"%lu 份材料待增强",(unsigned long)waiting]];
     if(!brief.count)[brief addObject:@"无新增作业"];
     [details addObject:[NSString stringWithFormat:@"课后作业：%lu 项\n待审核：%lu 项",(unsigned long)[scan[@"candidates"] count],(unsigned long)pending]];
-    if(exams)[details addObject:[NSString stringWithFormat:@"考试：%lu 项",(unsigned long)exams]];
     if(classroom)[details addObject:[NSString stringWithFormat:@"课上任务：%lu 项",(unsigned long)classroom]];
     if(unknown)[details addObject:[NSString stringWithFormat:@"类型待确认：%lu 项",(unsigned long)unknown]];
     NSDictionary *counts=scan[@"scanSummary"];

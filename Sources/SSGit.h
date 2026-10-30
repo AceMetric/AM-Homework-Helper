@@ -43,6 +43,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSDictionary *)resolveSkillDates:(NSDictionary *)validated scans:(NSDictionary *)scans courses:(NSArray *)courses;
 - (NSDictionary *)enhanceScan:(NSDictionary *)scan course:(NSDictionary *)course settings:(NSDictionary *)settings paths:(nullable NSArray *)paths cache:(NSMutableDictionary *)cache;
 - (NSDictionary * _Nullable)syncCourse:(NSDictionary *)course token:(NSString *)token error:(NSError **)error;
+/// Counts relative to a previously verified personal-remote commit; does not fetch or claim freshness.
+- (NSDictionary * _Nullable)localPushStateForCourse:(NSDictionary *)course remoteCommit:(nullable NSString *)remote error:(NSError **)error;
 - (NSArray<NSDictionary *> * _Nullable)changesForCourse:(NSDictionary *)course error:(NSError **)error;
 /// Read-only, bounded, credential-redacted preview; never executes diff drivers.
 - (NSString * _Nullable)previewForCourse:(NSDictionary *)course path:(NSString *)path error:(NSError **)error;

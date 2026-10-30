@@ -66,7 +66,7 @@ int main(void){@autoreleasepool{
     Check(!SSValidatedModelResults(@[NSNull.null],text,@"t/c",@"a.md",@"v",calendar,NULL).count,@"malformed model item is harmless");
     NSString *exam=@"# 入门考试\n## Q1 project_assignment\n解答下列问题。\n";renamed=model.mutableCopy;renamed[@"evidence"]=exam;renamed[@"deadlineEvidence"]=@"";
     NSDictionary *examRecord=SSValidatedModelResults(@[renamed],exam,@"t/c",@"intro_exam/Q1.md",@"v",calendar,NULL).firstObject;
-    Check([examRecord[@"kind"] isEqual:@"exam"] && !SSCanAutomaticallyImport(examRecord,@[],NSDate.date),@"exam context wins over assignment wording/model");
+    Check(examRecord==nil,@"actual exams are excluded even when a model labels them as homework");
     Check(!SSValidateRecognitionSettings(@{@"mode":@"local",@"endpoint":@"http://external.example.invalid",@"model":@"test"},NULL),@"local mode cannot send to remote host");
     Check(!SSValidateRecognitionSettings(@{@"mode":@"cloud",@"endpoint":@"http://api.example.invalid/v1",@"model":@"test"},NULL),@"cloud requires TLS");
     Check(!SSValidateRecognitionSettings(@{@"mode":@"cloud",@"endpoint":[NSString stringWithFormat:@"https://%@%c%@@example.invalid/v1",@"synthetic-user",':',@"synthetic-secret"],@"model":@"test"},NULL),@"credentials cannot enter endpoint");

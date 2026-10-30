@@ -11,4 +11,6 @@ with tempfile.TemporaryDirectory(prefix='quiet-', dir=root / 'build/tests') as d
     environment = {k: v for k, v in os.environ.items() if k not in ('GH_TOKEN', 'GITHUB_TOKEN', 'GH_DEBUG', 'GH_CONFIG_DIR')}
     environment['AM_TEST_DATA'] = directory
     result = subprocess.run([*sys.argv[1:], '--quiet-test'], env=environment, cwd=root)
+    if result.returncode:
+        print(f"FAIL: isolated UI test exited with status {result.returncode}", file=sys.stderr)
     sys.exit(1 if result.returncode else 0)

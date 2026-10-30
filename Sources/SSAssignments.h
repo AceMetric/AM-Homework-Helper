@@ -5,6 +5,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// Rules return evidence-backed candidates; the task service decides import eligibility.
 NSArray<NSDictionary<NSString *, id> *> *SSAssignmentsFromDocument(NSString *text,
     NSString *repository, NSString *path, NSString *blobSHA, NSDate *now, NSCalendar *calendar);
+NSDictionary *SSClassifyActivity(NSString *context, NSString *path);
 BOOL SSSeparateSubmission(NSString *text);
 NSString *SSProseText(NSString *text);
 NSDictionary *SSSourceAnalysis(NSString *text, NSString *path);
@@ -12,7 +13,7 @@ NSArray *SSActivityBlocks(NSString *text, NSString *path, BOOL local);
 NSString *SSActivityAnchor(NSDictionary *block, NSUInteger count);
 NSArray *SSReconcileDiscoveryIDs(NSArray *previous, NSArray *current);
 BOOL SSIsSupportedDocument(NSString *path);
-/// All activity types; only assignment records are eligible for DDL review.
+/// Assignment and classroom proposals; actual exams are excluded from recognition.
 NSArray<NSDictionary *> *SSDiscoveriesFromDocument(NSString *text, NSString *repository,
     NSString *path, NSString *blobSHA, NSDate *now, NSCalendar *calendar);
 NSArray<NSDictionary *> *SSGroupMaterials(NSArray<NSDictionary *> *records);

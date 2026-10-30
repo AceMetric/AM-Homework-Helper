@@ -29,6 +29,7 @@ int main(void){@autoreleasepool{
     f[@"teacherCommit"]=before;
     Write([f[@"path"] stringByAppendingPathComponent:@"terminal.md"],@"Synthetic terminal answer\n");Git(f[@"path"],@[@"add",@"terminal.md"]);Git(f[@"path"],@[@"commit",@"-m",@"Terminal work"]);
     NSString *terminal=Git(f[@"path"],@[@"rev-parse",@"HEAD"]);NSArray *external=[service externalCommits:f offset:0 error:&error];
+    NSDictionary *localPush=[service localPushStateForCourse:f remoteCommit:created error:&error];Check([localPush[@"known"] boolValue] && [localPush[@"ahead"] integerValue]==1 && [localPush[@"behind"] integerValue]==0,@"course status counts an unpushed terminal commit against verified personal tip without fetching");Check(![[service localPushStateForCourse:f remoteCommit:nil error:&error][@"known"] boolValue],@"unknown remote state is not reported as zero pending commits");
     Check([external.firstObject[@"commit"] isEqual:terminal] && [external.firstObject[@"origin"] isEqual:@"external"],@"terminal commit discovered on configured branch");
     Check([external indexOfObjectPassingTest:^BOOL(NSDictionary *r,NSUInteger i,BOOL *stop){return [r[@"commit"] isEqual:before];}]==NSNotFound,@"teacher history excluded using verified cached teacher commit");
     NSMutableDictionary *externalRecord=[external.firstObject mutableCopy];externalRecord[@"id"]=NSUUID.UUID.UUIDString;externalRecord[@"repository"]=f[@"fork"];externalRecord[@"branch"]=f[@"branch"];externalRecord[@"taskIDs"]=@[];externalRecord[@"state"]=@"uncertain";

@@ -701,6 +701,9 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 #include "AMRecurrenceUI.inc"
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
+    // 将系统睡眠事件转发给独立计时存储；不在唤醒时自动重启计时。
+    static dispatch_once_t timeObserverOnce;dispatch_once(&timeObserverOnce,^{[NSWorkspace.sharedWorkspace.notificationCenter addObserverForName:NSWorkspaceWillSleepNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note){[NSNotificationCenter.defaultCenter postNotificationName:@"AMSystemWillSleep" object:nil];}];});
+
 #ifndef DDL_TESTING
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{AMOnlineReviewCleanup();});
 #endif
@@ -802,7 +805,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.exitCoordinator.persist = ^BOOL {
         if (weakSelf.preview) return YES;
         if (weakSelf.reminderScheduler && !weakSelf.reminderScheduler.safeToExit) { weakSelf.notice=@"提醒更新未确认，已暂缓退出与更新。请在提醒设置中重试。"; [weakSelf render]; return NO; }
-        NSError *error = nil; BOOL ok = [weakSelf.courseWindow persistForExit:&error]; // Task edits are already persisted transactionally; never overwrite an unreadable store on exit.
+        NSError *error = nil; BOOL ok = [AMTimeTracker.shared pause:&error] && [weakSelf.courseWindow persistForExit:&error]; // Task edits are already persisted transactionally; never overwrite an unreadable store on exit.
         if (!ok) { weakSelf.notice = @"本机数据保存失败，已暂缓退出与更新。"; [weakSelf render]; }
         return ok;
     };

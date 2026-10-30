@@ -3,6 +3,7 @@
 #import "AMOperation.h"
 #import "SSLocalData.h"
 #import "SSSecurity.h"
+#import "AMPeerCore.h"
 
 static NSError *GHError(NSString *message) { return [NSError errorWithDomain:@"SSGitHub" code:1 userInfo:@{NSLocalizedDescriptionKey:SSRedactedText(message ?: @"GitHub 请求失败")}]; }
 
@@ -23,6 +24,7 @@ static NSError *GHCancelled(void){return [NSError errorWithDomain:@"SSGitHub" co
 #endif
 @end
 @implementation SSGitHub
+#include "AMPeerGitHub.inc"
 - (instancetype)init {
     if ((self = [super init])) {
         id settings = SSReadPlist(@"settings.plist");
@@ -40,6 +42,7 @@ static NSError *GHCancelled(void){return [NSError errorWithDomain:@"SSGitHub" co
 }
 
 - (id)requestURL:(NSURL *)url form:(NSDictionary *)form token:(NSString *)token error:(NSError **)error {
+    if(self.expectedReadIdentity && ![self.expectedReadIdentity isEqual:self.authenticationIdentity]){if(error)*error=GHError(@"账户已变化，旧读取已停止，请重新打开操作");return nil;}
     NSDate *previous=self.workflowDeadline;self.workflowDeadline=[NSDate dateWithTimeIntervalSinceNow:35];AMCancellationCheck stop=AMCurrentCancellationCheck();
     @try{for(NSUInteger attempt=0;attempt<2;attempt++){
         NSError *failure=nil;NSDate *started=NSDate.date;id value=[self workflowRequestURL:url form:form token:token error:&failure];SSWorkflowDiagnostic(@"github-api",value ? @"success":@"failed",value ? @"":AMWorkflowIssue(failure),-started.timeIntervalSinceNow);if(value)return value;
@@ -194,6 +197,7 @@ static NSError *GHCancelled(void){return [NSError errorWithDomain:@"SSGitHub" co
 }
 
 - (id)api:(NSString *)path error:(NSError **)error {
+    if(self.expectedReadIdentity && ![self.expectedReadIdentity isEqual:self.authenticationIdentity]){if(error)*error=GHError(@"账户已变化，旧读取已停止");return nil;}
     NSString *token = [self accessToken:error]; if (!token) return nil;
     NSURL *url = [NSURL URLWithString:[@"https://api.github.com" stringByAppendingString:path]];
     return [self requestURL:url form:nil token:token error:error];

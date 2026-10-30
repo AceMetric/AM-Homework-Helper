@@ -16,6 +16,7 @@
 #import "AMHistoryPolling.h"
 
 #import "SSSubmission.inc"
+#import "AMPeers.inc"
 
 @interface SSCourseTable : NSTableView @end
 @implementation SSCourseTable
@@ -27,6 +28,9 @@
 static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) { ActionButton *button=Button(text,target,action,0);button.frame=frame;return button; }
 @interface SSCourseController ()
 @property AMSubmissionHistoryController *submissionHistory;
+@property AMPeerWindowController *peerWindow;
+@property NSMutableDictionary *courseLocalStates;
+@property NSMutableSet *courseStateReads;
 @property NSString *submissionTaskID;
 @property(nonatomic) SSGitHub *github;
 @property(nonatomic) SSGit *git;
@@ -166,6 +170,9 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         NSDictionary *discoveries = preview ? nil : SSReadPlist(@"discoveries.plist");
         if ([discoveries[@"candidates"] isKindOfClass:NSDictionary.class]) [self.candidates addEntriesFromDictionary:discoveries[@"candidates"]];
         if ([discoveries[@"materials"] isKindOfClass:NSDictionary.class]) [self.materials addEntriesFromDictionary:discoveries[@"materials"]];
+        // 隐藏旧识别缓存中的考试材料，不触及已保存任务；小测在下次规则检查中按原文恢复归属。
+        for(NSString *key in self.candidates.allKeys)self.candidates[key]=SSConsolidateAssignments(self.candidates[key]);
+        for(NSString *key in self.materials.allKeys){NSMutableArray *flat=NSMutableArray.array;for(NSDictionary *group in self.materials[key])[flat addObjectsFromArray:group[@"documents"] ?: @[group]];self.materials[key]=SSGroupMaterials(flat);}
         self.skillProgress=[discoveries[@"skillProgress"] isKindOfClass:NSDictionary.class] ? [discoveries[@"skillProgress"] mutableCopy] : NSMutableDictionary.dictionary;
         self.skillBatches=[discoveries[@"skillBatches"] isKindOfClass:NSDictionary.class] ? [discoveries[@"skillBatches"] mutableCopy] : NSMutableDictionary.dictionary;
         self.skillJobs=[discoveries[@"skillJobs"] isKindOfClass:NSDictionary.class] ? [discoveries[@"skillJobs"] mutableCopy]:NSMutableDictionary.dictionary;
@@ -230,7 +237,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.assistantButton=SSButton(@"助手识别",self,@selector(exportSkillContext:),NSZeroRect);[root addSubview:self.assistantButton];
     self.assistantImportButton=SSButton(@"导入助手结果…",self,@selector(importSkillResults:),NSZeroRect);[root addSubview:self.assistantImportButton];
     self.sections = Segments(@[@"课程内容", @"已加入任务", @"仓库信息", @"提交记录"], self, @selector(sectionChanged:));
-    self.typeFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.typeFilter addItemsWithTitles:@[@"全部类型", @"作业", @"课上任务", @"考试", @"待确认类型"]]; self.typeFilter.target = self; self.typeFilter.action = @selector(sectionChanged:); [root addSubview:self.typeFilter];
+    self.typeFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.typeFilter addItemsWithTitles:@[@"全部类型", @"作业", @"课上任务", @"考试", @"待确认类型"]]; [self.typeFilter itemAtIndex:3].hidden=YES; self.typeFilter.target = self; self.typeFilter.action = @selector(sectionChanged:); [root addSubview:self.typeFilter];
     self.reviewFilter = [[PastelPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]; [self.reviewFilter addItemsWithTitles:@[@"全部待审核", @"新作业", @"更新建议", @"已删除"]]; self.reviewFilter.target = self; self.reviewFilter.action = @selector(sectionChanged:); [root addSubview:self.reviewFilter];
     self.search = [[NSSearchField alloc] initWithFrame:NSZeroRect]; self.search.placeholderString = @"搜索作业或来源文件"; self.search.delegate = self; self.search.sendsSearchStringImmediately = YES; [root addSubview:self.search];
     self.statusLabel = Text(@"", 12, NSFontWeightRegular, Muted()); [root addSubview:self.statusLabel];
@@ -281,6 +288,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     self.courseWorkspace.decisionHandler=self.reviewWorkspace.decisionHandler;
     self.courseWorkspace.actionHandler=^(NSString *action,NSString *identifier){
         if([action isEqual:@"course-result"]){if([owner selectCourseID:identifier]){owner.sections.selectedSegment=0;[owner.typeFilter selectItemAtIndex:0];owner.query=@"";owner.search.stringValue=@"";[owner refreshPresentation];}return;}
+        if([action isEqual:@"course-local"]){[owner readCourseLocalState:identifier];return;}if([action isEqual:@"course-submit"]){if([owner selectCourseID:identifier])[owner commit:nil];return;}
         if([action isEqual:@"restore-notes"]){if(owner.restoreTaskNotes)owner.restoreTaskNotes(identifier);return;}
         if([action isEqual:@"edit-task"]){if(owner.editTask)owner.editTask(identifier);return;}
         if([action isEqual:@"select"]){dispatch_async(dispatch_get_main_queue(),^{
@@ -453,8 +461,10 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     add(menu,@"交给助手识别…",@selector(exportSkillContext:),YES);
     add(menu,@"识别批次与进度…",@selector(showSkillJobs:),YES);
     add(menu,@"重新分析材料…",@selector(exportAllSkillContext:),YES);
+    add(menu,@"同学作业…",@selector(showPeers:),course!=nil && self.connected);
     [menu addItem:NSMenuItem.separatorItem];
-    add(menu,@"新建课程…",@selector(newStandaloneCourse:),YES);add(menu,@"添加仓库课程…",@selector(addFork:),YES);add(menu,@"重命名课程…",@selector(renameCatalogCourse:),course!=nil);add(menu,@"关联文件夹…",@selector(linkFolder:),course!=nil);add(menu,@"下载课程…",@selector(cloneFork:),course!=nil);add(menu,@"打开文件夹",@selector(openFolder:),[course[@"path"] length]>0);
+    add(menu,@"新建课程…",@selector(newStandaloneCourse:),YES);add(menu,@"从文件夹添加…",@selector(addCoursesFromFolder:),self.connected);add(menu,@"添加仓库课程…",@selector(addFork:),YES);add(menu,@"重命名课程…",@selector(renameCatalogCourse:),course!=nil);add(menu,@"关联文件夹…",@selector(linkFolder:),course!=nil);add(menu,@"下载课程…",@selector(cloneFork:),course!=nil);add(menu,@"打开文件夹",@selector(openFolder:),[course[@"path"] length]>0);
+    add(menu,@"在编辑器中打开",@selector(openExternalEditor:),[course[@"path"] length]>0);add(menu,@"打开终端",@selector(openExternalTerminal:),[course[@"path"] length]>0);
     if([course[@"pendingMergeTip"] length])add(menu,@"处理冲突…",@selector(continueMerge:),YES);
     if([course[@"pushFailed"] boolValue])add(menu,@"重试推送",@selector(push:),YES);
     if([self.errorDetails[self.selectedFork ?: @"all"] length])add(menu,@"操作详情…",@selector(operationDetails:),YES);
@@ -497,8 +507,10 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (NSArray *)discoveriesForFork:(NSString *)fork {
     NSMutableArray *result = NSMutableArray.array;
     for (NSDictionary *item in [(self.candidates[fork] ?: @[]) arrayByAddingObjectsFromArray:self.materials[fork] ?: @[]]) {
+        if([item[@"kind"] isEqual:@"exam"])continue;
         NSMutableDictionary *copy = item.mutableCopy; NSString *kind = self.kindOverrides[item[@"id"]] ?: item[@"kind"] ?: @"assignment";
         if (![@[@"assignment", @"classroom", @"exam", @"unknown"] containsObject:kind]) kind = @"unknown";
+        if([kind isEqual:@"exam"])kind=item[@"kind"] ?: @"unknown";
         copy[@"reviewDeleted"]=@(AMReviewIsDeleted(copy));
         copy[@"automaticDeferred"]=@([self.automaticDeferrals[item[@"id"]] isEqual:item[@"blobSHA"]]);
         copy[@"kind"] = kind; if (self.kindOverrides[item[@"id"]]) copy[@"kindReason"] = @"你已手动确认类型";
@@ -527,9 +539,9 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (void)changeType:(id)sender {
     NSInteger row = self.table.selectedRow; if (self.operationsPaused || row < 0 || row >= (NSInteger)self.visible.count) return;
     NSDictionary *record = self.visible[row]; if ([record[@"confirmed"] boolValue]) return;
-    NSAlert *alert = NSAlert.new; alert.messageText = @"确认课程内容类型"; alert.informativeText = @"只有作业进入待审核清单。考试与课上任务只在课程页标注；已确认的任务不会被自动删除。";
+    NSAlert *alert = NSAlert.new; alert.messageText = @"确认课程内容类型"; alert.informativeText = @"作业进入待审核；课上任务只在课程页显示。";
     NSPopUpButton *menu = [[PastelPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 280, 32) pullsDown:NO]; [menu addItemsWithTitles:@[@"作业", @"课上任务", @"考试", @"待确认类型"]];
-    NSArray *kinds = @[@"assignment", @"classroom", @"exam", @"unknown"]; NSInteger selected = [kinds indexOfObject:record[@"kind"]]; [menu selectItemAtIndex:selected == NSNotFound ? 3 : selected]; alert.accessoryView = menu;
+    NSArray *kinds = @[@"assignment", @"classroom", @"exam", @"unknown"]; NSInteger selected = [kinds indexOfObject:record[@"kind"]]; [menu selectItemAtIndex:selected == NSNotFound ? 3 : selected]; [menu itemAtIndex:2].hidden=YES; alert.accessoryView = menu;
     [alert addButtonWithTitle:@"保存类型"]; [alert addButtonWithTitle:@"取消"];
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse answer) { if (answer == NSAlertFirstButtonReturn) { NSError *error = nil; if (![self setKind:kinds[menu.indexOfSelectedItem] forDiscovery:record error:&error]) [self showError:error]; } }];
 }
@@ -595,7 +607,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         if(activity)symbol=@"arrow.triangle.2.circlepath";
         [result addObject:@{@"id":course[@"fork"],@"name":[course[@"fork"] lastPathComponent],@"pending":@(pending),@"newCount":@(pending-updates),@"updateCount":@(updates),@"symbol":symbol,@"linked":@([course[@"path"] length]>0),@"status":activity ? (activity[@"waitReason"] ?: activity[@"stage"]):(self.reports[course[@"fork"]] ? AMCourseCheckPresentation(self.reports[course[@"fork"]],pending)[@"summary"]:(self.statuses[course[@"fork"]] ?: ([course[@"path"] length] ? @"已关联":@"待关联目录")))}];
     }
-    NSArray *catalog=AMCourseCatalog(self.courses);for(NSUInteger i=0;i<result.count;i++){NSMutableDictionary *row=[result[i] mutableCopy];for(NSDictionary *c in catalog)if([c[@"fork"] isEqual:row[@"id"]])row[@"name"]=c[@"name"];result[i]=row;}
+    NSArray *catalog=AMCourseCatalog(self.courses);for(NSUInteger i=0;i<result.count;i++){NSMutableDictionary *row=[result[i] mutableCopy];for(NSDictionary *c in catalog)if([c[@"fork"] isEqual:row[@"id"]])row[@"name"]=c[@"name"];NSDictionary *repository=[self savedCourse:@{@"fork":row[@"id"]}];row[@"teacher"]=repository[@"upstream"] ?: @"";row[@"personal"]=repository[@"fork"] ?: @"";row[@"folder"]=[repository[@"path"] lastPathComponent] ?: @"未关联";row[@"folderDetail"]=repository[@"path"] ?: @"";row[@"checked"]=repository[@"lastScan"] ? DDLFormatDate(repository[@"lastScan"],@"M/d HH:mm"):@"尚未检查";row[@"localState"]=self.courseLocalStates[row[@"id"]][@"summary"] ?: @"本地状态未读取";row[@"localFiles"]=self.courseLocalStates[row[@"id"]][@"files"] ?: @[];result[i]=row;}
     for(NSDictionary *c in catalog){BOOL represented=NO;for(NSDictionary *repository in self.courses)if([repository[@"fork"] isEqual:c[@"fork"]])represented=YES;if(!represented)[result addObject:@{@"id":c[@"id"],@"name":c[@"name"],@"pending":@0,@"symbol":@"book.closed",@"linked":@NO,@"status":@""}];}return result;
 }
 - (BOOL)selectCourseID:(NSString *)identifier {
@@ -941,6 +953,21 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     } completion:^(NSNumber *ok, NSError *error) { if (ok.boolValue || [error.userInfo[@"SSPendingPush"] boolValue]) { NSMutableDictionary *saved = [self savedCourse:course]; [saved removeObjectForKey:@"pendingMergeTip"]; [saved removeObjectForKey:@"pendingConflicts"]; [self saveCourses]; if (ok.boolValue) [self status:@"冲突合并已完成，并已推送到自己的 fork。"]; else { saved[@"pushFailed"] = @YES; [self saveCourses]; [self showError:error]; } } else [self showError:error]; }];
 }
 - (void)openFolder:(id)sender { NSString *path = [self course][@"path"]; if (path.length) [NSWorkspace.sharedWorkspace openURL:[NSURL fileURLWithPath:path]]; }
+#include "AMCourseStatus.inc"
+- (void)openExternalEditor:(id)sender {
+    NSURL *folder=[NSURL fileURLWithPath:[self course][@"path"] ?: @""];if(![self course][@"path"])return;
+    NSOpenPanel *panel=NSOpenPanel.openPanel;panel.message=@"选择用于打开课程目录的编辑器";panel.directoryURL=[NSURL fileURLWithPath:@"/Applications"];panel.canChooseDirectories=NO;panel.allowedContentTypes=@[UTTypeApplication];if([panel runModal]!=NSModalResponseOK)return;
+    [NSWorkspace.sharedWorkspace openURLs:@[folder] withApplicationAtURL:panel.URL configuration:NSWorkspaceOpenConfiguration.configuration completionHandler:^(NSRunningApplication *application,NSError *error){if(error)dispatch_async(dispatch_get_main_queue(),^{[self showError:error];});}];
+}
+- (void)openExternalTerminal:(id)sender {NSString *path=[self course][@"path"];if(!path.length)return;NSURL *terminal=[NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:@"com.apple.Terminal"];if(terminal)[NSWorkspace.sharedWorkspace openURLs:@[[NSURL fileURLWithPath:path]] withApplicationAtURL:terminal configuration:NSWorkspaceOpenConfiguration.configuration completionHandler:^(NSRunningApplication *application,NSError *error){if(error)dispatch_async(dispatch_get_main_queue(),^{[self showError:error];});}];}
+- (void)showPeers:(id)sender {
+    NSDictionary *course=[self course];if(!course)return;if(self.peerWindow.window.visible && [self.peerWindow.course[@"fork"] isEqual:course[@"fork"]]){[self.peerWindow.window makeKeyAndOrderFront:nil];return;}
+    NSMutableArray *sources=NSMutableArray.array;NSMutableSet *seen=NSMutableSet.set;for(NSDictionary *record in [self discoveriesForFork:course[@"fork"]]){NSString *path=record[@"path"] ?: record[@"sourcePath"];if(AMPeerPath(path) && ![seen containsObject:path]){[sources addObject:@{@"path":path,@"title":record[@"title"] ?: path}];[seen addObject:path];}}
+    NSAlert *alert=NSAlert.new;alert.messageText=@"选择作业范围";alert.informativeText=@"只查询这一份作业。请核对来源文件与相对目录；无法确定时不按整门课程统计。";NSStackView *form=NSStackView.new;form.orientation=NSUserInterfaceLayoutOrientationVertical;form.alignment=NSLayoutAttributeLeading;NSPopUpButton *picker=NSPopUpButton.new;for(NSDictionary *source in sources)[picker addItemWithTitle:[NSString stringWithFormat:@"%@ · %@",source[@"title"],source[@"path"]]];NSTextField *scope=[NSTextField textFieldWithString:@""];scope.placeholderString=@"作业相对目录，如 assignment-03";[form addArrangedSubview:picker];[form addArrangedSubview:scope];[scope.widthAnchor constraintEqualToConstant:500].active=YES;form.frame=NSMakeRect(0,0,500,72);alert.accessoryView=form;
+    AMPeerScopePicker *choice=AMPeerScopePicker.new;choice.picker=picker;choice.field=scope;choice.sources=sources;picker.target=choice;picker.action=@selector(changed:);objc_setAssociatedObject(picker,@selector(changed:),choice,OBJC_ASSOCIATION_RETAIN_NONATOMIC);[choice changed:nil];
+    [alert addButtonWithTitle:@"查看"];[alert addButtonWithTitle:@"取消"];if([alert runModal]!=NSAlertFirstButtonReturn)return;NSString *range=[scope.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];if(!AMPeerPath(range)){[self showError:AMPeerError(@"请选择明确的作业相对目录或文件")];return;}
+    [self.peerWindow close];self.peerWindow=[[AMPeerWindowController alloc] initWithCourse:course scope:range source:sources.count ? sources[picker.indexOfSelectedItem][@"path"]:nil];[self.peerWindow.window center];[self.peerWindow showWindow:nil];[self.peerWindow loadPage:1];
+}
 - (void)report:(id)sender {
     NSDictionary *course = [self course], *report = course ? self.reports[course[@"fork"]] : nil;
     NSMutableArray *parts = NSMutableArray.array;

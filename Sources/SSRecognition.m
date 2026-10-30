@@ -6,9 +6,13 @@
 #import "SSSecurity.h"
 #import "DDLCore.h"
 #import "DDLImport.h"
+#import "AMScoringContent.h"
 #import <CommonCrypto/CommonDigest.h>
 #include <math.h>
 
+// 服务对结构化输出的支持按端点、模型及摘要缓存；识别与评分共用，切换模型后重新判断。
+static NSMutableSet *RUnsupportedFormats(void){static NSMutableSet *cache;static dispatch_once_t once;dispatch_once(&once,^{cache=NSMutableSet.set;});return cache;}
+static NSString *RFormatKey(NSString *base,NSDictionary *settings){return [NSString stringWithFormat:@"%@|%@|%@",base,settings[@"model"],settings[@"modelDigest"] ?: @""];}
 static NSError *RError(NSString *message) { return [NSError errorWithDomain:@"AMRecognition" code:1 userInfo:@{NSLocalizedDescriptionKey:message}]; }
 // A non-streaming local response includes prompt processing and generation.
 // Keep one bounded deadline for the initial request, capability fallback and repair.
@@ -119,7 +123,7 @@ NSDictionary *SSEnrichDiscovery(NSDictionary *record) {
     }
     if (!copy[@"summary"]) {NSArray *content=summary.count ? summary.array : fallback.array;copy[@"summary"] = [content componentsJoinedByString:@"\n"];}
     if (!copy[@"submissionRequirements"]) copy[@"submissionRequirements"] = [requirements.array componentsJoinedByString:@"\n"];
-    if (!copy[@"recognizer"]) copy[@"recognizer"] = @"rules-v8";
+    if (!copy[@"recognizer"]) copy[@"recognizer"] = @"rules-v9";
     return copy;
 }
 static BOOL SameSource(NSDictionary *task, NSDictionary *record) {
@@ -244,6 +248,7 @@ NSDictionary *SSModelValidationReport(id results, NSString *text, NSString *repo
         }else {NSRange remaining=NSMakeRange(NSMaxRange(location),text.length-NSMaxRange(location));if([text rangeOfString:quote options:NSLiteralSearch range:remaining].location!=NSNotFound){reject(@"evidence",@"ambiguous",@"引用重复，需要准确行号");continue;}}
         NSUInteger evidenceEnd=line+[quote componentsSeparatedByString:@"\n"].count-1;NSDictionary *block=nil;
         for(NSDictionary *candidate in blocks)if(line>=[candidate[@"line"] unsignedIntegerValue] && evidenceEnd<=[candidate[@"endLine"] unsignedIntegerValue]){block=candidate;break;}
+        if([block[@"role"] isEqual:@"exam"]){[acceptedIndices addObject:@(itemIndex)];continue;}
         if(block && ![block[@"role"] isEqual:@"requirements"]){reject(@"evidence",@"source-role",@"材料不是有效布置要求");continue;}
         if(!block){reject(@"evidence",@"activity-boundary",@"引用跨越独立活动，请分别提取");continue;}
         BOOL deadlineInActivity=deadline.length && block && [block[@"raw"] rangeOfString:deadline options:NSLiteralSearch].location!=NSNotFound;
@@ -258,9 +263,11 @@ NSDictionary *SSModelValidationReport(id results, NSString *text, NSString *repo
         // Bind by activity ownership before considering any deadline. Adjacent
         // activities with identical dates must never claim each other's IDs.
         NSMutableDictionary *record = matched ? matched.mutableCopy : [@{@"id":[NSString stringWithFormat:@"%@|%@|model|%@",repository.lowercaseString,path,SSActivityAnchor(block,blocks.count)],@"repository":repository,@"path":path,@"line":@(line),@"blobSHA":blob,@"title":title,@"sourceTitle":title,@"snippet":block[@"raw"] ?: text,@"needsDate":@YES,@"needsTime":@YES,@"modelOnly":@YES} mutableCopy];
-        // Original exam/classroom context always wins over a model's assignment label.
-        if ([matched[@"kind"] isEqual:@"exam"] || [matched[@"kind"] isEqual:@"classroom"]) kind=matched[@"kind"];
-        if (RMatch(path,@"(?:^|[/_-])(?:exam|quiz)|考试|测验")) kind=@"exam";
+        // 共享内容分类覆盖模型对“小测”的误判；考试来源已在上方直接排除。
+        NSDictionary *classification=SSClassifyActivity([block[@"title"] stringByAppendingFormat:@"\n%@",block[@"prose"] ?: block[@"raw"]],path);
+        if([matched[@"kind"] isEqual:@"assignment"] || [matched[@"kind"] isEqual:@"classroom"])kind=matched[@"kind"];
+        else if([classification[@"kind"] isEqual:@"assignment"])kind=@"assignment";
+        if([kind isEqual:@"exam"]){[acceptedIndices addObject:@(itemIndex)];continue;}
         record[@"kind"]=kind; record[@"kindReason"]=matched[@"kindReason"] ?: @"模型提取，需确认类型";
         if (!matched || ![matched[@"kind"] isEqual:kind]) record[@"modelOnly"]=@YES;
         record[@"suggestedTitle"]=title; record[@"summary"]=item[@"summary"] ?: @""; record[@"submissionRequirements"]=item[@"submissionRequirements"] ?: @""; record[@"evidence"]=quote; record[@"recognizer"]=AMCoursePromptVersion();
@@ -293,6 +300,7 @@ NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repositor
     return report[@"records"];
 }
 @implementation SSRecognitionClient
+#include "AMScoringTransport.inc"
 - (NSString *)cloudKeyForEndpoint:(NSString *)endpoint { NSDictionary *secret=SSReadSecret(@"recognition-api");return [secret[@"endpoint"] isEqual:endpoint] ? secret[@"key"] : nil; }
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task willPerformHTTPRedirection:(NSHTTPURLResponse *)response newRequest:(NSURLRequest *)request completionHandler:(void (^)(NSURLRequest *))completionHandler { completionHandler(nil); }
 - (NSArray *)localModels:(NSDictionary *)settings error:(NSError **)error {
@@ -347,7 +355,7 @@ NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repositor
     if (!cloud) body[@"think"]=@NO;
     if (cloud) body[@"response_format"]=@{@"type":@"json_object"}; else { body[@"format"]=AMLocalCourseSchema(); body[@"options"]=@{@"temperature":@0,@"num_predict":@4096}; }
     NSString *base=[settings[@"endpoint"] stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/"]];
-    static NSMutableSet *unsupportedFormats;static dispatch_once_t capabilityOnce;dispatch_once(&capabilityOnce,^{unsupportedFormats=NSMutableSet.set;});NSString *capability=[NSString stringWithFormat:@"%@|%@|%@",base,settings[@"model"],settings[@"modelDigest"] ?: @""];@synchronized(unsupportedFormats){if([unsupportedFormats containsObject:capability])[body removeObjectForKey:@"format"];}
+    NSMutableSet *unsupportedFormats=RUnsupportedFormats();NSString *capability=RFormatKey(base,settings);@synchronized(unsupportedFormats){if([unsupportedFormats containsObject:capability])[body removeObjectForKey:@"format"];}
     NSURL *url=[NSURL URLWithString:[base stringByAppendingString:cloud ? @"/chat/completions" : @"/api/chat"]];
     NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:url]; request.HTTPMethod=@"POST"; request.timeoutInterval=MAX(0.1,budget.timeIntervalSinceNow); [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
     if (key) [request setValue:[@"Bearer " stringByAppendingString:key] forHTTPHeaderField:@"Authorization"];
@@ -399,7 +407,7 @@ NSString *SSRecognitionCacheKey(NSString *repository,NSString *path,NSString *bl
     NSArray *fields=[settings[@"mode"] isEqual:@"rules"] ? @[@"mode",@"courseTemplate"]:@[@"mode",@"endpoint",@"model",@"modelDigest",@"courseTemplate"];
     for(NSString *field in fields)if(settings[field])cacheSettings[field]=settings[field];
     NSString *configuration=[[NSJSONSerialization dataWithJSONObject:cacheSettings options:NSJSONWritingSortedKeys error:NULL] base64EncodedStringWithOptions:0];
-    return [NSString stringWithFormat:@"recognition-v10|%@|%@|%@|%@|%@|%@|%@",repository.lowercaseString,path,blob,calendar.timeZone.name,RHash(configuration ?: @""),[settings[@"mode"] isEqual:@"rules"] ? @"rules-v8":AMCoursePromptVersion(),AMCourseValidationVersion()];
+    return [NSString stringWithFormat:@"recognition-v10|%@|%@|%@|%@|%@|%@|%@",repository.lowercaseString,path,blob,calendar.timeZone.name,RHash(configuration ?: @""),[settings[@"mode"] isEqual:@"rules"] ? @"rules-v9":AMCoursePromptVersion(),AMCourseValidationVersion()];
 }
 NSArray *SSCachedRecognition(NSString *repository,NSString *path,NSString *blob,NSCalendar *calendar,NSDictionary *settings,NSMutableDictionary *cache) {
     NSString *key=SSRecognitionCacheKey(repository,path,blob,calendar,settings);
@@ -412,6 +420,25 @@ NSArray *SSCachedRecognition(NSString *repository,NSString *path,NSString *blob,
     }
     return nil;
 }
+BOOL SSExamOnlySource(NSString *text,NSString *path){NSArray *blocks=SSSourceAnalysis(text,path)[@"activities"];if(!blocks.count)return NO;for(NSDictionary *block in blocks)if(![block[@"role"] isEqual:@"exam"])return NO;return YES;}
+// 对完整旧缓存同样应用新归属规则。只重算规则，不重发模型，不修改任务数据库或审核草稿。
+NSArray *SSApplyActivityPolicy(NSArray *records,NSString *text,NSString *repository,NSString *path,NSString *blob,NSCalendar *calendar){
+    NSArray *blocks=SSSourceAnalysis(text,path)[@"activities"];NSMutableArray *result=NSMutableArray.array;
+    for(NSDictionary *rule in SSDiscoveriesFromDocument(text,repository,path,blob,NSDate.date,calendar))[result addObject:SSEnrichDiscovery(rule)];
+    NSArray *rules=result.copy;
+    for(NSDictionary *old in records){if((old[@"blobSHA"] && ![old[@"blobSHA"] isEqual:blob]) || (old[@"path"] && ![old[@"path"] isEqual:path]) || (old[@"repository"] && ![old[@"repository"] isEqual:repository]))continue;if([old[@"recognizer"] hasPrefix:@"rules"] || !old[@"recognizer"])continue;
+        NSUInteger line=[old[@"sectionLine"] unsignedIntegerValue] ?: [old[@"line"] unsignedIntegerValue];NSDictionary *block=nil;for(NSDictionary *b in blocks)if(line>=[b[@"line"] unsignedIntegerValue] && line<=[b[@"endLine"] unsignedIntegerValue]){block=b;break;}
+        if(!block && blocks.count==1)block=blocks.firstObject;if(![block[@"role"] isEqual:@"requirements"])continue;
+        NSMutableArray *matches=NSMutableArray.array;for(NSDictionary *rule in rules)if([rule[@"id"] isEqual:old[@"id"]] || ([rule[@"sectionLine"] isEqual:block[@"line"]] && [rule[@"endLine"] isEqual:block[@"endLine"]]))[matches addObject:rule];
+        NSMutableDictionary *copy=old.mutableCopy;NSDictionary *classification=SSClassifyActivity([block[@"title"] stringByAppendingFormat:@"\n%@",block[@"prose"] ?: block[@"raw"]],path);
+        if(matches.count==1){NSDictionary *rule=matches.firstObject;for(NSString *field in @[@"id",@"title",@"sourceTitle",@"legacyIDs",@"kind",@"kindReason",@"sourceRef",@"sectionLine",@"endLine"])if(rule[field])copy[field]=rule[field];}
+        else if([classification[@"kind"] isEqual:@"assignment"])copy[@"kind"]=@"assignment";
+        NSMutableOrderedSet *aliases=[NSMutableOrderedSet orderedSetWithArray:copy[@"legacyIDs"] ?: @[]];[aliases addObjectsFromArray:old[@"legacyIDs"] ?: @[]];if(old[@"id"])[aliases addObject:old[@"id"]];if(copy[@"id"])[aliases removeObject:copy[@"id"]];copy[@"legacyIDs"]=aliases.array;
+        if([copy[@"kind"] isEqual:@"exam"])continue;[result addObject:copy];
+    }
+    NSMutableArray *assignments=NSMutableArray.array,*other=NSMutableArray.array;for(NSDictionary *record in result)if([record[@"kind"] isEqual:@"assignment"])[assignments addObject:record];else [other addObject:record];
+    [other addObjectsFromArray:SSConsolidateAssignments(assignments)];return other;
+}
 #include "AMRecognitionSlices.inc"
 NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings, NSMutableDictionary *cache, NSError **error) {
     return SSRecognizeDocumentWithClient(text,repository,path,blob,calendar,settings,cache,SSRecognitionClient.new,error);
@@ -419,12 +446,13 @@ NSArray *SSRecognizeDocument(NSString *text, NSString *repository, NSString *pat
 NSArray *SSRecognizeDocumentWithClient(NSString *text, NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings, NSMutableDictionary *cache, SSRecognitionClient *client, NSError **error) {
     text=RCanonicalText(text);
     NSString *key=SSRecognitionCacheKey(repository,path,blob,calendar,settings);
-    if(![settings[@"forceRecognition"] boolValue]){NSArray *saved=SSCachedRecognition(repository,path,blob,calendar,settings,cache);if(saved)return saved;}
+    if(![settings[@"forceRecognition"] boolValue]){NSArray *saved=SSCachedRecognition(repository,path,blob,calendar,settings,cache);if(saved)return SSApplyActivityPolicy(saved,text,repository,path,blob,calendar);}
+    if(SSExamOnlySource(text,path)){cache[key]=@[];return @[];}
     NSMutableArray *found=NSMutableArray.array; for (NSDictionary *record in SSDiscoveriesFromDocument(text,repository,path,blob,NSDate.date,calendar)) [found addObject:SSEnrichDiscovery(record)];
     NSDictionary *template=settings[@"courseTemplate"];
     if ([template isKindOfClass:NSDictionary.class] && template.count && SSValidateCourseTemplate(template,NULL)) {
         NSString *title=TemplateField(text,template[@"titlePattern"]), *summary=TemplateField(text,template[@"contentPattern"]), *deadline=TemplateField(text,template[@"deadlinePattern"]);
-        if (!found.count && title.length && !RMatch(path,@"exam|quiz|example|reference|changelog|考试|测验")) {
+        if (!found.count && title.length && !RMatch(path,@"(?:^|/)exam(?:/|$)|example|reference|changelog|考试")) {
             NSMutableDictionary *record=[@{@"id":[NSString stringWithFormat:@"%@|%@|template|%@",repository.lowercaseString,path,RHash(title)],@"repository":repository,@"path":path,@"blobSHA":blob,@"line":@1,@"title":title,@"sourceTitle":title,@"kind":@"assignment",@"kindReason":@"课程模板提取，需确认类型",@"snippet":text,@"modelOnly":@YES,@"needsDate":@YES,@"needsTime":@YES,@"recognizer":@"template-v1"} mutableCopy];
             if (deadline.length) { NSArray *parsed=SSAssignmentsFromDocument([@"# 作业\n截止：" stringByAppendingString:deadline],repository,path,blob,NSDate.date,calendar); if(parsed.count==1)for(NSString *field in @[@"due",@"dateOnly",@"clock",@"needsDate",@"needsTime",@"relative",@"relativeToken",@"warnings",@"timeZone",@"dateText",@"deadlineText"])if(parsed[0][field])record[field]=parsed[0][field];record[@"line"]=@([[text substringToIndex:[text rangeOfString:deadline].location] componentsSeparatedByString:@"\n"].count); }
             [found addObject:SSEnrichDiscovery(record)];
@@ -457,6 +485,7 @@ NSArray *SSRecognizeDocumentWithClient(NSString *text, NSString *repository, NSS
         cache[stateKey]=@{@"records":report[@"records"] ?: @[],@"issues":issues,@"complete":@(!failure && [report[@"complete"] boolValue]),@"state":failure.code==NSUserCancelledError ? @"cancelled":failure.code==NSURLErrorTimedOut ? @"timeout":failure ? ([report[@"records"] count] ? @"partial":@"failed"):@"completed",@"model":settings[@"model"] ?: @"",@"prompt":AMCoursePromptVersion(),@"validation":AMCourseValidationVersion()};
     }
     // Completion never depends on whether a caller requested NSError details.
+    found=[SSApplyActivityPolicy(found,text,repository,path,blob,calendar) mutableCopy];
     if(!failure)cache[key]=found;
     if(failure && error)*error=failure;
     return found;

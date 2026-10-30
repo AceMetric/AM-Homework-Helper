@@ -793,7 +793,7 @@ private struct CourseWorkspace:View {
     }
     private var summaries:some View {
         List{ForEach(workspaceRows(state.summaries)){row in let r=row.record
-            HStack(spacing:12){VStack(alignment:.leading,spacing:6){Label(string(r,"name"),systemImage:"books.vertical").fontWeight(.medium);Text("新作业 \((r["newCount"] as? NSNumber)?.intValue ?? 0) · 更新建议 \((r["updateCount"] as? NSNumber)?.intValue ?? 0)").font(.caption);Text(string(r,"status")).font(.caption).foregroundStyle(flag(r,"failed") ? Color.orange:Color.secondary).fixedSize(horizontal:false,vertical:true)};Spacer();WorkspaceButton(title:"\((r["pending"] as? NSNumber)?.intValue ?? 0) 项待审核",enabled:true,prominent:false,identity:"course-summary-"+identifier(r)){DispatchQueue.main.async{state.action?("course-result",identifier(r))}}.fixedSize()}.padding(.vertical,8)
+            HStack(spacing:12){VStack(alignment:.leading,spacing:6){Label(string(r,"name"),systemImage:"books.vertical").fontWeight(.medium);Text("新作业 \((r["newCount"] as? NSNumber)?.intValue ?? 0) · 更新建议 \((r["updateCount"] as? NSNumber)?.intValue ?? 0)").font(.caption);Text(string(r,"status")).font(.caption).foregroundStyle(flag(r,"failed") ? Color.orange:Color.secondary).fixedSize(horizontal:false,vertical:true);if !string(r,"personal").isEmpty{Text("老师仓库："+string(r,"teacher")).font(.caption).foregroundStyle(.secondary);Text("个人仓库："+string(r,"personal")).font(.caption).foregroundStyle(.secondary);Text("本地目录："+string(r,"folder")).font(.caption).foregroundStyle(.secondary).help(string(r,"folderDetail"));Text("检查："+string(r,"checked")+" · "+string(r,"localState")).font(.caption).foregroundStyle(.secondary);DisclosureGroup("本地改动"){ForEach((r["localFiles"] as? [String] ?? []),id:\.self){Text($0).font(.caption).textSelection(.enabled)};Button("刷新状态"){state.action?("course-local",identifier(r))};Button("选择提交文件…"){state.action?("course-submit",identifier(r))}}}};Spacer();WorkspaceButton(title:"\((r["pending"] as? NSNumber)?.intValue ?? 0) 项待审核",enabled:true,prominent:false,identity:"course-summary-"+identifier(r)){DispatchQueue.main.async{state.action?("course-result",identifier(r))}}.fixedSize()}.padding(.vertical,8)
         }}.listStyle(.inset)
     }
     var body:some View {
@@ -1002,6 +1002,55 @@ private struct TaskPlanningView:View {
     @objc public var actionHandler:((String,String,String,String)->Void)? {didSet{state.action=actionHandler}}
     public override func loadView(){view=NSHostingView(rootView:TaskPlanningView(state:state))}
     @objc public func updateTask(_ task:NSDictionary){state.task=workspaceSnapshot(task) as! NSDictionary}
+}
+
+private final class PeerState:ObservableObject {
+    @Published var values:NSDictionary=[:]
+    @Published var preview:NSView?
+    @Published var page=0
+    var action:((String,String)->Void)?
+}
+private struct PeerWorkspace:View {
+    @ObservedObject var state:PeerState
+    private var peers:[NSDictionary]{state.values["peers"] as? [NSDictionary] ?? []}
+    private var files:[NSDictionary]{state.values["files"] as? [NSDictionary] ?? []}
+    private var people:some View {
+        List(selection:Binding<String?>(get:{let v=string(state.values,"selected");return v.isEmpty ? nil:v},set:{if let value=$0{state.page=1;state.action?("select",value)}})){
+            ForEach(workspaceRows(peers)){row in
+                VStack(alignment:.leading,spacing:5){
+                    HStack{if let rank=row.record["rank"] as? NSNumber{Text("\(rank). ").monospacedDigit()};Text(string(row.record,"login")).fontWeight(.medium)}
+                    Text(string(row.record,"state")).font(.caption).foregroundStyle(.secondary)
+                    if let score=row.record["effectiveScore"] as? NSDictionary{Text("\(string(score,"display")) · \(string(score,"label"))").font(.caption).foregroundStyle(.secondary)}else{Text(string(row.record,"scoreStatus")).font(.caption).foregroundStyle(.secondary)}
+                }.padding(.vertical,4).tag(identifier(row.record))
+            }
+        }.listStyle(.inset).accessibilityIdentifier("peer-people")
+    }
+    private var fileList:some View {
+        List(selection:Binding<String?>(get:{let v=string(state.values,"selectedFile");return v.isEmpty ? nil:v},set:{if let value=$0{state.page=2;state.action?("file",value)}})){
+            ForEach(workspaceRows(files)){row in VStack(alignment:.leading,spacing:4){Text(string(row.record,"path")).lineLimit(3);Text(flag(row.record,"changed") ? "作答改动":"原有文件").font(.caption).foregroundStyle(.secondary)}.tag(identifier(row.record))}
+        }.listStyle(.inset).accessibilityIdentifier("peer-files")
+    }
+    private var preview:some View {Group{if let view=state.preview{TaskNativeSupplement(content:view)}else{Text("选择文件查看").foregroundStyle(.secondary).frame(maxWidth:.infinity,maxHeight:.infinity)}}}
+    var body:some View {GeometryReader{geometry in
+        VStack(alignment:.leading,spacing:10){
+            HStack{Text("同学作业").font(.title2.bold());Spacer();if flag(state.values,"busy"){Button{state.action?("stop","")}label:{Image(systemName:"stop.circle")}.help("停止").accessibilityLabel("停止")};Button("刷新"){state.action?("refresh","")}.disabled(flag(state.values,"busy"));if flag(state.values,"more"){Button("更多同学"){state.action?("more","")}.disabled(flag(state.values,"busy"))}}
+            Text(string(state.values,"title")).font(.subheadline).lineLimit(2).textSelection(.enabled)
+            HStack{Text(string(state.values,"summary")).font(.caption).foregroundStyle(.secondary);Spacer();Picker("评分批次",selection:Binding<String>(get:{string(state.values,"groupID")},set:{state.action?("group",$0)})){ForEach(workspaceRows(state.values["groups"] as? [NSDictionary] ?? [])){row in Text(string(row.record,"title")).tag(identifier(row.record))}}.labelsHidden().frame(width:190);Picker("评分来源",selection:Binding<Int>(get:{(state.values["filter"] as? NSNumber)?.intValue ?? 0},set:{state.action?("filter",String($0))})){Text("全部").tag(0);Text("老师评分").tag(1);Text("LLM评分").tag(2)}.labelsHidden().frame(width:130)}
+            if !string(state.values,"status").isEmpty{Text(string(state.values,"status")).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)}
+            HStack{Button("核验进度"){state.action?("verify","")};Menu("评价与评分"){Button("关联老师评价…"){state.action?("feedback","")};Button("关联已有LLM评分…"){state.action?("existing-llm","")};Button("检查材料…"){state.action?("materials","")};Button("评分标准…"){state.action?("rubric","")};Button("补齐评分…"){state.action?("grade","")};Button("导入已有评分…"){state.action?("import-score","")};Button("评分依据"){state.action?("score-detail","")};Divider();Button("移除材料…"){state.action?("remove-materials","")};Button("移除评价关联…"){state.action?("remove-evaluation","")}}.disabled(string(state.values,"selected").isEmpty);Spacer();Button("在 GitHub 中查看"){state.action?("github","")}.disabled(string(state.values,"selected").isEmpty)}.disabled(flag(state.values,"busy"))
+            Divider()
+            if geometry.size.width>=900 {HSplitView{people.frame(minWidth:190,idealWidth:230,maxWidth:330);fileList.frame(minWidth:190,idealWidth:240,maxWidth:360);preview.frame(minWidth:280)}}
+            else {Picker("浏览",selection:$state.page){Text("同学").tag(0);Text("文件").tag(1);Text("预览").tag(2)}.pickerStyle(.segmented);Group{if state.page==0{people}else if state.page==1{fileList}else{preview}}.frame(maxWidth:.infinity,maxHeight:.infinity)}
+            Divider();Text(flag(state.values,"mixed") ? "只读 · 评分参考排名 · 混合来源":"只读 · 评分参考排名").font(.caption).foregroundStyle(.secondary)
+        }.padding(16).background(Color(nsColor:AMAppearance.canvas))
+    }}
+}
+@objc(AMPeerController) @MainActor public final class AMPeerController:NSViewController {
+    private let state=PeerState()
+    @objc public var actionHandler:((String,String)->Void)? {didSet{state.action=actionHandler}}
+    public override func loadView(){view=NSHostingView(rootView:PeerWorkspace(state:state))}
+    @objc public func updateState(_ value:NSDictionary){state.values=workspaceSnapshot(value) as! NSDictionary}
+    @objc public func setPreviewView(_ view:NSView?){state.preview=view}
 }
 private struct WeeklyPlanningView:View {
     @ObservedObject var state:PlanningState
@@ -1467,7 +1516,7 @@ private struct TaskFields:View {
             else {var rule=recurrence as! [String:Any];if string(recurrence,"unit") != "week" || string(recurrence,"mode") != "fixed" {rule.removeValue(forKey:"weekdays")};let end=recurrence["endMode"] as? Int ?? 0;if end != 1 {rule.removeValue(forKey:"until")};if end != 2 {rule.removeValue(forKey:"countText")};result["recurrence"]=rule}
         }
 
-        for key in ["recurrencePreview","dateHint","saveTitle","evidence","isNew","sourceLocked","series","supplementaryHeight","planningSummary","seriesImpact","courses"] {result.removeValue(forKey:key)}
+        for key in ["supportsTime","recurrencePreview","dateHint","saveTitle","evidence","isNew","sourceLocked","series","supplementaryHeight","planningSummary","seriesImpact","courses"] {result.removeValue(forKey:key)}
         return result as NSDictionary
     }
     var dirty:Bool {!effectiveValues.isEqual(baseline)}
@@ -1502,7 +1551,7 @@ private struct TaskDraftView:View {
             if !state.notice.isEmpty {Text(state.notice).font(.caption).foregroundStyle(.secondary)}
             HStack{
                 if flag(state.values,"isNew"){Button("从文字或截图录入…"){state.action?("recognize",state.values)}}
-                else {Menu("更多"){Button("检查作业文件…"){state.action?("check",state.values)};Button("提交作业…"){state.action?("submit",state.values)};Button("提交记录"){state.action?("history",state.values)}}}
+                else {if flag(state.values,"supportsTime"){Button("实际用时…"){state.action?("time",state.values)}};Menu("更多"){Button("检查作业文件…"){state.action?("check",state.values)};Button("提交作业…"){state.action?("submit",state.values)};Button("提交记录"){state.action?("history",state.values)}}}
 
                 Spacer(minLength:8);Button("取消"){state.action?("cancel",state.values)}.keyboardShortcut(.cancelAction)
                 WorkspaceButton(title:string(state.values,"saveTitle").isEmpty ? "保存":string(state.values,"saveTitle"),prominent:true,identity:"task-save",saveShortcut:true){state.save()}.fixedSize()
