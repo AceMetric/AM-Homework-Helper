@@ -16,7 +16,15 @@ NSURL *SSDataDirectory(void) {
     return [base URLByAppendingPathComponent:@"SS Homework Manager" isDirectory:YES];
 }
 
+#ifdef DDL_TESTING
+#import <stdatomic.h>
+static atomic_ulong AMReadCounter;
+unsigned long AMPlistReadCount(void){return atomic_load(&AMReadCounter);}
+#endif
 id SSReadPlist(NSString *name) {
+#ifdef DDL_TESTING
+    atomic_fetch_add(&AMReadCounter,1);
+#endif
     if ([name containsString:@"/"]) return nil;
     NSData *data = [NSData dataWithContentsOfURL:[SSDataDirectory() URLByAppendingPathComponent:name]];
     return data ? [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:NULL error:NULL] : nil;

@@ -188,7 +188,7 @@ final class ReviewState: ObservableObject {
         if targets.contains(selected){clearDraft()}
         records.removeAll{targets.contains(identifier($0))}
         if current==nil,let next=visible.first{load(next)}
-        failed=false;message="已删除 \(rows.count) 项审核建议。";didSave?()
+        feedback("已删除 \(rows.count) 项建议");didSave?()
     }
     func restore(_ rows:[NSDictionary]) {
         guard !rows.isEmpty,!saving,!paused else{return}
@@ -197,7 +197,7 @@ final class ReviewState: ObservableObject {
         lastDeleted=[];if !dirty {clearDraft()};checked=[];batchPreview=nil
         records.removeAll{row in flag(row,"reviewDeleted") && rows.contains{identifier($0)==identifier(row)}}
         if current==nil,let next=visible.first{load(next)}
-        failed=false;message="已恢复审核建议。";didSave?()
+        feedback("已恢复建议");didSave?()
     }
     func latestSource(_ id:String)->NSDictionary? {sourceResolver != nil ? sourceResolver?(id) : records.first{identifier($0)==id}}
     func pruneChecks(){checked.formIntersection(Set(visible.map(identifier)))}
@@ -294,6 +294,11 @@ final class ReviewState: ObservableObject {
         if editing {draft["subject"]=subject;draft["priority"]=priority;draft["notes"]=notes;draft["reminderOffsets"]=reminders ? reminderOffsets.sorted(by:>) : [Int]()}
         return ["record":record,"draft":draft] as NSDictionary
     }
+    func feedback(_ text:String){
+        // Success is routed to the fixed toolbar host, never inserted above the document.
+        message="";failed=false
+        NotificationCenter.default.post(name:Notification.Name("AMWorkspaceFeedback"),object:UUID().uuidString,userInfo:["text":text])
+    }
     func reject(_ text:String){message=text;failed=true}
     @discardableResult func saveCurrent(advance:Bool) -> Bool {
         guard !saving else{return false}
@@ -317,7 +322,7 @@ final class ReviewState: ObservableObject {
         records.removeAll{savedIDs.contains(identifier($0))}
         if !advance,let refreshed=records.first(where:{identifier($0)==previous}) {load(refreshed)}
         else if let next=visible.first {load(next)}else{clearDraft()}
-        message="已保存 \(payloads.count) 项作业。"
+        feedback("已保存 \(payloads.count) 项作业")
         saving=false
         didSave?()
         return true
@@ -376,7 +381,7 @@ private struct ReviewDetails: View {
 private struct ReviewFeedback:View {
     @ObservedObject var state:ReviewState
     var body:some View {
-        if !state.message.isEmpty {
+        if !state.message.isEmpty && (state.failed || state.sourceChanged) {
             VStack(alignment:.leading,spacing:8) {
                 HStack(alignment:.top){Label(state.message,systemImage:state.failed ? "exclamationmark.circle.fill":"checkmark.circle").textSelection(.enabled);Spacer();Button{state.message=""}label:{Image(systemName:"xmark")}.buttonStyle(.plain).accessibilityLabel("关闭提示")}
                 if state.sourceChanged {Button("刷新来源，保留填写"){state.reviewLatest()}}

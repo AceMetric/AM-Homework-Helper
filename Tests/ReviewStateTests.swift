@@ -57,6 +57,7 @@ import AppKit
         state.reviewLatest();state.dateConfirmed=true;state.save={_ in "存储失败"};check(!state.saveCurrent(advance:true) && state.dirty,"save failure preserves inputs")
         var captured:[NSDictionary]=[];state.save={items in captured=items;state.refresh([]);return ""}
         check(state.saveCurrent(advance:true) && !state.dirty && state.current==nil,"successful save advances without reopening a sheet")
+        check(state.message.isEmpty,"successful review does not insert a banner into the document layout")
         check(captured.count==1 && (captured[0]["draft"] as? NSDictionary)?["notes"] as? String=="自己的备注","save uses edited draft")
         state.refresh([record as NSDictionary]);state.dateConfirmed=false;check(state.payload(record as NSDictionary,editing:true)==nil,"unconfirmed manual date blocks save");check(state.dirty,"explicit date confirmation changes are protected");state.dirty=false
         var ambiguous=record;ambiguous["needsTime"]=true;ambiguous.removeValue(forKey:"due");state.load(ambiguous as NSDictionary);check(!state.hasDate && !state.dateConfirmed,"missing time not silently filled")

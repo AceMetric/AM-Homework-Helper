@@ -64,6 +64,8 @@ NSDictionary * _Nullable AMSubmissionBaseline(NSDictionary *course,NSError **err
 BOOL AMStoreSubmissionBaseline(NSDictionary *course,NSDictionary *baseline,NSDictionary *expected,NSString *epoch,NSError **error);
 BOOL AMResetSubmissionBaselines(NSError **error);
 NSDictionary *AMSubmissionCompletionPlan(NSArray *tasks,NSArray *records,NSArray *courses,NSSet *deferred);
+NSDictionary * _Nullable AMPrepareSubmissionCompletions(NSArray *previous,NSArray *courses,NSSet *deferred,NSArray *series,NSError **error);
+NSDictionary * _Nullable AMCommitSubmissionCompletions(NSDictionary *prepared,NSArray *current,NSSet *deferred,NSArray *series,NSError **error);
 NSDictionary * _Nullable AMApplySubmissionCompletions(NSArray *previous,NSArray *courses,NSSet *deferred,NSArray *series,NSDictionary *overrides,NSError **error);
 BOOL AMSaveTasksWithSubmissionDecisions(NSArray *previous,NSArray *tasks,NSArray *series,NSDictionary *overrides,NSError **error);
 void SSWorkflowDiagnostic(NSString *stage,NSString *outcome,NSString *issue,NSTimeInterval seconds);

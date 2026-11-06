@@ -443,6 +443,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property AMReminderScheduler *reminderScheduler;
 @property AMReminderMigration *reminderMigration;
 @property BOOL applyingSubmissionCompletions;
+@property BOOL submissionCompletionsPending;
 @property NSSet *lastSubmissionEditingIDs;
 @property BOOL submissionCompletionUndoAvailable;
 - (void)applyVerifiedSubmissions;
@@ -1684,22 +1685,37 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if (!self.preview) [self refreshReminders];
     [self.courseWindow refreshPresentation]; [self render]; return YES;
 }
+- (NSSet *)submissionEditingIDs {
+    NSMutableSet *deferred=[self.courseWindow.editingTaskIDs mutableCopy] ?: NSMutableSet.set;
+    if(self.editor.task[@"id"] && self.editor.hasUnsavedChanges)[deferred addObject:self.editor.task[@"id"]];
+    return deferred.copy;
+}
 - (void)applyVerifiedSubmissions {
-    if(self.preview || self.taskStoreBlocked || self.applyingSubmissionCompletions || !self.courseWindow)return;
-    self.applyingSubmissionCompletions=YES;
-    NSMutableSet *deferred=[self.courseWindow.editingTaskIDs mutableCopy];if(!deferred)deferred=NSMutableSet.set;if(self.editor.task[@"id"] && self.editor.hasUnsavedChanges)[deferred addObject:self.editor.task[@"id"]];
-    NSError *error=nil;NSDictionary *result=AMApplySubmissionCompletions([self snapshot],self.courseWindow.submissionCourses,deferred,self.recurrenceSeries ?: @[],SSCalendarOverrides(),&error);
-    if(!result){NSString *message=error.localizedDescription ?: @"自动完成未保存，请在提交记录中重试。";if(![self.notice isEqual:message]){self.notice=message;[self render];}}
-    else if([result[@"completedIDs"] count]){
-        // A completion callback can follow editor Save in the same event.
-        // Keep its undo separate so edited fields survive undoing completion.
-        while(self.taskUndo.groupingLevel>0 && !self.taskUndo.isUndoing && !self.taskUndo.isRedoing)[self.taskUndo endUndoGrouping];
-        [self.taskUndo beginUndoGrouping];[self prepareUndo:@"提交后自动完成"];[self.taskUndo endUndoGrouping];self.tasks=[DDLNormalizeTasks(result[@"tasks"]) mutableCopy];self.submissionCompletionUndoAvailable=YES;
-        self.notice=[NSString stringWithFormat:@"已完成 %lu 项",(unsigned long)[result[@"completedIDs"] count]];
-        [self refreshReminders];[self.courseWindow showSubmissionCompletion:[result[@"completedIDs"] count]];[self render];
-    }
-    self.applyingSubmissionCompletions=NO;
-    if(result)[self.courseWindow reverifyDeferredSubmissionsExcept:deferred];
+    if(self.preview || self.taskStoreBlocked || !self.courseWindow)return;
+    // Coalesce storms of course/record/editor notifications into one running and one latest pass.
+    if(self.applyingSubmissionCompletions){self.submissionCompletionsPending=YES;return;}
+    self.applyingSubmissionCompletions=YES;self.submissionCompletionsPending=NO;
+    NSArray *tasks=[self snapshot],*courses=self.courseWindow.submissionCourses,*series=self.recurrenceSeries ?: @[];NSSet *deferred=[self submissionEditingIDs];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+        NSError *failure=nil;NSDictionary *prepared=AMPrepareSubmissionCompletions(tasks,courses,deferred,series,&failure);
+        dispatch_async(dispatch_get_main_queue(),^{
+            NSError *error=failure;NSDictionary *result=nil;
+            if(!self.taskStoreBlocked && [courses isEqual:self.courseWindow.submissionCourses])result=prepared ? AMCommitSubmissionCompletions(prepared,[self snapshot],[self submissionEditingIDs],self.recurrenceSeries ?: @[],&error):nil;
+            else result=@{@"stale":@YES};
+            if([result[@"stale"] boolValue])self.submissionCompletionsPending=YES;
+            else if(!result){NSString *message=error.localizedDescription ?: @"自动完成未保存，请重试。";AMPostUIMessage(@"submissions",@"completion-save",message,AMUIMessageWarning,@"重试",^{[self applyVerifiedSubmissions];});}
+            else if([result[@"completedIDs"] count]){
+                // Completion gets its own undo group, independent of the preceding editor save.
+                while(self.taskUndo.groupingLevel>0 && !self.taskUndo.isUndoing && !self.taskUndo.isRedoing)[self.taskUndo endUndoGrouping];
+                [self.taskUndo beginUndoGrouping];[self prepareUndo:@"提交后自动完成"];[self.taskUndo endUndoGrouping];
+                self.tasks=[DDLNormalizeTasks(result[@"tasks"]) mutableCopy];self.submissionCompletionUndoAvailable=YES;
+                [self refreshReminders];[self.courseWindow showSubmissionCompletion:[result[@"completedIDs"] count]];[self render];
+            }
+            self.applyingSubmissionCompletions=NO;
+            if(self.submissionCompletionsPending)[self applyVerifiedSubmissions];
+            else if(result && ![result[@"stale"] boolValue])[self.courseWindow reverifyDeferredSubmissionsExcept:[self submissionEditingIDs]];
+        });
+    });
 }
 - (NSString *)saveReviewItems:(NSArray *)items automatic:(BOOL)automatic {
     // A bounded local trace contains only stages/outcomes, never course content,

@@ -33,11 +33,23 @@ NSArray<NSDictionary *> *DDLWeekSections(NSArray *tasks,NSDate *now,NSInteger of
     NSMutableArray *sections=NSMutableArray.array;NSMutableDictionary *byDate=NSMutableDictionary.dictionary;
     for(NSInteger i=0;i<7;i++){NSDate *date=[calendar dateByAddingUnit:NSCalendarUnitDay value:i toDate:monday options:0];NSString *key=DDLPlanKey(date,calendar);NSMutableDictionary *section=[@{@"id":key,@"label":[NSString stringWithFormat:@"%@ · %ld/%ld",@[@"周一",@"周二",@"周三",@"周四",@"周五",@"周六",@"周日"][i],(long)[calendar component:NSCalendarUnitMonth fromDate:date],(long)[calendar component:NSCalendarUnitDay fromDate:date]],@"items":NSMutableArray.array,@"date":date,@"dayInfo":DDLChinaDayInfo(date,calendar,@{})} mutableCopy];[sections addObject:section];byDate[key]=section;}
     NSMutableDictionary *overdue=[@{@"id":@"overdue",@"label":@"待重新安排",@"items":NSMutableArray.array} mutableCopy],*unplanned=[@{@"id":@"unplanned",@"label":@"尚未安排",@"items":NSMutableArray.array} mutableCopy];
-    NSString *todayKey=DDLPlanKey(today,calendar);query=[query stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSString *todayKey=DDLPlanKey(today,calendar);NSMutableDictionary *unplannedSeries=NSMutableDictionary.dictionary;query=[query stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     for(NSDictionary *task in tasks){if([task[@"completed"] boolValue] || [task[@"archived"] boolValue] || [task[@"deleted"] boolValue])continue;
         NSMutableArray *items=[NSMutableArray arrayWithObject:@{@"id":task[@"id"],@"taskID":task[@"id"],@"subtaskID":@"",@"title":task[@"title"],@"parentTitle":@"",@"plannedDate":task[@"plannedDate"] ?: @"",@"due":task[@"due"],@"subject":task[@"subject"] ?: @""}];
         for(NSDictionary *sub in task[@"subtasks"])if(![sub[@"completed"] boolValue])[items addObject:@{@"id":[NSString stringWithFormat:@"%lu:%@%@",(unsigned long)[task[@"id"] length],task[@"id"],sub[@"id"]],@"taskID":task[@"id"],@"subtaskID":sub[@"id"],@"title":sub[@"title"],@"parentTitle":task[@"title"],@"plannedDate":sub[@"plannedDate"] ?: @"",@"due":task[@"due"],@"subject":task[@"subject"] ?: @""}];
-        for(NSDictionary *item in items){NSString *search=[NSString stringWithFormat:@"%@ %@ %@ %@",item[@"title"],task[@"title"],task[@"subject"] ?: @"",task[@"notes"] ?: @""];if(query.length && ![search localizedStandardContainsString:query])continue;NSString *key=item[@"plannedDate"];NSMutableDictionary *section=!key.length ? unplanned:([key compare:todayKey]==NSOrderedAscending ? overdue:byDate[key]);if(section)[section[@"items"] addObject:item];}
+        for(NSDictionary *item in items){NSString *search=[NSString stringWithFormat:@"%@ %@ %@ %@",item[@"title"],task[@"title"],task[@"subject"] ?: @"",task[@"notes"] ?: @""];if(query.length && ![search localizedStandardContainsString:query])continue;NSString *key=item[@"plannedDate"];
+            // A recurring occurrence belongs to its due week unless explicitly planned here.
+            // Unplanned series have one representative; stored instances remain untouched.
+            NSString *family=task[@"seriesFamilyID"] ?: task[@"seriesID"];
+            BOOL recurring=family.length>0;
+            if(recurring && !key.length){
+                NSDate *end=[calendar dateByAddingUnit:NSCalendarUnitDay value:7 toDate:monday options:0];
+                if([task[@"due"] compare:monday]==NSOrderedAscending || [task[@"due"] compare:end]!=NSOrderedAscending)continue;
+            }
+            NSMutableDictionary *section=!key.length ? unplanned:(byDate[key] ?: ((offset==0 && [key compare:todayKey]==NSOrderedAscending) ? overdue:nil));
+            if(section==unplanned && recurring){NSString *identity=[NSString stringWithFormat:@"%@|%@",family,item[@"subtaskID"]];NSDictionary *old=unplannedSeries[identity];if(!old || [item[@"due"] compare:old[@"due"]]==NSOrderedAscending)unplannedSeries[identity]=item;}
+            else if(section)[section[@"items"] addObject:item];}
+
     }
-    [sections addObject:overdue];[sections addObject:unplanned];for(NSDictionary *section in sections)[section[@"items"] sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){NSComparisonResult comparison=[a[@"due"] compare:b[@"due"]];return comparison==NSOrderedSame ? [a[@"title"] localizedStandardCompare:b[@"title"]]:comparison;}];return sections;
+    [unplanned[@"items"] addObjectsFromArray:unplannedSeries.allValues];[sections addObject:overdue];[sections addObject:unplanned];for(NSDictionary *section in sections)[section[@"items"] sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){NSComparisonResult comparison=[a[@"due"] compare:b[@"due"]];return comparison==NSOrderedSame ? [a[@"title"] localizedStandardCompare:b[@"title"]]:comparison;}];return sections;
 }

@@ -60,5 +60,10 @@ int main(){@autoreleasepool{
     for(NSUInteger length=20;length<100;length++){NSString *phase=[@"abcdefghijklmnopqrstuvwxyz" stringByPaddingToLength:length withString:@"abcdefghijklmnopqrstuvwxyz" startingAtIndex:0];AMOperationProgress(active,phase,1,2);[activity refresh];Layout(activity.view);AMOperationView *row=FindOperation(activity.view,active);CGFloat required=[row heightForWidth:NSWidth(row.bounds)];Check(NSHeight(row.bounds)+1>=required,@"legacy scrollbar keeps natural phase height after viewport width changes");}
     for(NSDictionary *message in AMUIMessages())AMDismissUIMessage(message[@"scope"],message[@"id"]);AMOperationFinish(active,@"cancelled",@"已取消");[activity refresh];NSButton *dismiss=[FindOperation(activity.view,active) valueForKey:@"cancelButton"];[dismiss performClick:nil];[activity refresh];Check(NSHeight(activity.view.frame)<150,@"dismissal shrinks popover");
     NSPopover *popover=NSPopover.new;popover.contentViewController=activity;[activity setValue:popover forKey:@"popover"];Check(popover.contentSize.height<150,@"native popover receives compact size");
+    NSButton *activityButton=(id)AMActivityToolbarItem(@"feedback-layout").view;
+    NSView *workspace=app.courseWindow.courseWorkspace.view;Layout(workspace);NSRect beforeFeedback=workspace.frame;
+    [NSNotificationCenter.defaultCenter postNotificationName:@"AMWorkspaceFeedback" object:nil userInfo:@{@"text":@"已保存 1 项作业"}];
+    Check([activityButton.title isEqual:@"已保存 1 项作业"],@"review success appears in toolbar feedback host");
+    Check(NSEqualRects(workspace.frame,beforeFeedback) && activityButton.constraints.count>0,@"feedback does not mutate content geometry and toolbar width is constrained");
     [app.ticker invalidate];[app.quickTimer invalidate];[app.window orderOut:nil];[window orderOut:nil];[NSStatusBar.systemStatusBar removeStatusItem:app.statusItem];printf("PASS: %lu toolbar and activity geometry and interaction assertions\n",(unsigned long)checks);
 }return 0;}

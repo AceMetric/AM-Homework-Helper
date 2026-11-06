@@ -17,13 +17,14 @@ NSArray *AMStoredCourses(NSError **error){
     id rows=SSReadPlist(@"course-catalog.plist");if(!rows && ![NSFileManager.defaultManager fileExistsAtPath:[SSDataDirectory() URLByAppendingPathComponent:@"course-catalog.plist"].path])return @[];
     if(AMValidCourseCatalog(rows))return rows;if(error)*error=[NSError errorWithDomain:@"AMCourses" code:1 userInfo:@{NSLocalizedDescriptionKey:@"课程目录无法读取，原文件已保留"}];return nil;
 }
-NSArray *AMCourseCatalog(NSArray *repositories){
-    NSMutableArray *rows=[AMStoredCourses(NULL) mutableCopy] ?: NSMutableArray.array;
+static NSArray *AMCourseCatalogFromSnapshot(NSArray *stored,NSArray *repositories){
+    NSMutableArray *rows=[stored mutableCopy] ?: NSMutableArray.array;
     if(![repositories isKindOfClass:NSArray.class])return rows;
     for(NSDictionary *repository in repositories){NSString *fork=repository[@"fork"];if(!fork.length)continue;NSUInteger index=[rows indexOfObjectPassingTest:^BOOL(NSDictionary *row,NSUInteger i,BOOL *stop){(void)i;(void)stop;return [row[@"fork"] caseInsensitiveCompare:fork]==NSOrderedSame && row[@"fork"]!=nil;}];
         NSMutableDictionary *row=index==NSNotFound ? [@{@"id":AMRepositoryCourseID(fork),@"name":fork.lastPathComponent,@"fork":fork} mutableCopy]:[rows[index] mutableCopy];if(repository[@"upstream"])row[@"upstream"]=repository[@"upstream"];if(index==NSNotFound)[rows addObject:row];else rows[index]=row;}
     if(AMTransientCourses)AMTransientCourses=rows.mutableCopy;return rows;
 }
+NSArray *AMCourseCatalog(NSArray *repositories){return AMCourseCatalogFromSnapshot(AMStoredCourses(NULL),repositories);}
 BOOL AMSaveCourseCatalog(NSArray *courses,NSError **error){
     if(!AMStoredCourses(error))return NO;if(!AMValidCourseCatalog(courses)){if(error)*error=[NSError errorWithDomain:@"AMCourses" code:2 userInfo:@{NSLocalizedDescriptionKey:@"课程名称或关联无效"}];return NO;}if(AMTransientCourses){AMTransientCourses=courses.mutableCopy;return YES;}return SSWritePlist(@"course-catalog.plist",courses,error);
 }

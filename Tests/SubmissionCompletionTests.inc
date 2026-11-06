@@ -4,6 +4,15 @@ static void CompletionAssertions(void){
     NSDictionary *course=@{@"fork":@"student/course",@"upstream":@"teacher/course",@"branch":@"main"};
     NSMutableDictionary *task=CompletionTask(@"answer",@"assignment-1/README.md"),*record=CompletionRecord(@[@"assignment-1/assignment.md"]);
     NSDictionary *(^plan)(NSArray *,NSArray *,NSSet *)=^NSDictionary *(NSArray *tasks,NSArray *records,NSSet *deferred){return AMSubmissionCompletionPlan(tasks,records,@[course],deferred);};
+    extern unsigned long AMPlistReadCount(void);
+    NSMutableArray *manyTasks=NSMutableArray.array,*manyRecords=NSMutableArray.array,*manyCourses=NSMutableArray.array;
+    for(NSUInteger i=0;i<5;i++)[manyCourses addObject:@{@"fork":[NSString stringWithFormat:@"student/course%lu",(unsigned long)i],@"upstream":@"teacher/course",@"branch":@"main"}];
+    for(NSUInteger i=0;i<82;i++){NSMutableDictionary *row=CompletionTask([NSString stringWithFormat:@"task-%lu",(unsigned long)i],@"assignment-1/README.md");row[@"courseID"]=AMRepositoryCourseID(manyCourses[i%5][@"fork"]);[manyTasks addObject:row];}
+    for(NSUInteger i=0;i<107;i++){NSMutableDictionary *row=CompletionRecord(@[@"assignment-1/answer.md"]);row[@"repository"]=manyCourses[i%5][@"fork"];row[@"taskIDs"]=@[manyTasks[i%82][@"id"]];[manyRecords addObject:row];}
+    unsigned long reads=AMPlistReadCount();CFAbsoluteTime began=CFAbsoluteTimeGetCurrent();
+    NSDictionary *large=AMSubmissionCompletionPlan(manyTasks,manyRecords,manyCourses,NSSet.set);
+    Check(large!=nil && AMPlistReadCount()-reads<=1,@"82 tasks and 107 records read catalog once, never inside matching loops");
+    Check(CFAbsoluteTimeGetCurrent()-began<0.1,@"representative completion calculation stays below 100ms in isolated test");
     NSDictionary *result=plan(@[task],@[record],NSSet.set);
     Check([result[@"completedIDs"] isEqual:@[@"answer"]],@"answer Markdown maps to its unique teacher README task");NSDictionary *completed=result[@"tasks"][0];
     Check([completed[@"subtasks"][0][@"completed"] boolValue] && completed[@"completedAt"] && completed[@"completionEvidence"],@"completion uses normal children and timestamp semantics with evidence");
@@ -43,6 +52,12 @@ static void CompletionAssertions(void){
     NSDictionary *recurringResult=AMApplySubmissionCompletions(@[recurring],@[course],NSSet.set,@[series],@{},&error);Check([recurringResult[@"tasks"] count]==2 && [recurringResult[@"completedIDs"] count]==1,@"automatic completion generates exactly one completion-based successor");Check(!recurringResult[@"tasks"][1][@"completionEvidence"] && ![recurringResult[@"tasks"][1][@"completed"] boolValue],@"successor starts pending without prior submission evidence");NSDictionary *again=AMApplySubmissionCompletions(recurringResult[@"tasks"],@[course],NSSet.set,@[series],@{},&error);Check([again[@"tasks"] count]==2 && ![again[@"completedIDs"] count],@"repeat callbacks cannot create another successor");Check(AMSaveTasksWithSubmissionDecisions(again[@"tasks"],@[task],@[],@{},&error),@"reset isolated recurrence fixture");
     // Force a journal destination failure and ensure the task stays pending.
     record[@"completionEpoch"]=AMSubmissionAutomation(NULL)[@"epoch"];[record removeObjectForKey:@"completionDecisions"];record[@"id"]=NSUUID.UUID.UUIDString;record[@"commit"]=[@"d" stringByPaddingToLength:40 withString:@"d" startingAtIndex:0];Check(SSWritePlist(@"submission-records.plist",@[record],&error),@"persist another eligible commit");NSURL *intent=[SSDataDirectory() URLByAppendingPathComponent:@"backup-transaction.plist"];Check([NSFileManager.defaultManager createDirectoryAtURL:intent withIntermediateDirectories:NO attributes:nil error:&error],@"simulate unavailable transaction destination");Check(!AMApplySubmissionCompletions(@[task],@[course],NSSet.set,@[],@{},&error),@"failed atomic save cannot report successful completion");Check([NSFileManager.defaultManager removeItemAtURL:intent error:&error],@"remove fixture obstruction");Check(![SSLoadTasks(NULL)[0][@"completed"] boolValue] && !AMSubmissionRecords(NULL)[0][@"completionDecisions"],@"failed save keeps task and decisions unchanged");
+    NSDictionary *prepared=AMPrepareSubmissionCompletions(@[task],@[course],NSSet.set,@[],&error);
+    NSMutableDictionary *edited=task.mutableCopy;edited[@"notes"]=@"Editing after snapshot";
+    Check([AMCommitSubmissionCompletions(prepared,@[edited],NSSet.set,@[],&error)[@"stale"] boolValue],@"late completion never overwrites changed task fields");
+    NSArray *beforeRecords=AMSubmissionRecords(NULL);
+    Check([AMCommitSubmissionCompletions(prepared,@[task],[NSSet setWithObject:task[@"id"]],@[],&error)[@"stale"] boolValue],@"opening a dirty editor after calculation defers completion");
+    Check([AMSubmissionRecords(NULL) isEqual:beforeRecords],@"stale completion preserves decisions and undo evidence");
     NSDictionary *beforeAssociation=AMSubmissionRecords(NULL)[0];Check(AMAssociateSubmission(beforeAssociation[@"id"],@[@"other-task"],&error),@"save explicit association atomically");Check(AMStoreSubmission(beforeAssociation,&error) && [AMSubmissionRecords(NULL)[0][@"taskIDs"] isEqual:@[@"other-task"]],@"late remote verification cannot overwrite new user association");Check(AMAssociateSubmission(beforeAssociation[@"id"],@[],&error) && AMStoreSubmission(beforeAssociation,&error) && ![AMSubmissionRecords(NULL)[0][@"taskIDs"] count],@"late verification also preserves explicitly cleared association");
 
 }
