@@ -2,6 +2,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 @interface SSGitHub : NSObject
+@property(strong, nullable) NSDate *requestDeadline;
 @property(atomic) BOOL requestsCancelled;
 @property (copy) NSString *clientID;
 @property (copy) NSString *authType; // githubCLI, oauth or githubApp; never inferred from a token

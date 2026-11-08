@@ -43,7 +43,12 @@ static NSError *GHCancelled(void){return [NSError errorWithDomain:@"SSGitHub" co
 
 - (id)requestURL:(NSURL *)url form:(NSDictionary *)form token:(NSString *)token error:(NSError **)error {
     if(self.expectedReadIdentity && ![self.expectedReadIdentity isEqual:self.authenticationIdentity]){if(error)*error=GHError(@"账户已变化，旧读取已停止，请重新打开操作");return nil;}
-    NSDate *previous=self.workflowDeadline;self.workflowDeadline=[NSDate dateWithTimeIntervalSinceNow:35];AMCancellationCheck stop=AMCurrentCancellationCheck();
+    NSDate *previous=self.workflowDeadline;
+    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:35];
+    if(self.requestDeadline && [self.requestDeadline compare:deadline]==NSOrderedAscending)deadline=self.requestDeadline;
+    if(deadline.timeIntervalSinceNow<=0){if(error)*error=AMWorkflowError(@"timeout",@"GitHub 读取超时",nil);return nil;}
+    self.workflowDeadline=deadline;
+    AMCancellationCheck stop=AMCurrentCancellationCheck();
     @try{for(NSUInteger attempt=0;attempt<2;attempt++){
         NSError *failure=nil;NSDate *started=NSDate.date;id value=[self workflowRequestURL:url form:form token:token error:&failure];SSWorkflowDiagnostic(@"github-api",value ? @"success":@"failed",value ? @"":AMWorkflowIssue(failure),-started.timeIntervalSinceNow);if(value)return value;
         NSDate *retryAt=failure.userInfo[@"AMRetryAt"];NSTimeInterval delay=retryAt ? MAX(1,retryAt.timeIntervalSinceNow):1;

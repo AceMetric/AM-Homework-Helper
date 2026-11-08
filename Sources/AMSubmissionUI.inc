@@ -33,14 +33,14 @@
 }
 
 - (void)recoverSubmissionRecords {
-    if(self.preview || !self.connected || self.operationsPaused)return;
+    if(self.preview || !self.connected || self.operationsPaused || [self automaticRemoteWorkDeferred])return;
     NSMutableArray *pending=NSMutableArray.array;for(NSDictionary *record in AMSubmissionRecords(NULL))if([@[@"running",@"uncertain"] containsObject:record[@"state"]] && !record[@"checkedAt"])[pending addObject:record];if(!pending.count)return;
     NSArray *courses=self.courses.copy;
     [self work:@"只读恢复提交记录…" forCourse:nil operation:^id(NSError **error){NSString *token=[self.github accessToken:error];if(!token)return nil;for(NSDictionary *record in pending){for(NSDictionary *course in courses)if([course[@"fork"] isEqual:record[@"repository"]]){NSError *failure=nil;NSDictionary *verified=[self.git verifySubmission:record course:course token:token retry:NO error:&failure];if(!verified){NSMutableDictionary *pendingRecord=record.mutableCopy;pendingRecord[@"checkedAt"]=NSDate.date;pendingRecord[@"state"]=@"uncertain";pendingRecord[@"issue"]=@"verification-pending";AMStoreSubmission(pendingRecord,NULL);}}}return @YES;} completion:^(id result,NSError *error){if(error)[self status:@"未能核验历史提交，可在提交记录中重试；没有重新提交或推送。" ];}];
 }
 
 - (void)reverifyDeferredSubmissionsExcept:(NSSet *)editing {
-    if(self.preview || !self.connected || self.operationsPaused || !AMSubmissionAutoCompletionEnabled())return;
+    if(self.preview || !self.connected || self.operationsPaused || [self automaticRemoteWorkDeferred] || !AMSubmissionAutoCompletionEnabled())return;
     if(!self.completionReverifyTimes)self.completionReverifyTimes=NSMutableDictionary.dictionary;NSString *epoch=AMSubmissionAutomation(NULL)[@"epoch"] ?: @"initial";
     for(NSDictionary *record in AMSubmissionRecords(NULL))if([(record[@"completionEpoch"] ?: @"initial") isEqual:epoch] && [record[@"completionStatus"] isEqual:@"deferred"] && -[record[@"checkedAt"] timeIntervalSinceNow]>300){
         BOOL blocked=NO;for(NSString *taskID in record[@"taskIDs"])if([editing containsObject:taskID])blocked=YES;

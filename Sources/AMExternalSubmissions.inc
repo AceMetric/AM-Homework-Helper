@@ -1,7 +1,7 @@
 - (void)discoverExternalSubmissions:(BOOL)loadMore {NSArray *courses=[self course] ? @[[self course].copy]:[[NSArray alloc] initWithArray:self.courses copyItems:YES];[self discoverExternalSubmissions:loadMore forCourses:courses manual:loadMore];}
 - (void)discoverExternalSubmissions:(BOOL)loadMore forCourses:(NSArray *)courses {[self discoverExternalSubmissions:loadMore forCourses:courses manual:loadMore];}
 - (void)discoverExternalSubmissions:(BOOL)loadMore forCourses:(NSArray *)requested manual:(BOOL)manual {
-    if(self.preview || self.operationsPaused || self.busy || self.discoveringExternal)return;
+    if(self.preview || self.operationsPaused || self.discoveringExternal || (!manual && (self.busy || [self automaticRemoteWorkDeferred])))return;
     NSDictionary *authentication=_github.authenticationIdentity ?: @{};
     if(!self.externalPolling){id saved=SSReadPlist(@"submission-history-polling.plist");self.externalPolling=[saved isKindOfClass:NSDictionary.class] ? [saved mutableCopy]:NSMutableDictionary.dictionary;}
     NSMutableArray *courses=NSMutableArray.array,*identities=NSMutableArray.array;NSDate *blockedRetry=nil;
@@ -17,9 +17,9 @@
     NSString *operation=AMOperationBeginWithExitPolicy(@"核验提交记录",[self course][@"fork"] ?: @"所有课程",YES,NO,^{[cancellation cancel];api.requestsCancelled=YES;[owner.externalReader cancelCurrentOperation];});AMOperationSetPresentationKey(operation,presentationKey);
     dispatch_async(self.externalQueue,^{
         NSThread.currentThread.threadDictionary[@"AMOperationCancellation"]=[^BOOL{return cancellation.cancelled;} copy];
-        __block AMCourseOperationContext *problemContext=nil;NSMutableArray *failures=NSMutableArray.array;NSMutableDictionary *advanced=NSMutableDictionary.dictionary,*pollFailures=NSMutableDictionary.dictionary;NSError *tokenError=nil;NSString *token=self.connected ? [api accessToken:&tokenError]:nil;
+        __block AMCourseOperationContext *problemContext=nil;NSMutableArray *failures=NSMutableArray.array;NSMutableDictionary *advanced=NSMutableDictionary.dictionary,*pollFailures=NSMutableDictionary.dictionary;NSError *tokenError=nil,*networkFailure=nil;NSMutableSet *attempted=NSMutableSet.set;NSString *token=self.connected ? [api accessToken:&tokenError]:nil;
         if(self.connected && !token.length && !tokenError)tokenError=AMWorkflowError(@"login",@"请重新登录后核验提交记录",nil);
-        for(NSDictionary *course in courses){if(cancellation.cancelled)break;NSString *pollKey=AMHistoryPollingKey(course,authentication);if(![course[@"path"] length])continue;AMOperationProgress(operation,@"读取提交记录",[courses indexOfObject:course],courses.count);NSError *error=nil;SSGit *reader=SSGit.new;
+        for(NSDictionary *course in courses){if(cancellation.cancelled)break;NSString *pollKey=AMHistoryPollingKey(course,authentication);if(![course[@"path"] length])continue;[attempted addObject:pollKey];AMOperationProgress(operation,@"读取提交记录",[courses indexOfObject:course],courses.count);NSError *error=nil;SSGit *reader=SSGit.new;
 #ifdef DDL_TESTING
             if(self.externalReaderFactory)reader=self.externalReaderFactory(course);
 #endif
@@ -33,13 +33,29 @@
             advanced[course[@"fork"]]=@(MAX([offsets[course[@"fork"]] unsignedIntegerValue],offset+50));
             NSMutableArray *toVerify=NSMutableArray.array;for(NSDictionary *record in pending)if(!record[@"checkedAt"] || -[record[@"checkedAt"] timeIntervalSinceNow]>300)[toVerify addObject:record];
             if(token.length && (toVerify.count || !AMSubmissionBaseline(course,NULL).count)){AMOperationProgress(operation,@"核验远端提交",0,0);reader.commandTimeout=180;
-                NSArray *verified=AMPerformResourceOperationInTask(operation,[@"history-verify:" stringByAppendingString:course[@"fork"]],@"核验提交记录",course[@"fork"],AMRepositoryResources(course,@"fetch"),-10,^BOOL{return cancellation.cancelled;},^id(NSError **problem){return [reader verifyExternalRecords:toVerify course:course token:token error:problem];},&error);if(verified){for(NSDictionary *record in verified)if(!AMStoreSubmission(record,&error)){problemContext=AMCourseOperationContext.new;problemContext.owner=self;problemContext.course=course;problemContext.authenticationIdentity=authentication;problemContext.api=api;problemContext.failure=AMWorkflowError(@"storage",@"核验记录尚未保存",error);problemContext.record=record;[failures addObject:@"核验记录尚未保存"];}}else {error=error ?: AMWorkflowError(@"verification-pending",@"未能核验提交记录",nil);problemContext=AMCourseOperationContext.new;problemContext.owner=self;problemContext.course=course;problemContext.authenticationIdentity=authentication;problemContext.api=api;problemContext.failure=error;[failures addObject:[NSString stringWithFormat:@"%@：远端暂未核验，保留本机记录。",course[@"name"] ?: @"课程"]];}}
+                NSArray *verified=AMPerformResourceOperationInTask(operation,[@"history-verify:" stringByAppendingString:course[@"fork"]],@"核验提交记录",course[@"fork"],AMRepositoryResources(course,@"fetch"),-10,^BOOL{return cancellation.cancelled;},^id(NSError **problem){
+                    // 后台核验与老师更新使用相同的短预算，排队时间不计入网络等待。
+                    NSDate *deadline=manual ? nil:[NSDate dateWithTimeIntervalSinceNow:45];
+                    reader.commandDeadline=deadline;
+                    api.requestDeadline=deadline;
+                    @try{return [reader verifyExternalRecords:toVerify course:course token:token error:problem];}
+                    @finally{reader.commandDeadline=nil;api.requestDeadline=nil;}
+                },&error);if(verified){for(NSDictionary *record in verified)if(!AMStoreSubmission(record,&error)){problemContext=AMCourseOperationContext.new;problemContext.owner=self;problemContext.course=course;problemContext.authenticationIdentity=authentication;problemContext.api=api;problemContext.failure=AMWorkflowError(@"storage",@"核验记录尚未保存",error);problemContext.record=record;[failures addObject:@"核验记录尚未保存"];}}else {error=error ?: AMWorkflowError(@"verification-pending",@"未能核验提交记录",nil);problemContext=AMCourseOperationContext.new;problemContext.owner=self;problemContext.course=course;problemContext.authenticationIdentity=authentication;problemContext.api=api;problemContext.failure=error;[failures addObject:[NSString stringWithFormat:@"%@：远端暂未核验，保留本机记录。",course[@"name"] ?: @"课程"]];}}
             if(error){pollFailures[pollKey]=error;[advanced removeObjectForKey:course[@"fork"]];}
+            if(!manual && AMWorkflowTransient(error)){networkFailure=error;break;}
+
         }
         [NSThread.currentThread.threadDictionary removeObjectForKey:@"AMOperationCancellation"];
         dispatch_async(dispatch_get_main_queue(),^{
             self.externalReader=nil;self.externalAPI=nil;self.discoveryCancellation=nil;
-            for(NSDictionary *course in courses){NSString *key=AMHistoryPollingKey(course,authentication);self.externalPolling[key]=AMHistoryPollResult(self.externalPolling[key],pollFailures[key] ?: tokenError,cancellation.cancelled,NSDate.date);}
+            for(NSDictionary *course in courses){
+                NSString *key=AMHistoryPollingKey(course,authentication);
+                if(![attempted containsObject:key] && !networkFailure && !tokenError)continue;
+                NSError *issue=pollFailures[key] ?: tokenError;
+                // 未开始的课程只继承退避，不标记核验成功。
+                if(![attempted containsObject:key])issue=issue ?: networkFailure;
+                self.externalPolling[key]=AMHistoryPollResult(self.externalPolling[key],issue,cancellation.cancelled,NSDate.date);
+            }
             // This optional cache contains hashed bindings and retry times, not course text or credentials.
             if(self.externalPolling.count>128){NSMutableSet *keys=NSMutableSet.set;for(NSDictionary *course in self.courses)[keys addObject:AMHistoryPollingKey(course,authentication)];for(NSString *key in self.externalPolling.allKeys.copy)if(![keys containsObject:key])[self.externalPolling removeObjectForKey:key];}
             SSWritePlist(@"submission-history-polling.plist",self.externalPolling,NULL);

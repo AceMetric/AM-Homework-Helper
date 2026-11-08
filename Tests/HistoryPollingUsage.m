@@ -24,6 +24,18 @@ static void Wait(BOOL (^ready)(void)){NSDate *end=[NSDate dateWithTimeIntervalSi
 - (NSArray *)classifyExternalRecords:(NSArray *)records course:(NSDictionary *)course{return @[];}
 - (NSArray *)verifyExternalRecords:(NSArray *)records course:(NSDictionary *)course token:(NSString *)token error:(NSError **)error{self.verifies++;BOOL metadataOnly=NO;for(NSDictionary *row in AMOperations())if([row[@"kind"] isEqual:@"核验提交记录"] && [row[@"state"] isEqual:@"running"] && [row[@"resources"] isEqual:AMRepositoryResources(course,@"fetch")])metadataOnly=YES;Check(metadataOnly,@"background remote verification does not reserve the worktree read barrier");Check(self.commandTimeout==180,@"network verification is not limited to thirty seconds");if(self.succeed)return @[];if(self.emptyFailure)return nil;if(error)*error=AMWorkflowError(self.failureIssue ?: @"timeout",@"Synthetic verification failure",nil);return nil;}
 @end
+@interface LaunchScanGit : SSGit
+@property (atomic) NSUInteger calls;
+@property (atomic) BOOL bounded;
+@end
+@implementation LaunchScanGit
+- (NSDictionary *)scanCourse:(NSDictionary *)course cache:(NSMutableDictionary *)cache error:(NSError **)error {
+    self.calls++;
+    self.bounded=self.commandDeadline && self.commandDeadline.timeIntervalSinceNow<=45;
+    if(error)*error=AMWorkflowError(@"network",@"合成网络故障",nil);
+    return nil;
+}
+@end
 static NSArray *HistoryViews(NSView *view){NSMutableArray *rows=NSMutableArray.array;if([view isKindOfClass:AMOperationView.class])for(NSDictionary *op in AMOperations())if([op[@"id"] isEqual:[(AMOperationView *)view operationID]] && op[@"presentationKey"])[rows addObject:view];for(NSView *child in view.subviews)[rows addObjectsFromArray:HistoryViews(child)];return rows;}
 int main(){@autoreleasepool{
  Check(NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"].length>0,@"synthetic isolated polling storage");NSDate *now=NSDate.date;NSDictionary *state=@{};NSError *timeout=AMWorkflowError(@"timeout",@"fixture",nil);
@@ -40,5 +52,32 @@ int main(){@autoreleasepool{
  git.emptyFailure=YES;void (^recover)(void)=nil;for(NSDictionary *operation in AMOperations())if(operation[@"presentationKey"] && operation[@"recovery"]){recover=operation[@"recovery"];break;}Check(recover!=nil,@"failed history retains an actionable retry");recover();Wait(^BOOL{return !c.discoveringExternal;});Check([c.externalPolling[key][@"failures"] integerValue]>0 && [c.workflowFailures.allValues.firstObject.problem[@"issue"] isEqual:@"verification-pending"],@"missing result without NSError is still a failed verification");git.emptyFailure=NO;
  NSDictionary *priorState=c.externalPolling[key];c.externalPolling[key]=AMHistoryPollResult(@{},[NSError errorWithDomain:@"rate-limit" code:1 userInfo:@{@"AMRetryAt":[NSDate dateWithTimeIntervalSinceNow:3600]}],NO,NSDate.date);NSUInteger priorCalls=git.verifies;[c submissionAction:@"refresh-external" identifier:@""];Check(!c.discoveringExternal && git.verifies==priorCalls,@"manual retry respects server rate limit while bypassing ordinary backoff");c.externalPolling[key]=priorState;
  git.succeed=YES;[c discoverExternalSubmissions:NO forCourses:@[course] manual:YES];Wait(^BOOL{return !c.discoveringExternal;});[activity refresh];Check([c.externalPolling[key][@"failures"] integerValue]==0 && HistoryViews(activity.view).count==1 && !c.workflowFailures.count && c.workflowNotice.hidden,@"successful retry replaces failed presentation and clears backoff");
+ // 升级重启后先完成老师读取，再允许自动提交核验。断网只尝试一门。
+ LaunchScanGit *scan=LaunchScanGit.new;
+ c.workflowGitFactory=^SSGit *{scan.commandDeadline=nil;return scan;};
+ c.workflowAPIFactory=^SSGitHub *{return PollAPI.new;};
+ NSMutableDictionary *second=course.mutableCopy;
+ second[@"fork"]=@"student/second";
+ second[@"upstream"]=@"teacher/second";
+ c.courses=[@[course.mutableCopy,second] mutableCopy];
+ for(NSUInteger i=3;i<=5;i++){
+     NSMutableDictionary *other=course.mutableCopy;
+     other[@"fork"]=[NSString stringWithFormat:@"student/course%lu",(unsigned long)i];
+     other[@"upstream"]=[NSString stringWithFormat:@"teacher/course%lu",(unsigned long)i];
+     [c.courses addObject:other];
+ }
+ NSUInteger historyBefore=git.reads;
+ [c scanAll:nil];
+ [c discoverExternalSubmissions:NO];
+ Wait(^BOOL{return !c.operationBusy && !c.automaticScanQueue;});
+ Check(scan.calls==1 && scan.bounded,@"first launch connection failure stops the remaining teacher reads within a shared deadline");
+ [c scanAll:nil];
+ [c discoverExternalSubmissions:NO];
+ Check(scan.calls==1 && git.reads==historyBefore && [c automaticRemoteWorkDeferred],@"startup and minute polling share the connection backoff");
+ [c scanCourses:@[second]];
+ Wait(^BOOL{return !c.operationBusy;});
+ Check(scan.calls==2,@"explicit course check remains available during background backoff");
+ [c.automaticScanRetry invalidate];
+ c.workflowAPIFactory=nil;
  c.preview=YES;[app.window orderOut:nil];[NSStatusBar.systemStatusBar removeStatusItem:app.statusItem];printf("PASS: %lu history polling, recovery and activity assertions\n",(unsigned long)checks);
 }return 0;}

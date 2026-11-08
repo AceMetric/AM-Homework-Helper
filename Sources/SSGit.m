@@ -20,7 +20,7 @@ static NSError *GitError(NSString *message) {
     if([detail containsString:@"Permission denied (publickey)"]){friendly=@"本机 SSH 身份验证失败。推荐切换到统一浏览器登录，无需配置 SSH。";issue=@"ssh";}
     else if([detail containsString:@"Authentication failed"] || [detail containsString:@"could not read Username"] || [detail containsString:@"Invalid username or token"]){friendly=@"GitHub 登录或凭据失效，请重新登录。";issue=@"login";}
     else if([detail containsString:@"Repository not found"]){friendly=@"无法读取课程仓库，请核对账户权限或学校授权。";issue=@"permission";}
-    else if([detail containsString:@"Could not resolve host"] || [detail containsString:@"Failed to connect"] || [detail containsString:@"timed out"] || [detail containsString:@"Connection reset"] || [detail containsString:@"remote end hung up"]){friendly=@"无法连接 GitHub，请检查网络后重试。";issue=@"network";}
+    else if([detail containsString:@"Could not resolve host"] || [detail containsString:@"Failed to connect"] || [detail containsString:@"timed out"] || [detail containsString:@"Connection reset"] || [detail containsString:@"remote end hung up"] || [detail containsString:@"Operation too slow"] || [detail containsString:@"RPC failed; curl 28"] || [detail containsString:@"SSL connection timeout"] || [detail containsString:@"HTTP/2 stream"] || [detail containsString:@"Recv failure"]){friendly=@"无法连接 GitHub，请检查网络后重试。";issue=@"network";}
     else if(([detail containsString:@"未提交修改"] || [detail.lowercaseString containsString:@"local changes"] || [detail.lowercaseString containsString:@"untracked working tree"] || [detail.lowercaseString containsString:@"index.lock"])){issue=@"dirty";friendly=@"本地修改需要先处理";}
     else if([detail containsString:@"切换到课程提交分支"]){issue=@"branch";friendly=@"课程分支不匹配";}
     else if([detail containsString:@"冲突"]){issue=@"merge-conflict";friendly=@"课程文件存在冲突";}
@@ -54,7 +54,6 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
 @property NSString *temporaryIndex;
 @property pid_t activePID;
 @property NSData *commandInput;
-@property NSDate *commandDeadline;
 @end
 @implementation SSGit
 - (void)cancelCurrentOperation {self.operationCancelled=YES;@synchronized(self){pid_t pid=self.activePID;if(pid>0 && getpgid(pid)==pid)kill(-pid,SIGKILL);}}
@@ -91,7 +90,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     NSTimeInterval limit=self.commandTimeout>0 ? self.commandTimeout:([@[@"fetch",@"clone",@"push",@"ls-remote"] containsObject:arguments[commandIndex]] ? 180:90);
     if(self.commandDeadline)limit=MIN(limit,MAX(.01,self.commandDeadline.timeIntervalSinceNow));NSDate *started=NSDate.date;NSError *failure=nil;
     SSGitResult *result=AMRunGitProcess(args,environment,path,self.commandInput,limit,^BOOL{return self.operationCancelled || (operationStop && operationStop()) || (self.readsCancellable && self.cancelledReads);},^(pid_t pid){@synchronized(self){self.activePID=pid;}},&failure);
-    NSString *category=[@[@"fetch",@"push",@"clone",@"ls-remote"] containsObject:arguments[commandIndex]] ? @"git-network":@"git-local";SSWorkflowDiagnostic(category,failure ? @"failed":(result.status ? @"failed":@"success"),failure ? AMWorkflowIssue(failure):@"",-started.timeIntervalSinceNow);if(failure && error)*error=failure;
+    NSString *category=[@[@"fetch",@"push",@"clone",@"ls-remote"] containsObject:arguments[commandIndex]] ? @"git-network":@"git-local";SSWorkflowDiagnostic(category,failure ? @"failed":(result.status ? @"failed":@"success"),failure ? AMWorkflowIssue(failure):([category isEqual:@"git-network"] && result.status ? AMWorkflowIssue(GitError(result.diagnostic)):@""),-started.timeIntervalSinceNow);if(failure && error)*error=failure;
     if(result && token.length)result.diagnostic=[result.diagnostic stringByReplacingOccurrencesOfString:token withString:@"[已隐藏凭据]"];return result;
 }
 
