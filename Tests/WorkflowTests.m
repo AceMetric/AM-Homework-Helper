@@ -38,6 +38,20 @@ static NSArray *HTTPResponses;static NSUInteger HTTPCalls;
 @end
 int main(){@autoreleasepool{
     Check(NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"].length>0,@"workflow fixtures isolated");NSError *error=nil;NSDictionary *environment=NSProcessInfo.processInfo.environment;
+    NSURL *gitHub=[NSURL URLWithString:@"https://github.com/actions/runner-images.git"];
+    NSDictionary *systemProxy=@{@"HTTPSEnable":@1,@"HTTPSProxy":@"127.0.0.1",@"HTTPSPort":@8080};
+    Check([SSGitSystemHTTPSProxy(gitHub,systemProxy) isEqual:@"http://127.0.0.1:8080"],@"HTTPS Git receives macOS CONNECT routing");
+    NSMutableDictionary *excluded=systemProxy.mutableCopy;
+    excluded[@"ExceptionsList"]=@[@"github.com"];
+    Check(!SSGitSystemHTTPSProxy(gitHub,excluded) && !SSGitSystemHTTPSProxy([NSURL URLWithString:@"https://example.org/repo.git"],systemProxy),@"system exclusions and GitHub destination boundary are respected");
+    NSMutableDictionary *explicit=[@{@"NO_PROXY":@"github.com"} mutableCopy];
+    SSGitApplySystemProxy(explicit,@[@"fetch",gitHub.absoluteString],0);
+    Check(explicit.count==1,@"explicit network settings take precedence");
+    if([environment[@"AM_TEST_PUBLIC_GIT"] isEqual:@"1"]){
+        SSGit *publicGit=SSGit.new;
+        publicGit.commandTimeout=12;
+        Check([publicGit checked:@[@"ls-remote",@"--",gitHub.absoluteString,@"HEAD"] in:nil token:nil error:&error]!=nil,@"real read-only GitHub request uses the app's transport");
+    }
     NSDate *started=NSDate.date;SSGitResult *result=AMRunGitProcess(@[@"-c",@"alias.amprobe=!/bin/sh -c 'sleep 30 & exit 0'",@"amprobe"],environment,NSTemporaryDirectory(),nil,5,nil,nil,&error);Check(!result && [AMWorkflowIssue(error) isEqual:@"timeout"] && -started.timeIntervalSinceNow<3.5,@"escaped descendant cannot hold output forever");
     __block BOOL stopped=NO;dispatch_after(dispatch_time(DISPATCH_TIME_NOW,150*NSEC_PER_MSEC),dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{stopped=YES;});started=NSDate.date;result=AMRunGitProcess(@[@"-c",@"alias.amprobe=!sleep 30",@"amprobe"],environment,NSTemporaryDirectory(),nil,5,^BOOL{return stopped;},nil,&error);Check(!result && [AMWorkflowIssue(error) isEqual:@"cancelled"] && -started.timeIntervalSinceNow<2.5,@"cancel interrupts real process group and pipe readers");
     started=NSDate.date;result=AMRunGitProcess(@[@"-c",@"alias.amprobe=!sleep 30",@"amprobe"],environment,NSTemporaryDirectory(),nil,.15,nil,nil,&error);Check(!result && [AMWorkflowIssue(error) isEqual:@"timeout"] && -started.timeIntervalSinceNow<2.5,@"process budget returns even when child still runs");

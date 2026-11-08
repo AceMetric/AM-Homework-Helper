@@ -13,7 +13,41 @@
 #import <unistd.h>
 #import <sys/stat.h>
 #import <errno.h>
+#import <CFNetwork/CFNetwork.h>
 #include <math.h>
+
+static NSString *SSGitSystemHTTPSProxy(NSURL *url, NSDictionary *settings) {
+    if(!settings || ![url.scheme.lowercaseString isEqual:@"https"] ||
+        !SSCanonicalRepository(url.absoluteString))return nil;
+    // CFNetwork 负责系统代理的启用范围与例外。只继承首选 HTTP CONNECT 地址。
+    NSArray *proxies=CFBridgingRelease(CFNetworkCopyProxiesForURL((__bridge CFURLRef)url,(__bridge CFDictionaryRef)settings));
+    NSDictionary *proxy=proxies.firstObject;
+    NSString *type=proxy[(__bridge NSString *)kCFProxyTypeKey];
+    if(![type isEqual:(__bridge NSString *)kCFProxyTypeHTTPS] &&
+        ![type isEqual:(__bridge NSString *)kCFProxyTypeHTTP])return nil;
+    NSString *host=proxy[(__bridge NSString *)kCFProxyHostNameKey];
+    NSNumber *port=proxy[(__bridge NSString *)kCFProxyPortNumberKey];
+    if(![host isKindOfClass:NSString.class] || !host.length || ![port isKindOfClass:NSNumber.class] ||
+        port.integerValue<1 || port.integerValue>65535)return nil;
+    NSURLComponents *route=NSURLComponents.new;
+    route.scheme=@"http";
+    route.host=host;
+    route.port=port;
+    return route.URL.absoluteString;
+}
+static void SSGitApplySystemProxy(NSMutableDictionary *environment, NSArray *arguments, NSUInteger commandIndex) {
+    if(commandIndex>=arguments.count || ![@[@"clone",@"fetch",@"ls-remote",@"push"] containsObject:arguments[commandIndex]])return;
+    for(NSString *key in @[@"https_proxy",@"HTTPS_PROXY",@"all_proxy",@"ALL_PROXY",@"no_proxy",@"NO_PROXY"]){
+        if(environment[key])return;
+    }
+    for(NSString *argument in arguments){
+        if(![argument.lowercaseString hasPrefix:@"https://github.com/"] || !SSCanonicalRepository(argument))continue;
+        NSDictionary *settings=CFBridgingRelease(CFNetworkCopySystemProxySettings());
+        NSString *route=SSGitSystemHTTPSProxy([NSURL URLWithString:argument],settings);
+        if(route)environment[@"https_proxy"]=route;
+        break;
+    }
+}
 
 static NSError *GitError(NSString *message) {
     NSString *detail=SSRedactedText(message ?: @"Git 操作失败"),*issue=@"git",*friendly=detail;
@@ -72,6 +106,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     [args addObjectsFromArray:arguments];
     NSMutableDictionary *environment = NSProcessInfo.processInfo.environment.mutableCopy;
     for (NSString *key in environment.allKeys) if ([key hasPrefix:@"GIT_"] || [key hasPrefix:@"SS_GIT_"]) [environment removeObjectForKey:key];
+    SSGitApplySystemProxy(environment,arguments,commandIndex);
     environment[@"GIT_CONFIG_GLOBAL"] = @"/dev/null";
     environment[@"GIT_CONFIG_NOSYSTEM"] = @"1";
     environment[@"GIT_TERMINAL_PROMPT"] = @"0";

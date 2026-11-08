@@ -21,7 +21,7 @@ xcrun swiftc -target arm64-apple-macosx13.0 -module-cache-path build/module-cach
 build/tests/review-state-tests
 
 clang -DDDL_TESTING=1 -fobjc-arc -fblocks -Wall -Wextra -Werror -Wno-unused-parameter -mmacosx-version-min=13.0 \
- -framework Foundation -framework Cocoa -framework PDFKit -framework Vision -framework Security -lz \
+ -framework Foundation -framework Cocoa -framework PDFKit -framework Vision -framework CFNetwork -framework Security -lz \
  Sources/SSRecognition.m Sources/SSAssignments.m Sources/SSLocalData.m Sources/SSSecurity.m Sources/DDLCore.m Sources/DDLImport.m Sources/SSGit.m Tests/LocalModelIntegration.m -o build/tests/local-model-integration
 python3 Tests/LocalModelIntegration.py
 clang -DDDL_TESTING=1 -fobjc-arc -fblocks -Wall -Wextra -Werror -Wno-unused-parameter -mmacosx-version-min=13.0 -framework Foundation -framework Cocoa -framework PDFKit -framework Vision -framework Security -lz Sources/SSRecognition.m Sources/SSAssignments.m Sources/SSLocalData.m Sources/SSSecurity.m Sources/DDLCore.m Sources/DDLImport.m Tests/RecognitionSlicesTests.m -o build/tests/recognition-slices-tests
