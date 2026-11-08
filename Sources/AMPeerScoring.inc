@@ -4,7 +4,7 @@
 - (NSString *)inputVersion:(NSString *)identifier {
     // 分数不仅属于某个学生，还属于这一版作答、题目材料和老师评语。
     // 任一材料变化都使旧 LLM 分数退出当前排名，但历史记录仍可查看。
-    NSMutableArray *versions=NSMutableArray.array;for(NSDictionary *ref in self.references)[versions addObject:@[ref[@"path"],ref[@"version"],ref[@"role"]]];
+    NSMutableArray *versions=NSMutableArray.array;for(NSDictionary *ref in [self.references arrayByAddingObjectsFromArray:self.automaticReferences ?: @[]])[versions addObject:@[ref[@"path"],ref[@"version"],ref[@"role"]]];
     [versions sortUsingComparator:^NSComparisonResult(NSArray *a,NSArray *b){return [a[0] compare:b[0]];}];
     NSDictionary *snapshot=[self snapshotForPeer:identifier] ?: @{},*comment=[self commentForPeer:identifier];
     // 无关课程提交不改变材料指纹，原始提交号仍单独保留用于查看历史。
@@ -32,28 +32,37 @@
     if(!self.references.count)return;NSAlert *alert=NSAlert.new;alert.messageText=@"移除检查材料";alert.informativeText=@"仅移除本机检查材料；原文件和提交文件不变。相关旧分数仍保留在历史记录。";NSPopUpButton *picker=NSPopUpButton.new;NSMutableArray *keys=NSMutableArray.array;for(NSDictionary *entry in self.references){NSString *key=entry[@"originKey"] ?: entry[@"path"];if([keys containsObject:key])continue;[keys addObject:key];[picker addItemWithTitle:entry[@"originalName"] ?: entry[@"path"]];}picker.frame=NSMakeRect(0,0,420,28);alert.accessoryView=picker;[alert addButtonWithTitle:@"移除"];[alert addButtonWithTitle:@"取消"];if([alert runModal]!=NSAlertFirstButtonReturn)return;NSString *key=keys[picker.indexOfSelectedItem];NSMutableArray *next=NSMutableArray.array;for(NSDictionary *entry in self.references)if(![(entry[@"originKey"] ?: entry[@"path"]) isEqual:key])[next addObject:entry];NSError *error=nil;if(!SSWritePlist([NSString stringWithFormat:@"peer-materials-%@.plist",[self scopeKey]],next,&error)){[self showError:error];return;}self.references=next;[self.materialCache removeAllObjects];self.status=@"材料已移除，相关评分需重新核验";[self present];
 }
 - (void)removeEvaluation {
-    NSArray *records=[self savedScores];NSMutableArray *sources=NSMutableArray.array;for(NSDictionary *row in records)if([row[@"repository"] isEqual:self.selected] && [@[@"comment",@"teacher"] containsObject:row[@"kind"]] && ![sources containsObject:row[@"sourceID"]])[sources addObject:row[@"sourceID"]];if(!sources.count)return;NSAlert *alert=NSAlert.new;alert.messageText=@"移除评价关联";alert.informativeText=@"仅移除本机的关联与对应老师分数，不修改 GitHub。参考该评语的旧LLM评分将退出当前排名。";NSPopUpButton *picker=NSPopUpButton.new;[picker addItemsWithTitles:sources];picker.frame=NSMakeRect(0,0,500,28);alert.accessoryView=picker;[alert addButtonWithTitle:@"移除"];[alert addButtonWithTitle:@"取消"];if([alert runModal]!=NSAlertFirstButtonReturn)return;NSString *source=sources[picker.indexOfSelectedItem];@synchronized(NSFileManager.defaultManager){id stored=SSReadPlist(@"peer-evaluations.plist");if(!AMPeerScoresValid(stored)){[self showError:AMPeerError(@"评分记录无法读取，原文件保留")];return;}NSMutableDictionary *all=[stored mutableCopy];NSMutableArray *next=NSMutableArray.array;for(NSDictionary *row in records)if(!([row[@"repository"] isEqual:self.selected] && [row[@"sourceID"] isEqual:source]))[next addObject:row];all[[self scopeKey]]=next;NSError *error=nil;if(!SSWritePlist(@"peer-evaluations.plist",all,&error)){[self showError:error];return;}}self.status=@"评价关联已移除";[self present];
+    NSArray *records=[self savedScores];NSMutableArray *sources=NSMutableArray.array;for(NSDictionary *row in records)if([row[@"repository"] isEqual:self.selected] && [@[@"comment",@"teacher"] containsObject:row[@"kind"]] && ![sources containsObject:row[@"sourceID"]])[sources addObject:row[@"sourceID"]];if(!sources.count)return;NSAlert *alert=NSAlert.new;alert.messageText=@"移除评价关联";alert.informativeText=@"仅移除本机的关联与对应老师分数，不修改 GitHub。参考该评语的旧LLM评分将退出当前排名。";NSPopUpButton *picker=NSPopUpButton.new;[picker addItemsWithTitles:sources];picker.frame=NSMakeRect(0,0,500,28);alert.accessoryView=picker;[alert addButtonWithTitle:@"移除"];[alert addButtonWithTitle:@"取消"];if([alert runModal]!=NSAlertFirstButtonReturn)return;NSString *source=sources[picker.indexOfSelectedItem];@synchronized(NSFileManager.defaultManager){id stored=SSReadPlist(@"peer-evaluations.plist");if(!AMPeerScoresValid(stored)){[self showError:AMPeerError(@"评分记录无法读取，原文件保留")];return;}NSMutableDictionary *all=[stored mutableCopy];NSMutableArray *next=NSMutableArray.array;for(NSDictionary *row in stored[[self scopeKey]])if(!([row[@"repository"] isEqual:self.selected] && [row[@"sourceID"] isEqual:source]))[next addObject:row];all[[self scopeKey]]=next;NSError *error=nil;if(!SSWritePlist(@"peer-evaluations.plist",all,&error)){[self showError:error];return;}@synchronized(self){self.scoreSnapshot=next.copy;self.scoreRevision++;}}self.status=@"评价关联已移除";[self present];
 }
 - (void)editRubric {
-    NSAlert *alert=NSAlert.new;alert.messageText=@"统一评分标准 · 满分100";alert.informativeText=@"所有待评分同学使用同一份已确认标准；修改后旧LLM评分移入历史。";
+    NSAlert *alert=NSAlert.new;alert.messageText=[NSString stringWithFormat:@"统一评分标准 · 满分%@",AMPeerRubricMaximum(self.rubric)];alert.informativeText=@"所有待评分同学使用同一份已确认标准；修改后旧LLM评分移入历史。";
     AMRubricEditor *editor=[[AMRubricEditor alloc] initWithRubric:self.rubric];alert.accessoryView=editor.view;
     [alert addButtonWithTitle:@"确认标准"];[alert addButtonWithTitle:@"生成草案…"];[alert addButtonWithTitle:@"取消"];
     NSError *error=nil;NSDictionary *rubric=nil;
-    while(!rubric){NSModalResponse choice=[alert runModal];[editor.table.window makeFirstResponder:nil];if(choice==NSAlertSecondButtonReturn){[self generateRubric];return;}if(choice!=NSAlertFirstButtonReturn)return;rubric=AMPeerRubric(@{@"criteria":editor.criteria},&error);if(!rubric)alert.informativeText=error.localizedDescription;}
+    while(!rubric){NSModalResponse choice=[alert runModal];[editor.table.window makeFirstResponder:nil];if(choice==NSAlertSecondButtonReturn){[self generateRubric];return;}if(choice!=NSAlertFirstButtonReturn)return;rubric=AMPeerRubric(@{@"criteria":editor.criteria,@"maximum":AMPeerRubricMaximum(self.rubric)},&error);if(!rubric)alert.informativeText=error.localizedDescription;}
     id old=SSReadPlist(@"peer-settings.plist");if((!old && [NSFileManager.defaultManager fileExistsAtPath:[SSDataDirectory() URLByAppendingPathComponent:@"peer-settings.plist"].path]) || (old && !AMPeerSettingsValid(old))){[self showError:AMPeerError(@"评分设置无法读取，未覆盖原文件")];return;}NSMutableDictionary *settings=[old mutableCopy] ?: NSMutableDictionary.dictionary;settings[[self scopeKey]]=@{@"rubric":rubric,@"provider":self.provider,@"requestLimit":@(self.requestLimit)};if(!SSWritePlist(@"peer-settings.plist",settings,&error)){[self showError:error];return;}self.rubric=rubric;self.status=@"统一标准已确认";[self present];
 }
-- (BOOL)chooseModelAndLimit:(NSString *)summary {
+- (BOOL)chooseModelAndLimit:(NSString *)summary materials:(NSString *)materials {
     // 每次生成前单独确认发送范围。浏览仓库、准备材料、读取已有分数不消耗生成额度。
     NSAlert *alert=NSAlert.new;alert.messageText=@"确认评分请求";alert.informativeText=summary;
     NSStackView *form=NSStackView.new;form.orientation=NSUserInterfaceLayoutOrientationVertical;form.alignment=NSLayoutAttributeLeading;NSPopUpButton *model=NSPopUpButton.new;
     NSMutableDictionary *settings=[SSRecognitionSettings() mutableCopy];NSString *mode=settings[@"mode"];NSURL *endpoint=[NSURL URLWithString:settings[@"endpoint"] ?: @""];if([mode isEqual:@"rules"] && [settings[@"model"] length] && [@[@"localhost",@"127.0.0.1",@"::1"] containsObject:endpoint.host]){mode=@"local";settings[@"mode"]=mode;}BOOL configured=[settings[@"model"] length]>0 && ![mode isEqual:@"rules"];
     if(configured)[model addItemWithTitle:[NSString stringWithFormat:@"%@ · %@",[mode isEqual:@"local"] ? @"本地（不上传）":@"已配置API（上传材料）",settings[@"model"]]];
-    [model addItemWithTitle:[NSString stringWithFormat:@"Gemini（上传材料） · %@",AMOnlineReviewCurrentModel()]];if([self.provider isEqual:@"gemini"])[model selectItemAtIndex:model.numberOfItems-1];NSTextField *limit=[NSTextField textFieldWithString:[NSString stringWithFormat:@"%lu",(unsigned long)self.requestLimit]];limit.placeholderString=@"本次生成请求上限";[form addArrangedSubview:model];[form addArrangedSubview:Text(@"请求上限（含标准生成、重试及续查）",12,NSFontWeightRegular,Muted())];[form addArrangedSubview:limit];[limit.widthAnchor constraintEqualToConstant:280].active=YES;form.frame=NSMakeRect(0,0,520,100);alert.accessoryView=form;[alert addButtonWithTitle:@"确认并开始"];[alert addButtonWithTitle:@"取消"];if([alert runModal]!=NSAlertFirstButtonReturn)return NO;
+    [model addItemWithTitle:[NSString stringWithFormat:@"Gemini（上传材料） · %@",AMOnlineReviewCurrentModel()]];if([self.provider isEqual:@"gemini"])[model selectItemAtIndex:model.numberOfItems-1];NSTextField *limit=[NSTextField textFieldWithString:[NSString stringWithFormat:@"%lu",(unsigned long)self.requestLimit]];limit.placeholderString=@"本次生成请求上限";[form addArrangedSubview:model];[form addArrangedSubview:Text(@"请求上限（含标准生成、重试及续查）",12,NSFontWeightRegular,Muted())];[form addArrangedSubview:limit];[limit.widthAnchor constraintEqualToConstant:280].active=YES;if(materials.length){
+        // 将实际发送范围、模型与请求上限放在同一个确认窗口。
+        NSTextView *scope=[self textAccessory:alert text:materials];
+        scope.editable=NO;
+        NSView *materialList=alert.accessoryView;
+        [form addArrangedSubview:materialList];
+        [materialList.widthAnchor constraintEqualToConstant:520].active=YES;
+        [materialList.heightAnchor constraintEqualToConstant:210].active=YES;
+    }
+    form.frame=NSMakeRect(0,0,520,materials.length ? 320:100);alert.accessoryView=form;[alert addButtonWithTitle:@"确认并开始"];[alert addButtonWithTitle:@"取消"];if([alert runModal]!=NSAlertFirstButtonReturn)return NO;
     NSInteger count=limit.integerValue;if(count<1 || count>20){[self showError:AMPeerError(@"请求上限须为1至20")];return NO;}
     self.provider=configured && model.indexOfSelectedItem==0 ? mode:@"gemini";self.modelSettings=settings;self.requestLimit=(NSUInteger)count;
     if([self.provider isEqual:@"gemini"]){self.requestLimit=MIN(self.requestLimit,AMOnlineReviewRemainingRequests());if(![AMOnlineReviewSettings()[@"enabled"] boolValue]){[self showError:AMPeerError(@"请先配置并启用在线模型")];AMShowOnlineReviewSettings(self.window);return NO;}}
     if([self.provider isEqual:@"cloud"]){NSDictionary *usage=SSReadPlist(@"recognition-usage.plist");NSUInteger used=[usage[@"day"] isEqual:DDLFormatDate(NSDate.date,@"yyyy-MM-dd")] ? [usage[@"count"] unsignedIntegerValue]:0;self.requestLimit=MIN(self.requestLimit,used>=20 ? 0:20-used);}
-    if(!self.requestLimit){[self showError:AMPeerError(@"今日生成请求额度已用完")];return NO;}self.requestsUsed=0;self.scoreClient=SSRecognitionClient.new;self.gemini=AMOnlineReviewClient.new;self.gemini.model=AMOnlineReviewCurrentModel();if(self.rubric){id previous=SSReadPlist(@"peer-settings.plist");if((!previous && [NSFileManager.defaultManager fileExistsAtPath:[SSDataDirectory() URLByAppendingPathComponent:@"peer-settings.plist"].path]) || (previous && !AMPeerSettingsValid(previous))){[self showError:AMPeerError(@"评分设置无法读取，未覆盖原文件")];return NO;}NSMutableDictionary *stored=[previous mutableCopy] ?: NSMutableDictionary.dictionary;stored[[self scopeKey]]=@{@"rubric":self.rubric,@"provider":self.provider,@"requestLimit":@(self.requestLimit)};NSError *failure=nil;if(!AMPeerSettingsValid(stored) || !SSWritePlist(@"peer-settings.plist",stored,&failure)){[self showError:failure ?: AMPeerError(@"评分设置保存失败，未开始请求")];return NO;}}return YES;
+    if(!self.requestLimit){[self showError:AMPeerError(@"今日生成请求额度已用完")];return NO;}self.requestsUsed=[self.rubricModelIdentity isEqual:[self modelIdentity]] ? self.rubricRequestsUsed:0;self.rubricRequestsUsed=0;self.rubricModelIdentity=nil;self.scoreClient=SSRecognitionClient.new;self.gemini=AMOnlineReviewClient.new;self.gemini.model=AMOnlineReviewCurrentModel();if(self.rubric){id previous=SSReadPlist(@"peer-settings.plist");if((!previous && [NSFileManager.defaultManager fileExistsAtPath:[SSDataDirectory() URLByAppendingPathComponent:@"peer-settings.plist"].path]) || (previous && !AMPeerSettingsValid(previous))){[self showError:AMPeerError(@"评分设置无法读取，未覆盖原文件")];return NO;}NSMutableDictionary *stored=[previous mutableCopy] ?: NSMutableDictionary.dictionary;stored[[self scopeKey]]=@{@"rubric":self.rubric,@"provider":self.provider,@"requestLimit":@(self.requestLimit)};NSError *failure=nil;if(!AMPeerSettingsValid(stored) || !SSWritePlist(@"peer-settings.plist",stored,&failure)){[self showError:failure ?: AMPeerError(@"评分设置保存失败，未开始请求")];return NO;}}return YES;
 }
 - (id)generate:(NSDictionary *)input rubric:(BOOL)rubric images:(NSArray *)images error:(NSError **)error {
     // 与其他模型任务共用资源队列；排队不持有 Git 锁，取消也只影响本次评分。
@@ -64,9 +73,13 @@
     NSMutableArray *json=NSMutableArray.array;for(NSDictionary *entry in materials){NSMutableDictionary *row=[@{@"path":entry[@"path"],@"version":entry[@"version"],@"role":entry[@"role"] ?: @"answer"} mutableCopy];if(entry[@"text"])row[@"text"]=entry[@"text"];else if([entry[@"image"] boolValue]){NSData *bytes=entry[@"data"];NSBitmapImageRep *rep=(NSBitmapImageRep *)[NSBitmapImageRep imageRepWithData:bytes];NSData *png=[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];if(!png || rep.pixelsWide>10000 || rep.pixelsHigh>10000)return nil;[images addObject:@{@"path":entry[@"path"],@"mime":@"image/png",@"base64":[png base64EncodedStringWithOptions:0]}];row[@"image"]=@YES;if(entry[@"page"])row[@"page"]=entry[@"page"];}[json addObject:row];}return json;
 }
 - (void)generateRubric {
-    NSMutableArray *references=NSMutableArray.array;for(NSDictionary *ref in self.references)if([@[@"question",@"requirements"] containsObject:ref[@"role"]])[references addObject:ref];if(!references.count){[self showError:AMPeerError(@"请先在“检查材料”添加题目与要求")];return;}
-    if(![self chooseModelAndLimit:@"将按已添加的题目与要求生成统一标准草案，不读取或评分任何同学作业。生成后需再次确认标准。"] )return;
-    NSArray *materials=references.copy;[self run:@"生成评分标准草案…" queue:self.previewQueue work:^id(SSGitHub *api,NSError **error){NSMutableArray *images=NSMutableArray.array;NSArray *json=[self jsonMaterials:materials images:images];if(!json){if(error)*error=AMPeerError(@"评分图片无法完整准备，请检查材料");return nil;}return [self generate:@{@"materials":json} rubric:YES images:images error:error];} done:^(NSDictionary *raw,NSError *error){NSDictionary *rubric=raw ? AMPeerRubric(raw,&error):nil;if(!rubric){[self showError:error];return;}NSDictionary *previous=self.rubric;self.rubric=rubric;[self editRubric];if([self.rubric isEqual:rubric]){NSDictionary *stored=SSReadPlist(@"peer-settings.plist")[[self scopeKey]][@"rubric"];if(![stored[@"version"] isEqual:rubric[@"version"]])self.rubric=previous;}self.status=@"标准草案已生成；只有确认保存的标准可用于评分";}];
+    if(self.grading)return;
+    NSMutableArray *references=NSMutableArray.array;for(NSDictionary *ref in [self.references arrayByAddingObjectsFromArray:self.automaticReferences ?: @[]])if([@[@"question",@"requirements"] containsObject:ref[@"role"]])[references addObject:ref];if(!references.count){[self showError:AMPeerError(@"请先在“检查材料”添加题目与要求")];return;}
+    NSMutableArray *paths=NSMutableArray.array;
+    for(NSDictionary *reference in references)[paths addObject:reference[@"path"]];
+    if(![self chooseModelAndLimit:@"按所列题目与要求生成评分标准草案。" materials:[paths componentsJoinedByString:@"\n"]])return;
+    self.grading=YES;
+    NSArray *materials=references.copy;[self run:@"生成评分标准草案…" queue:self.previewQueue work:^id(SSGitHub *api,NSError **error){NSMutableArray *images=NSMutableArray.array;NSArray *json=[self jsonMaterials:materials images:images];if(!json){if(error)*error=AMPeerError(@"评分图片无法完整准备，请检查材料");return nil;}return [self generate:@{@"materials":json} rubric:YES images:images error:error];} done:^(NSDictionary *raw,NSError *error){self.grading=NO;NSDictionary *rubric=raw ? AMPeerRubric(raw,&error):nil;if(!rubric){[self showError:error];return;}NSDictionary *previous=self.rubric;self.rubric=rubric;[self editRubric];if([self.rubric isEqual:rubric]){NSDictionary *stored=SSReadPlist(@"peer-settings.plist")[[self scopeKey]][@"rubric"];if(![stored[@"version"] isEqual:rubric[@"version"]])self.rubric=previous;}self.rubricRequestsUsed=self.requestsUsed;self.rubricModelIdentity=[self modelIdentity];self.status=@"评分标准草案已生成";}];
 }
 // 只沿明确的 Markdown 图片引用补齐同一固定版本内的资源，不扫描整库正文或下载外链。
 - (BOOL)completeImages:(NSMutableArray *)materials snapshot:(NSDictionary *)snapshot identifier:(NSString *)identifier api:(SSGitHub *)api error:(NSError **)error {
@@ -103,46 +116,222 @@
         if([path.pathExtension.lowercaseString isEqual:@"pdf"] && !entry[@"text"] && !entry[@"image"]){PDFDocument *document=[[PDFDocument alloc] initWithData:entry[@"data"]];if(!document || document.isLocked || !document.pageCount || document.pageCount>32){if(error)*error=AMPeerError(@"PDF无法读取或超过32页，请缩小作业范围并确认题目页码");return nil;}for(NSUInteger i=0;i<document.pageCount;i++){PDFPage *page=[document pageAtIndex:i];NSImage *image=[page thumbnailOfSize:NSMakeSize(1600,1600) forBox:kPDFDisplayBoxMediaBox];NSBitmapImageRep *rep=[NSBitmapImageRep imageRepWithData:image.TIFFRepresentation];NSData *png=[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];bytes+=png.length;if(!png || bytes>24*1024*1024){if(error)*error=AMPeerError(@"PDF页面无法完整载入或超过材料预算");return nil;}NSString *pagePath=[path stringByAppendingFormat:@"/page-%lu.png",(unsigned long)i+1];[materials addObject:@{@"path":pagePath,@"version":AMPeerHash(@[[png base64EncodedStringWithOptions:0]]),@"data":png,@"image":@YES,@"role":@"answer",@"page":@(i+1),@"originRepository":identifier,@"originPath":path,@"originSHA":entry[@"version"]}];}continue;}
         NSMutableDictionary *copy=entry.mutableCopy;copy[@"role"]=@"answer";copy[@"originRepository"]=identifier;copy[@"originPath"]=path;[materials addObject:copy];
     }
+    for(NSDictionary *reference in self.automaticReferences){
+        if(![reference[@"role"] isEqual:@"question"])continue;
+        NSArray *files=[api peerDirectory:reference[@"originPath"] commit:snapshot[@"teacherCommit"] repository:self.course[@"upstream"] error:NULL];
+        if([files.firstObject[@"sha"] isEqual:reference[@"version"]])[materials addObject:reference];
+    }
     // Read requirements at the exact teacher revision used for this comparison.
     if(AMPeerPath(self.sourcePath)){BOOL found=NO;NSDictionary *tree=[api peerTree:snapshot[@"teacherCommit"] repository:self.course[@"upstream"] error:error];if(!tree)return nil;for(NSDictionary *file in tree[@"tree"])if([file[@"path"] isEqual:self.sourcePath]){NSDictionary *entry=[self loadFile:file peer:@{@"repository":self.course[@"upstream"]} api:api error:error];if(!entry)return nil;NSMutableDictionary *copy=entry.mutableCopy;copy[@"path"]=[@"teacher/" stringByAppendingString:self.sourcePath];copy[@"role"]=@"requirements";copy[@"originRepository"]=self.course[@"upstream"];copy[@"originPath"]=self.sourcePath;[materials addObject:copy];found=YES;break;}if(!found){if(error)*error=AMPeerError(@"老师要求已移动或缺失，请重新关联作业来源");return nil;}}
     for(NSDictionary *record in [self savedScores])if([record[@"repository"] isEqual:identifier] && [record[@"kind"] isEqual:@"teacher"] && AMPeerRecordApplies(record,snapshot) && ![self evaluationCurrent:record]){if(error)*error=AMPeerError(@"已有老师评分待核验，请先检查评价来源，不使用LLM替代");return nil;}
     NSDictionary *comment=[self commentForPeer:identifier];if(comment && ![self evaluationCurrent:comment]){if(error)*error=AMPeerError(@"老师评语来源已变化或尚未核验，请先核验进度并重新关联评价");return nil;}if(comment){[materials addObject:@{@"path":@"evaluation/teacher-comment.txt",@"version":AMPeerHash(@[comment[@"sourceID"],comment[@"text"]]),@"role":@"teacher-comment",@"text":comment[@"text"]}];}
     if(![self completeImages:materials snapshot:snapshot identifier:identifier api:api error:error])return nil;BOOL question=NO;for(NSDictionary *entry in materials)if([entry[@"role"] isEqual:@"question"])question=YES;if(!question){if(error)*error=AMPeerError(@"缺少已关联题目，不能生成完整总分；请先添加题目材料");return nil;}return materials;
 }
+- (void)discoverRubric {
+    if(self.discoveringRubric)return;
+    self.discoveringRubric=YES;
+    NSDictionary *course=self.course;
+    NSString *source=self.sourcePath,*scope=self.scope;
+    [self run:@"查找老师评分标准…" queue:self.queue work:^id(SSGitHub *api,NSError **error){
+        NSDictionary *teacher=[api readableTeacher:course error:error];
+        if(!teacher)return nil;
+        NSString *branch=[teacher[@"default_branch"] stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"]];
+        NSDictionary *head=[api readRepository:course[@"upstream"] resource:[@"commits/" stringByAppendingString:branch] error:error];
+        NSString *commit=head[@"sha"];
+        if(!AMPeerSHA(commit))return nil;
+        NSMutableArray *folders=[NSMutableArray arrayWithObject:scope],*materials=NSMutableArray.array;
+        NSMutableDictionary *rubrics=NSMutableDictionary.dictionary;
+        NSMutableSet *seen=NSMutableSet.set;
+        for(NSUInteger i=0;i<folders.count && i<12 && materials.count<24;i++){
+            NSArray *files=[api peerDirectory:folders[i] commit:commit repository:course[@"upstream"] error:error];
+            if(!files)return nil;
+            for(NSDictionary *file in files){
+                NSString *path=file[@"path"],*name=path.lastPathComponent.lowercaseString;
+                if([file[@"directory"] boolValue]){
+                    if(path.pathComponents.count<=scope.pathComponents.count+3 && [name rangeOfString:@"^(questions?|problems?|requirements?|rubric|docs|题目|要求|评分)$" options:NSRegularExpressionSearch].location!=NSNotFound)[folders addObject:path];
+                    continue;
+                }
+                BOOL question=[name rangeOfString:@"questions?|problems?|题目|习题" options:NSRegularExpressionSearch].location!=NSNotFound;
+                BOOL related=question || [path isEqual:source] || [name rangeOfString:@"readme|rubric|requirements|评分|要求" options:NSRegularExpressionSearch].location!=NSNotFound;
+                if(!related || [seen containsObject:path] || materials.count>=24)continue;
+                [seen addObject:path];
+                NSDictionary *entry=[self loadFile:file peer:@{@"repository":course[@"upstream"]} api:api error:NULL];
+                if(![entry[@"text"] length] && ![entry[@"image"] boolValue])continue;
+                NSMutableDictionary *material=entry.mutableCopy;
+                material[@"originPath"]=path;material[@"originRepository"]=course[@"upstream"];
+                material[@"path"]=[@"teacher/" stringByAppendingString:path];material[@"role"]=question ? @"question":@"requirements";
+                [materials addObject:material];
+                NSDictionary *rubric=AMPeerRubricFromTeacherText(entry[@"text"]);
+                if(rubric)rubrics[rubric[@"version"]]=@{@"rubric":rubric,@"path":path};
+            }
+        }
+        return @{@"materials":materials,@"rubrics":rubrics.allValues};
+    } done:^(NSDictionary *result,NSError *error){
+        self.discoveringRubric=NO;
+        if(!result){[self showError:error];return;}
+        self.automaticReferences=result[@"materials"];
+        NSArray *standards=result[@"rubrics"];
+        if(standards.count>1){[self showError:AMPeerError(@"找到多份评分标准，请在评分标准中核对后再评分。")];return;}
+        if(standards.count==1){
+            NSDictionary *found=standards.firstObject;
+            if([self.rubric[@"version"] isEqual:found[@"rubric"][@"version"]]){[self grade];return;}
+            NSAlert *confirm=NSAlert.new;confirm.messageText=@"采用老师评分标准？";
+            confirm.informativeText=[NSString stringWithFormat:@"%@ · 满分%@",found[@"path"],AMPeerRubricMaximum(found[@"rubric"])];
+            [confirm addButtonWithTitle:@"采用"];[confirm addButtonWithTitle:@"取消"];
+            if([confirm runModal]==NSAlertFirstButtonReturn){self.rubric=found[@"rubric"];[self grade];}
+        }else if(self.rubric)[self grade];else [self generateRubric];
+    }];
+}
 - (void)grade {
-    if(!self.rubric){[self editRubric];return;}if(!self.snapshots[self.selected ?: @""][@"commit"]){[self verifyPeer:self.selected completion:nil];return;}
+    if(self.grading)return;
+    if(!self.rubric || !self.automaticReferences){[self discoverRubric];return;}if(!self.snapshots[self.selected ?: @""][@"commit"]){[self verifyPeer:self.selected completion:^(NSDictionary *snapshot){if(snapshot)[self grade];}];return;}
+    NSMutableArray *chosen=NSMutableArray.array;
+    if(!self.batchGrading){if(self.selected)[chosen addObject:self.selected];}
+    else {
     NSAlert *selection=NSAlert.new;selection.messageText=@"选择需要补齐评分的同学";selection.informativeText=@"仅列出已核验版本；已有有效评分会复用，不重复请求。";NSStackView *list=NSStackView.new;list.orientation=NSUserInterfaceLayoutOrientationVertical;list.alignment=NSLayoutAttributeLeading;NSMutableArray *checks=NSMutableArray.array;
     for(NSDictionary *peer in self.peers)if(self.snapshots[peer[@"repository"]][@"commit"]){NSButton *check=[NSButton checkboxWithTitle:peer[@"login"] target:nil action:nil];check.identifier=peer[@"repository"];check.state=[peer[@"repository"] isEqual:self.selected] ? NSControlStateValueOn:NSControlStateValueOff;[list addArrangedSubview:check];[checks addObject:check];}
     NSScrollView *scroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,400,240)];scroll.hasVerticalScroller=YES;list.frame=NSMakeRect(0,0,380,MAX(240,checks.count*30));scroll.documentView=list;AMPeerCheckSelection *toggle=AMPeerCheckSelection.new;toggle.checks=checks;NSButton *all=[NSButton checkboxWithTitle:@"全选" target:toggle action:@selector(toggle:)];NSStackView *choices=[NSStackView stackViewWithViews:@[all,scroll]];choices.orientation=NSUserInterfaceLayoutOrientationVertical;choices.alignment=NSLayoutAttributeLeading;choices.spacing=8;choices.frame=NSMakeRect(0,0,400,280);[scroll.heightAnchor constraintEqualToConstant:240].active=YES;[scroll.widthAnchor constraintEqualToConstant:400].active=YES;selection.accessoryView=choices;[selection addButtonWithTitle:@"准备材料"];[selection addButtonWithTitle:@"取消"];if([selection runModal]!=NSAlertFirstButtonReturn)return;
-    NSMutableArray *chosen=NSMutableArray.array;for(NSButton *check in checks)if(check.state==NSControlStateValueOn)[chosen addObject:check.identifier];if(!chosen.count)return;
-    NSDictionary *confirmedRubric=self.rubric.copy;NSUInteger generation=self.generation;
-    if(![self chooseModelAndLimit:[NSString stringWithFormat:@"为所选%lu位准备评分材料。下一步核对具体材料后才发送给模型；已有有效评分直接复用。",(unsigned long)chosen.count]])return;
-    NSString *model=[self.provider isEqual:@"gemini"] ? self.gemini.model:[self modelIdentity];NSUInteger requestedCount=chosen.count;
+    for(NSButton *check in checks)if(check.state==NSControlStateValueOn)[chosen addObject:check.identifier];if(!chosen.count)return;
+    }
+    if(!chosen.count)return;
+    NSDictionary *confirmedRubric=self.rubric.copy;
+    NSUInteger generation=self.generation, requestedCount=chosen.count;
+    NSMutableDictionary *versions=NSMutableDictionary.dictionary,*snapshots=NSMutableDictionary.dictionary;
+    for(NSString *identifier in chosen){
+        versions[identifier]=[self inputVersion:identifier];
+        snapshots[identifier]=[self snapshotForPeer:identifier];
+    }
+    self.grading=YES;
 
-    // 各同学独立准备；一份缺材料不丢弃其他可用部分。整个批次限制内存用量。
-    [self run:@"准备题目、作答与评语…" queue:self.previewQueue work:^id(SSGitHub *api,NSError **error){NSMutableDictionary *prepared=NSMutableDictionary.dictionary,*failures=NSMutableDictionary.dictionary;NSUInteger totalBytes=0;
-        for(NSString *identifier in chosen){if(![self isCurrent:generation])break;NSDictionary *snapshot=[self snapshotForPeer:identifier];if(AMPeerEffectiveScoreForSnapshot([self comparableScores:identifier],snapshot,confirmedRubric[@"version"],model,AMGradePromptVersion)){prepared[identifier]=@[];continue;}
-            NSError *failure=nil;NSArray *materials=[self materialsForPeer:identifier api:api error:&failure];if(!materials){failures[identifier]=failure.localizedDescription ?: @"材料未完整准备";continue;}NSUInteger bytes=0;for(NSDictionary *entry in materials)bytes+=[entry[@"data"] length];if(totalBytes+bytes>64*1024*1024){failures[identifier]=@"本批材料超过64MB，请分批检查";continue;}totalBytes+=bytes;prepared[identifier]=materials;
-        }return @{@"prepared":prepared,@"failures":failures};
-    } done:^(NSDictionary *value,NSError *error){NSDictionary *prepared=value[@"prepared"],*failures=value[@"failures"];if(!prepared.count){[self showError:error ?: AMPeerError([[failures allValues] componentsJoinedByString:@"；"])];return;}NSMutableArray *ready=NSMutableArray.array;for(NSString *identifier in chosen)if(prepared[identifier])[ready addObject:identifier];NSUInteger preparationFailures=failures.count;
-
-        for(NSString *key in prepared)self.materialCache[[self inputVersion:key]]=prepared[key];
-        NSMutableString *scope=[NSMutableString stringWithString:@"本次材料：\n"];for(NSString *identifier in ready){[scope appendFormat:@"\n%@ · %@\n",[self peer:identifier][@"login"],self.snapshots[identifier][@"commit"]];for(NSDictionary *entry in prepared[identifier])[scope appendFormat:@"%@ · %@\n",entry[@"role"],entry[@"path"]];}
-        for(NSString *identifier in failures)[scope appendFormat:@"\n未完成：%@ · %@\n",[self peer:identifier][@"login"],failures[identifier]];
-        NSAlert *confirm=NSAlert.new;confirm.messageText=@"核对评分材料";confirm.informativeText=@"确认题目、完整作答、图片和老师评语属于同一份作业及所示版本。缺少材料请取消并补充。";NSTextView *text=[self textAccessory:confirm text:scope];text.editable=NO;[confirm addButtonWithTitle:@"材料完整，继续"];[confirm addButtonWithTitle:@"取消"];if([confirm runModal]!=NSAlertFirstButtonReturn)return;
-        self.rankingGroup=nil;NSMutableDictionary *versions=NSMutableDictionary.dictionary,*snapshots=NSMutableDictionary.dictionary;for(NSString *identifier in ready){versions[identifier]=[self inputVersion:identifier];snapshots[identifier]=self.snapshots[identifier];}
-        [self run:@"补齐评分…" queue:self.previewQueue work:^id(SSGitHub *api,NSError **inner){NSUInteger completed=0;for(NSString *identifier in ready){if(![self isCurrent:generation] || self.scoreClient.scoringCancelled)break;NSDictionary *snapshot=snapshots[identifier];NSArray *existing=[self comparableScores:identifier];if(AMPeerEffectiveScoreForSnapshot(existing,snapshot,confirmedRubric[@"version"],model,AMGradePromptVersion)){completed++;continue;}BOOL teacherConflict=NO;for(NSDictionary *record in existing)if([record[@"kind"] isEqual:@"teacher"] && [record[@"confirmed"] boolValue] && AMPeerRecordApplies(record,snapshot))teacherConflict=YES;if(teacherConflict){if(inner)*inner=AMPeerError(@"老师评分来源冲突，请先核对，不使用LLM覆盖");break;}
-                NSDictionary *current=[api readRepository:identifier resource:[@"commits/" stringByAppendingString:[[self peer:identifier][@"branch"] stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"]]] error:inner];if(![current[@"sha"] isEqual:snapshot[@"commit"]]){if(inner && !*inner)*inner=AMPeerError(@"同学作业版本已变化，请刷新并重新确认材料");break;}
-                NSMutableArray *images=NSMutableArray.array;NSArray *json=[self jsonMaterials:prepared[identifier] images:images];if(!json){if(inner)*inner=AMPeerError(@"评分图片无法完整准备，未发送");break;}NSDictionary *result=[self generate:@{@"rubric":confirmedRubric,@"materials":json,@"answerCommit":snapshot[@"commit"],@"scope":self.scope} rubric:NO images:images error:inner];if(!result)break;if(!AMPeerValidateScore(result,confirmedRubric,prepared[identifier],inner))break;
-                NSDictionary *row=@{@"repository":identifier,@"commit":snapshot[@"commit"],@"answerVersion":AMPeerAnswerVersion(snapshot),@"inputVersion":versions[identifier],@"rubric":confirmedRubric[@"version"],@"rubricDefinition":confirmedRubric,@"model":model,@"prompt":AMGradePromptVersion,@"score":result[@"score"],@"maximum":@100,@"date":NSDate.date,@"kind":[self commentForPeer:identifier] ? @"llm-teacher":@"llm",@"confirmed":@YES,@"sourceID":NSUUID.UUID.UUIDString,@"result":result,@"remoteSources":[self remoteSources:prepared[identifier]],@"sourceVerifiedAt":NSDate.date};if(![self isCurrent:generation] || ![self saveScore:row error:inner])break;completed++;dispatch_async(dispatch_get_main_queue(),^{if([self isCurrent:generation]){self.status=[NSString stringWithFormat:@"已完成 %lu/%lu · 请求 %lu/%lu",(unsigned long)completed,(unsigned long)requestedCount,(unsigned long)self.requestsUsed,(unsigned long)self.requestLimit];[self present];}});
-            }return @(completed);
-        } done:^(NSNumber *count,NSError *failure){self.groupFailed|=preparationFailures>0;self.status=failure ? failure.localizedDescription:[NSString stringWithFormat:@"已完成 %@/%lu%@ · 完整结果已保存",count ?: @0,(unsigned long)requestedCount,preparationFailures ? [NSString stringWithFormat:@" · %lu位材料需处理",(unsigned long)preparationFailures]:@""];}];
+    // 每位同学独立准备材料，整个批次共用内存预算。
+    [self run:@"准备评分材料…" queue:self.previewQueue work:^id(SSGitHub *api,NSError **error){
+        NSMutableDictionary *prepared=NSMutableDictionary.dictionary,*failures=NSMutableDictionary.dictionary;
+        NSUInteger totalBytes=0;
+        for(NSString *identifier in chosen){
+            if(![self isCurrent:generation])break;
+            if(AMPeerEffectiveScoreForSnapshot([self comparableScores:identifier],snapshots[identifier],nil,nil,nil)){
+                prepared[identifier]=@[];
+                continue;
+            }
+            NSError *failure=nil;
+            NSArray *materials=[self materialsForPeer:identifier api:api error:&failure];
+            if(!materials){failures[identifier]=failure.localizedDescription ?: @"材料未完整准备";continue;}
+            NSUInteger bytes=0;
+            for(NSDictionary *entry in materials)bytes+=[entry[@"data"] length];
+            if(totalBytes+bytes>64*1024*1024){failures[identifier]=@"本批材料超过64MB，请分批检查";continue;}
+            totalBytes+=bytes;
+            prepared[identifier]=materials;
+        }
+        return @{@"prepared":prepared,@"failures":failures};
+    } done:^(NSDictionary *value,NSError *error){
+        NSDictionary *prepared=value[@"prepared"];
+        NSMutableDictionary *failures=[value[@"failures"] mutableCopy] ?: NSMutableDictionary.dictionary;
+        NSMutableArray *ready=NSMutableArray.array;
+        NSMutableString *scope=NSMutableString.string;
+        NSUInteger existingTeacherScores=0;
+        [self.materialCache removeAllObjects];
+        for(NSString *identifier in chosen){
+            NSArray *materials=prepared[identifier];
+            if(!materials)continue;
+            if(![versions[identifier] isEqual:[self inputVersion:identifier]] ||
+                ![snapshots[identifier][@"commit"] isEqual:[self snapshotForPeer:identifier][@"commit"]]){
+                failures[identifier]=@"材料已更新，请重新打开评分";
+                continue;
+            }
+            if(!materials.count){existingTeacherScores++;continue;}
+            [ready addObject:identifier];
+            self.materialCache[versions[identifier]]=materials;
+            [scope appendFormat:@"%@ · %@\n",[self peer:identifier][@"login"],snapshots[identifier][@"commit"]];
+            for(NSDictionary *entry in materials)[scope appendFormat:@"%@ · %@\n",entry[@"role"],entry[@"path"]];
+            [scope appendString:@"\n"];
+        }
+        for(NSString *identifier in failures)[scope appendFormat:@"%@ · %@\n",[self peer:identifier][@"login"],failures[identifier]];
+        if(!ready.count){
+            self.grading=NO;
+            if(failures.count || error)[self showError:error ?: AMPeerError(scope)];
+            else self.status=@"已有老师评分";
+            return;
+        }
+        NSString *summary=[NSString stringWithFormat:@"%lu 位同学 · 满分 %@。请核对材料范围。",(unsigned long)ready.count,AMPeerRubricMaximum(confirmedRubric)];
+        if(![self chooseModelAndLimit:summary materials:scope]){
+            self.grading=NO;
+            self.status=@"评分未开始";
+            return;
+        }
+        if(![self isCurrent:generation])return;
+        NSString *model=[self modelIdentity];
+        if([self.provider isEqual:@"gemini"])model=self.gemini.model;
+        self.rankingGroup=nil;
+        [self run:@"补齐评分…" queue:self.previewQueue work:^id(SSGitHub *api,NSError **inner){
+            NSUInteger completed=existingTeacherScores;
+            for(NSString *identifier in ready){
+                if(![self isCurrent:generation] || self.scoreClient.scoringCancelled || self.gemini.cancelled)break;
+                NSDictionary *snapshot=snapshots[identifier];
+                NSArray *existing=[self comparableScores:identifier];
+                if(AMPeerEffectiveScoreForSnapshot(existing,snapshot,confirmedRubric[@"version"],model,AMGradePromptVersion)){
+                    completed++;
+                    continue;
+                }
+                if(self.requestsUsed>=self.requestLimit){
+                    failures[identifier]=@"达到请求上限，可继续未完成部分";
+                    continue;
+                }
+                BOOL teacherConflict=NO;
+                for(NSDictionary *record in existing){
+                    if([record[@"kind"] isEqual:@"teacher"] && [record[@"confirmed"] boolValue] && AMPeerRecordApplies(record,snapshot)){
+                        teacherConflict=YES;
+                        break;
+                    }
+                }
+                if(teacherConflict){failures[identifier]=@"老师评分来源待核对";continue;}
+                NSError *failure=nil;
+                NSString *branch=[[self peer:identifier][@"branch"] stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"]];
+                NSDictionary *current=[api readRepository:identifier resource:[@"commits/" stringByAppendingString:branch ?: @""] error:&failure];
+                // 用户确认后，再核验远端提交和本机材料指纹。
+                if(![current[@"sha"] isEqual:snapshot[@"commit"]] || ![versions[identifier] isEqual:[self inputVersion:identifier]]){
+                    failures[identifier]=failure.localizedDescription ?: @"作答或评分材料已变化，请重新确认";
+                    continue;
+                }
+                NSMutableArray *images=NSMutableArray.array;
+                NSArray *json=[self jsonMaterials:prepared[identifier] images:images];
+                if(!json){failures[identifier]=@"评分图片无法完整准备";continue;}
+                NSDictionary *result=[self generate:@{@"rubric":confirmedRubric,@"materials":json,@"answerCommit":snapshot[@"commit"],@"scope":self.scope} rubric:NO images:images error:&failure];
+                if(!result || !AMPeerValidateScore(result,confirmedRubric,prepared[identifier],&failure)){
+                    failures[identifier]=failure.localizedDescription ?: @"评分未完成";
+                    continue;
+                }
+                NSDictionary *row=@{@"repository":identifier,@"commit":snapshot[@"commit"],@"answerVersion":AMPeerAnswerVersion(snapshot),@"inputVersion":versions[identifier],@"rubric":confirmedRubric[@"version"],@"rubricDefinition":confirmedRubric,@"model":model,@"prompt":AMGradePromptVersion,@"score":result[@"score"],@"maximum":AMPeerRubricMaximum(confirmedRubric),@"date":NSDate.date,@"kind":[self commentForPeer:identifier] ? @"llm-teacher":@"llm",@"confirmed":@YES,@"sourceID":NSUUID.UUID.UUIDString,@"result":result,@"remoteSources":[self remoteSources:prepared[identifier]],@"sourceVerifiedAt":NSDate.date};
+                if(![self isCurrent:generation])break;
+                if(![versions[identifier] isEqual:[self inputVersion:identifier]]){
+                    failures[identifier]=@"评分期间材料已变化";
+                    continue;
+                }
+                if(![self saveScore:row error:&failure]){
+                    failures[identifier]=failure.localizedDescription ?: @"评分保存失败";
+                    continue;
+                }
+                completed++;
+            }
+            return @(completed);
+        } done:^(NSNumber *count,NSError *failure){
+            self.grading=NO;
+            NSMutableArray *details=NSMutableArray.array;
+            for(NSString *identifier in chosen)if(failures[identifier]){
+                [details addObject:[NSString stringWithFormat:@"%@ · %@",[self peer:identifier][@"login"],failures[identifier]]];
+            }
+            NSString *result=[NSString stringWithFormat:@"已完成 %@/%lu · 请求 %lu/%lu",count ?: @0,(unsigned long)requestedCount,(unsigned long)self.requestsUsed,(unsigned long)self.requestLimit];
+            if(details.count || failure){
+                self.groupFailed=YES;
+                self.status=[NSString stringWithFormat:@"%@ · %lu 位需处理",result,(unsigned long)details.count];
+                AMOperationSetResult(self.activityID,self.status,[details componentsJoinedByString:@"\n"],YES,nil,nil);
+            }else self.status=result;
+        }];
     }];
 }
 - (void)associateFeedback {
     BOOL external=self.associatingLLM;if(external && !self.rubric){[self editRubric];return;}
     if(!self.snapshots[self.selected ?: @""][@"commit"]){[self showError:AMPeerError(@"请先核验所选同学的作答版本")];return;}
-    NSAlert *alert=NSAlert.new;alert.messageText=external ? @"关联已有LLM评分":@"关联老师评价";alert.informativeText=@"粘贴评价文件或具体评论的 GitHub 链接。读取后固定来源版本，再核对账号、原文与对应解答。";NSTextField *field=[NSTextField textFieldWithString:@""];field.frame=NSMakeRect(0,0,540,28);alert.accessoryView=field;[alert addButtonWithTitle:@"读取"];[alert addButtonWithTitle:@"取消"];if([alert runModal]!=NSAlertFirstButtonReturn)return;
+    NSAlert *alert=NSAlert.new;alert.messageText=external ? @"关联已有LLM评分":@"关联老师评价";alert.informativeText=@"粘贴评价文件或具体评论的 GitHub 链接。读取后固定来源版本，再核对账号、原文与对应解答。";NSTextField *field=[NSTextField textFieldWithString:external ? @"":([self.feedback[self.selected] firstObject] ?: @"")];field.frame=NSMakeRect(0,0,540,28);alert.accessoryView=field;[alert addButtonWithTitle:@"读取"];[alert addButtonWithTitle:@"取消"];if([alert runModal]!=NSAlertFirstButtonReturn)return;
     NSURL *url=[NSURL URLWithString:field.stringValue];NSArray *parts=url.path.pathComponents;if(![url.scheme isEqual:@"https"] || ![url.host isEqual:@"github.com"] || url.user || url.password || url.query.length || parts.count<5){[self showError:AMPeerError(@"请输入 GitHub 评价原位置")];return;}NSString *repository=[NSString stringWithFormat:@"%@/%@",parts[1],parts[2]];NSString *selected=self.selected,*answerCommit=self.snapshots[selected][@"commit"];
     [self run:@"读取评价原文…" queue:self.previewQueue work:^id(SSGitHub *api,NSError **error){
         if([parts[3] isEqual:@"blob"] && parts.count>=6){NSString *path=[[parts subarrayWithRange:NSMakeRange(5,parts.count-5)] componentsJoinedByString:@"/"];NSDictionary *resolved=[api readRepository:repository resource:[@"commits/" stringByAppendingString:parts[4]] error:error];NSString *sourceCommit=resolved[@"sha"];if(!AMPeerSHA(sourceCommit))return nil;NSDictionary *tree=[api peerTree:sourceCommit repository:repository error:error];for(NSDictionary *file in tree[@"tree"])if([file[@"path"] isEqual:path]){NSDictionary *entry=[self loadFile:file peer:@{@"repository":repository} api:api error:error];if(!entry[@"text"]){if(error && !*error)*error=AMPeerError(@"评价文件须为可读取文本");return nil;}NSDictionary *commit=[api readRepository:repository resource:[@"commits/" stringByAppendingString:sourceCommit] error:error];NSURLComponents *permalink=[NSURLComponents componentsWithString:[NSString stringWithFormat:@"https://github.com/%@",repository]];permalink.path=[NSString stringWithFormat:@"/%@/blob/%@/%@",repository,sourceCommit,path];return @{@"text":entry[@"text"],@"author":commit[@"author"][@"login"] ?: @"来源提交未关联GitHub账号",@"sourceID":permalink.URL.absoluteString,@"sourceCommit":sourceCommit,@"sourceKind":@"file",@"sourceRepository":repository,@"sourcePath":path,@"sourceBlobSHA":entry[@"version"],@"sourceTimestamp":commit[@"commit"][@"committer"][@"date"] ?: @""};}}
@@ -173,7 +362,7 @@
 - (void)importScore {
     NSOpenPanel *panel=NSOpenPanel.openPanel;panel.canChooseDirectories=NO;if([panel runModal]!=NSModalResponseOK)return;NSData *data=[NSData dataWithContentsOfURL:panel.URL];if(data.length>2*1024*1024 || SSContainsSecret(data)){[self showError:AMPeerError(@"评分文件过大或含疑似凭据")];return;}NSError *error=nil;id row=[NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
     if(![row isKindOfClass:NSDictionary.class] || ![row[@"repository"] isEqual:self.selected] || !AMPeerRecordApplies(row,self.snapshots[self.selected ?: @""] ?: @{}) || ![row[@"rubric"] isEqual:self.rubric[@"version"]] || ![row[@"model"] isEqual:[self modelIdentity]] || ![row[@"prompt"] isEqual:AMGradePromptVersion] || ![row[@"inputVersion"] isEqual:[self inputVersion:self.selected]]){[self showError:AMPeerError(@"已有评分须与当前仓库、解答版本、材料、模型和统一标准一致")];return;}
-    NSArray *materials=self.materialCache[[self inputVersion:self.selected]];if(!materials){[self showError:AMPeerError(@"请先准备并核验该同学的评分材料")];return;}if(!AMPeerValidateScore(row[@"result"],self.rubric,materials,&error)){[self showError:error];return;}NSAlert *confirm=NSAlert.new;confirm.messageText=@"导入已有LLM评分";confirm.informativeText=@"此分数来自外部文件，真实性由你核对，不视为老师评分。";[confirm addButtonWithTitle:@"确认"];[confirm addButtonWithTitle:@"取消"];if([confirm runModal]!=NSAlertFirstButtonReturn)return;NSMutableDictionary *safe=NSMutableDictionary.dictionary;for(NSString *key in @[@"repository",@"commit",@"answerVersion",@"inputVersion",@"rubric",@"rubricDefinition",@"model",@"prompt",@"result"])if(row[key])safe[key]=row[key];safe[@"remoteSources"]=[self remoteSources:materials];safe[@"sourceVerifiedAt"]=NSDate.date;safe[@"kind"]=@"llm";safe[@"score"]=row[@"result"][@"score"];safe[@"maximum"]=@100;safe[@"date"]=NSDate.date;safe[@"confirmed"]=@YES;safe[@"sourceID"]=NSUUID.UUID.UUIDString;if(![self saveScore:safe error:&error])[self showError:error];else{self.status=@"已有评分已导入";[self present];}
+    NSArray *materials=self.materialCache[[self inputVersion:self.selected]];if(!materials){[self showError:AMPeerError(@"请先准备并核验该同学的评分材料")];return;}if(!AMPeerValidateScore(row[@"result"],self.rubric,materials,&error)){[self showError:error];return;}NSAlert *confirm=NSAlert.new;confirm.messageText=@"导入已有LLM评分";confirm.informativeText=@"此分数来自外部文件，真实性由你核对，不视为老师评分。";[confirm addButtonWithTitle:@"确认"];[confirm addButtonWithTitle:@"取消"];if([confirm runModal]!=NSAlertFirstButtonReturn)return;NSMutableDictionary *safe=NSMutableDictionary.dictionary;for(NSString *key in @[@"repository",@"commit",@"answerVersion",@"inputVersion",@"rubric",@"rubricDefinition",@"model",@"prompt",@"result"])if(row[key])safe[key]=row[key];safe[@"remoteSources"]=[self remoteSources:materials];safe[@"sourceVerifiedAt"]=NSDate.date;safe[@"kind"]=@"llm";safe[@"score"]=row[@"result"][@"score"];safe[@"maximum"]=AMPeerRubricMaximum(self.rubric);safe[@"date"]=NSDate.date;safe[@"confirmed"]=@YES;safe[@"sourceID"]=NSUUID.UUID.UUIDString;if(![self saveScore:safe error:&error])[self showError:error];else{self.status=@"已有评分已导入";[self present];}
 }
 - (void)showScore {
     NSMutableString *markdown=[NSMutableString stringWithString:@"# 评分依据\n\n"];

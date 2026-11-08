@@ -1,3 +1,4 @@
+#import "AMPeerCore.h"
 #import "SSGit.h"
 #import "AMPreflight.h"
 #import "AMPrompts.h"
@@ -417,6 +418,39 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     SSGitResult *status = [self checked:@[@"status", @"--porcelain=v1", @"-z", @"--untracked-files=all"] in:path token:nil error:error]; if (!status) return NO;
     if (status.data.length) { if (error) *error = GitError(@"本地有未提交修改；请先提交或自行处理，再拉取上游。"); return NO; } return YES;
 }
+- (NSDictionary *)fastForwardLocalCourse:(NSDictionary *)course teacher:(NSString *)teacher remote:(NSString *)remote error:(NSError **)error {
+    NSString *path=course[@"path"];
+    if(!AMPeerSHA(teacher) || ![self validateCourse:course error:error] || ![self submissionBranch:course error:error])return nil;
+    NSString *head=Trim([self string:[self checked:@[@"rev-parse",@"HEAD"] in:path token:nil error:error]]);
+    if(!AMPeerSHA(head))return nil;
+    // Only previously fetched, validated tips can participate. The routine never fetches or pushes.
+    NSString *candidate=head;
+    NSArray *tips=AMPeerSHA(remote) ? @[teacher,remote]:@[teacher];
+    for(NSString *tip in tips){
+        SSGitResult *before=[self run:@[@"merge-base",@"--is-ancestor",candidate,tip] in:path token:nil error:error];
+        if(!before || before.status>1)return nil;
+        if(before.status==0){candidate=tip;continue;}
+        SSGitResult *after=[self run:@[@"merge-base",@"--is-ancestor",tip,candidate] in:path token:nil error:error];
+        if(!after || after.status>1)return nil;
+        if(after.status!=0)return @{@"state":@"diverged"};
+    }
+    if([candidate isEqual:head])return @{@"state":@"current"};
+    for(NSString *marker in @[@"MERGE_HEAD",@"CHERRY_PICK_HEAD",@"REVERT_HEAD",@"rebase-merge",@"rebase-apply",@"sequencer"]){
+        SSGitResult *location=[self checked:@[@"rev-parse",@"--git-path",marker] in:path token:nil error:error];
+        if(!location)return nil;
+        NSString *file=Trim([self string:location]);
+        if(!file.isAbsolutePath)file=[path stringByAppendingPathComponent:file];
+        if([NSFileManager.defaultManager fileExistsAtPath:file])return @{@"state":@"busy"};
+    }
+    NSError *dirty=nil;
+    if(![self cleanWorktree:path error:&dirty]){
+        if([AMWorkflowIssue(dirty) isEqual:@"dirty"])return @{@"state":@"dirty"};
+        if(error)*error=dirty;
+        return nil;
+    }
+    if(![self checked:@[@"merge",@"--ff-only",@"--no-overwrite-ignore",@"--no-edit",candidate] in:path token:nil error:error])return nil;
+    return @{@"state":@"updated",@"commit":candidate};
+}
 - (NSArray<NSDictionary *> *)changesForCourse:(NSDictionary *)course error:(NSError **)error {
     NSTimeInterval previousTimeout=self.commandTimeout;NSDate *previousDeadline=self.commandDeadline;self.commandDeadline=[NSDate dateWithTimeIntervalSinceNow:15];if(previousDeadline && [previousDeadline compare:self.commandDeadline]==NSOrderedAscending)self.commandDeadline=previousDeadline;self.commandTimeout=previousTimeout>0 ? MIN(previousTimeout,15):15;
     @try{
@@ -573,6 +607,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     return YES;
 }
 #include "AMSubmissionGit.inc"
+#include "AMAssignmentFeedback.inc"
 #include "AMPreflightGit.inc"
 - (NSArray<NSString *> *)conflicts:(NSDictionary *)course error:(NSError **)error {
     if (![self validateCourse:course error:error]) return nil;

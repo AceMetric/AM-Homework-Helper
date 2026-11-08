@@ -15,12 +15,51 @@ NS_INLINE BOOL AMPeerInScope(NSString *path,NSString *scope){return AMPeerPath(p
 NS_INLINE NSError *AMPeerError(NSString *message){return [NSError errorWithDomain:@"AMPeers" code:1 userInfo:@{NSLocalizedDescriptionKey:message}];}
 NS_INLINE NSDictionary *AMPeerRubric(id raw,NSError **error){
     BOOL valid=[raw isKindOfClass:NSDictionary.class] && [raw[@"criteria"] isKindOfClass:NSArray.class] && [raw[@"criteria"] count]>0 && [raw[@"criteria"] count]<=30;double total=0;NSMutableSet *seen=NSMutableSet.set;
-    if(valid)for(id item in raw[@"criteria"]){if(![item isKindOfClass:NSDictionary.class] || ![item[@"id"] isKindOfClass:NSString.class] || ![item[@"id"] length] || [seen containsObject:item[@"id"]] || ![item[@"title"] isKindOfClass:NSString.class] || ![item[@"title"] length] || !AMPeerNumber(item[@"maximum"]) || [item[@"maximum"] doubleValue]<=0 || [item[@"maximum"] doubleValue]>100){valid=NO;break;}total+=[item[@"maximum"] doubleValue];[seen addObject:item[@"id"]];}
-    if(!valid || fabs(total-100)>.001){if(error)*error=AMPeerError(@"评分标准须有唯一维度、明确名称，满分合计为100");return nil;}
+    if(valid)for(id item in raw[@"criteria"]){if(![item isKindOfClass:NSDictionary.class] || ![item[@"id"] isKindOfClass:NSString.class] || ![item[@"id"] length] || [seen containsObject:item[@"id"]] || ![item[@"title"] isKindOfClass:NSString.class] || ![item[@"title"] length] || !AMPeerNumber(item[@"maximum"]) || [item[@"maximum"] doubleValue]<=0 || [item[@"maximum"] doubleValue]>10000){valid=NO;break;}total+=[item[@"maximum"] doubleValue];[seen addObject:item[@"id"]];}
+    if(!valid){if(error)*error=AMPeerError(@"评分标准无效");return nil;}
+    double maximum=raw[@"maximum"] ? [raw[@"maximum"] doubleValue]:100;
+    if(!valid || (raw[@"maximum"] && !AMPeerNumber(raw[@"maximum"])) || maximum<=0 || maximum>10000 || fabs(total-maximum)>.001){if(error)*error=AMPeerError(@"请核对评分维度与满分，分项之和须等于满分");return nil;}
     NSMutableArray *criteria=NSMutableArray.array;for(NSDictionary *item in raw[@"criteria"]){if([item[@"title"] length]>1000 || [item[@"id"] length]>128){if(error)*error=AMPeerError(@"评分维度过长");return nil;}[criteria addObject:@{@"id":item[@"id"],@"title":item[@"title"],@"maximum":item[@"maximum"]}];}
-    return @{@"criteria":criteria,@"version":AMPeerHash(criteria)};
+    if(fabs(maximum-100)<.001)return @{@"criteria":criteria,@"version":AMPeerHash(criteria)};
+    NSDictionary *definition=@{@"criteria":criteria,@"maximum":@(maximum)};return @{@"criteria":criteria,@"maximum":@(maximum),@"version":AMPeerHash(definition)};
 }
-NS_INLINE BOOL AMPeerSettingsValid(id value){if(![value isKindOfClass:NSDictionary.class] || [value count]>1000)return NO;for(id key in value){if(![key isKindOfClass:NSString.class] || [key rangeOfString:@"^[a-f0-9]{64}$" options:NSRegularExpressionSearch].location==NSNotFound)return NO;id entry=value[key];if(![entry isKindOfClass:NSDictionary.class] || !AMPeerRubric(entry[@"rubric"],NULL))return NO;for(id field in entry)if(![@[@"rubric",@"provider",@"requestLimit"] containsObject:field])return NO;if(entry[@"provider"] && ![@[@"local",@"cloud",@"gemini"] containsObject:entry[@"provider"]])return NO;if(entry[@"requestLimit"] && (!AMPeerNumber(entry[@"requestLimit"]) || [entry[@"requestLimit"] integerValue]<1 || [entry[@"requestLimit"] integerValue]>20))return NO;NSDictionary *rubric=entry[@"rubric"];if(rubric.count!=2 || ![AMPeerRubric(rubric,NULL)[@"version"] isEqual:rubric[@"version"]])return NO;}return YES;}
+NS_INLINE NSNumber *AMPeerRubricMaximum(NSDictionary *rubric){return rubric[@"maximum"] ?: @100;}
+// Extract only explicit point values from teacher tables. Rubric totals are checked
+// again by the same validator used for manual and model-generated standards.
+NS_INLINE NSDictionary *AMPeerRubricFromTeacherText(NSString *text){
+    if(![text isKindOfClass:NSString.class] || text.length>1024*1024)return nil;
+    NSRegularExpression *number=[NSRegularExpression regularExpressionWithPattern:@"^([0-9]+(?:\\.[0-9]+)?)\\s*(?:分|pts?|points?)?$" options:NSRegularExpressionCaseInsensitive error:NULL];
+    NSMutableArray *criteria=NSMutableArray.array;
+    NSInteger labelColumn=-1,pointColumn=-1;
+    double total=0,declared=0;
+    for(NSString *line in [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]){
+        NSString *trimmed=[line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        if(![trimmed containsString:@"|"]){if(criteria.count)break;labelColumn=-1;pointColumn=-1;continue;}
+        NSMutableArray *cells=NSMutableArray.array;
+        NSArray *parts=[[trimmed stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"|"]] componentsSeparatedByString:@"|"];
+        for(NSString *part in parts)[cells addObject:[[part stringByReplacingOccurrencesOfString:@"*" withString:@""] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet]];
+        if(pointColumn<0){
+            for(NSUInteger i=0;i<cells.count;i++){
+                NSString *cell=[cells[i] lowercaseString];
+                if([@[@"分值",@"满分",@"分数",@"points",@"max points",@"maximum"] containsObject:cell])pointColumn=(NSInteger)i;
+                if([@[@"评分项",@"评分项目",@"维度",@"项目",@"评价标准",@"评分标准",@"criterion",@"criteria"] containsObject:cell])labelColumn=(NSInteger)i;
+            }
+            if(labelColumn<0 || pointColumn<0){labelColumn=-1;pointColumn=-1;}
+            continue;
+        }
+        if(cells.count<=(NSUInteger)MAX(labelColumn,pointColumn))break;
+        NSString *label=cells[labelColumn],*point=cells[pointColumn];
+        NSTextCheckingResult *match=[number firstMatchInString:point options:0 range:NSMakeRange(0,point.length)];
+        if(!match){if(criteria.count)break;continue;}
+        double value=[[point substringWithRange:[match rangeAtIndex:1]] doubleValue];
+        if([@[@"总分",@"合计",@"total"] containsObject:label.lowercaseString]){declared=value;break;}
+        if(!label.length || value<=0 || criteria.count>=30)return nil;
+        [criteria addObject:@{@"id":[NSString stringWithFormat:@"c%lu",(unsigned long)criteria.count+1],@"title":label,@"maximum":@(value)}];
+        total+=value;
+    }
+    return criteria.count ? AMPeerRubric(@{@"criteria":criteria,@"maximum":@(declared>0 ? declared:total)},NULL):nil;
+}
+NS_INLINE BOOL AMPeerSettingsValid(id value){if(![value isKindOfClass:NSDictionary.class] || [value count]>1000)return NO;for(id key in value){if(![key isKindOfClass:NSString.class] || [key rangeOfString:@"^[a-f0-9]{64}$" options:NSRegularExpressionSearch].location==NSNotFound)return NO;id entry=value[key];if(![entry isKindOfClass:NSDictionary.class] || !AMPeerRubric(entry[@"rubric"],NULL))return NO;for(id field in entry)if(![@[@"rubric",@"provider",@"requestLimit"] containsObject:field])return NO;if(entry[@"provider"] && ![@[@"local",@"cloud",@"gemini"] containsObject:entry[@"provider"]])return NO;if(entry[@"requestLimit"] && (!AMPeerNumber(entry[@"requestLimit"]) || [entry[@"requestLimit"] integerValue]<1 || [entry[@"requestLimit"] integerValue]>20))return NO;NSDictionary *rubric=entry[@"rubric"];if((rubric.count!=2 && rubric.count!=3) || ![AMPeerRubric(rubric,NULL)[@"version"] isEqual:rubric[@"version"]])return NO;}return YES;}
 NS_INLINE BOOL AMPeerMaterialsValid(id materials){if(![materials isKindOfClass:NSArray.class] || [materials count]>256)return NO;NSUInteger bytes=0;NSMutableSet *paths=NSMutableSet.set;for(id row in materials){if(![row isKindOfClass:NSDictionary.class] || !AMPeerPath(row[@"path"]) || !AMPeerSHA(row[@"version"]) || ![@[@"question",@"requirements",@"reference",@"answer"] containsObject:row[@"role"]] || ![row[@"data"] isKindOfClass:NSData.class] || [paths containsObject:row[@"path"]])return NO;bytes+=[row[@"data"] length];if(bytes>64*1024*1024)return NO;if(row[@"text"] && ![row[@"text"] isKindOfClass:NSString.class])return NO;[paths addObject:row[@"path"]];}return YES;}
 NS_INLINE BOOL AMPeerScoresValid(id store){
     if(![store isKindOfClass:NSDictionary.class])return NO;

@@ -1,7 +1,7 @@
 - (id)readRepository:(NSString *)repository resource:(NSString *)resource error:(NSError **)error {
     BOOL valid=[repository rangeOfString:@"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" options:NSRegularExpressionSearch].location!=NSNotFound && [resource isKindOfClass:NSString.class] && ![resource containsString:@".."] && ![resource containsString:@"#"] && ![resource containsString:@"\\"];
     // Explicit read-only surface; neither URLs nor caller-selected HTTP methods are accepted.
-    BOOL allowed=NO;for(NSString *prefix in @[@"forks?",@"commits/",@"git/trees/",@"git/blobs/",@"compare/",@"issues/",@"pulls/"])if([resource hasPrefix:prefix])allowed=YES;
+    BOOL allowed=NO;for(NSString *prefix in @[@"forks?",@"commits/",@"git/trees/",@"git/blobs/",@"compare/",@"issues/",@"pulls/",@"pulls?"])if([resource hasPrefix:prefix])allowed=YES;
     if(!valid || !allowed){if(error)*error=GHError(@"只读仓库请求无效");return nil;}
     return [self api:[NSString stringWithFormat:@"/repos/%@/%@",repository,resource] error:error];
 }
@@ -48,4 +48,52 @@
     NSDictionary *blob=[self readRepository:repository resource:[@"git/blobs/" stringByAppendingString:sha] error:error];
     if(![blob isKindOfClass:NSDictionary.class] || ![blob[@"sha"] isEqual:sha] || ![blob[@"encoding"] isEqual:@"base64"] || [blob[@"size"] unsignedLongLongValue]>20*1024*1024 || ![blob[@"content"] isKindOfClass:NSString.class]){if(error && !*error)*error=GHError(@"文件过大或不可读取，请在 GitHub 查看");return nil;}
     NSData *bytes=[[NSData alloc] initWithBase64EncodedString:blob[@"content"] options:NSDataBase64DecodingIgnoreUnknownCharacters];if(bytes.length!=[blob[@"size"] unsignedLongLongValue]){if(error)*error=GHError(@"文件未完整返回");return nil;}return bytes;
+}
+
+- (NSArray *)peerDirectory:(NSString *)scope commit:(NSString *)commit repository:(NSString *)repository error:(NSError **)error {
+    if(!AMPeerPath(scope) || !AMPeerSHA(commit))return nil;
+    NSDictionary *details=[self readRepository:repository resource:[@"commits/" stringByAppendingString:commit] error:error];
+    NSString *tree=details[@"commit"][@"tree"][@"sha"];
+    NSString *prefix=@"";
+    for(NSString *component in scope.pathComponents){
+        if(!AMPeerSHA(tree))return nil;
+        NSDictionary *directory=[self readRepository:repository resource:[@"git/trees/" stringByAppendingString:tree] error:error];
+        if(!directory || [directory[@"truncated"] boolValue])return nil;
+        NSDictionary *entry=nil;
+        for(NSDictionary *row in directory[@"tree"])if([row[@"path"] isEqual:component]){entry=row;break;}
+        if(!entry)return @[];
+        prefix=prefix.length ? [prefix stringByAppendingPathComponent:component]:component;
+        tree=entry[@"sha"];
+        if([entry[@"type"] isEqual:@"blob"]){
+            if(![prefix isEqual:scope] || !AMPeerSHA(tree) || ![@[@"100644",@"100755"] containsObject:entry[@"mode"]])return @[];
+            return @[@{@"path":prefix,@"sha":tree,@"size":entry[@"size"] ?: @0}];
+        }
+        if(![entry[@"type"] isEqual:@"tree"])return @[];
+    }
+    if(!AMPeerSHA(tree))return nil;
+    NSDictionary *directory=[self readRepository:repository resource:[@"git/trees/" stringByAppendingString:tree] error:error];
+    if(!directory || [directory[@"truncated"] boolValue])return nil;
+    NSMutableArray *files=NSMutableArray.array;
+    for(NSDictionary *entry in directory[@"tree"]){
+        NSString *name=entry[@"path"],*sha=entry[@"sha"];
+        if(!AMPeerPath(name) || [name containsString:@"/"] || [name hasPrefix:@"."] || !AMPeerSHA(sha))continue;
+        BOOL folder=[entry[@"type"] isEqual:@"tree"];
+        if(!folder && (![entry[@"type"] isEqual:@"blob"] || ![@[@"100644",@"100755"] containsObject:entry[@"mode"]]))continue;
+        [files addObject:@{@"path":[scope stringByAppendingPathComponent:name],@"sha":sha,@"size":entry[@"size"] ?: @0,@"directory":@(folder)}];
+    }
+    return files;
+}
+
+- (NSDictionary *)peerBrowseSnapshot:(NSDictionary *)peer teacherID:(NSNumber *)teacherID scope:(NSString *)scope error:(NSError **)error {
+    NSDictionary *repository=[self repository:peer[@"repository"] error:error];
+    if(!teacherID || ![repository[@"id"] isEqual:peer[@"repositoryID"]] || ![repository[@"parent"][@"id"] isEqual:teacherID]){
+        if(error && !*error)*error=GHError(@"仓库关联已变化，无法打开作业。");
+        return nil;
+    }
+    NSString *branch=[peer[@"branch"] stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"]];
+    if(!branch.length)return nil;
+    NSDictionary *head=[self readRepository:peer[@"repository"] resource:[@"commits/" stringByAppendingString:branch] error:error];
+    NSString *sha=head[@"sha"];
+    NSArray *files=AMPeerSHA(sha) ? [self peerDirectory:scope commit:sha repository:peer[@"repository"] error:error]:nil;
+    return files ? @{@"commit":sha,@"files":files,@"scope":scope}:nil;
 }

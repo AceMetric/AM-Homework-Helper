@@ -1247,7 +1247,20 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     for (NSArray *entry in entries) {
         NSMenuItem *item = [menu addItemWithTitle:entry[0] action:NSSelectorFromString(entry[1]) keyEquivalent:@""]; item.target = self; item.representedObject = task[@"id"];
     }
+    if(![task[@"deleted"] boolValue])for(NSDictionary *child in task[@"subtasks"])if(SSLegacyAutomaticSubtask(child)){
+        NSMenuItem *cleanup=[menu addItemWithTitle:@"清理旧自动子任务…" action:@selector(cleanLegacySubtasks:) keyEquivalent:@""];
+        cleanup.target=self;cleanup.representedObject=identifier;break;
+    }
     return menu;
+}
+
+- (void)cleanLegacySubtasks:(NSMenuItem *)sender {
+    NSString *identifier=sender.representedObject;
+    if(![self resolveTaskEditor])return;
+    NSAlert *alert=NSAlert.new;alert.messageText=@"清理旧自动子任务？";
+    alert.informativeText=@"移除旧识别生成的题目和步骤。改过名称、已完成或已安排的内容会保留。可撤销。";
+    [alert addButtonWithTitle:@"清理"];[alert addButtonWithTitle:@"取消"];
+    if([alert runModal]==NSAlertFirstButtonReturn)[self applyPlanning:@"clean-generated" task:identifier subtask:@"" value:@""];
 }
 
 - (Surface *)deletedRow:(NSDictionary *)task width:(CGFloat)w {

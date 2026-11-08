@@ -17,6 +17,11 @@
     if([action isEqual:@"set-plan"]){if(value.length && !DDLPlanDate(value,Cal())){self.notice=@"计划日期无效，未保存。";[self render];return NO;}if(value.length && ![self confirmLatePlan:value task:task])return NO;if(value.length)target[@"plannedDate"]=value;else[target removeObjectForKey:@"plannedDate"];}
     else if([action isEqual:@"add"] || [action isEqual:@"edit"]){NSString *title=[value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];if(!title.length || title.length>500 || ([action isEqual:@"add"] && children.count>=500)){self.notice=@"请填写1—500字的名称；每份作业最多500个步骤。";[self render];return NO;}if([action isEqual:@"add"])[children addObject:[@{@"id":NSUUID.UUID.UUIDString,@"title":title,@"completed":@NO} mutableCopy]];else if(subID.length)target[@"title"]=title;else return NO;}
     else if([action isEqual:@"toggle"] && subID.length)target[@"completed"]=@(![target[@"completed"] boolValue]);
+    else if([action isEqual:@"clean-generated"]){
+        NSIndexSet *discard=[children indexesOfObjectsPassingTest:^BOOL(NSDictionary *child,NSUInteger index,BOOL *stop){return SSLegacyAutomaticSubtask(child);}];
+        if(!discard.count)return YES;
+        [children removeObjectsAtIndexes:discard];
+    }
     else if([action isEqual:@"delete"] && subID.length)[children removeObjectAtIndex:index];
     else if(([action isEqual:@"up"] || [action isEqual:@"down"]) && subID.length){NSInteger destination=(NSInteger)index+([action isEqual:@"up"] ? -1:1);if(destination<0 || destination>=(NSInteger)children.count)return YES;[children exchangeObjectAtIndex:index withObjectAtIndex:(NSUInteger)destination];}
     else return NO;

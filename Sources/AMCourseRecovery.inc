@@ -1,7 +1,7 @@
 // Recovery captures the original operation. Navigation never determines its target.
 - (void)showNoChanges:(NSDictionary *)course {
     [self status:@"没有待提交修改"];NSAlert *alert=NSAlert.new;alert.messageText=@"没有待提交修改";alert.informativeText=[NSString stringWithFormat:@"%@ · %@",course[@"fork"],course[@"branch"]];[alert addButtonWithTitle:@"打开文件夹"];[alert addButtonWithTitle:@"刷新"];[alert addButtonWithTitle:@"已有提交"];[alert addButtonWithTitle:@"关闭"];
-    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse choice){if(![[self savedCourse:course][@"path"] isEqual:course[@"path"]])return;if(choice==NSAlertFirstButtonReturn)[NSWorkspace.sharedWorkspace openURL:[NSURL fileURLWithPath:course[@"path"]]];else if(choice==NSAlertSecondButtonReturn)[self openSubmissionForCourse:course preserving:nil];else if(choice==NSAlertThirdButtonReturn){if([self selectCourseID:course[@"fork"]]){self.sections.selectedSegment=3;[self refreshPresentation];}}}];
+    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse choice){if(![[self savedCourse:course][@"path"] isEqual:course[@"path"]])return;if(choice==NSAlertFirstButtonReturn)[NSWorkspace.sharedWorkspace openURL:[NSURL fileURLWithPath:course[@"path"]]];else if(choice==NSAlertSecondButtonReturn)[self openSubmissionForCourse:course preserving:nil];else if(choice==NSAlertThirdButtonReturn){if([self selectCourseID:course[@"fork"]]){self.sections.selectedSegment=2;[self refreshPresentation];}}}];
 }
 - (BOOL)workflowRecoveryAllowed:(AMCourseOperationContext *)context {
     if(self.operationsPaused)return NO;if(![self workflowSourceMatches:context]){[self status:@"账户或课程关联已变化，请重新检查"];return NO;}return YES;

@@ -10,16 +10,26 @@
     NSString *blocked=[self taskCheckBlockReason];if(blocked){[self showTaskCheckProblem:blocked];return;}
     NSDictionary *task=nil,*linked=nil;for(NSDictionary *row in self.tasksProvider ? self.tasksProvider():@[])if([row[@"id"] isEqual:identifier])task=row.copy;
     if(!task){[self showTaskCheckProblem:@"这项任务已不存在，请重新选择任务。"];return;}
-    for(NSDictionary *row in self.courses)if([task[@"courseRepository"] isEqual:row[@"fork"]] || [task[@"sourceRepository"] isEqual:row[@"upstream"]]){linked=row.copy;break;}
+    for(NSDictionary *row in self.courses)if(AMTaskBelongsToCourse(task,row)){if(linked){linked=nil;break;}linked=row.copy;}
+    NSArray<NSURL *> *urls=nil;
+    NSString *source=task[@"sourcePath"];
+    if([linked[@"path"] length] && AMPeerPath(source)){
+        NSURL *courseRoot=[NSURL fileURLWithPath:linked[@"path"]].URLByResolvingSymlinksInPath;
+        NSString *directory=source.stringByDeletingLastPathComponent;
+        NSURL *target=[[courseRoot URLByAppendingPathComponent:directory.length ? directory:source] URLByResolvingSymlinksInPath];
+        if([target.path hasPrefix:[courseRoot.path stringByAppendingString:@"/"]] && [NSFileManager.defaultManager fileExistsAtPath:target.path])urls=@[target];
+    }
+    if(!urls){
     // A folder is the normal starting point; files remain available in this
     // same native picker, without a preceding mode-selection dialog.
     NSOpenPanel *picker=NSOpenPanel.openPanel;picker.canChooseDirectories=YES;picker.canChooseFiles=YES;picker.allowsMultipleSelection=YES;
     picker.message=@"选择作业文件夹（包含子文件夹），也可选择具体文件；下一步核对范围。";picker.prompt=@"核对检查范围";
     if([linked[@"path"] length])picker.directoryURL=[NSURL fileURLWithPath:linked[@"path"]];if([picker runModal]!=NSModalResponseOK)return;
-    NSArray<NSURL *> *urls=picker.URLs;if(!urls.count)return;NSNumber *directory=nil;[urls.firstObject getResourceValue:&directory forKey:NSURLIsDirectoryKey error:NULL];BOOL folder=directory.boolValue;if(folder && urls.count!=1){[self showTaskCheckProblem:@"请选择一个作业文件夹，或多个具体文件；多个文件夹请分次检查。"];return;}
+    urls=picker.URLs;}
+    if(!urls.count)return;NSNumber *directory=nil;[urls.firstObject getResourceValue:&directory forKey:NSURLIsDirectoryKey error:NULL];BOOL folder=directory.boolValue;if(folder && urls.count!=1){[self showTaskCheckProblem:@"请选择一个作业文件夹，或多个具体文件；多个文件夹请分次检查。"];return;}
     for(NSURL *url in urls){NSNumber *isDirectory=nil;[url getResourceValue:&isDirectory forKey:NSURLIsDirectoryKey error:NULL];if(isDirectory.boolValue!=folder){[self showTaskCheckProblem:@"文件夹和具体文件请分别选择，避免扩大读取范围。"];return;}}
     // Common parent is an explicit local boundary, independent of Git configuration.
-    NSString *root=folder ? picker.URL.path.stringByStandardizingPath:urls.firstObject.path.stringByDeletingLastPathComponent.stringByStandardizingPath;
+    NSString *root=folder ? urls.firstObject.path.stringByStandardizingPath:urls.firstObject.path.stringByDeletingLastPathComponent.stringByStandardizingPath;
     if(!folder)for(NSURL *url in urls){NSString *parent=url.path.stringByDeletingLastPathComponent.stringByStandardizingPath;while(![parent isEqual:root] && ![parent hasPrefix:[root stringByAppendingString:@"/"]] && ![root isEqual:@"/"])root=root.stringByDeletingLastPathComponent;}
     blocked=[self taskCheckBlockReason];if(blocked){[self showTaskCheckProblem:blocked];return;}
     NSMutableDictionary *course=linked.mutableCopy ?: NSMutableDictionary.dictionary;course[@"path"]=root;course[@"preflightMode"]=@"working";course[@"preflightLocal"]=@YES;

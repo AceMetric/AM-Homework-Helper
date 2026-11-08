@@ -54,19 +54,19 @@ int main(int argc,const char *argv[]){@autoreleasepool{
     Check([courses.courseWorkspace saveCurrent] && app.tasks.count==before+1 && [[courses stateForCandidate:record] isEqual:@"已导入"],@"inline confirmation saves once and changes course status");
     Check([app.tasks.lastObject[@"notes"] isEqual:@"审核保存的模拟备注\n第二行"] && !courses.hasUnsavedReview,@"inline user notes persist after confirmation");
     for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua]){NSApp.appearance=[NSAppearance appearanceNamed:appearance];[app refreshAppearance];Capture(app.window.contentView,[NSString stringWithFormat:@"inline-course-%@.png",[appearance isEqual:NSAppearanceNameAqua] ? @"light":@"dark"]);}
-    Check(courses.visible.count==1 && ![courses.selectedCandidateID isEqual:record[@"id"]] && ![courses.courseWorkspace saveCurrent] && app.tasks.count==before+1,@"saved source disappears from course queue and next incomplete entry cannot duplicate it");
+    Check(courses.visible.count==2 && [courses.selectedCandidateID isEqual:record[@"id"]] && [courses.visible.firstObject[@"confirmed"] boolValue] && app.tasks.count==before+1,@"saved source remains selected in the same course list without duplication");
     [app navigate:route];Check(courses.visible.count==1 && courses.pendingCount==1,@"reviewed source leaves default inbox immediately");
     [courses.reviewFilter selectItemAtIndex:1];[courses refreshPresentation];Check(courses.visible.count==1,@"new-assignment filter also excludes reviewed source");
     [courses.reviewFilter selectItemAtIndex:2];[courses refreshPresentation];Check(courses.visible.count==0,@"update filter never restores reviewed source");
     [courses.reviewFilter selectItemAtIndex:0];[courses refreshPresentation];
-    [app navigate:courseRoute];courses.sections.selectedSegment=1;[courses refreshPresentation];
+    [app navigate:courseRoute];courses.sections.selectedSegment=0;[courses refreshPresentation];
     NSDictionary *joined=courses.visible.firstObject;Check(joined && [courses.courseWorkspace selectRecordWithID:joined[@"id"]] && [courses.courseWorkspace saveCurrent],@"joined task resolves its original source and edits inline");
     [app navigate:courseRoute];courses.sections.selectedSegment=0;[courses refreshPresentation];
     NSMutableDictionary *newSource=record.mutableCopy;newSource[@"blobSHA"]=@"source-version-2";
     courses.candidates[@"student/physics"]=@[newSource,missing];[courses refreshPresentation];
     Check(courses.visible.count==2 && [[courses stateForCandidate:newSource] isEqual:@"有更新"],@"source change returns one update suggestion to course queue");
     Check([courses.courseWorkspace selectRecordWithID:newSource[@"id"]],@"updated source selects inline form");[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
-    Check([courses.courseWorkspace saveCurrent] && app.tasks.count==before+1 && courses.visible.count==1,@"confirming an update modifies original task and removes suggestion");
+    Check([courses.courseWorkspace saveCurrent] && app.tasks.count==before+1 && courses.visible.count==2 && ![courses.visible.firstObject[@"sourceUpdate"] boolValue],@"confirming an update replaces the source without removing the saved row");
     [app navigate:route];
     before=app.tasks.count;
     FailedBatchApp *failed=FailedBatchApp.new;failed.preview=YES;failed.tasks=app.tasks.mutableCopy;failed.courseWindow=courses;Check([failed saveReviewItems:@[@{@"record":missing,@"draft":@{@"assignmentDue":record[@"due"],@"dateConfirmed":@YES}}] automatic:NO].length && failed.tasks.count==before,@"disk failure retains entire previous batch");

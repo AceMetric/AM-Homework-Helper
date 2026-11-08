@@ -142,7 +142,7 @@ int main(void) { @autoreleasepool {
     Check([courses recognitionRecord:@{@"path":@"assignment/README.md",@"attachments":@[@{@"path":@"assignment/quiz.md"}]} touchesPaths:@[@"assignment/quiz.md"] depth:0],@"selected quiz attachment refreshes the parent candidate snapshot");
     Check(![courses recognitionRecord:@{@"path":@"assignment/README.md",@"attachments":@[@{@"path":@"assignment/quiz.md"}]} touchesPaths:@[@"other/answer.md"] depth:0],@"unselected source snapshots are retained");
     [courses.typeFilter selectItemAtIndex:0];
-    Route(app, 4); courses.sections.selectedSegment = 1; [courses refreshPresentation]; Check(courses.visible.count == 2 && [courses.visible.firstObject[@"confirmed"] boolValue], @"course shows already-added tasks");
+    Route(app, 4); courses.sections.selectedSegment = 0; [courses refreshPresentation]; NSUInteger confirmedCount=0;for(NSDictionary *row in courses.visible)if([row[@"confirmed"] boolValue])confirmedCount++;Check(confirmedCount==2,@"course list retains both saved assignments alongside discoveries");
     courses.sections.selectedSegment = 0; course[@"pendingMergeTip"] = @"synthetic-merge"; course[@"pendingConflicts"] = @[@"answers.md"]; [courses refreshPresentation];
     Check(!courses.recoveryButton.hidden && [courses.recoveryButton.title containsString:@"冲突"], @"conflicts expose recovery entry");
     [course removeObjectForKey:@"pendingMergeTip"]; [course removeObjectForKey:@"pendingConflicts"]; course[@"pushFailed"] = @YES; [courses refreshPresentation]; Check([courses.recoveryButton.title isEqual:@"重试推送"], @"failed push exposes retry");
@@ -166,9 +166,9 @@ int main(void) { @autoreleasepool {
     NSDate *limit = [NSDate dateWithTimeIntervalSinceNow:3]; while (!finished && limit.timeIntervalSinceNow > 0) [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
     Check(finished && [courses.statuses[@"student/physics"] isEqual:@"模拟完成"] && !courses.busy, @"result stored against initiating course"); courses.preview = YES;
     courses.preview=YES;Route(app,4);[courses selectCourseID:course[@"fork"]];
-    courses.query=@"物理筛选";courses.sections.selectedSegment=2;[courses.typeFilter selectItemAtIndex:2];
+    courses.query=@"物理筛选";courses.sections.selectedSegment=1;[courses.typeFilter selectItemAtIndex:2];
     Check([courses selectCourseID:other[@"fork"]] && courses.query.length==0,@"switch course resets only new course view state");
-    Check([courses selectCourseID:course[@"fork"]] && [courses.query isEqual:@"物理筛选"] && courses.sections.selectedSegment==2 && courses.typeFilter.indexOfSelectedItem==2,@"course retains its own query, section and type");
+    Check([courses selectCourseID:course[@"fork"]] && [courses.query isEqual:@"物理筛选"] && courses.sections.selectedSegment==1 && courses.typeFilter.indexOfSelectedItem==2,@"course retains its own query, section and type");
     [courses selectCourseID:nil];Check(courses.syncButton.hidden && courses.commitButton.hidden && [courses.scanButton.title isEqual:@"检查所有课程"],@"all-courses view has no ambiguous sync or submit target");
     Check(courses.courseWorkspace.view.superview!=nil && !courses.courseWorkspace.view.hidden && courses.table.enclosingScrollView.hidden,@"SwiftUI course details replace visible legacy table");
     Check(app.navigationController.outline.numberOfRows>=7,@"main sidebar expands course entries without second sidebar");

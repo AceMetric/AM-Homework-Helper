@@ -20,6 +20,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSDictionary * _Nullable)repository:(NSString *)fullName error:(NSError **)error;
 - (id _Nullable)readRepository:(NSString *)repository resource:(NSString *)resource error:(NSError **)error;
 - (NSDictionary * _Nullable)peerForks:(NSDictionary *)course page:(NSUInteger)page error:(NSError **)error;
+- (NSArray * _Nullable)peerDirectory:(NSString *)scope commit:(NSString *)commit repository:(NSString *)repository error:(NSError **)error;
+- (NSDictionary * _Nullable)peerBrowseSnapshot:(NSDictionary *)peer teacherID:(NSNumber *)teacherID scope:(NSString *)scope error:(NSError **)error;
 - (NSDictionary * _Nullable)peerSnapshot:(NSDictionary *)peer teacher:(NSDictionary *)teacher scope:(NSString *)scope error:(NSError **)error;
 - (NSData * _Nullable)peerBlob:(NSString *)sha repository:(NSString *)repository error:(NSError **)error;
 - (NSDictionary * _Nullable)peerTree:(NSString *)commit repository:(NSString *)repository error:(NSError **)error;

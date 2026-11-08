@@ -12,6 +12,7 @@ static NSString *SHA(NSString *letter){return [@"" stringByPaddingToLength:40 wi
 @property NSMutableArray *requests;
 @property BOOL changed;
 @property BOOL truncated;
+@property BOOL scopedBrowse;
 @end
 @implementation PeerAPI
 - (NSString *)accessToken:(NSError **)error{return @"synthetic";}
@@ -22,6 +23,11 @@ static NSString *SHA(NSString *letter){return [@"" stringByPaddingToLength:40 wi
     if([path isEqual:@"/repos/Student/Physics"])return @{@"id":@2,@"parent":@{@"id":@1}};
     if([path containsString:@"/compare/"])return @{@"merge_base_commit":@{@"sha":SHA(@"c")}};
     if([path containsString:@"/commits/"]){NSString *ref=path.lastPathComponent;NSString *commit=AMPeerSHA(ref) ? ref:([path containsString:@"School/"] ? SHA(@"b"):SHA(@"a"));NSString *tree=[commit isEqual:SHA(@"c")] ? SHA(@"d"):SHA(@"e");return @{@"sha":commit,@"commit":@{@"tree":@{@"sha":tree}}};}
+    if(self.scopedBrowse && [path containsString:@"/git/trees/"]){
+        Check(![url.query containsString:@"recursive"],@"the first file list never downloads a recursive tree");
+        if([path.lastPathComponent isEqual:SHA(@"e")])return @{@"tree":@[@{@"path":@"assignment-1",@"type":@"tree",@"sha":SHA(@"d")}]};
+        return @{@"tree":@[@{@"path":@"answer.md",@"type":@"blob",@"mode":@"100644",@"sha":SHA(@"f"),@"size":@12}]};
+    }
     if([path containsString:@"/git/trees/"]){BOOL baseline=[path.lastPathComponent isEqual:SHA(@"d")];return @{@"truncated":@(self.truncated),@"tree":@[@{@"path":@"assignment-1/answer.md",@"sha":baseline || !self.changed ? SHA(@"f"):SHA(@"0"),@"type":@"blob",@"size":@12},@{@"path":@"assignment-2/answer.md",@"sha":baseline ? SHA(@"f"):SHA(@"0"),@"type":@"blob",@"size":@12}]};}
     if(error)*error=AMPeerError(@"fixture request not found");return nil;
 }
@@ -30,6 +36,9 @@ static NSString *SHA(NSString *letter){return [@"" stringByPaddingToLength:40 wi
 int main(void){@autoreleasepool{
     NSError *error=nil;NSDictionary *rubric=AMPeerRubric(@{@"criteria":@[@{@"id":@"c1",@"title":@"计算",@"maximum":@60},@{@"id":@"c2",@"title":@"解释",@"maximum":@40}]},&error);Check(rubric!=nil,@"valid shared rubric");
     Check(!AMPeerRubric(@{@"criteria":@[@{@"id":@"x",@"title":@"x",@"maximum":@99}]},NULL),@"rubric must total 100");
+    NSDictionary *teacherRubric=AMPeerRubricFromTeacherText(@"## 评分标准\n| 评分项 | 分值 |\n| --- | --- |\n| 正确性 | 6 分 |\n| 说明 | 4 分 |\n| 合计 | 10 分 |");
+    Check([AMPeerRubricMaximum(teacherRubric) isEqual:@10] && [teacherRubric[@"criteria"] count]==2,@"teacher rubric retains the actual ten-point scale");
+    Check(!AMPeerRubricFromTeacherText(@"| 评分项 | 分值 |\n| --- | --- |\n| 正确性 | 6 |\n| 合计 | 10 |"),@"ambiguous point totals do not become an inferred rubric");
     Check(AMPeerPath(@"assignment-1/answer.md") && !AMPeerPath(@"../private") && !AMPeerPath(@"a/.git/config"),@"scope path boundaries");
     NSArray *materials=@[@{@"path":@"a.md",@"text":@"first\nsecond",@"role":@"answer"}];NSDictionary *evidence=@{@"path":@"a.md",@"line":@2,@"quote":@"second"};
     NSDictionary *valid=@{@"status":@"complete",@"score":@90,@"items":@[@{@"id":@"c1",@"score":@55,@"reason":@"依据原文",@"evidence":@[evidence]},@{@"id":@"c2",@"score":@35,@"reason":@"依据原文",@"evidence":@[evidence]}],@"unverified":@[],@"conflicts":@[]};
@@ -39,6 +48,10 @@ int main(void){@autoreleasepool{
     Check(!AMPeerEffectiveScore(@[record(@"llm",90)],SHA(@"a"),@"other",@"synthetic",@"v1"),@"old rubric not comparable");Check(!AMPeerEffectiveScore(@[record(@"teacher",90)],SHA(@"b"),rubric[@"version"],@"synthetic",@"v1"),@"old answer not comparable");
     NSArray *ranking=AMPeerRank(@[@{@"login":@"A",@"effectiveScore":record(@"teacher",90)},@{@"login":@"B",@"effectiveScore":record(@"llm",90)},@{@"login":@"C",@"effectiveScore":record(@"llm",80)},@{@"login":@"D"}]);Check([ranking[0][@"rank"] intValue]==1 && [ranking[1][@"rank"] intValue]==1 && [ranking[2][@"rank"] intValue]==3 && !ranking[3][@"rank"],@"ties and missing scores");
     PeerAPI *api=PeerAPI.new;NSDictionary *course=@{@"upstream":@"School/Physics"};NSDictionary *page=[api peerForks:course page:1 error:&error];Check([page[@"peers"] count]==1 && ![page[@"more"] boolValue],@"fork enumeration");NSDictionary *peer=page[@"peers"][0],*teacher=[api readableTeacher:course error:NULL];NSDictionary *snapshot=[api peerSnapshot:peer teacher:teacher scope:@"assignment-1" error:&error];Check([snapshot[@"state"] isEqual:@"未发现作答"],@"unrelated assignment change is not an answer");api.changed=YES;snapshot=[api peerSnapshot:peer teacher:teacher scope:@"assignment-1" error:&error];Check([snapshot[@"state"] isEqual:@"发现作答"] && [snapshot[@"files"] count]==1,@"scoped pinned answer change");api.truncated=YES;Check(![api peerSnapshot:peer teacher:teacher scope:@"assignment-1" error:&error],@"truncated trees stay unknown");
+    api.scopedBrowse=YES;[api.requests removeAllObjects];
+    NSDictionary *browse=[api peerBrowseSnapshot:peer teacherID:@1 scope:@"assignment-1" error:&error];
+    Check([browse[@"commit"] isEqual:SHA(@"a")] && [browse[@"files"] count]==1 && [browse[@"files"][0][@"path"] isEqual:@"assignment-1/answer.md"],@"a pinned assignment directory is independently readable");
+    for(NSString *request in api.requests)Check(![request containsString:@"/compare/"],@"opening the assignment does not depend on any comparison request");
     NSArray *imageMaterials=@[@{@"path":@"assignment/answer.md",@"role":@"answer",@"version":@"v1",@"text":@"# 第一题\n前文\n![图](a.png)\n后文\n![同图](a.png)\n结束"},@{@"path":@"assignment/a.png",@"role":@"answer",@"version":@"v2",@"image":@YES}];NSArray *stream=AMScoringSegments(@{@"materials":imageMaterials},@[@{@"path":@"assignment/a.png",@"mime":@"image/png",@"base64":@"eA=="}]);NSUInteger imageCount=0,referenceCount=0;BOOL afterImage=NO;for(NSDictionary *part in stream){if(part[@"image"]){imageCount++;afterImage=YES;}NSString *text=part[@"text"] ?: @"";if([text containsString:@"\"document\""])referenceCount++;if([text containsString:@"后文"])Check(afterImage,@"image remains between its surrounding paragraphs");}Check(imageCount==1 && referenceCount==2,@"one image payload preserves both Markdown occurrences");
     Check(!AMPeerValidateScore(@{@"status":@"complete",@"score":@0,@"items":@[@{@"id":@"c1",@"score":@0,@"reason":@"x",@"evidence":@[@"invalid"]}],@"unverified":@[],@"conflicts":@[]},rubric,materials,NULL),@"malformed evidence is rejected without crashing");
     Check([AMPeerTeacherNumbers(@"**得分：** 85/100。请补充解释。")[@"score"] intValue]==85,@"explicit teacher score survives Markdown formatting");Check([AMPeerTeacherNumbers(@"得分: 5/10，得分: 8/10，总分:13/20")[@"maximum"] intValue]==20,@"explicit total wins over item scores");Check([AMPeerTeacherNumbers(@"得分:5/10；得分:8/10")[@"ambiguous"] boolValue],@"several grades require association rather than choosing the maximum");Check(AMPeerTeacherNumbers(@"解释很清楚，请补充单位").count==0,@"teacher sentiment never becomes a numeric teacher score");
@@ -55,7 +68,7 @@ int main(void){@autoreleasepool{
     Check([clock startTask:secondID error:&error],@"only explicit starts run a timer");[clock setValue:@(NSProcessInfo.processInfo.systemUptime-30) forKey:@"lastTick"];NSURL *timeURL=[SSDataDirectory() URLByAppendingPathComponent:@"task-time.plist"];NSData *oldTime=[NSData dataWithContentsOfURL:timeURL];[@"broken-ledger" writeToURL:timeURL atomically:YES encoding:NSUTF8StringEncoding error:NULL];Check(![clock checkpoint:&error] && !clock.running && clock.taskID.length,@"failed checkpoint freezes while retaining the same pending session");
     [oldTime writeToURL:timeURL atomically:YES];Check([clock pause:&error] && [clock secondsForTask:secondID]>=30,@"retry preserves elapsed time without duplicating a session");AMTimeTracker *restart=AMTimeTracker.new;Check(!restart.taskID && !restart.running,@"new tracker never resumes a persisted timestamp");
     NSMutableDictionary *deleted=second.mutableCopy;deleted[@"deleted"]=@YES;Check([clock startTask:secondID error:&error] && SSSaveTasks(@[finished,second],@[finished,deleted],&error) && !clock.taskID,@"task deletion immediately pauses its timer");Check(SSSaveTasks(@[finished,deleted],@[finished,second],&error) && [clock secondsForTask:secondID]>=30,@"restoring task identity restores its own time without starting it");
-    NSDictionary *backup=AMBackupEnvelope(@[finished,second],&error);Check([backup[@"format"] isEqual:@"am-helper-backup-v5"] && [backup[@"timeEntries"] count]>0 && AMDecodeBackup(backup,NULL),@"v5 includes time and validates");NSMutableDictionary *corrupt=backup.mutableCopy;corrupt[@"timeEntries"]=@[@{@"seconds":@(-1)}];Check(!AMDecodeBackup(corrupt,NULL),@"invalid time backup rejected");NSMutableDictionary *old=backup.mutableCopy;old[@"format"]=@"am-helper-backup-v4";[old removeObjectForKey:@"timeEntries"];[old removeObjectForKey:@"peerSettings"];Check(AMDecodeBackup(old,NULL)!=nil,@"old backups accepted");
+    NSDictionary *backup=AMBackupEnvelope(@[finished,second],&error);Check([backup[@"format"] isEqual:@"am-helper-backup-v6"] && [backup[@"timeEntries"] count]>0 && AMDecodeBackup(backup,NULL),@"v6 includes time and validates");NSMutableDictionary *corrupt=backup.mutableCopy;corrupt[@"timeEntries"]=@[@{@"seconds":@(-1)}];Check(!AMDecodeBackup(corrupt,NULL),@"invalid time backup rejected");NSMutableDictionary *old=backup.mutableCopy;old[@"format"]=@"am-helper-backup-v4";[old removeObjectForKey:@"timeEntries"];[old removeObjectForKey:@"peerSettings"];Check(AMDecodeBackup(old,NULL)!=nil,@"old backups accepted");
     NSString *liveModel=NSProcessInfo.processInfo.environment[@"AM_LOCAL_GRADING_MODEL"];
     if(liveModel.length){
         NSDictionary *liveRubric=AMPeerRubric(@{@"criteria":@[@{@"id":@"result",@"title":@"只按求和结果评分：答案为4计100分，否则0分",@"maximum":@100}]},NULL);

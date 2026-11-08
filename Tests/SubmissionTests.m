@@ -11,6 +11,38 @@
 @implementation HistoryBudgetGit
 - (SSGitResult *)run:(NSArray *)args in:(NSString *)path token:(NSString *)token error:(NSError **)error{BOOL network=[args.firstObject isEqual:@"fetch"];if(network)self.observedNetworkBudget=self.commandTimeout;SSGitResult *result=[super run:args in:path token:token error:error];if(network && self.expireAfterFetch)self.commandDeadline=[NSDate dateWithTimeIntervalSinceNow:-1];return result;}
 @end
+static void BackgroundFastForwardAssertions(void){
+    NSMutableDictionary *fixture=Fixture();FixtureGit *service=Service(fixture);
+    NSString *local=fixture[@"path"],*seed=fixture[@"seed"];
+    NSString *initial=Git(local,@[@"rev-parse",@"HEAD"]),*remote=Git(fixture[@"forkBare"],@[@"rev-parse",@"main"]);
+    Write([seed stringByAppendingPathComponent:@"new-requirements.md"],@"Synthetic teacher update\n");
+    Git(seed,@[@"add",@"new-requirements.md"]);Git(seed,@[@"commit",@"-m",@"Add teacher requirements"]);
+    NSString *teacher=Git(seed,@[@"rev-parse",@"HEAD"]);
+    Git(local,@[@"fetch",@"--no-tags",seed,@"main"]);
+    Write([local stringByAppendingPathComponent:@"shared.txt"],@"Keep uncommitted input\n");
+    Check([[service fastForwardLocalCourse:fixture teacher:teacher remote:remote error:NULL][@"state"] isEqual:@"dirty"],@"background course update preserves dirty worktree");
+    Check([Git(local,@[@"rev-parse",@"HEAD"]) isEqual:initial],@"dirty update leaves the local branch untouched");
+    Git(local,@[@"restore",@"--",@"shared.txt"]);
+    Check([[service fastForwardLocalCourse:fixture teacher:teacher remote:remote error:NULL][@"state"] isEqual:@"updated"],@"clean branch fast-forwards to verified teacher tip");
+    Check([Git(local,@[@"rev-parse",@"HEAD"]) isEqual:teacher] && [Git(fixture[@"forkBare"],@[@"rev-parse",@"main"]) isEqual:remote],@"background update changes only the local branch");
+}
+static void AssignmentFeedbackAssertions(void){
+    NSMutableDictionary *fixture=Fixture();FixtureGit *service=Service(fixture);
+    NSString *root=fixture[@"path"];
+    for(NSString *directory in @[@"assignment-6",@"assignment-7"]){
+        Check([NSFileManager.defaultManager createDirectoryAtPath:[root stringByAppendingPathComponent:directory] withIntermediateDirectories:YES attributes:nil error:NULL],@"feedback fixture directories");
+        Write([root stringByAppendingPathComponent:[directory stringByAppendingPathComponent:@"feedback.md"]],@"Synthetic review: check the boundary condition.\n");
+    }
+    Git(root,@[@"add",@"--",@"assignment-6",@"assignment-7"]);
+    Git(root,@[@"-c",@"user.name=Synthetic Reviewer",@"-c",@"user.email=reviewer@example.invalid",@"commit",@"-m",@"Add feedback"]);
+    NSString *review=Git(root,@[@"rev-parse",@"HEAD"]);
+    Git(root,@[@"update-ref",@"refs/remotes/origin/main",review]);
+    fixture[@"teacherCommit"]=fixture[@"teacherCommit"] ?: Git(fixture[@"teacherBare"],@[@"rev-parse",@"main"]);
+    Write([root stringByAppendingPathComponent:@"assignment-6/feedback.md"],@"Uncommitted replacement\n");
+    NSArray *found=[service assignmentFeedbackForCourse:fixture scope:@"assignment-6" login:@"student" remote:nil error:NULL];
+    Check(found.count==1 && [found[0][@"commit"] isEqual:review] && [found[0][@"text"] containsString:@"boundary condition"],@"direct feedback uses the pinned Git object within this assignment");
+    Check([service assignmentFeedbackForCourse:fixture scope:@"assignment-6" login:@"reviewer" remote:nil error:NULL].count==0,@"the student's own feedback-like commit is excluded");
+}
 int main(void){@autoreleasepool{
     NSString *data=NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"];Check(data.length>0,@"isolated submission storage");
     NSMutableDictionary *f=Fixture();FixtureGit *service=Service(f);NSError *error=nil;NSString *before=Git(f[@"teacherBare"],@[@"rev-parse",@"main"]);
@@ -46,6 +78,6 @@ int main(void){@autoreleasepool{
     Check(AMRestoreBackup(@[],@[task],savedRecords,&error),@"task and record backup restores together");Check([AMBackupEnvelope(@[task],NULL)[@"submissions"] count]==savedRecords.count,@"backup contains journal without credential fields");
     Check(SSWritePlist(@"backup-transaction.plist",@{@"tasks":@[],@"submissions":savedRecords},NULL),@"simulate interrupted restore intent");Check(SSLoadTasks(NULL).count==0 && AMSubmissionRecords(NULL).count==savedRecords.count,@"startup completes restore intent without Git writes");
     NSMutableDictionary *tainted=record.mutableCopy;tainted[@"token"]=@"synthetic-not-a-token";Check(!AMDecodeBackup(@{@"format":@"am-helper-backup-v2",@"tasks":@[task],@"submissions":@[tainted]},NULL),@"unknown credential fields rejected in backup");
-    CompletionAssertions();CompletionGitAssertions(f,service);FreshTeacherAssertions();PipelineAssertions();
+    BackgroundFastForwardAssertions();AssignmentFeedbackAssertions();CompletionAssertions();CompletionGitAssertions(f,service);FreshTeacherAssertions();PipelineAssertions();
     Cleanup(f);printf("PASS: %lu submission record and Git safety assertions\n",(unsigned long)assertions);
 }return 0;}

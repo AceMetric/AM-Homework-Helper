@@ -6,7 +6,7 @@
 }
 - (void)showSubmissionHistory:(NSString *)identifier {
     if(identifier){for(NSDictionary *record in AMSubmissionRecords(NULL))if([record[@"taskIDs"] containsObject:identifier]){if(![self selectCourseID:record[@"repository"]])[self selectCourseID:nil];break;}}
-    self.inbox=NO;self.sections.selectedSegment=3;[self refreshPresentation];
+    self.inbox=NO;self.sections.selectedSegment=2;[self refreshPresentation];
 }
 - (void)submissionAction:(NSString *)action identifier:(NSString *)identifier {
     if([action isEqual:@"refresh-external"] || [action isEqual:@"more-external"]){NSArray *courses=[self course] ? @[[self course].copy]:[[NSArray alloc] initWithArray:self.courses copyItems:YES];[self discoverExternalSubmissions:[action isEqual:@"more-external"] forCourses:courses manual:YES];return;}

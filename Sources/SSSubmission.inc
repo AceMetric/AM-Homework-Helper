@@ -54,6 +54,7 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
 @property NSButton *selectAllFilesButton;
 @property NSTextField *previewHeading;
 @property NSButton *fileCancel;
+@property NSButton *fileCheckButton;
 @property NSButton *expandPreviewButton;
 @property NSButton *previewStopButton;
 @property(copy) void (^previewCancellation)(void);
@@ -206,9 +207,10 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
         self.message=[[PastelTextField alloc] initWithFrame:NSZeroRect];self.message.placeholderString=@"提交说明";self.message.accessibilityLabel=@"提交说明";self.message.delegate=self;
         self.validation=Text(@"尚未选择文件",12,NSFontWeightRegular,Muted());self.filesValidation=self.validation;
         self.fileCancel=Button(@"取消",self,@selector(cancel:),0);self.fileCancel.keyEquivalent=@"\033";self.fileCancel.keyEquivalentModifierMask=0;
-        self.filesPrimary=Button(@"检查",self,@selector(save:),1);self.primary=self.filesPrimary;self.filesPrimary.keyEquivalent=@"\r";self.filesPrimary.keyEquivalentModifierMask=0;
-        for(NSView *child in @[title,steps,target,self.preparationArea,self.taskSection,self.fileSplit,self.message,self.validation,self.fileCancel,self.filesPrimary]){child.translatesAutoresizingMaskIntoConstraints=NO;[page addSubview:child];}
-        [NSLayoutConstraint activateConstraints:@[[title.leadingAnchor constraintEqualToAnchor:page.leadingAnchor constant:24],[title.topAnchor constraintEqualToAnchor:page.safeAreaLayoutGuide.topAnchor constant:20],[title.trailingAnchor constraintLessThanOrEqualToAnchor:page.trailingAnchor constant:-24],[target.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[target.trailingAnchor constraintEqualToAnchor:page.trailingAnchor constant:-24],[steps.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[steps.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:8],[steps.trailingAnchor constraintLessThanOrEqualToAnchor:page.trailingAnchor constant:-24],[target.topAnchor constraintEqualToAnchor:steps.bottomAnchor constant:8],[self.taskSection.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[self.taskSection.trailingAnchor constraintEqualToAnchor:target.trailingAnchor],[self.preparationArea.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[self.preparationArea.trailingAnchor constraintEqualToAnchor:target.trailingAnchor],[self.preparationArea.topAnchor constraintEqualToAnchor:target.bottomAnchor constant:8],[self.taskSection.topAnchor constraintEqualToAnchor:self.preparationArea.bottomAnchor constant:12],self.taskSectionHeight,[self.fileSplit.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[self.fileSplit.trailingAnchor constraintEqualToAnchor:target.trailingAnchor],[self.fileSplit.topAnchor constraintEqualToAnchor:self.taskSection.bottomAnchor constant:12],[self.fileSplit.bottomAnchor constraintEqualToAnchor:self.message.topAnchor constant:-16],[self.fileSplit.heightAnchor constraintGreaterThanOrEqualToConstant:160],[self.message.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[self.message.trailingAnchor constraintEqualToAnchor:target.trailingAnchor],[self.message.heightAnchor constraintEqualToConstant:28],[self.validation.topAnchor constraintEqualToAnchor:self.message.bottomAnchor constant:12],[self.validation.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[self.validation.trailingAnchor constraintEqualToAnchor:target.trailingAnchor],[self.validation.bottomAnchor constraintEqualToAnchor:self.filesPrimary.topAnchor constant:-12],[self.filesPrimary.trailingAnchor constraintEqualToAnchor:target.trailingAnchor],[self.filesPrimary.bottomAnchor constraintEqualToAnchor:page.safeAreaLayoutGuide.bottomAnchor constant:-20],[self.fileCancel.trailingAnchor constraintEqualToAnchor:self.filesPrimary.leadingAnchor constant:-12],[self.fileCancel.centerYAnchor constraintEqualToAnchor:self.filesPrimary.centerYAnchor]]];
+        self.fileCheckButton=Button(@"检查…",self,@selector(inspectSelectedFiles:),0);
+        self.filesPrimary=Button(@"提交",self,@selector(save:),1);self.primary=self.filesPrimary;self.filesPrimary.keyEquivalent=@"\r";self.filesPrimary.keyEquivalentModifierMask=0;
+        for(NSView *child in @[title,steps,target,self.preparationArea,self.taskSection,self.fileSplit,self.message,self.validation,self.fileCancel,self.fileCheckButton,self.filesPrimary]){child.translatesAutoresizingMaskIntoConstraints=NO;[page addSubview:child];}
+        [NSLayoutConstraint activateConstraints:@[[title.leadingAnchor constraintEqualToAnchor:page.leadingAnchor constant:24],[title.topAnchor constraintEqualToAnchor:page.safeAreaLayoutGuide.topAnchor constant:20],[title.trailingAnchor constraintLessThanOrEqualToAnchor:page.trailingAnchor constant:-24],[target.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[target.trailingAnchor constraintEqualToAnchor:page.trailingAnchor constant:-24],[steps.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[steps.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:8],[steps.trailingAnchor constraintLessThanOrEqualToAnchor:page.trailingAnchor constant:-24],[target.topAnchor constraintEqualToAnchor:steps.bottomAnchor constant:8],[self.taskSection.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[self.taskSection.trailingAnchor constraintEqualToAnchor:target.trailingAnchor],[self.preparationArea.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[self.preparationArea.trailingAnchor constraintEqualToAnchor:target.trailingAnchor],[self.preparationArea.topAnchor constraintEqualToAnchor:target.bottomAnchor constant:8],[self.taskSection.topAnchor constraintEqualToAnchor:self.preparationArea.bottomAnchor constant:12],self.taskSectionHeight,[self.fileSplit.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[self.fileSplit.trailingAnchor constraintEqualToAnchor:target.trailingAnchor],[self.fileSplit.topAnchor constraintEqualToAnchor:self.taskSection.bottomAnchor constant:12],[self.fileSplit.bottomAnchor constraintEqualToAnchor:self.message.topAnchor constant:-16],[self.fileSplit.heightAnchor constraintGreaterThanOrEqualToConstant:160],[self.message.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[self.message.trailingAnchor constraintEqualToAnchor:target.trailingAnchor],[self.message.heightAnchor constraintEqualToConstant:28],[self.validation.topAnchor constraintEqualToAnchor:self.message.bottomAnchor constant:12],[self.validation.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],[self.validation.trailingAnchor constraintEqualToAnchor:target.trailingAnchor],[self.validation.bottomAnchor constraintEqualToAnchor:self.filesPrimary.topAnchor constant:-12],[self.filesPrimary.trailingAnchor constraintEqualToAnchor:target.trailingAnchor],[self.filesPrimary.bottomAnchor constraintEqualToAnchor:page.safeAreaLayoutGuide.bottomAnchor constant:-20],[self.fileCancel.trailingAnchor constraintEqualToAnchor:self.filesPrimary.leadingAnchor constant:-12],[self.fileCancel.centerYAnchor constraintEqualToAnchor:self.filesPrimary.centerYAnchor],[self.fileCheckButton.centerYAnchor constraintEqualToAnchor:self.filesPrimary.centerYAnchor],[self.fileCheckButton.leadingAnchor constraintEqualToAnchor:title.leadingAnchor]]];
         panel.initialFirstResponder=self.message;panel.defaultButtonCell=self.filesPrimary.cell;
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(submissionSplitResized:) name:NSSplitViewDidResizeSubviewsNotification object:self.fileSplit];root.onResize=^{[weakSelf layoutFiles];};[self layoutFiles];[self.fileSplit setPosition:NSWidth(self.fileSplit.bounds)*.38 ofDividerAtIndex:0];self.draftBaseline=[self draftValues];
 
@@ -278,15 +280,47 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
 - (void)textDidChange:(NSNotification *)notification {if(notification.object==self.supplement){NSMutableDictionary *materials=self.reviewMaterialsSnapshot.mutableCopy;[materials removeObjectForKey:@"reviewRequirements"];self.reviewMaterialsSnapshot=materials;self.confirmedOnlineSnapshot=nil;self.reviewFailure=nil;self.supplement.enclosingScrollView.hidden=NO;[self layoutReport];self.onlineButton.enabled=NO;self.report=nil;self.assistantButton.enabled=NO;self.acknowledge.state=NSControlStateValueOff;self.validation.stringValue=@"题目已修改，请重新检查。";}}
 - (NSArray *)chosenPaths {if(!self.selectedFilePaths)self.selectedFilePaths=NSMutableSet.set;for(NSUInteger i=0;i<self.checks.count;i++){NSString *path=self.changes[i][@"path"];if(self.checks[i].enabled && self.checks[i].state==NSControlStateValueOn)[self.selectedFilePaths addObject:path];else [self.selectedFilePaths removeObject:path];}NSMutableArray *paths=NSMutableArray.array;for(NSDictionary *change in self.allFileChanges ?: self.changes)if(![change[@"sensitive"] boolValue] && [self.selectedFilePaths containsObject:change[@"path"]])[paths addObject:change[@"path"]];return paths;}
 - (NSArray *)chosenTasks {NSMutableArray *ids=NSMutableArray.array;for(NSButton *check in self.taskChecks)if(check.state==NSControlStateValueOn)[ids addObject:check.identifier];return ids;}
+- (void)inspectSelectedFiles:(id)sender {
+    if(self.filesPreparing || self.localChecking || self.closed)return;
+    self.selectedPaths=[self chosenPaths];
+    self.taskIDs=[self chosenTasks];
+    if(!self.selectedPaths.count){self.validation.stringValue=@"请选择文件。";return;}
+    [self buildCheckPage];
+    [self checkNow:nil];
+}
+- (void)submitSelectedFiles {
+    if(self.localChecking || self.closed)return;
+    if(!self.performCheck){self.validation.hidden=NO;self.validation.stringValue=@"检查尚未准备好，请刷新文件后重试。";return;}
+    NSArray *paths=[self chosenPaths],*ids=[self chosenTasks];NSString *message=[self.message.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if(!paths.count || !message.length){self.validation.stringValue=@"请选择文件并填写提交说明。";return;}
+    self.selectedPaths=paths;self.taskIDs=ids;self.checking=YES;self.localChecking=YES;self.filesPrimary.enabled=NO;self.primary.enabled=NO;self.validation.stringValue=@"正在检查提交文件…";
+    NSUInteger generation=++self.previewGeneration;__weak typeof(self) owner=self;
+    NSMutableDictionary *cache=NSMutableDictionary.dictionary;cache[@"submissionSafetyOnly"]=@YES;
+    __block NSString *operation=nil;operation=AMOperationBegin(@"检查提交文件",self.course[@"fork"],YES,^{SSSubmissionController *sheet=owner;if(!sheet)return;sheet.previewGeneration++;sheet.checking=NO;sheet.localChecking=NO;sheet.filesPrimary.enabled=YES;sheet.primary.enabled=YES;sheet.validation.stringValue=@"已取消";AMOperationFinish(operation,@"cancelled",@"已取消");});self.operationID=operation;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+        SSSubmissionController *working=owner;if(!working)return;
+        NSError *error=nil;NSDictionary *bundle=working.performCheck(paths,ids,@"",cache,^BOOL{return !owner || owner.previewGeneration!=generation;},&error);
+        dispatch_async(dispatch_get_main_queue(),^{SSSubmissionController *sheet=owner;if(!sheet || sheet.previewGeneration!=generation)return;
+            sheet.checking=NO;sheet.localChecking=NO;sheet.filesPrimary.enabled=YES;sheet.primary.enabled=YES;
+            BOOL unchanged=[paths isEqual:[sheet chosenPaths]] && [ids isEqual:[sheet chosenTasks]] && [message isEqual:[sheet.message.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]];
+            if(!bundle || !unchanged){NSString *reason=error.localizedDescription ?: (unchanged ? @"文件检查未完成，请重试。":@"文件选择或说明已变化，请再次提交。");sheet.validation.stringValue=reason;sheet.validation.textColor=NSColor.systemOrangeColor;AMOperationFinish(operation,@"failed",reason);return;}
+            // The Git transaction revalidates this exact snapshot before staging. AI findings
+            // are optional and cannot turn a security failure into a successful submission.
+            sheet.snapshot=bundle[@"snapshot"];sheet.reviewSummary=@{@"coverage":@"local",@"date":NSDate.date,@"count":@0,@"acknowledged":@NO};
+            AMOperationFinish(operation,@"success",@"文件检查完成");[sheet cancel:nil];sheet.preserveClosedDraft=YES;if(sheet.submit)sheet.submit(paths,message);
+        });
+    });
+}
 - (void)save:(id)sender {
-    if(self.filesPreparing)return;
-    if((self.checking && (!self.onlineClient || self.localChecking)) || self.closed)return;
-    if(![self.window makeFirstResponder:nil]){self.validation.stringValue=@"请先完成当前输入，再开始检查。";self.validation.textColor=NSColor.systemRedColor;return;}
-    if(!self.checkPage || self.checkPage.hidden){self.selectedPaths=[self chosenPaths];self.taskIDs=[self chosenTasks];if(!self.selectedPaths.count || (!self.checkOnly && ![self.message.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length)){self.validation.stringValue=self.checkOnly ? @"请先选择需要检查的文件。":@"请选择文件并填写提交说明。";self.validation.textColor=NSColor.systemRedColor;return;}[self buildCheckPage];[self checkNow:nil];return;}
-    if(self.checkOnly){[self cancel:nil];return;}
-    if(!self.report){self.validation.stringValue=@"检查未完成，请重新检查或返回。";return;}
-    if(self.acknowledge.state!=NSControlStateValueOn){self.validation.stringValue=@"请核对问题与未检查项，并确认继续。";self.validation.textColor=NSColor.systemRedColor;return;}
-    self.finalValidation=YES;[self checkNow:nil];
+    if(self.filesPreparing || (self.checking && (!self.onlineClient || self.localChecking)) || self.closed)return;
+    if(![self.window makeFirstResponder:nil])return;
+    if(!self.checkOnly){
+        if(self.checkPage && !self.checkPage.hidden && self.report){self.finalValidation=YES;[self checkNow:nil];}
+        else [self submitSelectedFiles];
+        return;
+    }
+    if(!self.checkPage || self.checkPage.hidden){self.selectedPaths=[self chosenPaths];self.taskIDs=[self chosenTasks];if(!self.selectedPaths.count){self.validation.stringValue=@"请选择文件。";return;}[self buildCheckPage];[self checkNow:nil];return;}
+    [self cancel:nil];
 }
 - (void)buildCheckPage {
     for(NSView *view in self.window.contentView.subviews)if(view!=self.checkPage)view.hidden=YES;
@@ -314,7 +348,7 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
     NSArray *options=@[@[@"在线设置…",NSStringFromSelector(@selector(onlineSettings:))],@[@"Skill 复核…",NSStringFromSelector(@selector(assistantReview:))],@[@"导入助手结果…",NSStringFromSelector(@selector(importAssistantResult:))],@[@"复核选中疑点",NSStringFromSelector(@selector(reviewDoubt:))],@[@"完整报告",NSStringFromSelector(@selector(showMarkdownReport:))],@[@"检查范围",NSStringFromSelector(@selector(showCoverage:))],@[@"显示选中文件…",NSStringFromSelector(@selector(openFinding:))],@[@"发送范围…",NSStringFromSelector(@selector(reviewOptions:))],@[@"状态…",NSStringFromSelector(@selector(showReportStatus:))]];
     for(NSArray *option in options){NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:option[0] action:NSSelectorFromString(option[1]) keyEquivalent:@""];item.target=self;[self.reportMenu.menu addItem:item];}
     NSStackView *actions=[NSStackView stackViewWithViews:@[self.onlineButton,recheck,self.reportMenu]];actions.spacing=12;[footer addArrangedSubview:actions];
-    self.acknowledge=[NSButton checkboxWithTitle:@"已核对报告" target:nil action:nil];self.acknowledge.hidden=self.checkOnly;[footer addArrangedSubview:self.acknowledge];
+    self.acknowledge=[NSButton checkboxWithTitle:@"已核对报告" target:nil action:nil];self.acknowledge.hidden=YES;[footer addArrangedSubview:self.acknowledge];
     self.validation=Text(@"正在读取拟提交版本…",12,NSFontWeightRegular,Muted());self.checkValidation=self.validation;self.validation.selectable=YES;self.validation.maximumNumberOfLines=0;self.validation.lineBreakMode=NSLineBreakByWordWrapping;[footer addArrangedSubview:self.validation];[self.validation.widthAnchor constraintEqualToAnchor:footer.widthAnchor].active=YES;
     self.operationView=AMOperationView.new;self.operationView.hidden=YES;[footer addArrangedSubview:self.operationView];[self.operationView.heightAnchor constraintEqualToConstant:64].active=YES;
     NSButton *back=Button(self.checkOnly ? @"调整范围":@"返回文件",self,@selector(backToFiles:),0);back.enabled=self.changes.count>0;NSButton *cancel=Button(@"取消",self,@selector(cancel:),0);cancel.keyEquivalent=@"\033";cancel.keyEquivalentModifierMask=0;

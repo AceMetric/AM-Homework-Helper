@@ -11,6 +11,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSDictionary * _Nullable)performRecordedCourse:(NSDictionary *)course kind:(NSString *)kind taskIDs:(NSArray *)taskIDs paths:(NSArray *)paths message:(NSString *)message token:(NSString *)token login:(NSString *)login userID:(NSNumber *)userID error:(NSError **)error;
 - (NSDictionary * _Nullable)verifySubmission:(NSDictionary *)record course:(NSDictionary *)course token:(NSString *)token retry:(BOOL)retry error:(NSError **)error;
 - (NSDictionary * _Nullable)submissionDetailsForCourse:(NSDictionary *)course commit:(NSString *)commit error:(NSError **)error;
+- (NSArray * _Nullable)assignmentFeedbackForCourse:(NSDictionary *)course scope:(NSString *)scope login:(NSString *)login remote:(nullable NSString *)remote error:(NSError **)error;
 - (NSArray * _Nullable)recentCommits:(NSDictionary *)course error:(NSError **)error;
 - (NSArray * _Nullable)externalCommits:(NSDictionary *)course offset:(NSUInteger)offset error:(NSError **)error;
 - (NSArray * _Nullable)verifyExternalRecords:(NSArray *)records course:(NSDictionary *)course token:(NSString *)token error:(NSError **)error;
@@ -42,6 +43,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSDictionary * _Nullable)scanCourse:(NSDictionary *)course cache:(NSMutableDictionary *)cache error:(NSError **)error;
 - (NSDictionary *)resolveSkillDates:(NSDictionary *)validated scans:(NSDictionary *)scans courses:(NSArray *)courses;
 - (NSDictionary *)enhanceScan:(NSDictionary *)scan course:(NSDictionary *)course settings:(NSDictionary *)settings paths:(nullable NSArray *)paths cache:(NSMutableDictionary *)cache;
+- (NSDictionary * _Nullable)fastForwardLocalCourse:(NSDictionary *)course teacher:(NSString *)teacher remote:(nullable NSString *)remote error:(NSError **)error;
 - (NSDictionary * _Nullable)syncCourse:(NSDictionary *)course token:(NSString *)token error:(NSError **)error;
 /// Counts relative to a previously verified personal-remote commit; does not fetch or claim freshness.
 - (NSDictionary * _Nullable)localPushStateForCourse:(NSDictionary *)course remoteCommit:(nullable NSString *)remote error:(NSError **)error;

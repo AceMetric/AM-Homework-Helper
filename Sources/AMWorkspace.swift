@@ -693,6 +693,8 @@ private struct SettingsWorkspace:View {
 @MainActor final class CourseState: ObservableObject {
     @Published var summaries:[NSDictionary]=[]
     @Published var showSummary=false
+    @Published var statusFilter=0
+    @Published var showingDetail=false
     @Published var records:[NSDictionary]=[]
     @Published var selected:String?
     @Published var information=""
@@ -729,7 +731,11 @@ private struct SettingsWorkspace:View {
         action?("select",id);return true
     }
     func update(_ records:[NSDictionary], selected:String, information:String, empty:String, paused:Bool) {
-        self.records=workspaceRecords(records);self.information=information;self.empty=empty;self.paused=paused;review.paused=paused;refreshedSelection=selected
+        if !self.records.elementsEqual(records,by:{$0.isEqual($1)}){self.records=workspaceRecords(records)}
+        if self.information != information{self.information=information}
+        if self.empty != empty{self.empty=empty}
+        if self.paused != paused{self.paused=paused;review.paused=paused}
+        refreshedSelection=selected
         // Background refresh retains an unfinished draft. Navigation resolves it first.
         if !review.dirty {self.selected=selected.isEmpty ? nil:selected;draftRow=self.records.first{identifier($0)==self.selected}}
         if let record=current, let source=reviewRecord(record), information.isEmpty {review.refresh([source])}
@@ -746,10 +752,15 @@ private struct CourseReviewPane:View {
 private struct CourseWorkspace:View {
     @ObservedObject var state:CourseState
     @FocusState private var listFocused:Bool
-    private func kind(_ record:NSDictionary)->String {flag(record,"confirmed") ? (flag(record,"completed") ? "已完成":"待完成") : string(record,"reviewStatus")=="有更新" ? "有更新，待审核" : ["assignment":"作业","exam":"考试","classroom":"课上任务","unknown":"待确认类型"][string(record,"kind")] ?? "作业"}
-    private var entries:some View {
-        List(selection:Binding(get:{state.listSelection},set:{if let id=$0, id != state.selected {DispatchQueue.main.async{if state.records.contains(where:{identifier($0)==id}){state.select(id)}}}})) {
-            ForEach(workspaceRows(state.records)) { row in
+    private func kind(_ record:NSDictionary)->String {flag(record,"sourceUpdate") ? "有更新" : flag(record,"confirmed") ? (flag(record,"completed") ? "已完成":"待完成") : string(record,"reviewStatus")=="有更新" ? "有更新，待审核" : ["assignment":"作业","exam":"考试","classroom":"课上任务","unknown":"待确认类型"][string(record,"kind")] ?? "作业"}
+    private var entries:some View {VStack(spacing:0){
+        Picker("状态",selection:$state.statusFilter){Text("全部").tag(0);Text("待审核").tag(1);Text("待完成").tag(2);Text("已完成").tag(3)}.pickerStyle(.segmented).labelsHidden().padding(10)
+        entryList
+    }}
+    private var displayedRecords:[NSDictionary]{state.records.filter{record in switch state.statusFilter{case 1:return !flag(record,"confirmed") || flag(record,"sourceUpdate");case 2:return flag(record,"confirmed") && !flag(record,"completed");case 3:return flag(record,"completed");default:return true}}}
+    private var entryList:some View {
+        List(selection:Binding(get:{state.listSelection},set:{if let id=$0 {DispatchQueue.main.async{if state.records.contains(where:{identifier($0)==id}),state.select(id){state.showingDetail=true}}}})) {
+            ForEach(workspaceRows(displayedRecords)) { row in
                 let record=row.record
                 VStack(alignment:.leading,spacing:6) {
                     Text(string(record,"suggestedTitle").isEmpty ? string(record,"title") : string(record,"suggestedTitle")).fontWeight(.medium).lineLimit(2)
@@ -773,10 +784,14 @@ private struct CourseWorkspace:View {
                 } else if let record=state.current {
                     Text(string(record,"suggestedTitle").isEmpty ? string(record,"title") : string(record,"suggestedTitle")).font(.title3.bold())
                     Label(kind(record),systemImage:string(record,"kind")=="exam" ? "doc.text" : "checklist").foregroundStyle(.secondary)
+                    HStack(spacing:10){
+                        if flag(record,"confirmed"){Button("编辑"){state.action?("edit-task",identifier(record))};Button("检查"){state.action?("check-task",identifier(record))};if flag(record,"gitCourse"){Button("提交"){state.action?("submit-task",identifier(record))}.buttonStyle(.borderedProminent)}}
+                        if flag(record,"gitCourse"), !string(record,"path").isEmpty{Button(flag(record,"newFeedback") ? "新评语":"评语"){state.action?("feedback-task",identifier(record))};Button("同学作业"){state.action?("peer-task",identifier(record))};Button("打开"){state.action?("open-task",identifier(record))}}
+                    }.controlSize(.regular)
+
                     if let due=record["due"] as? Date {Text("截止：\(due.formatted(date:.abbreviated,time:.shortened))")}
                     if flag(record,"confirmed") || !string(record,"notes").isEmpty {WorkspaceSection("备注"){VStack(alignment:.leading,spacing:12){Text(string(record,"notes").isEmpty ? "暂无备注":string(record,"notes")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)
                         if string(record,"notes").isEmpty && !suggestedNotes(record).isEmpty {Button("从识别内容补全…"){state.action?("restore-notes",identifier(record))}.disabled(state.paused)}
-                        if flag(record,"confirmed") {Button("编辑任务…"){state.action?("edit-task",identifier(record))}.disabled(state.paused)}
                     }}}
                     if !string(record,"dateText").isEmpty {Text("老师截止原文：\(string(record,"dateText"))").textSelection(.enabled)}
                     if !flag(record,"confirmed") && !string(record,"summary").isEmpty {WorkspaceSection("内容概括"){Text(string(record,"summary")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)}}
@@ -787,14 +802,20 @@ private struct CourseWorkspace:View {
                     Divider()
                     Text(flag(record,"confirmed") ? "来源信息":"老师原文").font(.headline)
                     ForEach(Array((record["documents"] as? [NSDictionary] ?? [record]).enumerated()),id:\.offset) { _, document in
-                        VStack(alignment:.leading,spacing:8){Text(string(document,"path")).font(.caption).foregroundStyle(.secondary);Text(flag(record,"confirmed") ? "原始资料可在课程内容中查看。":(string(document,"snippet").isEmpty ? string(document,"notes"):string(document,"snippet"))).textSelection(.enabled)}
+                        VStack(alignment:.leading,spacing:8){Text(string(document,"path")).font(.caption).foregroundStyle(.secondary);Text(string(document,"snippet").isEmpty ? string(document,"notes"):string(document,"snippet")).textSelection(.enabled)}
                     }
                 } else {VStack(alignment:.leading,spacing:12){Label(state.empty.isEmpty ? "未选择课程内容":state.empty,systemImage:"tray")}}
             }.padding(20).frame(maxWidth:.infinity,alignment:.leading)
         }.frame(minWidth:260)
     }
     private var detailPane:some View {
-        VStack(spacing:0){ReviewFeedback(state:state.review).padding(.horizontal,12);details;if let record=state.current,!flag(record,"confirmed"),state.reviewRecord(record) != nil {Divider();ReviewSaveBar(state:state.review,advance:false).padding(12)}}
+        VStack(spacing:0){
+            if state.information.isEmpty, let record=state.current, (!flag(record,"confirmed") || flag(record,"sourceUpdate")), state.reviewRecord(record) != nil {
+                HStack{Text(kind(record)).foregroundStyle(.secondary);Spacer();Button("同学作业"){state.action?("peer-task",identifier(record))};Button(flag(record,"newFeedback") ? "新评语":"评语"){state.action?("feedback-task",identifier(record))}}.padding(12)
+                CourseReviewPane(state:state.review)
+                Divider();ReviewSaveBar(state:state.review,advance:false).padding(12)
+            }else{details}
+        }.overlay(alignment:.top){ReviewFeedback(state:state.review).padding(12)}
     }
     private var summaries:some View {
         List{ForEach(workspaceRows(state.summaries)){row in let r=row.record
@@ -805,7 +826,10 @@ private struct CourseWorkspace:View {
         GeometryReader { geometry in
             if state.showSummary {summaries}
             else if state.records.isEmpty {detailPane}
-            else if geometry.size.width<760 {VSplitView{entries.frame(minHeight:160,idealHeight:220);detailPane.frame(minHeight:180)}}
+            else if geometry.size.width<760 {
+                if state.showingDetail {VStack(alignment:.leading,spacing:0){Button("返回作业"){state.showingDetail=false}.padding(12);detailPane}}
+                else {VStack(spacing:0){entries;if state.current != nil{Button("打开作业"){state.showingDetail=true}.padding(8)}}}
+            }
             else {HSplitView{entries.frame(idealWidth:300,maxWidth:360);detailPane}}
         }.font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions()
     }
@@ -823,12 +847,32 @@ private struct CourseWorkspace:View {
     @objc public func resolveUnsavedChanges()->Bool {state.review.resolve()}
     @objc public func discardChanges(){state.review.dirty=false;state.review.refresh(state.review.records)}
     @objc public func saveCurrent()->Bool {state.review.saveCurrent(advance:false)}
-    @objc public func selectRecord(withID id:String)->Bool {state.select(id)}
+    @objc public func selectRecord(withID id:String)->Bool {let selected=state.select(id);if selected{state.showingDetail=true};return selected}
     @objc public func showCourseSummaries(_ records:[NSDictionary],visible:Bool){state.summaries=workspaceRecords(records);state.showSummary=visible}
     @objc public func updateRecords(_ records:[NSDictionary],selected:String,information:String,empty:String,paused:Bool){state.update(records,selected:selected,information:information,empty:empty,paused:paused)}
-    private func scrollViews(_ view:NSView)->[NSScrollView] {var result:[NSScrollView]=[];if let scroll=view as? NSScrollView {result.append(scroll)};for child in view.subviews {result+=scrollViews(child)};return result}
-    @objc public func scrollPositions()->[NSValue] {scrollViews(view).map{NSValue(point:$0.contentView.bounds.origin)}}
-    @objc public func restoreScrollPositions(_ positions:[NSValue]) {DispatchQueue.main.async {for (scroll,value) in zip(self.scrollViews(self.view),positions){scroll.contentView.scroll(to:value.pointValue);scroll.reflectScrolledClipView(scroll.contentView)}}}
+    private func visibleScrolls(_ root:NSView)->[NSScrollView] {
+        if root.isHidden{return []}
+        if let scroll=root as? NSScrollView{return [scroll]}
+        return root.subviews.flatMap(visibleScrolls)
+    }
+    private func scrollRoles()->[String:NSScrollView] {
+        let scrolls=visibleScrolls(view)
+        if state.showSummary{return scrolls.first.map{["courses":$0]} ?? [:]}
+        var result:[String:NSScrollView]=[:]
+        for scroll in scrolls {
+            if scroll.documentView is NSTableView || scroll.documentView is NSCollectionView {result["assignments"]=scroll}
+            else {result["assignment:"+(state.selected ?? "")]=scroll}
+        }
+        return result
+    }
+    @objc public func scrollPositions()->[String:NSValue] {scrollRoles().mapValues{NSValue(point:$0.contentView.bounds.origin)}}
+    @objc public func restoreScrollPositions(_ positions:[String:NSValue]) {
+        let selection=state.selected
+        DispatchQueue.main.async {
+            guard self.state.selected==selection else{return}
+            for (key,scroll) in self.scrollRoles(){guard let target=positions[key] else{continue};scroll.contentView.scroll(to:target.pointValue);scroll.reflectScrolledClipView(scroll.contentView)}
+        }
+    }
     public override func loadView(){view=NSHostingView(rootView:CourseWorkspace(state:state))}
 }
 
@@ -1031,18 +1075,18 @@ private struct PeerWorkspace:View {
         }.listStyle(.inset).accessibilityIdentifier("peer-people")
     }
     private var fileList:some View {
-        List(selection:Binding<String?>(get:{let v=string(state.values,"selectedFile");return v.isEmpty ? nil:v},set:{if let value=$0{state.page=2;state.action?("file",value)}})){
-            ForEach(workspaceRows(files)){row in VStack(alignment:.leading,spacing:4){Text(string(row.record,"path")).lineLimit(3);Text(flag(row.record,"changed") ? "作答改动":"原有文件").font(.caption).foregroundStyle(.secondary)}.tag(identifier(row.record))}
+        List(selection:Binding<String?>(get:{let v=string(state.values,"selectedFile");return v.isEmpty ? nil:v},set:{if let value=$0{if let row=files.first(where:{identifier($0)==value}),!flag(row,"directory"){state.page=2};state.action?("file",value)}})){
+            ForEach(workspaceRows(files)){row in VStack(alignment:.leading,spacing:4){Text(string(row.record,"path")).lineLimit(3);Text(flag(row.record,"directory") ? "文件夹" : flag(row.record,"changed") ? "作答改动":"").font(.caption).foregroundStyle(.secondary)}.tag(identifier(row.record))}
         }.listStyle(.inset).accessibilityIdentifier("peer-files")
     }
     private var preview:some View {Group{if let view=state.preview{TaskNativeSupplement(content:view)}else{Text("选择文件查看").foregroundStyle(.secondary).frame(maxWidth:.infinity,maxHeight:.infinity)}}}
     var body:some View {GeometryReader{geometry in
         VStack(alignment:.leading,spacing:10){
-            HStack{Text("同学作业").font(.title2.bold());Spacer();if flag(state.values,"busy"){Button{state.action?("stop","")}label:{Image(systemName:"stop.circle")}.help("停止").accessibilityLabel("停止")};Button("刷新"){state.action?("refresh","")}.disabled(flag(state.values,"busy"));if flag(state.values,"more"){Button("更多同学"){state.action?("more","")}.disabled(flag(state.values,"busy"))}}
+            HStack{Text("同学作业").font(.title2.bold());Spacer();if flag(state.values,"busy"){Button{state.action?("stop","")}label:{Image(systemName:"stop.circle")}.help("停止").accessibilityLabel("停止")};Button("刷新"){state.action?("refresh","")}.disabled(flag(state.values,"loadingPage"));if flag(state.values,"more"){Button("更多同学"){state.action?("more","")}.disabled(flag(state.values,"loadingPage"))}}
             Text(string(state.values,"title")).font(.subheadline).lineLimit(2).textSelection(.enabled)
             HStack{Text(string(state.values,"summary")).font(.caption).foregroundStyle(.secondary);Spacer();Picker("评分批次",selection:Binding<String>(get:{string(state.values,"groupID")},set:{state.action?("group",$0)})){ForEach(workspaceRows(state.values["groups"] as? [NSDictionary] ?? [])){row in Text(string(row.record,"title")).tag(identifier(row.record))}}.labelsHidden().frame(width:190);Picker("评分来源",selection:Binding<Int>(get:{(state.values["filter"] as? NSNumber)?.intValue ?? 0},set:{state.action?("filter",String($0))})){Text("全部").tag(0);Text("老师评分").tag(1);Text("LLM评分").tag(2)}.labelsHidden().frame(width:130)}
-            if !string(state.values,"status").isEmpty{Text(string(state.values,"status")).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)}
-            HStack{Button("核验进度"){state.action?("verify","")};Menu("评价与评分"){Button("关联老师评价…"){state.action?("feedback","")};Button("关联已有LLM评分…"){state.action?("existing-llm","")};Button("检查材料…"){state.action?("materials","")};Button("评分标准…"){state.action?("rubric","")};Button("补齐评分…"){state.action?("grade","")};Button("导入已有评分…"){state.action?("import-score","")};Button("评分依据"){state.action?("score-detail","")};Divider();Button("移除材料…"){state.action?("remove-materials","")};Button("移除评价关联…"){state.action?("remove-evaluation","")}}.disabled(string(state.values,"selected").isEmpty);Spacer();Button("在 GitHub 中查看"){state.action?("github","")}.disabled(string(state.values,"selected").isEmpty)}.disabled(flag(state.values,"busy"))
+            Text(string(state.values,"status")).font(.caption).foregroundStyle(.secondary).lineLimit(1).frame(height:18,alignment:.leading).textSelection(.enabled)
+            HStack{Button("评分"){state.action?("grade","")}.buttonStyle(.borderedProminent).disabled(string(state.values,"selected").isEmpty).accessibilityIdentifier("peer-grade");if flag(state.values,"feedbackAvailable"){Button("评语"){state.action?("feedback","")}};Button("核验进度"){state.action?("verify","")};Menu("更多"){Button("关联老师评价…"){state.action?("feedback","")};Button("关联已有LLM评分…"){state.action?("existing-llm","")};Button("检查材料…"){state.action?("materials","")};Button("评分标准…"){state.action?("rubric","")};Button("批量补齐评分…"){state.action?("grade-batch","")};Button("导入已有评分…"){state.action?("import-score","")};Button("评分依据"){state.action?("score-detail","")};Divider();Button("移除材料…"){state.action?("remove-materials","")};Button("移除评价关联…"){state.action?("remove-evaluation","")}}.disabled(string(state.values,"selected").isEmpty);Spacer();Button("在 GitHub 中查看"){state.action?("github","")}.disabled(string(state.values,"selected").isEmpty)}
             Divider()
             if geometry.size.width>=900 {HSplitView{people.frame(minWidth:190,idealWidth:230,maxWidth:330);fileList.frame(minWidth:190,idealWidth:240,maxWidth:360);preview.frame(minWidth:280)}}
             else {Picker("浏览",selection:$state.page){Text("同学").tag(0);Text("文件").tag(1);Text("预览").tag(2)}.pickerStyle(.segmented);Group{if state.page==0{people}else if state.page==1{fileList}else{preview}}.frame(maxWidth:.infinity,maxHeight:.infinity)}
@@ -1445,7 +1489,7 @@ private struct CourseSelector:View {
     private func choose(_ row:NSDictionary){courseID=identifier(row);subject=string(row,"name");error="";expanded=false}
     private var input:Binding<String> {Binding(get:{subject},set:{value in subject=value;let rows=directory.records.filter{string($0,"name")==value.trimmingCharacters(in:.whitespacesAndNewlines)};if rows.count==1{courseID=identifier(rows[0])}else if chosen.map({string($0,"name") != value}) ?? false{courseID=""}})}
     var body:some View {
-        HStack(spacing:6){TextField("课程／分类",text:input).accessibilityIdentifier("task-subject")
+        HStack(spacing:6){TextField("",text:input).labelsHidden().accessibilityLabel("课程").multilineTextAlignment(.leading).accessibilityIdentifier("task-subject")
             Button{expanded.toggle()}label:{Image(systemName:chosen == nil ? "chevron.down":"checkmark.circle")}.buttonStyle(.borderless).accessibilityLabel("选择课程").popover(isPresented:$expanded){VStack(alignment:.leading,spacing:10){TextField("搜索课程或填写新名称",text:input).textFieldStyle(.roundedBorder);ScrollView{VStack(alignment:.leading,spacing:4){Button("不关联"){courseID="";subject="其他";expanded=false};ForEach(workspaceRows(matches)){row in Button{choose(row.record)}label:{HStack{Text(string(row.record,"name"));Spacer();if !string(row.record,"fork").isEmpty{Text(string(row.record,"fork")).font(.caption).foregroundStyle(.secondary)};if identifier(row.record)==courseID{Image(systemName:"checkmark")}}}.buttonStyle(.plain).padding(.vertical,5)}}}.frame(maxHeight:240)
                 Button("新建课程…"){let name=subject.trimmingCharacters(in:.whitespacesAndNewlines);guard !name.isEmpty,name != "其他" else{error="请填写课程名称";return};if let row=directory.create?(name){choose(row)}else{error="课程未能保存，请检查名称后重试"}};if !error.isEmpty{Text(error).foregroundStyle(.red).font(.caption)}}.padding(14).frame(width:330)}
         }
@@ -1481,7 +1525,7 @@ private struct TaskFields:View {
     }
     var body:some View {
         Section {
-            VStack(alignment:.leading,spacing:5){LabeledContent("名称"){TextField("任务名称",text:$title).focused($focus,equals:"title").accessibilityIdentifier("task-title")};problem("title")}
+            VStack(alignment:.leading,spacing:5){LabeledContent("名称"){TextField("",text:$title).labelsHidden().accessibilityLabel("任务名称").multilineTextAlignment(.leading).focused($focus,equals:"title").accessibilityIdentifier("task-title")};problem("title")}
             VStack(alignment:.leading,spacing:5){LabeledContent("课程"){CourseSelector(subject:$subject,courseID:courseID)};problem("course")}
             VStack(alignment:.leading,spacing:5){
                 if compact {VStack(alignment:.leading,spacing:6){Text("截止时间").foregroundStyle(.secondary);DatePicker("截止时间",selection:$date,displayedComponents:[.date,.hourAndMinute]).labelsHidden().accessibilityIdentifier("task-deadline")}}else{DatePicker("截止时间",selection:$date,displayedComponents:[.date,.hourAndMinute]).accessibilityIdentifier("task-deadline")}

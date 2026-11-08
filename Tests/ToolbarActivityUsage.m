@@ -24,7 +24,7 @@ int main(){@autoreleasepool{
     Check(NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"]!=nil,@"isolated synthetic data");[NSApplication sharedApplication];[NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];AppDelegate *app=AppDelegate.new;NSApp.delegate=app;[app applicationDidFinishLaunching:[NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification object:NSApp]];
     app.page=4;[app.courseWindow selectCourseID:nil];[app refreshPageToolbar];Check(!Item(app,@"AMCourseSync") && !Item(app,@"AMCourseSubmit"),@"all courses removes unavailable actions");
     [app.courseWindow.courses addObject:[@{@"fork":@"student/toolbar-fixture",@"upstream":@"teacher/fixture",@"path":@"/synthetic/no-git-operations"} mutableCopy]];Check([app.courseWindow selectCourseID:@"student/toolbar-fixture"],@"select course");app.courseWindow.connected=YES;
-    for(NSInteger section=0;section<4;section++){app.courseWindow.sections.selectedSegment=section;[app.courseWindow refreshPresentation];[app refreshPageToolbar];
+    for(NSInteger section=0;section<3;section++){app.courseWindow.sections.selectedSegment=section;[app.courseWindow refreshPresentation];[app refreshPageToolbar];
         for(NSString *identifier in @[@"AMCourseSync",@"AMCourseSubmit"]){NSButton *button=(id)Item(app,identifier).view;Check(button && !button.hidden && button.title.length && NSWidth(button.frame)>30,@"named toolbar action remains available");}
         Check(app.courseWindow.setupButton.hidden,@"configured course has no duplicate add-course button");Check((Item(app,@"AMCourseFilter")!=nil)==(section==0),@"filter exists only in content section");
     }

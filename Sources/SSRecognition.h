@@ -2,6 +2,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 NSString *SSRecordSourceVersion(NSDictionary *record);
+BOOL SSLegacyAutomaticSubtask(NSDictionary *child);
 NSString *SSSubtaskProposalVersion(NSDictionary *record);
 NSArray *SSRecognitionSlices(NSString *text,NSString *path);
 NSString *SSRecognitionCacheKey(NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings);
