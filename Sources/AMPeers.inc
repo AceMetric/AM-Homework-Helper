@@ -57,6 +57,7 @@ static NSString *const AMGradePromptVersion=@"peer-grading-v1";
 @property BOOL discoveringRubric;
 @property BOOL batchGrading;
 @property BOOL grading;
+@property BOOL scoreStoreBlocked;
 @property BOOL loadingPage;
 @property NSArray *automaticReferences;
 @property NSUInteger rubricRequestsUsed;
@@ -143,8 +144,26 @@ static NSString *const AMGradePromptVersion=@"peer-grading-v1";
 - (NSArray *)savedScores {@synchronized(self){return self.scoreSnapshot ?: @[];}}
 - (void)reloadScores {
     __weak typeof(self) owner=self;NSString *scope=[self scopeKey];NSUInteger generation=self.generation,revision=self.scoreRevision;
-    [self.queue addOperationWithBlock:^{id value=SSReadPlist(@"peer-evaluations.plist");BOOL exists=[NSFileManager.defaultManager fileExistsAtPath:[SSDataDirectory() URLByAppendingPathComponent:@"peer-evaluations.plist"].path];BOOL valid=(!value && !exists) || AMPeerScoresValid(value);
-        dispatch_async(dispatch_get_main_queue(),^{AMPeerWindowController *sheet=owner;if(!sheet || ![sheet isCurrent:generation])return;if(valid){@synchronized(sheet){if(sheet.scoreRevision==revision)sheet.scoreSnapshot=value[scope] ?: @[];}}else sheet.status=@"评分记录无法读取，原文件保留";[sheet present];});
+    [self.queue addOperationWithBlock:^{
+        id value;
+        BOOL valid;
+        @synchronized(NSFileManager.defaultManager){
+            value=SSReadPlist(@"peer-evaluations.plist");
+            BOOL exists=[NSFileManager.defaultManager fileExistsAtPath:[SSDataDirectory() URLByAppendingPathComponent:@"peer-evaluations.plist"].path];
+            valid=(!value && !exists) || AMPeerScoresValid(value);
+        }
+        dispatch_async(dispatch_get_main_queue(),^{
+            AMPeerWindowController *sheet=owner;
+            if(!sheet || ![sheet isCurrent:generation])return;
+            @synchronized(sheet){
+                // 已保存的新结果比早先开始的读取更新。
+                if(sheet.scoreRevision!=revision)return;
+                sheet.scoreStoreBlocked=!valid;
+                if(valid)sheet.scoreSnapshot=value[scope] ?: @[];
+            }
+            if(!valid)sheet.status=@"评分记录无法读取，原文件保留";
+            [sheet present];
+        });
     }];
 }
 - (BOOL)saveScore:(NSDictionary *)score error:(NSError **)error {

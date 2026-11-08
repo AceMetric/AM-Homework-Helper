@@ -87,6 +87,18 @@ NSDictionary *AMPrepareSubmissionCompletions(NSArray *previous,NSArray *courses,
     if(!plan){plan=[settings[@"enabled"] boolValue] ? AMCompletionPlanWithCatalog(previous,records,verifiedCourses,deferred,catalog):@{@"tasks":previous,@"records":records,@"completedIDs":@[]};
         NSArray *tasks=plan[@"tasks"];
         if([plan[@"completedIDs"] count]){NSCalendar *calendar=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];calendar.timeZone=[NSTimeZone timeZoneWithName:@"Asia/Shanghai"];tasks=DDLMaterializeRecurringTasks(tasks,series,[calendar startOfDayForDate:NSDate.date],[calendar dateByAddingUnit:NSCalendarUnitDay value:90 toDate:NSDate.date options:0],overrides,error);if(!tasks)return nil;NSMutableDictionary *copy=plan.mutableCopy;copy[@"tasks"]=tasks;plan=copy;}
+        // 课程页使用同一份提交快照，渲染时按任务与分支查找，避免重新读提交历史。
+        NSMutableDictionary *assignments=NSMutableDictionary.dictionary;
+        for(NSDictionary *record in plan[@"records"]){
+            if([record[@"teacherHistoryExcluded"] boolValue])continue;
+            for(NSString *taskID in record[@"taskIDs"]){
+                NSArray *key=@[record[@"repository"],record[@"branch"],taskID];
+                if(!assignments[key] || [record[@"date"] compare:assignments[key][@"date"]]!=NSOrderedAscending)assignments[key]=record;
+            }
+        }
+        NSMutableDictionary *indexed=plan.mutableCopy;
+        indexed[@"assignments"]=assignments.copy;
+        plan=indexed;
         @synchronized(cacheLock){lastInput=input;lastPlan=plan;}
     }
     return @{@"input":input,@"plan":plan};
@@ -103,7 +115,7 @@ NSDictionary *AMCommitSubmissionCompletions(NSDictionary *prepared,NSArray *curr
         if([plan[@"completedIDs"] count]){if(!AMStoreSchedule(current,plan[@"tasks"],plan[@"records"],series,input[@"overrides"],error))return nil;}
         else if(![input[@"records"] isEqual:plan[@"records"]] && !SSWritePlist(@"submission-records.plist",plan[@"records"],error))return nil;
     }
-    return @{@"tasks":plan[@"tasks"],@"completedIDs":plan[@"completedIDs"]};
+    return @{@"tasks":plan[@"tasks"],@"completedIDs":plan[@"completedIDs"],@"assignments":plan[@"assignments"] ?: @{}};
 }
 NSDictionary *AMApplySubmissionCompletions(NSArray *previous,NSArray *courses,NSSet *deferred,NSArray *series,NSDictionary *overrides,NSError **error){
     NSDictionary *prepared=AMPrepareSubmissionCompletions(previous,courses,deferred,series,error);if(prepared && ![overrides isEqual:prepared[@"input"][@"overrides"]])return @{@"stale":@YES};return prepared ? AMCommitSubmissionCompletions(prepared,previous,deferred,series,error):nil;

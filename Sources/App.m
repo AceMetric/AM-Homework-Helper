@@ -1724,6 +1724,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
                 self.tasks=[DDLNormalizeTasks(result[@"tasks"]) mutableCopy];self.submissionCompletionUndoAvailable=YES;
                 [self refreshReminders];[self.courseWindow showSubmissionCompletion:[result[@"completedIDs"] count]];[self render];
             }
+            if(result[@"assignments"])[self.courseWindow updateAssignmentSubmissions:result[@"assignments"]];
             self.applyingSubmissionCompletions=NO;
             if(self.submissionCompletionsPending)[self applyVerifiedSubmissions];
             else if(result && ![result[@"stale"] boolValue])[self.courseWindow reverifyDeferredSubmissionsExcept:[self submissionEditingIDs]];

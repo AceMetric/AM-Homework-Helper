@@ -785,10 +785,14 @@ private struct CourseWorkspace:View {
                     Text(string(record,"suggestedTitle").isEmpty ? string(record,"title") : string(record,"suggestedTitle")).font(.title3.bold())
                     Label(kind(record),systemImage:string(record,"kind")=="exam" ? "doc.text" : "checklist").foregroundStyle(.secondary)
                     HStack(spacing:10){
-                        if flag(record,"confirmed"){Button("编辑"){state.action?("edit-task",identifier(record))};Button("检查"){state.action?("check-task",identifier(record))};if flag(record,"gitCourse"){Button("提交"){state.action?("submit-task",identifier(record))}.buttonStyle(.borderedProminent)}}
+                        if flag(record,"confirmed"){Button("编辑"){state.action?("edit-task",identifier(record))};Button("检查"){state.action?("check-task",identifier(record))};if flag(record,"gitCourse"){
+                            if string(record,"pushAction").isEmpty {Button("提交"){state.action?("submit-task",identifier(record))}.buttonStyle(.borderedProminent)}
+                            else {let action=string(record,"pushAction");Button(action=="retry-task-push" ? "重试推送":"核验推送"){state.action?(action,identifier(record))}.buttonStyle(.borderedProminent)}
+                        }}
                         if flag(record,"gitCourse"), !string(record,"path").isEmpty{Button(flag(record,"newFeedback") ? "新评语":"评语"){state.action?("feedback-task",identifier(record))};Button("同学作业"){state.action?("peer-task",identifier(record))};Button("打开"){state.action?("open-task",identifier(record))}}
                     }.controlSize(.regular)
 
+                    if !string(record,"submissionLabel").isEmpty {Text(string(record,"submissionLabel")).foregroundStyle(.secondary)}
                     if let due=record["due"] as? Date {Text("截止：\(due.formatted(date:.abbreviated,time:.shortened))")}
                     if flag(record,"confirmed") || !string(record,"notes").isEmpty {WorkspaceSection("备注"){VStack(alignment:.leading,spacing:12){Text(string(record,"notes").isEmpty ? "暂无备注":string(record,"notes")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)
                         if string(record,"notes").isEmpty && !suggestedNotes(record).isEmpty {Button("从识别内容补全…"){state.action?("restore-notes",identifier(record))}.disabled(state.paused)}

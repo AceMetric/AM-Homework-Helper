@@ -30,6 +30,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property AMSubmissionHistoryController *submissionHistory;
 @property AMPeerWindowController *peerWindow;
 @property NSWindow *assignmentFeedbackWindow;
+@property NSDictionary *assignmentSubmissions;
 @property NSCache *assignmentFeedbackCache;
 @property NSMutableSet *assignmentFeedbackReads;
 @property NSMutableSet *unreadFeedbackKeys;
@@ -209,6 +210,16 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (BOOL)hasCheckWorkspace {return self.checkScopeWindow!=nil;}
 - (NSArray *)submissionCourses {NSMutableArray *rows=NSMutableArray.array;for(NSDictionary *course in self.courses)if([course[@"fork"] length] && [course[@"branch"] length] && [course[@"upstream"] length])[rows addObject:@{@"fork":course[@"fork"],@"branch":course[@"branch"],@"upstream":course[@"upstream"]}];return rows;}
 - (NSSet *)editingTaskIDs {NSMutableSet *ids=NSMutableSet.set;BOOL visible=!self.view.hidden && self.view.window!=nil;if(((visible && !self.reviewWorkspace.view.hidden) || self.reviewWorkspace.hasUnsavedChanges) && self.reviewWorkspace.editingTaskID)[ids addObject:self.reviewWorkspace.editingTaskID];if(((visible && !self.courseWorkspace.view.hidden) || self.courseWorkspace.hasUnsavedChanges) && self.courseWorkspace.editingTaskID)[ids addObject:self.courseWorkspace.editingTaskID];return ids;}
+- (void)updateAssignmentSubmissions:(NSDictionary *)submissions {
+    if([self.assignmentSubmissions isEqual:submissions])return;
+    self.assignmentSubmissions=submissions;
+    if(!self.view.hidden && [self course] && self.sections.selectedSegment==0)[self refreshPresentation];
+}
+- (NSDictionary *)submissionForAssignment:(NSDictionary *)assignment course:(NSDictionary *)course {
+    NSString *taskID=assignment[@"taskID"] ?: assignment[@"id"];
+    if(!taskID || !course[@"fork"] || !course[@"branch"])return nil;
+    return self.assignmentSubmissions[@[course[@"fork"],course[@"branch"],taskID]];
+}
 - (void)showSubmissionCompletion:(NSUInteger)count {
     NSString *message=[NSString stringWithFormat:@"已完成 %lu 项",(unsigned long)count];
     // Publish the receipt through the fixed toolbar rather than rebuilding the course page.
@@ -298,7 +309,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         if([action isEqual:@"course-result"]){if([owner selectCourseID:identifier]){owner.sections.selectedSegment=0;[owner.typeFilter selectItemAtIndex:0];owner.query=@"";owner.search.stringValue=@"";[owner refreshPresentation];}return;}
         if([action isEqual:@"course-local"]){[owner readCourseLocalState:identifier];return;}if([action isEqual:@"course-submit"]){if([owner selectCourseID:identifier])[owner commit:nil];return;}
         if([action isEqual:@"restore-notes"]){if(owner.restoreTaskNotes)owner.restoreTaskNotes(identifier);return;}
-        if([@[@"edit-task",@"submit-task",@"check-task",@"peer-task",@"open-task",@"feedback-task"] containsObject:action]){
+        if([@[@"edit-task",@"submit-task",@"check-task",@"peer-task",@"open-task",@"feedback-task",@"verify-task-push",@"retry-task-push"] containsObject:action]){
             NSDictionary *record=nil;for(NSDictionary *row in owner.visible)if([row[@"id"] isEqual:identifier])record=row;
             NSString *taskID=record[@"taskID"] ?: identifier;
             if([action isEqual:@"edit-task"]){if(owner.editTask)owner.editTask(taskID);}
@@ -306,6 +317,14 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             if([action isEqual:@"check-task"])[owner checkTask:taskID];
             if([action isEqual:@"peer-task"])[owner showPeersForCourse:[owner course] source:record[@"path"]];
             if([action isEqual:@"feedback-task"])[owner showAssignmentFeedback:record];
+            if([@[@"verify-task-push",@"retry-task-push"] containsObject:action]){
+                NSDictionary *submission=[owner submissionForAssignment:record course:[owner course]];
+                NSString *state=submission[@"state"];
+                if([action isEqual:@"retry-task-push"] && [state isEqual:@"local"] && submission[@"checkedAt"] && !submission[@"confirmedAt"] && [submission[@"commit"] length])
+                    [owner submissionAction:@"retry" identifier:submission[@"id"]];
+                else if([@[@"local",@"uncertain"] containsObject:state])
+                    [owner submissionAction:@"verify" identifier:submission[@"id"]];
+            }
             if([action isEqual:@"open-task"]){owner.selectedCandidateID=identifier;[owner openExternalEditor:nil];}
             return;
         }
@@ -700,6 +719,14 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSMutableArray *content=NSMutableArray.array;
     for(NSDictionary *record in visible){
         NSMutableDictionary *copy=[SSEnrichDiscovery(record) mutableCopy];
+        NSDictionary *submission=[self submissionForAssignment:record course:course];
+        if(submission){
+            copy[@"submissionLabel"]=AMSubmissionStateLabel(submission);
+            if([@[@"local",@"uncertain"] containsObject:submission[@"state"]]){
+                BOOL canRetry=[submission[@"state"] isEqual:@"local"] && submission[@"checkedAt"] && !submission[@"confirmedAt"] && [submission[@"commit"] length];
+                copy[@"pushAction"]=canRetry ? @"retry-task-push":@"verify-task-push";
+            }
+        }
         if([record[@"path"] length] && course){NSString *key=[self assignmentFeedbackKeyForCourse:course source:record[@"path"]];copy[@"newFeedback"]=@([self.unreadFeedbackKeys containsObject:key]);}
         if([record[@"confirmed"] boolValue]){
             NSDictionary *source=[self reviewSourceWithID:record[@"sourceID"]];

@@ -21,6 +21,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readonly) NSArray<NSDictionary *> *submissionCourses;
 @property (readonly) NSSet<NSString *> *editingTaskIDs;
 - (void)showSubmissionCompletion:(NSUInteger)count;
+- (void)updateAssignmentSubmissions:(NSDictionary *)submissions;
 - (BOOL)resolveUnsavedReview;
 - (BOOL)saveConfigurationDraftForExit;
 - (void)discardReview;

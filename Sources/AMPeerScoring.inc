@@ -74,6 +74,7 @@
 }
 - (void)generateRubric {
     if(self.grading)return;
+    if(self.scoreStoreBlocked){[self showError:AMPeerError(@"评分记录无法读取，请修复后刷新")];return;}
     NSMutableArray *references=NSMutableArray.array;for(NSDictionary *ref in [self.references arrayByAddingObjectsFromArray:self.automaticReferences ?: @[]])if([@[@"question",@"requirements"] containsObject:ref[@"role"]])[references addObject:ref];if(!references.count){[self showError:AMPeerError(@"请先在“检查材料”添加题目与要求")];return;}
     NSMutableArray *paths=NSMutableArray.array;
     for(NSDictionary *reference in references)[paths addObject:reference[@"path"]];
@@ -184,6 +185,7 @@
 }
 - (void)grade {
     if(self.grading)return;
+    if(self.scoreStoreBlocked){[self showError:AMPeerError(@"评分记录无法读取，请修复后刷新")];return;}
     if(!self.rubric || !self.automaticReferences){[self discoverRubric];return;}if(!self.snapshots[self.selected ?: @""][@"commit"]){[self verifyPeer:self.selected completion:^(NSDictionary *snapshot){if(snapshot)[self grade];}];return;}
     NSMutableArray *chosen=NSMutableArray.array;
     if(!self.batchGrading){if(self.selected)[chosen addObject:self.selected];}
