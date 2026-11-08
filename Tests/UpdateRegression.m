@@ -203,7 +203,7 @@ int main(int argc, char **argv) { @autoreleasepool {
     Check(![courses saveSubmissionForExit] && !courses.operationBusy, @"exit never bypasses preflight or starts submission through paused gate");
     courses.operationsPaused=NO;
     courses.submission.performCheck=^NSDictionary *(NSArray *paths,NSArray *ids,NSString *extra,NSMutableDictionary *cache,BOOL(^cancelled)(void),NSError **error){return @{@"snapshot":@{},@"requirements":@"",@"report":@{@"version":@"fixture",@"issues":@[],@"coverage":@[],@"images":@[]}};};
-    [courses.submission save:nil];while(courses.submission.checking)Drain();courses.submission.acknowledge.state=NSControlStateValueOn;[courses.submission save:nil];while(courses.submission.checking)Drain();
+    [courses.submission.fileCheckButton performClick:nil];while(courses.submission.checking)Drain();[courses.submission save:nil];while(courses.submission.checking)Drain();
     while (courses.operationBusy) Drain();
     Check(!courses.submissionFailedDuringExit && courses.hasSubmissionSheet && [courses.submission.message.stringValue isEqual:@"保留我的说明"], @"explicit checked submission failure restores input");
     [AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];

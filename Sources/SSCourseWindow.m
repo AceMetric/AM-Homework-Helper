@@ -588,7 +588,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSDictionary *selected=[self course];if(!selected)for(NSDictionary *row in catalog)if([row[@"id"] isEqual:self.selectedFork])selected=row;
     // A saved assignment replaces its suggestion in the same list instead of disappearing
     // into a second navigation segment. Teacher provenance remains separate from course identity.
-    if(!self.inbox){
+    if(!self.inbox && selected){
         for(NSDictionary *task in AMCourseDisplayTasks(tasks,catalog)){
             if([task[@"deleted"] boolValue] || [task[@"archived"] boolValue])continue;
             NSDictionary *linked=AMCourseForTask(task,catalog);
@@ -708,7 +708,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     BOOL info = !self.inbox && self.sections.selectedSegment == 1;
     self.table.enclosingScrollView.hidden = info || !visible.count;
     self.emptyLabel.hidden = info || visible.count > 0;
-    self.emptyLabel.stringValue = !self.courses.count ? @"尚未添加课程" : (course && !local ? @"这门课尚未关联本地文件夹" : (self.query.length ? @"没有匹配的作业" : (self.inbox ? @"暂无待审核作业" : @"暂无待审核作业")));
+    self.emptyLabel.stringValue = !self.courses.count ? @"尚未添加课程" : (course && !local ? @"这门课尚未关联本地文件夹" : (self.query.length ? @"没有匹配的作业" : (self.inbox ? @"暂无待审核作业" : @"暂无作业")));
     self.emptyLabel.maximumNumberOfLines = 2; self.emptyLabel.lineBreakMode = NSLineBreakByWordWrapping;
     self.table.backgroundColor = Card(); self.detail.textColor = Ink(); ThemeEditor(self.detail);
     if (info) [self report:nil]; else [self candidateSelected:nil];

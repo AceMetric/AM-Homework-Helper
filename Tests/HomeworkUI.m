@@ -7,11 +7,12 @@
 #import "../Sources/SSAssignments.h"
 static NSUInteger checks;
 static void Check(BOOL condition, NSString *label) { checks++; if (!condition) { fprintf(stderr, "FAIL: %s\n", label.UTF8String); exit(1); } }
-static void Await(BOOL (^finished)(void)) {
+static void AwaitAtLine(BOOL (^finished)(void),NSUInteger line) {
     // A cold WebKit process can use the renderer's 12-second timeout on CI.
     NSDate *limit=[NSDate dateWithTimeIntervalSinceNow:20];while(!finished() && limit.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
-    Check(finished(),@"asynchronous UI operation completes within its renderer allowance");
+    Check(finished(),[NSString stringWithFormat:@"UI operation at line %lu completes within its allowance",(unsigned long)line]);
 }
+#define Await(...) AwaitAtLine((__VA_ARGS__),__LINE__)
 static void Capture(NSView *view, NSString *path) {
     (void)path;[view layoutSubtreeIfNeeded];Check(!NSIsEmptyRect(view.bounds),@"synthetic form lays out without image capture");
 }
@@ -68,11 +69,11 @@ int main(void) { @autoreleasepool {
     Check(!taskCheckSheet.hasUnsavedChanges,@"preselected scope and associated task do not create an unsaved draft warning");
     Check(taskCheckSheet.report && !taskCheckSheet.checkPage.hidden && taskCheckSheet.findings.count>0 && [taskCheckSheet.snapshot[@"paths"] isEqual:@[@"report.md"]],@"actual task button through file selection produces the real missing-image report");
     NSDictionary *localCourse=@{@"fork":@"student/fixture",@"branch":@"main",@"path":checkRoot,@"preflightMode":@"working",@"preflightLocal":@YES};
-    SSSubmissionController *parallel=[[SSSubmissionController alloc] initWithCourse:localCourse changes:@[@{@"path":@"report.md",@"status":@"M",@"sensitive":@NO}]];[courses configurePreflight:parallel course:localCourse tasks:@[]];parallel.message.stringValue=@"Synthetic submission check";[parallel.checks[0] performClick:nil];[parallel.filesPrimary performClick:nil];Await(^BOOL{return !parallel.checking && parallel.report!=nil;});Check(parallel.report && !parallel.checkPage.hidden && courses.busy,@"submission Next reaches real local report while the teacher scan queue remains suspended");[parallel cancel:nil];
+    SSSubmissionController *parallel=[[SSSubmissionController alloc] initWithCourse:localCourse changes:@[@{@"path":@"report.md",@"status":@"M",@"sensitive":@NO}]];[courses configurePreflight:parallel course:localCourse tasks:@[]];parallel.message.stringValue=@"Synthetic submission check";[parallel.checks[0] performClick:nil];[parallel.fileCheckButton performClick:nil];Await(^BOOL{return !parallel.checking && parallel.report!=nil;});Check(parallel.report && !parallel.checkPage.hidden && courses.busy,@"explicit check reaches real local report while the teacher scan queue remains suspended");[parallel cancel:nil];
     courses.git.readsCancellable=NO;dispatch_semaphore_t writeStarted=dispatch_semaphore_create(0),writeReleased=dispatch_semaphore_create(0);
     AMOperationEnqueue(@"synthetic-write",@"模拟写入",@"fixture",AMRepositoryResources(localCourse,@"write"),100,^(NSString *identifier){dispatch_semaphore_signal(writeStarted);dispatch_semaphore_wait(writeReleased,DISPATCH_TIME_FOREVER);AMOperationFinish(identifier,@"success",@"");},nil);
     Check(dispatch_semaphore_wait(writeStarted,dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC))==0,@"synthetic Git write owns the shared barrier");
-    SSSubmissionController *writing=[[SSSubmissionController alloc] initWithCourse:localCourse changes:@[@{@"path":@"report.md",@"status":@"M",@"sensitive":@NO}]];[courses configurePreflight:writing course:localCourse tasks:@[]];writing.message.stringValue=@"Keep while writing";[writing.checks[0] performClick:nil];[writing.filesPrimary performClick:nil];
+    SSSubmissionController *writing=[[SSSubmissionController alloc] initWithCourse:localCourse changes:@[@{@"path":@"report.md",@"status":@"M",@"sensitive":@NO}]];[courses configurePreflight:writing course:localCourse tasks:@[]];writing.message.stringValue=@"Keep while writing";[writing.checks[0] performClick:nil];[writing.fileCheckButton performClick:nil];
     Await(^BOOL{return AMQueuedOperationCount()>0;});Check(writing.checking && !writing.report && [writing.message.stringValue isEqual:@"Keep while writing"],@"concurrent write queues inspection and preserves inputs");
     dispatch_semaphore_signal(writeReleased);Await(^BOOL{return !writing.checking;});Check(writing.report!=nil,@"queued local inspection resumes when the write completes");[writing cancel:nil];courses.git.readsCancellable=YES;
 
@@ -89,7 +90,7 @@ int main(void) { @autoreleasepool {
     app.tasks=tasksBeforeCheck.mutableCopy;app.filter=0;Route(app,pageBeforeCheck);[courses selectCourseID:course[@"fork"]];
     course[@"path"] = @"/synthetic/physics"; course[@"lastScan"] = NSDate.date; [courses refreshCourses];
     Check(courses.syncButton.enabled && courses.commitButton.enabled && [courses.accountLabel.stringValue containsString:@"上次成功检查"], @"linked course displays readiness and last check");
-    Check([courses.emptyLabel.stringValue isEqual:@"暂无待审核作业"] && courses.scanButton.enabled && !courses.scanButton.hidden && courses.scanButton.action==@selector(scan:), @"empty result keeps a direct working check action without a tutorial sentence");
+    Check([courses.emptyLabel.stringValue isEqual:@"暂无作业"] && courses.scanButton.enabled && !courses.scanButton.hidden && courses.scanButton.action==@selector(scan:), @"empty result keeps a direct working check action without a tutorial sentence");
     NSDate *due = DDLParseDate(@"2026-10-08 23:59", NSDate.date, Cal());
     NSDictionary *candidate = @{@"id":@"teacher/physics|README.md|作业一|1", @"title":@"作业一 · 实验报告", @"due":due, @"repository":@"teacher/physics", @"path":@"README.md", @"line":@12, @"blobSHA":@"version1", @"timeZone":@"Asia/Shanghai", @"needsDate":@NO, @"needsTime":@NO, @"snippet":@"## 作业一 · 实验报告\n截止时间：2026-10-08 23:59\n提交实验报告和源代码。"};
     NSMutableDictionary *math = candidate.mutableCopy; math[@"id"] = @"math-homework"; math[@"repository"] = @"teacher/math"; math[@"title"] = @"数学 · 习题练习";
@@ -154,7 +155,7 @@ int main(void) { @autoreleasepool {
     Check(submission.checks[0].state == NSControlStateValueOff && !submission.checks[1].enabled, @"submission defaults unchecked and excludes sensitive files");
     __block NSArray *selected; submission.submit = ^(NSArray *paths, NSString *message) { selected = paths; }; [submission save:nil]; Check(selected == nil, @"empty submission is blocked");
     submission.performCheck=^NSDictionary *(NSArray *paths,NSArray *ids,NSString *extra,NSMutableDictionary *cache,BOOL(^cancelled)(void),NSError **error){return @{@"snapshot":@{},@"requirements":@"",@"report":@{@"version":@"fixture",@"issues":@[],@"coverage":@[],@"images":@[]}};};
-    submission.checks[0].state=NSControlStateValueOn;submission.message.stringValue=@"完成作业";[submission save:nil];NSDate *reviewLimit=[NSDate dateWithTimeIntervalSinceNow:5];while(submission.checking && reviewLimit.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];Check(submission.report && !selected,@"file selection proceeds to check, not implicit submission");submission.acknowledge.state=NSControlStateValueOn;[submission save:nil];reviewLimit=[NSDate dateWithTimeIntervalSinceNow:5];while(submission.checking && reviewLimit.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];Check([selected isEqual:@[@"answers.md"]],@"only explicitly selected and checked files leave submission sheet");
+    submission.checks[0].state=NSControlStateValueOn;submission.message.stringValue=@"完成作业";[submission.fileCheckButton performClick:nil];NSDate *reviewLimit=[NSDate dateWithTimeIntervalSinceNow:5];while(submission.checking && reviewLimit.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];Check(submission.report && !selected,@"file selection proceeds to check, not implicit submission");[submission save:nil];reviewLimit=[NSDate dateWithTimeIntervalSinceNow:5];while(submission.checking && reviewLimit.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];Check([selected isEqual:@[@"answers.md"]],@"only explicitly selected and checked files leave submission sheet");
     Check([submission.taskIDs isEqual:@[@"related-task"]],@"explicit task association accompanies submission");
     submission.readPreview = ^(NSString *file, void (^ready)(NSString *)) { ready([@"diff preview: " stringByAppendingString:file]); };
     NSButton *previewButton = NSButton.new; previewButton.tag = 0; [submission showPreview:previewButton]; Check([submission.preview.string containsString:@"answers.md"], @"selected file preview is delivered to sheet");

@@ -828,7 +828,7 @@ private struct CourseWorkspace:View {
     }
     var body:some View {
         GeometryReader { geometry in
-            if state.showSummary {summaries}
+            if state.showSummary && !state.summaries.isEmpty {summaries}
             else if state.records.isEmpty {detailPane}
             else if geometry.size.width<760 {
                 if state.showingDetail {VStack(alignment:.leading,spacing:0){Button("返回作业"){state.showingDetail=false}.padding(12);detailPane}}
