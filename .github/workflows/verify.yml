@@ -38,6 +38,7 @@ jobs:
           AM_UI_TEST=RepositoryConcurrencyUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=SubmissionSelectionUsage zsh verify-hybrid-ui.sh
           AM_UI_TEST=HistoryPollingUsage zsh verify-hybrid-ui.sh
+          AM_UI_TEST=CompletionResponsivenessUsage zsh verify-hybrid-ui.sh
       - name: Dates and reminders
         run: zsh test.sh
       - name: Document and screenshot import

@@ -205,7 +205,11 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (BOOL)hasCheckWorkspace {return self.checkScopeWindow!=nil;}
 - (NSArray *)submissionCourses {NSMutableArray *rows=NSMutableArray.array;for(NSDictionary *course in self.courses)if([course[@"fork"] length] && [course[@"branch"] length] && [course[@"upstream"] length])[rows addObject:@{@"fork":course[@"fork"],@"branch":course[@"branch"],@"upstream":course[@"upstream"]}];return rows;}
 - (NSSet *)editingTaskIDs {NSMutableSet *ids=NSMutableSet.set;BOOL visible=!self.view.hidden && self.view.window!=nil;if(((visible && !self.reviewWorkspace.view.hidden) || self.reviewWorkspace.hasUnsavedChanges) && self.reviewWorkspace.editingTaskID)[ids addObject:self.reviewWorkspace.editingTaskID];if(((visible && !self.courseWorkspace.view.hidden) || self.courseWorkspace.hasUnsavedChanges) && self.courseWorkspace.editingTaskID)[ids addObject:self.courseWorkspace.editingTaskID];return ids;}
-- (void)showSubmissionCompletion:(NSUInteger)count {[self status:[NSString stringWithFormat:@"已完成 %lu 项",(unsigned long)count]];}
+- (void)showSubmissionCompletion:(NSUInteger)count {
+    NSString *message=[NSString stringWithFormat:@"已完成 %lu 项",(unsigned long)count];
+    // Publish the receipt through the fixed toolbar rather than rebuilding the course page.
+    AMPostUIMessageWithRevision(@"submission",@"completion",NSUUID.UUID.UUIDString,message,AMUIMessageSuccess,nil,nil);
+}
 - (BOOL)hasUnsavedReview { return self.reviewWorkspace.hasUnsavedChanges || self.courseWorkspace.hasUnsavedChanges; }
 - (BOOL)resolveUnsavedReview { if(self.setupWindow.sheetParent){NSAlert *alert=NSAlert.new;alert.messageText=@"课程配置尚未关闭";alert.informativeText=@"已成功关联的课程已经保存；尚未关联的目录选择会被放弃。";[alert addButtonWithTitle:@"继续配置"];[alert addButtonWithTitle:@"放弃未关联选择并继续"];if([alert runModal]!=NSAlertSecondButtonReturn)return NO;[self closeCourseSetup];} self.resolvingReview=YES; self.reviewWorkspace.paused=NO; self.courseWorkspace.paused=NO; BOOL ok=[self.reviewWorkspace resolveUnsavedChanges] && [self.courseWorkspace resolveUnsavedChanges]; self.resolvingReview=NO; self.reviewWorkspace.paused=self.operationsPaused; self.courseWorkspace.paused=self.operationsPaused; return ok; }
 - (BOOL)saveConfigurationDraftForExit {if(!self.setupWindow)return YES;[self.setupWorkspace requestCloseSavingDraft];return self.setupWindow==nil;}

@@ -52,6 +52,7 @@ AM_UI_TEST=SubmissionResponsivenessUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=RepositoryConcurrencyUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=SubmissionSelectionUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=HistoryPollingUsage zsh verify-hybrid-ui.sh
+AM_UI_TEST=SubmissionCompletionUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=CompletionResponsivenessUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=AuthActivityUsage zsh verify-hybrid-ui.sh
 AM_UI_TEST=NativePromotionUsage zsh verify-hybrid-ui.sh
