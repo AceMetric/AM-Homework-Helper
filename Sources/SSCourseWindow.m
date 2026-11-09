@@ -26,6 +26,11 @@
 #import "AMCourseWorkflow.inc"
 
 static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) { ActionButton *button=Button(text,target,action,0);button.frame=frame;return button; }
+// Older course configurations can exist before a branch has been associated.
+static NSArray *AMAssignmentProgressKey(NSDictionary *course){
+    NSString *fork=course[@"fork"],*branch=course[@"branch"],*path=course[@"path"];
+    return fork.length && branch.length && path.length ? @[fork,branch,path]:nil;
+}
 @interface SSCourseController ()
 @property AMSubmissionHistoryController *submissionHistory;
 @property AMPeerWindowController *peerWindow;
@@ -758,7 +763,8 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             copy[@"remoteVerification"]=remote;
             NSString *source=record[@"path"] ?: record[@"sourcePath"],*scope=source.stringByDeletingLastPathComponent;
             if(!AMPeerPath(scope))scope=source;
-            NSDictionary *local=[course[@"path"] length] ? self.assignmentProgress[@[course[@"fork"],course[@"branch"],course[@"path"]]]:nil;
+            NSArray *progressKey=AMAssignmentProgressKey(course);
+            NSDictionary *local=progressKey ? self.assignmentProgress[progressKey]:nil;
             BOOL working=AMPeerPath(scope) && [local[@"working"] containsObject:scope];
             BOOL pending=AMPeerPath(scope) && [local[@"pending"] containsObject:scope];
             NSMutableArray *labels=NSMutableArray.array;

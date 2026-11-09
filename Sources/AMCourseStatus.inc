@@ -25,10 +25,10 @@ static NSSet *AMCoursePathIndex(NSArray *paths){
     return result.copy;
 }
 - (void)refreshAssignmentProgress:(NSDictionary *)course {
-    if(self.preview || self.operationsPaused || ![course[@"path"] length])return;
+    NSArray *key=AMAssignmentProgressKey(course);
+    if(self.preview || self.operationsPaused || !key)return;
     if(!self.assignmentProgress)self.assignmentProgress=NSMutableDictionary.dictionary;
     if(!self.assignmentProgressReads)self.assignmentProgressReads=NSMutableSet.set;
-    NSArray *key=@[course[@"fork"],course[@"branch"],course[@"path"]];
     NSDictionary *previous=self.assignmentProgress[key];
     if([self.assignmentProgressReads containsObject:key] || (previous && -[previous[@"date"] timeIntervalSinceNow]<20))return;
     [self.assignmentProgressReads addObject:key];

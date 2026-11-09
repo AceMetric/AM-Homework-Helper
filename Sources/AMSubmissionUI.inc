@@ -43,7 +43,8 @@
         if(error)[self.failedAssignmentVerifications addObject:identifier];
         else {
             [self.failedAssignmentVerifications removeObject:identifier];
-            if([course[@"path"] length])[self.assignmentProgress removeObjectForKey:@[course[@"fork"],course[@"branch"],course[@"path"]]];
+            NSArray *key=AMAssignmentProgressKey(course);
+            if(key)[self.assignmentProgress removeObjectForKey:key];
             [self status:AMSubmissionStateLabel(result)];
         }
         [self refreshPresentation];
