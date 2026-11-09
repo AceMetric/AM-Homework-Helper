@@ -8,6 +8,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
+from urllib.parse import urljoin
 from distribution import update_locations
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,12 +33,15 @@ def validate_archive(archive, expected):
             raise ValueError('测试应用不能进入正式更新源。')
 
 
-def prepare(notes, previous_feed=None):
+def prepare(notes, previous_feed=None, pages_mirror=False):
     notes_bytes = notes.read_bytes()
     previous_bytes = previous_feed.read_bytes() if previous_feed else None
     info = plistlib.loads((ROOT / 'Info.plist').read_bytes())
     _, download_prefix, notes_prefix = update_locations(info)
     version, build = info['CFBundleShortVersionString'], info['CFBundleVersion']
+    if pages_mirror:
+        # The versioned mirror must contain the same signed archive before the live feed changes.
+        download_prefix = urljoin(notes_prefix, f'../downloads/v{version}/')
     archive = ROOT / f'build/releases/{info["DDLArchiveName"]}-{version}-macOS-arm64.zip'
     if not archive.is_file():
         raise SystemExit('先运行 zsh release.sh，生成通过检查的正式更新包。')
@@ -85,5 +89,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--notes', required=True, type=Path, help='公开 Markdown 更新说明')
     parser.add_argument('--previous-feed', type=Path, help='前一版已发布的签名清单')
+    parser.add_argument('--pages-mirror', action='store_true', help='从版本固定的公开下载镜像提供更新包')
     args = parser.parse_args()
-    prepare(args.notes, args.previous_feed)
+    prepare(args.notes, args.previous_feed, args.pages_mirror)

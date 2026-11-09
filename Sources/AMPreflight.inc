@@ -156,11 +156,12 @@ static NSDictionary *PFPython(NSString *source){
     return @{@"status":@"已检查：Python 语法（未执行代码）",@"syntax":result};
 }
 NSDictionary *AMPreflightCheck(NSDictionary *snapshot,NSString *requirements,NSMutableDictionary *cache,BOOL (^cancelled)(void)){return AMPreflightCheckWithProgress(snapshot,requirements,cache,cancelled,nil);}
+#include "AMNotebookReview.inc"
 NSDictionary *AMPreflightCheckWithProgress(NSDictionary *snapshot,NSString *requirements,NSMutableDictionary *cache,BOOL (^cancelled)(void),void (^progress)(NSUInteger,NSUInteger)){
     NSUInteger processed=0,total=[snapshot[@"paths"] count];
     NSMutableArray *issues=NSMutableArray.array,*coverage=NSMutableArray.array,*images=NSMutableArray.array;NSDictionary *files=snapshot[@"files"];
     for(NSString *path in snapshot[@"paths"]){if(progress)progress(processed++,total);if(cancelled && cancelled())return @{@"cancelled":@YES};NSDictionary *entry=files[path];if([entry[@"deleted"] boolValue])continue;
-        NSString *key=[NSString stringWithFormat:@"preflight-v4-renderer5|%@|%@",path,entry[@"version"] ?: @""];NSDictionary *cached=cache[key];
+        NSString *key=[NSString stringWithFormat:@"preflight-v4-renderer6|%@|%@",path,entry[@"version"] ?: @""];NSDictionary *cached=cache[key];
         if(!cached){NSMutableArray *found=NSMutableArray.array;NSDictionary *math=nil;NSString *text=entry[@"text"],*ext=path.pathExtension.lowercaseString,*status=@"未检查：不支持的文件类型";
             if(entry[@"problem"])[found addObject:PFIssue(@"format",@"error",path,@1,entry[@"problem"],@"",@"检查文件格式与大小后重新检查。")];
             else if([entry[@"trainingData"] boolValue]){status=@"已检查：训练数据格式与凭据；不发送给模型";}
@@ -177,13 +178,18 @@ NSDictionary *AMPreflightCheckWithProgress(NSDictionary *snapshot,NSString *requ
                     NSArray *words=PFMatches(prose,@"\\b[A-Za-z]{3,}\\b");if(words.count){__block NSArray *spelling=nil;void (^check)(void)=^{NSSpellChecker *checker=NSSpellChecker.sharedSpellChecker;NSMutableArray *matches=NSMutableArray.array;NSUInteger position=0;while(position<prose.length && matches.count<200){NSRange r=[checker checkSpellingOfString:prose startingAt:position language:@"en_US" wrap:NO inSpellDocumentWithTag:0 wordCount:NULL];if(r.location==NSNotFound || !r.length)break;[matches addObject:[NSTextCheckingResult spellCheckingResultWithRange:r]];position=NSMaxRange(r);}spelling=matches;};if(NSThread.isMainThread)check();else dispatch_sync(dispatch_get_main_queue(),check);NSUInteger count=0;for(NSTextCheckingResult *m in spelling){if(m.range.location==NSNotFound || NSMaxRange(m.range)>prose.length)continue;NSString *word=[prose substringWithRange:m.range];if(!PFSpellingWord(word))continue;NSRange loc=m.range;NSUInteger line=[[text substringToIndex:loc.location] componentsSeparatedByString:@"\n"].count;[found addObject:PFIssue(@"spelling",@"info",path,@(line),@"英文拼写建议（非语法错误）",word,@"仅供参考；课程术语与专有名词可忽略。")];if(++count>=20)break;}}
                 }
                 if([ext isEqual:@"py"]){NSDictionary *parse=PFPython(text);status=parse[@"status"];if(parse[@"syntax"][@"message"])[found addObject:PFIssue(@"format",@"warning",path,parse[@"syntax"][@"line"],@"Python 语法可能有误",parse[@"syntax"][@"message"],@"核对目标 Python 版本和语法；未执行代码。")];}
-                if([ext isEqual:@"ipynb"]){id notebook=[NSJSONSerialization JSONObjectWithData:entry[@"data"] options:0 error:NULL];BOOL ok=[notebook isKindOfClass:NSDictionary.class] && [notebook[@"cells"] isKindOfClass:NSArray.class] && [notebook[@"nbformat"] isKindOfClass:NSNumber.class];if(ok)for(id cell in notebook[@"cells"])if(![cell isKindOfClass:NSDictionary.class] || ![@[@"code",@"markdown",@"raw"] containsObject:cell[@"cell_type"]] || !([cell[@"source"] isKindOfClass:NSString.class] || [cell[@"source"] isKindOfClass:NSArray.class])){ok=NO;break;}if(!ok)[found addObject:PFIssue(@"format",@"error",path,@1,@"Notebook JSON 或单元结构无效",@"",@"用 Notebook 编辑器检查文件；未执行任何单元。")];}
+                if([ext isEqual:@"ipynb"])status=@"已提取单元格；未运行代码";
             }else if([entry[@"image"] boolValue]){status=@"已检查：图片可解码";if(!PFImage(entry[@"data"]))[found addObject:PFIssue(@"format",@"error",path,@1,@"图片损坏或超过安全解码尺寸",@"",@"重新导出图片并复查。")];}
             if(cancelled && cancelled())return @{@"cancelled":@YES};
             cached=@{@"issues":found,@"status":status,@"math":math ?: @{}};if(!math || [math[@"completed"] boolValue])cache[key]=cached;
         }
         [issues addObjectsFromArray:cached[@"issues"]];[coverage addObject:@{@"path":path,@"status":cached[@"status"]}];if([cached[@"math"] count])[coverage addObject:@{@"path":path,@"kind":@"math",@"status":[cached[@"math"][@"completed"] boolValue] ? [NSString stringWithFormat:@"已渲染：%lu 个公式",(unsigned long)[cached[@"math"][@"formulaCount"] unsignedIntegerValue]]:@"未完成：公式渲染超时、内容超限或渲染器不可用"}];
         if([entry[@"image"] boolValue] && !entry[@"problem"] && PFImage(entry[@"data"]))[images addObject:@{@"path":path,@"document":path,@"line":@1,@"version":entry[@"version"]}];
+        if(entry[@"notebookOmissions"] && !entry[@"text"])
+            [issues addObject:PFIssue(@"format",@"error",path,@1,@"Notebook JSON 或单元结构无效",@"",@"用 Notebook 编辑器检查文件；未执行任何单元。")];
+        for(NSString *omission in entry[@"notebookOmissions"] ?: @[])[coverage addObject:@{@"path":path,@"status":[@"未覆盖：" stringByAppendingString:omission]}];
+        for(NSDictionary *asset in [entry[@"notebookImages"] allValues])
+            [images addObject:@{@"path":asset[@"path"],@"document":path,@"line":asset[@"line"],@"version":asset[@"version"],@"notebookOutput":@YES}];
         NSString *text=entry[@"text"];
         if([@[@"md",@"markdown",@"mdx"] containsObject:path.pathExtension.lowercaseString])for(NSDictionary *ref in AMPreflightImageReferences(text ?: @"")){
             NSString *target=ref[@"reference"],*resolved=AMPreflightResolveImage(path,target);if(PFMatches(target,@"^(?:https?:)?//").count){[issues addObject:PFIssue(@"image",@"info",path,ref[@"line"],@"远程图片可用性未验证",target,@"请自行确认网络图片可用。")];continue;}
@@ -193,18 +199,24 @@ NSDictionary *AMPreflightCheckWithProgress(NSDictionary *snapshot,NSString *requ
             [images addObject:@{@"path":resolved,@"document":path,@"line":ref[@"line"],@"version":asset[@"version"]}];
         }
     }
+    [coverage addObjectsFromArray:snapshot[@"scopeOmissions"] ?: @[]];
     if(progress)progress(total,total);
     if(!RTrim(requirements).length)[issues addObject:PFIssue(@"requirements",@"info",@"",@1,@"未提供题目，无法判断是否完成全部要求",@"",@"关联作业或补充老师原文。")];
     [coverage addObject:@{@"path":@"",@"status":@"未检查：答案、推导、中文语义及程序运行；可交给助手复核"}];
     NSArray *sorted=[issues sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){NSArray *levels=@[@"error",@"warning",@"info"];NSUInteger x=[levels indexOfObject:a[@"severity"]],y=[levels indexOfObject:b[@"severity"]];return x<y ? NSOrderedAscending : x>y ? NSOrderedDescending:NSOrderedSame;}];
     NSMutableArray *uniqueImages=NSMutableArray.array;NSMutableSet *imagePaths=NSMutableSet.set;for(NSDictionary *image in images)if(![imagePaths containsObject:image[@"path"]]){[imagePaths addObject:image[@"path"]];[uniqueImages addObject:image];}
-    return @{@"requirements":requirements ?: @"",@"version":AMPreflightHash([[NSString stringWithFormat:@"preflight-v4-renderer5|%@|%@",snapshot[@"version"],requirements] dataUsingEncoding:NSUTF8StringEncoding]),@"snapshotVersion":snapshot[@"version"],@"issues":sorted,@"coverage":coverage,@"images":uniqueImages,@"date":NSDate.date,@"assistant":@"未检查"};
+    return @{@"requirements":requirements ?: @"",@"version":AMPreflightHash([[NSString stringWithFormat:@"preflight-v4-renderer6|%@|%@",snapshot[@"version"],requirements] dataUsingEncoding:NSUTF8StringEncoding]),@"snapshotVersion":snapshot[@"version"],@"issues":sorted,@"coverage":coverage,@"images":uniqueImages,@"date":NSDate.date,@"assistant":@"未检查"};
 }
 static BOOL PFWrite(NSData *data,NSURL *url,NSError **error){
     if(![url.path isEqual:url.URLByResolvingSymlinksInPath.path]){if(error)*error=RError(@"交换目录不安全。");return NO;}
     NSString *temp=[url.path stringByAppendingFormat:@".%@.tmp",NSUUID.UUID.UUIDString];int fd=open(temp.fileSystemRepresentation,O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW,0600);if(fd<0)return NO;const unsigned char *p=data.bytes;NSUInteger remaining=data.length;BOOL ok=YES;while(remaining){ssize_t n=write(fd,p,remaining);if(n<=0){ok=NO;break;}p+=n;remaining-=n;}if(fsync(fd))ok=NO;close(fd);if(ok)ok=rename(temp.fileSystemRepresentation,url.path.fileSystemRepresentation)==0;if(!ok){unlink(temp.fileSystemRepresentation);if(error)*error=RError(@"材料或检查记录保存失败，未推进批次。");}return ok;
 }
 #include "AMReviewMaterials.inc"
+NSInteger AMReviewMaterialPriority(NSString *path,NSString *role){
+    if([@[@"question",@"requirements"] containsObject:role ?: @""])return 0;
+    if([@[@"csv",@"tsv",@"jsonl",@"log",@"out",@"dat",@"gz",@"zip"] containsObject:path.pathExtension.lowercaseString])return 3;
+    return [role isEqual:@"reference"] ? 2:1;
+}
 NSDictionary *AMPreflightExport(NSDictionary *report,NSDictionary *snapshot,NSString *requirements,NSArray *images,NSURL *folder,NSError **error){
     if(!AMReviewMaterialsCurrent(snapshot,error))return nil;
     if(SSContainsSecret([requirements dataUsingEncoding:NSUTF8StringEncoding])){if(error)*error=RError(@"题目含疑似凭据，请先移除。");return nil;}
@@ -212,6 +224,12 @@ NSDictionary *AMPreflightExport(NSDictionary *report,NSDictionary *snapshot,NSSt
     if(![NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:error])return nil;
     NSMutableArray *documents=NSMutableArray.array,*assets=NSMutableArray.array;NSUInteger total=0;
     for(NSString *path in snapshot[@"paths"]){NSDictionary *file=snapshot[@"files"][path];if([file[@"version"] isEqual:@"secret"]){if(error)*error=RError(@"所选文件含疑似凭据，无法导出。");return nil;}if(!file[@"text"])continue;if(SSSensitivePath(path) || SSContainsSecret([file[@"text"] dataUsingEncoding:NSUTF8StringEncoding])){if(error)*error=RError(@"材料含疑似凭据，无法导出。");return nil;}total+=[file[@"data"] length];if(total>32*1024*1024){if(error)*error=RError(@"材料总量过大，请减少选择后分批复核。");return nil;}[documents addObject:@{@"path":path,@"version":file[@"version"],@"text":file[@"text"],@"role":snapshot[@"reviewRoles"][path] ?: file[@"role"] ?: @"answer"}];}
+    // Keep answer sources ahead of optional data when the online request budget forces splitting.
+    [documents sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){
+        NSInteger left=AMReviewMaterialPriority(a[@"path"],a[@"role"]);
+        NSInteger right=AMReviewMaterialPriority(b[@"path"],b[@"role"]);
+        return left<right ? NSOrderedAscending:(left>right ? NSOrderedDescending:NSOrderedSame);
+    }];
     NSArray *occurrences=AMReviewImageOccurrences(snapshot);NSMutableSet *seen=NSMutableSet.set;NSUInteger index=0;
     for(NSDictionary *image in images){NSString *path=image[@"path"];if([seen containsObject:path])continue;[seen addObject:path];NSDictionary *source=snapshot[@"files"][path];NSData *png=PFImage(source[@"data"]);if(!png){if(error)*error=RError(@"图片无法解码，未发送材料。");return nil;}total+=png.length;if(total>64*1024*1024){if(error)*error=RError(@"图片材料总量超过64 MB，请减少图片或分批复核。");return nil;}
         NSError *ocrError=nil;NSString *ocr=DDLOCRTextFromImage([[NSImage alloc] initWithData:png],&ocrError);if(ocrError){if(error)*error=RError(@"图片隐私检查未完成，未导出；可排除图片后重试。");return nil;}if(SSContainsSecret([ocr dataUsingEncoding:NSUTF8StringEncoding])){if(error)*error=RError(@"图片文字含疑似凭据，请先排除该图片。");return nil;}
@@ -221,8 +239,16 @@ NSDictionary *AMPreflightExport(NSDictionary *report,NSDictionary *snapshot,NSSt
     }
     NSMutableOrderedSet *excluded=NSMutableOrderedSet.orderedSet;for(NSDictionary *image in report[@"images"])if(![seen containsObject:image[@"path"]])[excluded addObject:[NSString stringWithFormat:@"%@：未选择发送图片",image[@"path"]]];
     for(NSDictionary *row in report[@"coverage"]){NSString *path=row[@"path"];if(snapshot[@"files"][path][@"text"] && ![snapshot[@"paths"] containsObject:path])[excluded addObject:[NSString stringWithFormat:@"%@：未选择发送文档",path]];}
+    NSMutableOrderedSet *uncovered=NSMutableOrderedSet.orderedSet;
+    for(NSDictionary *row in report[@"coverage"]){
+        NSString *status=row[@"status"],*path=row[@"path"];
+        if(path.length && ([status hasPrefix:@"未覆盖"] || [status hasPrefix:@"未检查"] || [status isEqual:@"已删除"]) && !SSSensitivePath(path))
+            [excluded addObject:[NSString stringWithFormat:@"%@：%@",path,status]];
+        if(path.length && [status hasPrefix:@"未覆盖"] && !SSSensitivePath(path))
+            [uncovered addObject:[NSString stringWithFormat:@"%@：%@",path,status]];
+    }
     NSMutableDictionary *links=NSMutableDictionary.dictionary;NSMutableSet *sent=[NSMutableSet setWithArray:[documents valueForKey:@"path"]];[sent addObjectsFromArray:[assets valueForKey:@"path"]];for(NSString *question in snapshot[@"questionLinks"]){NSMutableArray *validLinks=NSMutableArray.array;for(NSDictionary *link in AMReviewRelations(snapshot[@"questionLinks"],question)){NSString *answer=link[@"answer"];if(![sent containsObject:question] || ![sent containsObject:answer])continue;if(![snapshot[@"files"][question][@"version"] isEqual:link[@"sourceVersion"]] || ![snapshot[@"files"][answer][@"version"] isEqual:link[@"answerVersion"]]){if(error)*error=RError(@"题目与解答关联已过期，请重新确认。");return nil;}[validLinks addObject:link];}if(validLinks.count)links[question]=validLinks.count==1 ? validLinks[0]:validLinks;}
-    NSDictionary *context=@{@"excluded":excluded.array,@"unverifiedImages":@[],@"format":@"am-preflight-context-v1",@"instructions":AMReviewPrompt(),@"batchID":folder.lastPathComponent,@"reportVersion":report[@"version"],@"snapshotVersion":snapshot[@"version"],@"requirements":requirements ?: @"",@"imageOccurrences":occurrences,@"questionLinks":links,@"requestLimit":snapshot[@"requestLimit"] ?: @4,@"documents":documents,@"images":assets};
+    NSDictionary *context=@{@"excluded":excluded.array,@"uncovered":uncovered.array,@"unverifiedImages":@[],@"format":@"am-preflight-context-v1",@"instructions":AMReviewPrompt(),@"batchID":folder.lastPathComponent,@"reportVersion":report[@"version"],@"snapshotVersion":snapshot[@"version"],@"requirements":requirements ?: @"",@"imageOccurrences":occurrences,@"questionLinks":links,@"requestLimit":snapshot[@"requestLimit"] ?: @4,@"documents":documents,@"images":assets};
     NSData *json=[NSJSONSerialization dataWithJSONObject:context options:NSJSONWritingPrettyPrinted error:error];if(!json || !PFWrite(json,[folder URLByAppendingPathComponent:@"context.local.json"],error))return nil;
     NSString *skill=[NSString stringWithContentsOfFile:[NSBundle.mainBundle pathForResource:@"am-homework-extract" ofType:@"md"] ?: @"Skills/am-homework-extract/SKILL.md" encoding:NSUTF8StringEncoding error:NULL];if(!skill.length || !PFWrite([skill dataUsingEncoding:NSUTF8StringEncoding],[folder URLByAppendingPathComponent:@"SKILL.md"],error))return nil;
     return context;
@@ -243,6 +269,7 @@ NSDictionary *AMPreflightValidateResult(id result,NSDictionary *context,NSError 
     NSMutableSet *checked=NSMutableSet.set;for(id item in result[@"checked"])if([item isKindOfClass:NSDictionary.class] && [item[@"path"] isKindOfClass:NSString.class] && [sources[item[@"path"]][@"version"] isEqual:item[@"version"]])[checked addObject:item[@"path"]];
     NSMutableOrderedSet *unverified=NSMutableOrderedSet.orderedSet,*excluded=[NSMutableOrderedSet orderedSetWithArray:context[@"excluded"] ?: @[]];
     [excluded addObjectsFromArray:context[@"unverifiedImages"] ?: @[]];
+    [unverified addObjectsFromArray:context[@"uncovered"] ?: @[]];
     for(id reason in result[@"unverified"])if([reason isKindOfClass:NSString.class] && [reason length]<1000 && !SSContainsSecret([reason dataUsingEncoding:NSUTF8StringEncoding]))[unverified addObject:reason];
     for(NSString *path in [[sources allKeys] sortedArrayUsingSelector:@selector(compare:)])if(![checked containsObject:path]){BOOL explained=NO;for(NSString *reason in unverified)if([reason hasPrefix:[path stringByAppendingString:@"："]] || [reason hasPrefix:[path stringByAppendingString:@":"]]){explained=YES;break;}if(!explained)[unverified addObject:[NSString stringWithFormat:@"%@：未返回检查结果",path]];}
     if(context[@"imageOccurrences"] && ![context[@"questionLinks"] count])[unverified addObject:@"未关联实际题目，尚未核对解答对应关系与要求完整性。"];
@@ -259,7 +286,7 @@ NSDictionary *AMPreflightValidateResult(id result,NSDictionary *context,NSError 
             grounded=[check[@"evidence"] isKindOfClass:NSString.class] && [check[@"evidence"] length] && line>0 && line<=(NSInteger)lines.count && [[[lines subarrayWithRange:NSMakeRange(line-1,lines.count-line+1)] componentsJoinedByString:@"\n"] hasPrefix:check[@"evidence"]];
         }else grounded=NO;
         // 要求覆盖必须同时具备实际题目与同版本依据，模型声称“通过”本身不能打勾。
-        if((![context[@"questionLinks"] count] || !grounded) && [@[@"checked",@"issue"] containsObject:copy[@"status"]])copy[@"status"]=@"unchecked";
+        if((![context[@"questionLinks"] count] || !grounded || [context[@"uncovered"] count]) && [@[@"checked",@"issue"] containsObject:copy[@"status"]])copy[@"status"]=@"unchecked";
         if(grounded)for(NSString *key in @[@"path",@"version",@"line",@"evidence"])copy[key]=check[key];
         if(!SSContainsSecret([NSJSONSerialization dataWithJSONObject:copy options:0 error:NULL]))[requirementChecks addObject:copy];
     }

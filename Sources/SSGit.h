@@ -4,6 +4,8 @@ NS_ASSUME_NONNULL_BEGIN
 @interface SSGit : NSObject
 @property(copy, nullable) NSDictionary *expectedSubmissionSnapshot;
 @property(copy, nullable) NSDictionary *submissionReviewSummary;
+- (NSDictionary * _Nullable)assignmentCheckScopeForCourse:(NSDictionary *)course scope:(NSString *)scope error:(NSError **)error;
+- (BOOL)checkReviewHead:(NSString *)head course:(NSDictionary *)course error:(NSError **)error;
 - (NSDictionary * _Nullable)preflightSnapshotForCourse:(NSDictionary *)course paths:(NSArray *)paths error:(NSError **)error;
 - (NSString *)preflightRequirementsForCourse:(NSDictionary *)course tasks:(NSArray *)tasks;
 - (BOOL)validatePreflightIndex:(NSArray *)paths course:(NSDictionary *)course error:(NSError **)error;
@@ -13,6 +15,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSDictionary * _Nullable)submissionDetailsForCourse:(NSDictionary *)course commit:(NSString *)commit error:(NSError **)error;
 - (NSArray * _Nullable)assignmentFeedbackForCourse:(NSDictionary *)course scope:(NSString *)scope login:(NSString *)login remote:(nullable NSString *)remote error:(NSError **)error;
 - (NSArray * _Nullable)recentCommits:(NSDictionary *)course error:(NSError **)error;
+@property(copy, nullable) NSDictionary *externalHistorySnapshot;
 - (NSArray * _Nullable)externalCommits:(NSDictionary *)course offset:(NSUInteger)offset error:(NSError **)error;
 - (NSArray * _Nullable)verifyExternalRecords:(NSArray *)records course:(NSDictionary *)course token:(NSString *)token error:(NSError **)error;
 - (NSArray *)classifyExternalRecords:(NSArray *)records course:(NSDictionary *)course;
@@ -47,6 +50,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSDictionary * _Nullable)fastForwardLocalCourse:(NSDictionary *)course teacher:(NSString *)teacher remote:(nullable NSString *)remote error:(NSError **)error;
 - (NSDictionary * _Nullable)syncCourse:(NSDictionary *)course token:(NSString *)token error:(NSError **)error;
 /// Counts relative to a previously verified personal-remote commit; does not fetch or claim freshness.
+- (NSDictionary * _Nullable)assignmentProgressForCourse:(NSDictionary *)course remoteCommit:(nullable NSString *)remote error:(NSError **)error;
 - (NSDictionary * _Nullable)localPushStateForCourse:(NSDictionary *)course remoteCommit:(nullable NSString *)remote error:(NSError **)error;
 - (NSArray<NSDictionary *> * _Nullable)changesForCourse:(NSDictionary *)course error:(NSError **)error;
 /// Read-only, bounded, credential-redacted preview; never executes diff drivers.

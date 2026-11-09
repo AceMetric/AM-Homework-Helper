@@ -88,13 +88,20 @@ NSDictionary *AMPrepareSubmissionCompletions(NSArray *previous,NSArray *courses,
         NSArray *tasks=plan[@"tasks"];
         if([plan[@"completedIDs"] count]){NSCalendar *calendar=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];calendar.timeZone=[NSTimeZone timeZoneWithName:@"Asia/Shanghai"];tasks=DDLMaterializeRecurringTasks(tasks,series,[calendar startOfDayForDate:NSDate.date],[calendar dateByAddingUnit:NSCalendarUnitDay value:90 toDate:NSDate.date options:0],overrides,error);if(!tasks)return nil;NSMutableDictionary *copy=plan.mutableCopy;copy[@"tasks"]=tasks;plan=copy;}
         // 课程页使用同一份提交快照，渲染时按任务与分支查找，避免重新读提交历史。
-        NSMutableDictionary *assignments=NSMutableDictionary.dictionary;
+        NSMutableDictionary *assignments=NSMutableDictionary.dictionary,*verified=NSMutableDictionary.dictionary;
         for(NSDictionary *record in plan[@"records"]){
             if([record[@"teacherHistoryExcluded"] boolValue])continue;
             for(NSString *taskID in record[@"taskIDs"]){
                 NSArray *key=@[record[@"repository"],record[@"branch"],taskID];
                 if(!assignments[key] || [record[@"date"] compare:assignments[key][@"date"]]!=NSOrderedAscending)assignments[key]=record;
+                NSDate *date=record[@"verifiedAt"] ?: record[@"confirmedAt"];
+                if(date && (!verified[key] || [date compare:verified[key][@"time"]]==NSOrderedDescending))
+                    verified[key]=@{@"commit":record[@"commit"] ?: @"",@"time":date,@"state":record[@"state"] ?: @""};
             }
+        }
+        for(NSArray *key in verified){
+            NSMutableDictionary *row=[assignments[key] mutableCopy];
+            row[@"lastVerified"]=verified[key];assignments[key]=row;
         }
         NSMutableDictionary *indexed=plan.mutableCopy;
         indexed[@"assignments"]=assignments.copy;

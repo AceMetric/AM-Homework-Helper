@@ -51,7 +51,7 @@
             NSString *text=blob && blob.status==0 ? [[NSString alloc] initWithData:blob.data encoding:NSUTF8StringEncoding]:nil;
             if(!text.length || SSContainsSecret(blob.data))continue;
             // Author metadata is evidence for the user to inspect, not proof of teacher identity.
-            [results addObject:@{@"path":path,@"commit":header[0],@"author":SSRedactedText(author),@"version":AMPeerHash(@[text]),@"text":text}];
+            [results addObject:@{@"path":path,@"commit":header[0],@"author":SSRedactedText(author),@"version":AMPeerHash(@[text]),@"contentHash":AMPreflightHash(blob.data),@"text":text}];
         }
     }
     return results;

@@ -1,6 +1,22 @@
 #import <PDFKit/PDFKit.h>
 static BOOL AMReviewOriginsCurrent(NSDictionary *origins,NSError **error){NSMutableSet *seen=NSMutableSet.set;for(NSDictionary *origin in origins.allValues){NSURL *url=origin[@"url"];if([seen containsObject:url])continue;[seen addObject:url];if(!url.isFileURL || ![url.path isEqual:url.URLByResolvingSymlinksInPath.path]){if(error)*error=RError(@"题目位置已变化，请重新选择。");return NO;}int fd=open(url.fileSystemRepresentation,O_RDONLY|O_NOFOLLOW|O_NONBLOCK);struct stat st;if(fd<0 || fstat(fd,&st) || !S_ISREG(st.st_mode) || st.st_size<0 || st.st_size>20*1024*1024){if(fd>=0)close(fd);if(error)*error=RError(@"题目材料无法核验，请重新选择。");return NO;}NSMutableData *data=NSMutableData.data;char buffer[8192];ssize_t n;while((n=read(fd,buffer,sizeof(buffer)))>0 && data.length<=20*1024*1024)[data appendBytes:buffer length:n];close(fd);if(n<0 || data.length>20*1024*1024 || ![AMPreflightHash(data) isEqual:origin[@"version"]]){if(error)*error=RError(@"题目材料已变化，请重新添加并确认。");return NO;}}return YES;}
-BOOL AMReviewMaterialsCurrent(NSDictionary *snapshot,NSError **error){return AMReviewOriginsCurrent(snapshot[@"materialOrigins"] ?: @{},error);}
+BOOL AMReviewMaterialsCurrent(NSDictionary *snapshot,NSError **error){
+    if(!AMReviewOriginsCurrent(snapshot[@"materialOrigins"] ?: @{},error))return NO;
+    NSString *root=snapshot[@"localRoot"];
+    if(!root.length)return YES;
+    // Use the same descriptor-based file stamps as the original byte read.
+    NSURL *folder=[NSURL fileURLWithPath:root];
+    NSMutableDictionary *stamps=[snapshot[@"feedbackStamps"] mutableCopy] ?: NSMutableDictionary.dictionary;
+    for(NSString *path in snapshot[@"files"]){
+        NSString *stamp=snapshot[@"files"][path][@"stamp"];
+        if(stamp)stamps[path]=stamp;
+    }
+    for(NSString *path in stamps)if(![stamps[path] isEqual:AMPreflightFileStamp(folder,path)]){
+        if(error)*error=RError(@"文件或评语副本在检查后变化，请重新确认检查材料。");
+        return NO;
+    }
+    return YES;
+}
 NSArray *AMReviewRelations(NSDictionary *links,NSString *path){id value=links[path];if([value isKindOfClass:NSDictionary.class])return @[value];return [value isKindOfClass:NSArray.class] ? value:@[];}
 // Immutable reference sources; only virtual relative identities leave this module.
 NSDictionary *AMReviewImportMaterial(NSURL *url,NSIndexSet *pages,NSError **error){
@@ -24,6 +40,12 @@ NSDictionary *AMReviewImportMaterial(NSURL *url,NSIndexSet *pages,NSError **erro
 NSArray *AMReviewImageOccurrences(NSDictionary *snapshot){
     NSMutableArray *uses=NSMutableArray.array;for(NSString *path in snapshot[@"paths"]){NSDictionary *doc=snapshot[@"files"][path];NSArray *lines=[doc[@"text"] componentsSeparatedByString:@"\n"];for(NSDictionary *ref in AMPreflightImageReferences(doc[@"text"] ?: @"")){NSString *image=AMPreflightResolveImage(path,ref[@"reference"]);if(!image || !snapshot[@"files"][image])continue;NSUInteger line=[ref[@"line"] unsignedIntegerValue];NSMutableArray *headings=NSMutableArray.array;for(NSUInteger i=0;i<MIN(line,lines.count);i++){NSString *s=lines[i];if(RMatch(s,@"^#{1,6} ")){NSUInteger level=0;while(level<s.length && [s characterAtIndex:level]=='#')level++;while(headings.count>=level)[headings removeLastObject];[headings addObject:s];}}
         NSUInteger start=line>3 ? line-3:0,end=MIN(lines.count,line+2);[uses addObject:@{@"path":image,@"document":path,@"version":doc[@"version"] ?: @"",@"line":@(line),@"headings":headings,@"context":[[lines subarrayWithRange:NSMakeRange(start,end-start)] componentsJoinedByString:@"\n"],@"role":snapshot[@"reviewRoles"][image] ?: snapshot[@"reviewRoles"][path] ?: doc[@"role"] ?: @"answer"}];
+    }
+    for(NSDictionary *asset in [doc[@"notebookImages"] allValues]){
+        NSString *image=asset[@"path"];
+        [uses addObject:@{@"path":image,@"document":path,@"version":doc[@"version"],@"line":asset[@"line"],
+            @"headings":@[[NSString stringWithFormat:@"第 %@ 单元格",asset[@"cell"]]],@"context":@"Notebook 单元格图片输出",
+            @"role":snapshot[@"reviewRoles"][image] ?: snapshot[@"reviewRoles"][path] ?: @"answer"}];
     }}return uses;
 }
 NSArray<NSURL *> *AMReviewMaterialCandidates(NSDictionary *snapshot,NSURL *root){

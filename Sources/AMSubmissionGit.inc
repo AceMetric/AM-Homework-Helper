@@ -10,23 +10,85 @@
     NSMutableArray *rows=NSMutableArray.array;for(NSString *line in NonemptyParts([self string:result],@"\n")){NSArray *parts=[line componentsSeparatedByString:@"\0"];if(parts.count==2 && !SSContainsSecret([parts[1] dataUsingEncoding:NSUTF8StringEncoding]))[rows addObject:@{@"commit":parts[0],@"message":SSRedactedText(parts[1])}];}return rows;
 }
 - (NSArray *)externalCommits:(NSDictionary *)course offset:(NSUInteger)offset error:(NSError **)error {
+    self.historyCompletionFiles=nil;
     if(![self validateCourse:course error:error] || offset>100000)return nil;
-    NSString *ref=[@"refs/heads/" stringByAppendingString:course[@"branch"]];
-    // Exclude teacher history only when a validated upstream ref is available.
-    // Do not infer ownership from a commit's author/email or its message.
-    NSMutableArray *args=[@[@"log",@"-50",[NSString stringWithFormat:@"--skip=%lu",(unsigned long)offset],@"--format=%H%x00%ct%x00%P%x00%s",ref] mutableCopy];
-    NSString *upstream=[@"refs/remotes/upstream/" stringByAppendingString:course[@"upstreamBranch"] ?: course[@"branch"]];
-    NSString *cached=course[@"teacherCommit"];if([cached isKindOfClass:NSString.class] && [cached rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location!=NSNotFound)upstream=cached;
-    SSGitResult *upstreamTip=[self run:@[@"rev-parse",@"--verify",upstream] in:course[@"path"] token:nil error:NULL];if(upstreamTip.status==0)[args addObject:[@"^" stringByAppendingString:Trim([self string:upstreamTip])]];[args addObject:@"--"];
-    SSGitResult *result=[self checked:args in:course[@"path"] token:nil error:error];if(!result)return nil;NSMutableArray *rows=NSMutableArray.array;
-    for(NSString *line in NonemptyParts([self string:result],@"\n")){NSArray *p=[line componentsSeparatedByString:@"\0"];if(p.count!=4 || SSContainsSecret([p[3] dataUsingEncoding:NSUTF8StringEncoding]))continue;
-        SSGitResult *files=[self checked:@[@"diff-tree",@"--root",@"-m",@"--no-commit-id",@"--name-only",@"-r",@"-z",p[0],@"--"] in:course[@"path"] token:nil error:error];if(!files)return nil;
-        NSMutableArray *safe=NSMutableArray.array;for(NSString *path in NonemptyParts([self string:files],@"\0"))if(!SSSensitivePath(path) && ![path hasPrefix:@"/"] && ![[path componentsSeparatedByString:@"/"] containsObject:@".."]) [safe addObject:path];
-        NSArray *parents=NonemptyParts(p[2],@" ");[rows addObject:@{@"commit":p[0],@"message":SSRedactedText(p[3]),@"date":[NSDate dateWithTimeIntervalSince1970:[p[1] doubleValue]],@"files":[NSOrderedSet orderedSetWithArray:safe].array,@"kind":parents.count>1 ? @"merge":@"existing",@"origin":@"external",@"teacherHistoryKnown":@(upstreamTip.status==0)}];
-    }return rows;
+    NSString *root=course[@"path"];
+    NSDictionary *snapshot=offset ? self.externalHistorySnapshot:nil;
+    if(!snapshot){
+        NSString *ref=[@"refs/heads/" stringByAppendingString:course[@"branch"]];
+        SSGitResult *tip=[self checked:@[@"rev-parse",@"--verify",[ref stringByAppendingString:@"^{commit}"]] in:root token:nil error:error];
+        if(!tip)return nil;
+        NSString *upstream=AMPeerSHA(course[@"teacherCommit"]) ? course[@"teacherCommit"]:
+            [@"refs/remotes/upstream/" stringByAppendingString:course[@"upstreamBranch"] ?: course[@"branch"]];
+        SSGitResult *teacher=[self run:@[@"rev-parse",@"--verify",[upstream stringByAppendingString:@"^{commit}"]] in:root token:nil error:NULL];
+        snapshot=@{@"head":Trim([self string:tip]),@"teacher":teacher && teacher.status==0 ? Trim([self string:teacher]):@""};
+    }
+    NSMutableArray *args=[@[@"log",@"-50",[NSString stringWithFormat:@"--skip=%lu",(unsigned long)offset],@"--no-show-signature",@"--format=%H%x00%ct%x00%P%x00%s",snapshot[@"head"]] mutableCopy];
+    BOOL known=AMPeerSHA(snapshot[@"teacher"]);
+    if(known)[args addObject:[@"^" stringByAppendingString:snapshot[@"teacher"]]];
+    [args addObject:@"--"];
+    SSGitResult *result=[self checked:args in:root token:nil error:error];
+    if(!result)return nil;
+
+    NSMutableArray *metadata=NSMutableArray.array;
+    NSMutableDictionary *paths=NSMutableDictionary.dictionary,*completion=NSMutableDictionary.dictionary;
+    NSMutableString *input=NSMutableString.string;
+    for(NSString *line in NonemptyParts([self string:result],@"\n")){
+        NSArray *fields=[line componentsSeparatedByString:@"\0"];
+        if(fields.count!=4 || !AMPeerSHA(fields[0]) || SSContainsSecret([fields[3] dataUsingEncoding:NSUTF8StringEncoding]))continue;
+        [metadata addObject:fields];
+        paths[fields[0]]=NSMutableOrderedSet.orderedSet;
+        if(NonemptyParts(fields[2],@" ").count<=1)completion[fields[0]]=NSMutableOrderedSet.orderedSet;
+        [input appendFormat:@"%@\n",fields[0]];
+    }
+    if(input.length){
+        // Status tokens delimit each path, including paths that look like a commit ID.
+        SSGitResult *changes=[self run:@[@"diff-tree",@"--stdin",@"--root",@"-m",@"--always",@"-r",@"--name-status",@"-z"] input:[input dataUsingEncoding:NSUTF8StringEncoding] in:root token:nil error:error];
+        if(!changes || changes.status!=0){
+            if(changes && error && !*error)*error=GitError(@"无法批量读取此页的文件变更，请重试。");
+            return nil;
+        }
+        NSArray *fields=[[self string:changes] componentsSeparatedByString:@"\0"];
+        NSMutableOrderedSet *current=nil,*answerPaths=nil;
+        NSUInteger headers=0;
+        NSMutableSet *seen=NSMutableSet.set;
+        for(NSUInteger i=0;i<fields.count;){
+            NSString *field=fields[i++];
+            if(!field.length && i==fields.count)break;
+            if(paths[field]){current=paths[field];answerPaths=completion[field];[seen addObject:field];headers++;continue;}
+            unichar status=field.length ? [field characterAtIndex:0]:0;
+            NSUInteger count=(status=='R' || status=='C') ? 2:1;
+            if(!current || !status || [@"ACDMRTUXB" rangeOfString:[field substringToIndex:1]].location==NSNotFound || i+count>=fields.count){
+                if(error)*error=GitError(@"此页文件变更不完整，请重试。");
+                return nil;
+            }
+            // Git's name-only output shows the destination for detected copies and renames.
+            NSString *path=fields[i+count-1];i+=count;
+            if(!SSSensitivePath(path) && ![path hasPrefix:@"/"] && ![[path componentsSeparatedByString:@"/"] containsObject:@".."]){
+                [current addObject:path];
+                if([@"AMRT" rangeOfString:[field substringToIndex:1]].location!=NSNotFound)[answerPaths addObject:path];
+            }
+        }
+        if(headers<metadata.count || seen.count!=metadata.count){
+            if(error)*error=GitError(@"此页缺少提交的文件变更，请重试。");
+            return nil;
+        }
+    }
+    NSMutableArray *rows=NSMutableArray.array;
+    for(NSArray *p in metadata){
+        NSArray *parents=NonemptyParts(p[2],@" ");
+        [rows addObject:@{@"commit":p[0],@"message":SSRedactedText(p[3]),@"date":[NSDate dateWithTimeIntervalSince1970:[p[1] doubleValue]],@"files":[paths[p[0]] array],@"kind":parents.count>1 ? @"merge":@"existing",@"origin":@"external",@"teacherHistoryKnown":@(known)}];
+    }
+    NSMutableDictionary *answers=NSMutableDictionary.dictionary;
+    for(NSArray *p in metadata)answers[p[0]]=[completion[p[0]] array] ?: @[];
+    self.historyCompletionFiles=answers.copy;
+    self.externalHistorySnapshot=snapshot;
+    return rows;
 }
+
 // Only additions and modifications can provide completion evidence; deleted answers cannot.
 - (NSArray *)completionFiles:(NSDictionary *)course commit:(NSString *)commit error:(NSError **)error {
+    NSArray *batched=self.historyCompletionFiles[commit];if(batched)return batched;
     SSGitResult *result=[self checked:@[@"diff-tree",@"--root",@"--no-commit-id",@"--name-only",@"-r",@"-z",@"--diff-filter=AMRT",commit,@"--"] in:course[@"path"] token:nil error:error];if(!result)return nil;
     NSMutableArray *safe=NSMutableArray.array;for(NSString *path in NonemptyParts([self string:result],@"\0"))if(!SSSensitivePath(path) && ![path hasPrefix:@"/"] && ![[path componentsSeparatedByString:@"/"] containsObject:@".."]) [safe addObject:path];return [NSOrderedSet orderedSetWithArray:safe].array;
 }
@@ -65,7 +127,7 @@
             next[@"completionEligibility"]=AMSubmissionAutoCompletionEnabled() && historical.status==1 ? @"new":@"historical";
         }
         NSArray *completion=[self completionFiles:course commit:commit error:error];if(!completion)return nil;next[@"completionFiles"]=[completion filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSString *file,NSDictionary *bindings){return [record[@"files"] containsObject:file];}]];
-        if(contains.status==0){next[@"confirmedAt"]=record[@"confirmedAt"] ?: NSDate.date;[next removeObjectForKey:@"issue"];}else next[@"issue"]=record[@"confirmedAt"] ? @"remote-changed":@"not-on-remote";[verified addObject:next];
+        if(contains.status==0){next[@"confirmedAt"]=record[@"confirmedAt"] ?: NSDate.date;next[@"verifiedAt"]=next[@"checkedAt"];[next removeObjectForKey:@"issue"];}else next[@"issue"]=record[@"confirmedAt"] ? @"remote-changed":@"not-on-remote";[verified addObject:next];
     }if(!AMStoreSubmissionBaseline(course,@{@"anchor":anchor,@"tip":remote},baseline,epoch,error))return nil;return verified;
     }@finally{self.commandTimeout=savedTimeout;self.commandDeadline=savedDeadline;}
 }
@@ -91,24 +153,26 @@
     }
     if(!commit.length){next[@"state"]=@"uncertain";next[@"issue"]=@"local-unresolved";self.lastWorkflowRecord=next;if(!AMStoreSubmission(next,error))return nil;return next;}
     if([commit rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location==NSNotFound)return nil;
-    // The interrupted commit used a temporary index. Reconcile only when the
-    // real index is still exactly the previously verified, untouched base tree.
-    // Foreign staged changes and shared lock files are never removed.
-    if([next[@"issue"] isEqual:@"index-recovery-needed"]){
-        SSGitResult *tip=[self checked:@[@"rev-parse",@"HEAD"] in:course[@"path"] token:nil error:error];if(!tip)return nil;
-        if([Trim([self string:tip]) isEqual:commit]){SSGitResult *unchanged=[self run:@[@"diff",@"--cached",@"--quiet",record[@"before"],@"--"] in:course[@"path"] token:nil error:error];if(!unchanged)return nil;
-            if(unchanged.status==0){NSMutableArray *reset=[@[@"reset",@"--quiet",commit,@"--"] mutableCopy];[reset addObjectsFromArray:record[@"files"]];if(![self checked:reset in:course[@"path"] token:nil error:error])return nil;}
-        }[next removeObjectForKey:@"issue"];if(!AMStoreSubmission(next,error))return nil;
-    }
     NSString *url=[NSString stringWithFormat:@"https://github.com/%@.git",course[@"fork"]];NSString *remote=[self fetch:url branch:course[@"branch"] path:course[@"path"] token:token error:error];if(!remote)return nil;
     SSGitResult *contains=[self run:@[@"merge-base",@"--is-ancestor",commit,remote] in:course[@"path"] token:nil error:error];if(!contains || contains.status>1)return nil;
     NSArray *completion=[self completionFiles:course commit:commit error:error];if(!completion)return nil;next[@"completionFiles"]=[completion filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSString *file,NSDictionary *bindings){return [record[@"files"] containsObject:file];}]];
     NSDictionary *source=[record[@"kind"] isEqual:@"existing"] || [record[@"origin"] isEqual:@"external"] ? [self completionSourceCourse:course]:course;[self classifyCompletionOwnership:next course:source];
     next[@"checkedAt"]=NSDate.date;next[@"remoteCommit"]=remote;
-    if(contains.status==0){next[@"state"]=@"confirmed";next[@"confirmedAt"]=record[@"confirmedAt"] ?: NSDate.date;[next removeObjectForKey:@"issue"];}
+    if(contains.status==0){next[@"state"]=@"confirmed";next[@"confirmedAt"]=record[@"confirmedAt"] ?: NSDate.date;next[@"verifiedAt"]=next[@"checkedAt"];[next removeObjectForKey:@"issue"];}
     else if(retry){
         SSGitResult *head=[self checked:@[@"rev-parse",@"HEAD"] in:course[@"path"] token:nil error:error];if(!head || ![Trim([self string:head]) isEqual:commit]){if(error)*error=GitError(@"本地分支已变化，重试不会推送其他提交。请检查后通过课程提交流程处理。");return nil;}
-        if(![self pushCourse:course token:token error:error])return nil;
+        // An explicit retry may reconcile our interrupted temporary index. A
+        // read-only verification never changes the worktree or its index.
+        // The interrupted commit used a temporary index. Reconcile only when the
+        // real index is still exactly the previously verified, untouched base tree.
+        // Foreign staged changes and shared lock files are never removed.
+        if([next[@"issue"] isEqual:@"index-recovery-needed"]){
+            SSGitResult *tip=[self checked:@[@"rev-parse",@"HEAD"] in:course[@"path"] token:nil error:error];if(!tip)return nil;
+            if([Trim([self string:tip]) isEqual:commit]){SSGitResult *unchanged=[self run:@[@"diff",@"--cached",@"--quiet",record[@"before"],@"--"] in:course[@"path"] token:nil error:error];if(!unchanged)return nil;
+                if(unchanged.status==0){NSMutableArray *reset=[@[@"reset",@"--quiet",commit,@"--"] mutableCopy];[reset addObjectsFromArray:record[@"files"]];if(![self checked:reset in:course[@"path"] token:nil error:error])return nil;}
+            }[next removeObjectForKey:@"issue"];if(!AMStoreSubmission(next,error))return nil;
+        }
+        if(![self pushCourse:course expectedHead:commit token:token error:error])return nil;
         return [self verifySubmission:next course:course token:token retry:NO error:error];
     }else{next[@"state"]=@"local";next[@"issue"]=record[@"confirmedAt"] ? @"remote-changed":@"not-on-remote";}
     next[@"workflowResult"]=[next[@"state"] isEqual:@"confirmed"] ? @"completed":([next[@"state"] isEqual:@"local"] ? @"needs-action":@"uncertain");next[@"workflowStage"]=@"verify";self.lastWorkflowRecord=next;if(!AMStoreSubmission(next,error))return nil;return next;

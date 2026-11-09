@@ -13,3 +13,45 @@
         return @{@"summary":[NSString stringWithFormat:@"%@%@%@",changes.count ? [NSString stringWithFormat:@"%lu个文件有改动",(unsigned long)changes.count]:@"工作区无改动",push.length ? @" · ":@"",push],@"files":files};
     } completion:^(NSDictionary *state,NSError *error){[self.courseStateReads removeObject:identifier];NSDictionary *saved=[self savedCourse:course];if(![saved[@"path"] isEqual:course[@"path"]] || ![saved[@"branch"] isEqual:course[@"branch"]])return;self.courseLocalStates[identifier]=state ?: @{@"summary":error.localizedDescription ?: @"本地状态读取未完成",@"files":@[]};[self refreshPresentation];}];
 }
+
+
+// Index each path once so rendering or changing the selected assignment does not scan Git.
+static NSSet *AMCoursePathIndex(NSArray *paths){
+    NSMutableSet *result=NSMutableSet.set;
+    for(NSString *path in paths){
+        if(!AMPeerPath(path))continue;
+        for(NSString *key=path;key.length;key=key.stringByDeletingLastPathComponent)[result addObject:key];
+    }
+    return result.copy;
+}
+- (void)refreshAssignmentProgress:(NSDictionary *)course {
+    if(self.preview || self.operationsPaused || ![course[@"path"] length])return;
+    if(!self.assignmentProgress)self.assignmentProgress=NSMutableDictionary.dictionary;
+    if(!self.assignmentProgressReads)self.assignmentProgressReads=NSMutableSet.set;
+    NSArray *key=@[course[@"fork"],course[@"branch"],course[@"path"]];
+    NSDictionary *previous=self.assignmentProgress[key];
+    if([self.assignmentProgressReads containsObject:key] || (previous && -[previous[@"date"] timeIntervalSinceNow]<20))return;
+    [self.assignmentProgressReads addObject:key];
+    __weak typeof(self) owner=self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+        NSDate *latest=nil;NSString *remote=AMSubmissionBaseline(course,NULL)[@"tip"];
+        for(NSDictionary *row in AMSubmissionRecords(NULL))if([row[@"repository"] isEqual:course[@"fork"]] &&
+            [row[@"branch"] isEqual:course[@"branch"]] && AMPeerSHA(row[@"remoteCommit"]) &&
+            [row[@"checkedAt"] isKindOfClass:NSDate.class] && (!latest || [row[@"checkedAt"] compare:latest]==NSOrderedDescending)){
+            latest=row[@"checkedAt"];remote=row[@"remoteCommit"];
+        }
+        SSGit *git=SSGit.new;git.commandDeadline=[NSDate dateWithTimeIntervalSinceNow:15];
+        NSError *error=nil;
+        NSDictionary *local=AMPerformResourceOperation(NSUUID.UUID.UUIDString,@"读取作业进度",course[@"fork"],AMRepositoryResources(course,@"read"),10,^BOOL{return !owner;},^id(NSError **problem){
+            return [git assignmentProgressForCourse:course remoteCommit:remote error:problem];
+        },&error);
+        NSDictionary *indexed=@{@"date":NSDate.date,@"working":local ? AMCoursePathIndex(local[@"working"]):previous[@"working"] ?: NSSet.set,
+            @"pending":local ? AMCoursePathIndex(local[@"pending"]):previous[@"pending"] ?: NSSet.set,
+            @"pendingKnown":local[@"pendingKnown"] ?: previous[@"pendingKnown"] ?: @NO,@"failed":@(!local)};
+        dispatch_async(dispatch_get_main_queue(),^{
+            SSCourseController *self=owner;if(!self)return;
+            [self.assignmentProgressReads removeObject:key];self.assignmentProgress[key]=indexed;
+            if([[self course][@"fork"] isEqual:course[@"fork"]])[self refreshPresentation];
+        });
+    });
+}

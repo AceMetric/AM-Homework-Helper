@@ -785,14 +785,19 @@ private struct CourseWorkspace:View {
                     Text(string(record,"suggestedTitle").isEmpty ? string(record,"title") : string(record,"suggestedTitle")).font(.title3.bold())
                     Label(kind(record),systemImage:string(record,"kind")=="exam" ? "doc.text" : "checklist").foregroundStyle(.secondary)
                     HStack(spacing:10){
-                        if flag(record,"confirmed"){Button("编辑"){state.action?("edit-task",identifier(record))};Button("检查"){state.action?("check-task",identifier(record))};if flag(record,"gitCourse"){
+                        if flag(record,"confirmed"){Button("编辑"){state.action?("edit-task",identifier(record))};Button("检查整份作业"){state.action?("check-task",identifier(record))};if flag(record,"gitCourse"){
                             if string(record,"pushAction").isEmpty {Button("提交"){state.action?("submit-task",identifier(record))}.buttonStyle(.borderedProminent)}
                             else {let action=string(record,"pushAction");Button(action=="retry-task-push" ? "重试推送":"核验推送"){state.action?(action,identifier(record))}.buttonStyle(.borderedProminent)}
                         }}
                         if flag(record,"gitCourse"), !string(record,"path").isEmpty{Button(flag(record,"newFeedback") ? "新评语":"评语"){state.action?("feedback-task",identifier(record))};Button("同学作业"){state.action?("peer-task",identifier(record))};Button("打开"){state.action?("open-task",identifier(record))}}
                     }.controlSize(.regular)
 
-                    if !string(record,"submissionLabel").isEmpty {Text(string(record,"submissionLabel")).foregroundStyle(.secondary)}
+                    if !string(record,"remoteVerification").isEmpty {
+                        Grid(alignment:.leading,horizontalSpacing:12,verticalSpacing:4) {
+                            GridRow {Text("远端核验");Text(string(record,"remoteVerification")).textSelection(.enabled)}
+                            GridRow {Text("本地进度");Text(string(record,"localProgress"))}
+                        }.font(.callout).foregroundStyle(.secondary)
+                    }
                     if let due=record["due"] as? Date {Text("截止：\(due.formatted(date:.abbreviated,time:.shortened))")}
                     if flag(record,"confirmed") || !string(record,"notes").isEmpty {WorkspaceSection("备注"){VStack(alignment:.leading,spacing:12){Text(string(record,"notes").isEmpty ? "暂无备注":string(record,"notes")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading)
                         if string(record,"notes").isEmpty && !suggestedNotes(record).isEmpty {Button("从识别内容补全…"){state.action?("restore-notes",identifier(record))}.disabled(state.paused)}
@@ -1292,6 +1297,7 @@ private final class CheckScopeState:ObservableObject {
     @Published var query=""
     @Published var chosen=""
     @Published var busy=true
+    @Published var canRefresh=false
     @Published var notice="正在整理文件夹…"
     @Published var preview:NSView?
     var initialized=false
@@ -1340,12 +1346,13 @@ private struct CheckScopeWorkspace:View {
     private var selection:Binding<String?>{Binding(get:{state.chosen.isEmpty ? nil:state.chosen},set:{state.chosen=$0 ?? ""})}
     var body:some View {
         VStack(alignment:.leading,spacing:12){
-            WorkspaceHeading(title:"检查作业文件",subtitle:"1 文件范围  ›  2 检查报告",symbol:"doc.text.magnifyingglass")
-            HStack{TextField("搜索文件或目录",text:$state.query).textFieldStyle(.roundedBorder).accessibilityLabel("搜索检查文件");Button("全选当前结果"){for row in state.visible where flag(row,"selectable"){state.selected.insert(string(row,"path"))}}.keyboardShortcut("a",modifiers:.command);Button("取消选择"){state.selected.removeAll()}}.disabled(state.busy)
+            WorkspaceHeading(title:"检查整份作业",subtitle:"1 文件范围  ›  2 检查报告",symbol:"doc.text.magnifyingglass")
+            HStack{TextField("搜索文件或目录",text:$state.query).textFieldStyle(.roundedBorder).accessibilityLabel("搜索检查文件");Button("全选当前结果"){for row in state.visible where flag(row,"selectable"){state.selected.insert(string(row,"path"))}}.keyboardShortcut("a",modifiers:.command);Button("取消选择"){state.selected.removeAll()};if state.canRefresh{Button("刷新范围"){state.send("refresh")}}}.disabled(state.busy)
             HSplitView {
                 List(selection:selection){
                     OutlineGroup(checkFileTree(state.visible.filter{flag($0,"selectable")},flat:!state.query.isEmpty),children:\.children){node in fileRow(node)}
-                    if state.visible.contains(where:{!flag($0,"selectable")}){WorkspaceDisclosure("已排除 · \(state.visible.filter{!flag($0,"selectable")}.count)"){ForEach(checkFileTree(state.visible.filter{!flag($0,"selectable")},flat:true)){node in fileRow(node)}}}
+                    if state.visible.contains(where:{flag($0,"deleted")}){WorkspaceDisclosure("已删除 · \(state.visible.filter{flag($0,"deleted")}.count)"){ForEach(checkFileTree(state.visible.filter{flag($0,"deleted")},flat:true)){node in fileRow(node)}}}
+                    if state.visible.contains(where:{!flag($0,"selectable") && !flag($0,"deleted")}){WorkspaceDisclosure("已排除 · \(state.visible.filter{!flag($0,"selectable") && !flag($0,"deleted")}.count)"){ForEach(checkFileTree(state.visible.filter{!flag($0,"selectable") && !flag($0,"deleted")},flat:true)){node in fileRow(node)}}}
                 }.listStyle(.inset).scrollContentBackground(.hidden).frame(minWidth:280,idealWidth:360,maxWidth:520,maxHeight:.infinity).accessibilityLabel("检查范围文件树").background(CheckSplitAnchor())
                 VStack(alignment:.leading,spacing:8){Text(state.chosen.isEmpty ? "选择文件预览":state.chosen).font(.caption).foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled);CheckPreviewHost(preview:state.preview).frame(maxWidth:.infinity,maxHeight:.infinity)}.padding(8).frame(minWidth:360,maxWidth:.infinity,maxHeight:.infinity).background(Color(nsColor:AMAppearance.surface))
             }.frame(maxWidth:.infinity,maxHeight:.infinity)
@@ -1373,7 +1380,8 @@ private struct WorkspaceHeading:View {
     private let state=CheckScopeState()
     @objc public var actionHandler:((NSDictionary)->Void)?{get{state.action}set{state.action=newValue}}
     public override func loadView(){view=NSHostingView(rootView:CheckScopeWorkspace(state:state))}
-    @objc public func update(_ records:[NSDictionary],busy:Bool,notice:String){state.records=records;state.busy=busy;state.notice=notice;if !busy && !state.initialized {state.initialized=true;state.selected=Set(records.filter{flag($0,"selectable")}.map{string($0,"path")});state.initialSelection=state.selected;state.chosen=records.first(where:{flag($0,"selectable") && !flag($0,"image")}).map{string($0,"path")} ?? "";state.send("preview")}}
+    @objc public func setRefreshAvailable(_ available:Bool){state.canRefresh=available}
+    @objc public func update(_ records:[NSDictionary],busy:Bool,notice:String){state.records=records;state.busy=busy;state.notice=notice;if !busy && !state.initialized {state.initialized=true;state.selected=Set(records.filter{flag($0,"selectable") && ($0["defaultSelected"] == nil || flag($0,"defaultSelected"))}.map{string($0,"path")});state.initialSelection=state.selected;state.chosen=records.first(where:{flag($0,"selectable") && !flag($0,"image")}).map{string($0,"path")} ?? "";state.send("preview")}}
     @objc public func setProgress(_ notice:String){state.notice=notice}
     @objc public func setPreview(_ preview:NSView){state.preview=preview}
     @objc public var previewView:NSView?{state.preview}
@@ -1604,7 +1612,7 @@ private struct TaskDraftView:View {
             if !state.notice.isEmpty {Text(state.notice).font(.caption).foregroundStyle(.secondary)}
             HStack{
                 if flag(state.values,"isNew"){Button("从文字或截图录入…"){state.action?("recognize",state.values)}}
-                else {if flag(state.values,"supportsTime"){Button("实际用时…"){state.action?("time",state.values)}};Menu("更多"){Button("检查作业文件…"){state.action?("check",state.values)};Button("提交作业…"){state.action?("submit",state.values)};Button("提交记录"){state.action?("history",state.values)}}}
+                else {if flag(state.values,"supportsTime"){Button("实际用时…"){state.action?("time",state.values)}};Menu("更多"){Button("检查整份作业…"){state.action?("check",state.values)};Button("提交作业…"){state.action?("submit",state.values)};Button("提交记录"){state.action?("history",state.values)}}}
 
                 Spacer(minLength:8);Button("取消"){state.action?("cancel",state.values)}.keyboardShortcut(.cancelAction)
                 WorkspaceButton(title:string(state.values,"saveTitle").isEmpty ? "保存":string(state.values,"saveTitle"),prominent:true,identity:"task-save",saveShortcut:true){state.save()}.fixedSize()

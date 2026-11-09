@@ -88,6 +88,7 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
 @property NSString *temporaryIndex;
 @property pid_t activePID;
 @property NSData *commandInput;
+@property NSDictionary *historyCompletionFiles;
 @end
 @implementation SSGit
 - (void)cancelCurrentOperation {self.operationCancelled=YES;@synchronized(self){pid_t pid=self.activePID;if(pid>0 && getpgid(pid)==pid)kill(-pid,SIGKILL);}}
@@ -503,6 +504,29 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
     return changes;
     }@finally{self.commandTimeout=previousTimeout;self.commandDeadline=previousDeadline;}
 }
+- (NSDictionary *)assignmentProgressForCourse:(NSDictionary *)course remoteCommit:(NSString *)remote error:(NSError **)error {
+    if(![self validateCourse:course error:error] || ![self submissionBranch:course error:error])return nil;
+    NSString *root=course[@"path"];
+    SSGitResult *head=[self checked:@[@"rev-parse",@"HEAD"] in:root token:nil error:error];
+    if(!head)return nil;
+    NSString *tip=Trim([self string:head]);
+    SSGitResult *status=[self checked:@[@"status",@"--porcelain=v1",@"-z",@"--no-renames",@"--untracked-files=all"] in:root token:nil error:error];
+    if(!status)return nil;
+    NSMutableArray *working=NSMutableArray.array;
+    for(NSString *entry in NonemptyParts([self string:status],@"\0"))if(entry.length>=4)[working addObject:[entry substringFromIndex:3]];
+    NSArray *pending=@[];BOOL known=NO;
+    if(AMPeerSHA(remote)){
+        SSGitResult *base=[self run:@[@"merge-base",remote,tip] in:root token:nil error:NULL];
+        if(base && base.status==0){
+            SSGitResult *diff=[self checked:@[@"diff",@"--no-ext-diff",@"--no-renames",@"--name-only",@"-z",Trim([self string:base]),tip,@"--"] in:root token:nil error:error];
+            if(!diff)return nil;
+            pending=NonemptyParts([self string:diff],@"\0");known=YES;
+        }
+    }
+    SSGitResult *end=[self checked:@[@"rev-parse",@"HEAD"] in:root token:nil error:error];
+    if(!end || ![tip isEqual:Trim([self string:end])]){if(end && error)*error=GitError(@"本地分支已变化，请重读进度。");return nil;}
+    return @{@"working":working,@"pending":pending,@"pendingKnown":@(known)};
+}
 - (NSDictionary *)localPushStateForCourse:(NSDictionary *)course remoteCommit:(NSString *)remote error:(NSError **)error {
     // 使用最近核验的个人远端快照，不把老师提交或全局 FETCH_HEAD 当作个人推送状态。
     if(![remote isKindOfClass:NSString.class] || [remote rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location==NSNotFound)return @{@"known":@NO};
@@ -542,11 +566,16 @@ static NSArray *NonemptyParts(NSString *value, NSString *separator) {
 }
 #include "AMGitObjectCheck.inc"
 - (BOOL)pushCourse:(NSDictionary *)course token:(NSString *)token error:(NSError **)error {
+    return [self pushCourse:course expectedHead:nil token:token error:error];
+}
+- (BOOL)pushCourse:(NSDictionary *)course expectedHead:(NSString *)expected token:(NSString *)token error:(NSError **)error {
     if (![self authorize:course error:error] || ![self validateCourse:course error:error] || ![self submissionBranch:course error:error]) return NO;
     NSString *path = course[@"path"], *url = [NSString stringWithFormat:@"https://github.com/%@.git", course[@"fork"]];
     if(self.progress)self.progress([NSString stringWithFormat:@"更新个人分支：%@ · %@",course[@"fork"],course[@"branch"]]);NSString *base = [self fetch:url branch:course[@"branch"] path:path token:token error:error]; if (!base) return NO;
     SSGitResult *tip = [self checked:@[@"rev-parse", @"HEAD"] in:path token:nil error:error]; if (!tip) return NO;
     NSString *head = Trim([self string:tip]);
+    if(expected && ![head isEqual:expected]){if(error)*error=GitError(@"本地分支在核验期间发生变化，未推送。");return NO;}
+
     SSGitResult *ancestor = [self run:@[@"merge-base", @"--is-ancestor", base, head] in:path token:nil error:error];
     if (!ancestor || ancestor.status != 0) { if (error) *error = GitError(@"个人 fork 有新提交或已经分歧；当前推送不是快进，已停止。"); return NO; }
     if (![self checkObjects:[NSString stringWithFormat:@"%@..%@", base, head] path:path error:error]) return NO;

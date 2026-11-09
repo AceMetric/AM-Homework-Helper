@@ -6,7 +6,7 @@ static BOOL AMValidSubmission(id value) {
     if(![@[@"submission",@"sync",@"merge",@"existing"] containsObject:r[@"kind"]] || ![@[@"running",@"local",@"uncertain",@"confirmed",@"failed"] containsObject:r[@"state"]])return NO;
     for(NSString *key in @[@"commit",@"before",@"remoteCommit",@"completionAnchor"]){if(r[key] && (![r[key] isKindOfClass:NSString.class] || [r[key] rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location==NSNotFound))return NO;}
     for(NSString *key in @[@"taskIDs",@"files"]){if(![r[key] isKindOfClass:NSArray.class])return NO;for(id s in r[key])if(![s isKindOfClass:NSString.class] || ![s length] || ( [key isEqual:@"files"] && ([s hasPrefix:@"/"] || [[s componentsSeparatedByString:@"/"] containsObject:@".."] || SSSensitivePath(s))))return NO;}
-    for(NSString *key in @[@"checkedAt",@"confirmedAt"])if(r[key] && ![r[key] isKindOfClass:NSDate.class])return NO;
+    for(NSString *key in @[@"checkedAt",@"confirmedAt",@"verifiedAt"])if(r[key] && ![r[key] isKindOfClass:NSDate.class])return NO;
     if(r[@"review"]){NSDictionary *v=r[@"review"];if(![v isKindOfClass:NSDictionary.class] || ![v[@"date"] isKindOfClass:NSDate.class] || ![v[@"count"] isKindOfClass:NSNumber.class] || [v[@"count"] integerValue]<0 || [v[@"count"] integerValue]>10000 || ![v[@"acknowledged"] isKindOfClass:NSNumber.class] || ![@[@"local",@"assistant",@"partial"] containsObject:v[@"coverage"]] || v.count!=4)return NO;}
     if([r[@"message"] length]>10000 || [r[@"files"] count]>10000 || [r[@"taskIDs"] count]>10000)return NO;
     if(r[@"issue"] && (![r[@"issue"] isKindOfClass:NSString.class] || [r[@"issue"] rangeOfString:@"^[a-z-]{1,64}$" options:NSRegularExpressionSearch].location==NSNotFound))return NO;
@@ -26,7 +26,7 @@ static BOOL AMValidSubmission(id value) {
     if(SSContainsSecret([r[@"message"] dataUsingEncoding:NSUTF8StringEncoding]))return NO;
     return YES;
 }
-static NSDictionary *AMSubmissionPublicFields(NSDictionary *record){NSMutableDictionary *out=NSMutableDictionary.dictionary;for(NSString *key in @[@"id",@"repository",@"branch",@"kind",@"state",@"message",@"date",@"taskIDs",@"files",@"commit",@"before",@"remoteCommit",@"checkedAt",@"confirmedAt",@"issue",@"workflowStage",@"workflowResult",@"localUpdated",@"review",@"origin",@"teacherHistoryKnown",@"teacherHistoryExcluded",@"completionEligibility",@"completionAnchor",@"completionEpoch",@"associationVersion",@"completionFiles",@"completionDecisions",@"completionStatus"])if(record[key])out[key]=record[key];return out;}
+static NSDictionary *AMSubmissionPublicFields(NSDictionary *record){NSMutableDictionary *out=NSMutableDictionary.dictionary;for(NSString *key in @[@"id",@"repository",@"branch",@"kind",@"state",@"message",@"date",@"taskIDs",@"files",@"commit",@"before",@"remoteCommit",@"checkedAt",@"confirmedAt",@"verifiedAt",@"issue",@"workflowStage",@"workflowResult",@"localUpdated",@"review",@"origin",@"teacherHistoryKnown",@"teacherHistoryExcluded",@"completionEligibility",@"completionAnchor",@"completionEpoch",@"associationVersion",@"completionFiles",@"completionDecisions",@"completionStatus"])if(record[key])out[key]=record[key];return out;}
 NSArray *AMSubmissionRecords(NSError **error) {
     if(!AMRecoverBackup(error))return nil;
     NSURL *url=[SSDataDirectory().URLByResolvingSymlinksInPath URLByAppendingPathComponent:@"submission-records.plist"];

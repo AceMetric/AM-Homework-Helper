@@ -29,6 +29,7 @@ static NSTextView *PFText(NSView *root,NSRect frame,BOOL editable){
 @property NSTableView *table;
 @property NSTextView *text;
 @property NSScrollView *imageScroll;
+@property NSArray *coverage;
 @property PFImageView *image;
 @property NSButton *include;
 @property NSTextField *heading;
@@ -50,16 +51,32 @@ static NSTextView *PFText(NSView *root,NSRect frame,BOOL editable){
 - (instancetype)initWithSnapshot:(NSDictionary *)snapshot report:(NSDictionary *)report requirements:(NSString *)requirements {
     DDLFormPanel *panel=[[DDLFormPanel alloc] initWithContentRect:NSMakeRect(0,0,1040,720) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
     if((self=[super initWithWindow:panel])){
-        panel.delegate=self;panel.title=@"预览交给助手的材料";panel.minSize=NSMakeSize(820,580);panel.releasedWhenClosed=NO;self.snapshot=snapshot;self.originalSnapshot=snapshot;self.requirements=snapshot[@"reviewRequirements"] ?: requirements;self.excluded=[NSMutableSet setWithArray:snapshot[@"materialExcluded"] ?: @[]];self.fit=YES;self.zoom=1;
+        panel.delegate=self;panel.title=@"预览交给助手的材料";panel.minSize=NSMakeSize(820,580);panel.releasedWhenClosed=NO;self.snapshot=snapshot;self.originalSnapshot=snapshot;self.coverage=report[@"coverage"];self.requirements=snapshot[@"reviewRequirements"] ?: requirements;self.excluded=[NSMutableSet setWithArray:snapshot[@"materialExcluded"] ?: @[]];self.fit=YES;self.zoom=1;
         self.rows=NSMutableArray.array;if(requirements.length)[self.rows addObject:@{@"path":@"题目与评分要求",@"requirements":@YES}];
         NSMutableArray *documents=NSMutableArray.array;for(NSString *path in snapshot[@"paths"])if(snapshot[@"files"][path][@"text"])[documents addObject:@{@"path":path}];
-        [documents sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){BOOL am=[@[@"md",@"markdown",@"mdx"] containsObject:[a[@"path"] pathExtension].lowercaseString],bm=[@[@"md",@"markdown",@"mdx"] containsObject:[b[@"path"] pathExtension].lowercaseString];return am!=bm ? (am ? NSOrderedAscending:NSOrderedDescending):[a[@"path"] localizedStandardCompare:b[@"path"]];}];
-        [self.rows addObjectsFromArray:documents];for(NSDictionary *row in report[@"images"]){NSMutableDictionary *image=row.mutableCopy;image[@"image"]=@YES;[self.rows addObject:image];}NSMutableSet *known=[NSMutableSet setWithArray:[self.rows valueForKey:@"path"]];for(NSString *p in snapshot[@"files"])if([snapshot[@"files"][p][@"image"] boolValue] && [p hasPrefix:@"references/"] && ![known containsObject:p])[self.rows addObject:@{@"path":p,@"image":@YES,@"document":p,@"line":@1}];
+        [documents sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){
+            NSString *x=a[@"path"],*y=b[@"path"];
+            NSInteger left=AMReviewMaterialPriority(x,snapshot[@"reviewRoles"][x] ?: snapshot[@"files"][x][@"role"]);
+            NSInteger right=AMReviewMaterialPriority(y,snapshot[@"reviewRoles"][y] ?: snapshot[@"files"][y][@"role"]);
+            return left==right ? [x localizedStandardCompare:y]:(left<right ? NSOrderedAscending:NSOrderedDescending);
+        }];
+        [self.rows addObjectsFromArray:documents];
+        for(NSDictionary *row in report[@"images"]){
+            BOOL optional=[row[@"notebookOutput"] boolValue] ||
+                ([snapshot[@"mode"] isEqual:@"submission"] && ![snapshot[@"paths"] containsObject:row[@"path"]]);
+            if(optional && !snapshot[@"materialExcluded"])[self.excluded addObject:row[@"path"]];
+            NSMutableDictionary *image=row.mutableCopy;
+            image[@"image"]=@YES;[self.rows addObject:image];
+        }
+        NSMutableSet *known=[NSMutableSet setWithArray:[self.rows valueForKey:@"path"]];
+        for(NSString *path in snapshot[@"files"])if([snapshot[@"files"][path][@"image"] boolValue] && [path hasPrefix:@"references/"] && ![known containsObject:path])
+            [self.rows addObject:@{@"path":path,@"image":@YES,@"document":path,@"line":@1}];
         NSArray *order=snapshot[@"materialOrder"];if(order)[self.rows sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){NSUInteger x=[order indexOfObject:a[@"path"]],y=[order indexOfObject:b[@"path"]];return x==y ? [a[@"path"] localizedStandardCompare:b[@"path"]]:(x<y ? NSOrderedAscending:NSOrderedDescending);}];
         Surface *root=Box(Canvas(),0);root.frame=NSMakeRect(0,0,1040,720);root.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;panel.contentView=root;
         Put(root,Text(@"确认交给助手的文件",20,NSFontWeightSemibold,Ink()),20,16,900,30);
         Put(root,Text(@"仅使用已勾选材料，不会自动发送或提交。",13,NSFontWeightRegular,Muted()),20,54,980,24);
-        self.summary=Text(@"",12,NSFontWeightRegular,Muted());Put(root,self.summary,20,84,980,24);
+        self.summary=Text(@"",12,NSFontWeightRegular,Muted());Put(root,self.summary,20,84,875,24);
+        NSButton *omissions=Button(@"未覆盖…",self,@selector(showOmissions:),0);omissions.identifier=@"material-omissions";Put(root,omissions,918,82,102,28);
         NSScrollView *list=[[NSScrollView alloc] initWithFrame:NSMakeRect(20,120,270,474)];list.hasVerticalScroller=YES;list.autohidesScrollers=YES;self.table=NSOutlineView.new;NSTableColumn *column=[[NSTableColumn alloc] initWithIdentifier:@"material"];column.width=250;[self.table addTableColumn:column];[(NSOutlineView *)self.table setOutlineTableColumn:column];self.table.headerView=nil;self.table.rowHeight=46;self.table.dataSource=self;self.table.delegate=self;self.table.accessibilityLabel=@"交给助手的文件清单";list.documentView=self.table;[root addSubview:list];
         self.heading=Text(@"",13,NSFontWeightSemibold,Ink());Put(root,self.heading,308,120,700,24);
         self.include=[NSButton checkboxWithTitle:@"包含此文件" target:self action:@selector(toggle:)];Put(root,self.include,308,152,124,28);
@@ -76,8 +93,23 @@ static NSTextView *PFText(NSView *root,NSRect frame,BOOL editable){
     CGFloat w=NSWidth(self.window.contentView.bounds),h=NSHeight(self.window.contentView.bounds),x=MIN(290,w*.28)+18,body=h-246;NSView *root=self.window.contentView;
     self.table.enclosingScrollView.frame=NSMakeRect(20,120,x-38,body);self.table.tableColumns.firstObject.width=x-58;
     self.heading.frame=NSMakeRect(x,120,w-x-20,24);self.include.frame=NSMakeRect(x,152,120,28);
-    for(NSView *v in root.subviews){if([v.identifier isEqual:@"material-requirements-edit"])v.frame=NSMakeRect(x+270,186,MIN(120,w-x-290),26);if([v.identifier hasPrefix:@"material-tool-"]){NSInteger tag=[v.identifier substringFromIndex:14].integerValue;v.frame=NSMakeRect(x+128+tag*MAX(55,(w-x-148)/6),152,MAX(50,(w-x-148)/6-4),28);}else if([v.identifier isEqual:@"material-cancel"])v.frame=NSMakeRect(w-244,h-64,88,32);else if([v.identifier isEqual:@"material-prepare"])v.frame=NSMakeRect(w-140,h-64,120,32);}
+    for(NSView *v in root.subviews){if([v.identifier isEqual:@"material-omissions"])v.frame=NSMakeRect(w-122,82,102,28);if([v.identifier isEqual:@"material-requirements-edit"])v.frame=NSMakeRect(x+270,186,MIN(120,w-x-290),26);if([v.identifier hasPrefix:@"material-tool-"]){NSInteger tag=[v.identifier substringFromIndex:14].integerValue;v.frame=NSMakeRect(x+128+tag*MAX(55,(w-x-148)/6),152,MAX(50,(w-x-148)/6-4),28);}else if([v.identifier isEqual:@"material-cancel"])v.frame=NSMakeRect(w-244,h-64,88,32);else if([v.identifier isEqual:@"material-prepare"])v.frame=NSMakeRect(w-140,h-64,120,32);}
     self.roleControl.frame=NSMakeRect(x,186,110,26);self.linkControl.frame=NSMakeRect(x+120,186,140,26);self.addControl.frame=NSMakeRect(20,h-64,112,32);self.findControl.frame=NSMakeRect(142,h-64,112,32);self.limitControl.frame=NSMakeRect(w-240,h-106,220,30);self.text.enclosingScrollView.frame=self.imageScroll.frame=NSMakeRect(x,220,w-x-20,MAX(100,body-100));self.destination.frame=NSMakeRect(20,h-106,MIN(430,w-40),30);[self sizeImage];
+}
+- (void)showOmissions:(id)sender {
+    NSMutableOrderedSet *lines=NSMutableOrderedSet.orderedSet;
+    for(NSDictionary *row in self.coverage){
+        NSString *status=row[@"status"],*path=row[@"path"];
+        if([status hasPrefix:@"未覆盖"] || [status hasPrefix:@"未检查"] || [status hasPrefix:@"未完成"] || [status isEqual:@"已删除"])
+            [lines addObject:path.length ? [NSString stringWithFormat:@"%@ · %@",path,status]:status];
+    }
+    for(NSString *path in self.excluded)[lines addObject:[path stringByAppendingString:@" · 未选择发送"]];
+    NSAlert *alert=NSAlert.new;alert.messageText=@"未覆盖范围";
+    NSScrollView *scroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,530,220)];scroll.hasVerticalScroller=YES;
+    NSTextView *body=[[NSTextView alloc] initWithFrame:scroll.bounds];body.editable=NO;body.verticallyResizable=YES;body.autoresizingMask=NSViewWidthSizable;
+    body.string=lines.count ? [lines.array componentsJoinedByString:@"\n"]:@"没有额外未覆盖项。";
+    scroll.documentView=body;alert.accessoryView=scroll;
+    [alert addButtonWithTitle:@"好"];[alert runModal];
 }
 - (void)sizeImage {if(!self.image.image)return;NSSize size=self.image.image.size,viewport=self.imageScroll.contentSize;CGFloat scale=self.fit ? MIN(viewport.width/MAX(1,size.width),viewport.height/MAX(1,size.height)):self.zoom;self.image.frame=NSMakeRect(0,0,MAX(viewport.width,size.width*scale),MAX(viewport.height,size.height*scale));self.image.needsDisplay=YES;}
 - (NSDictionary *)selectedNode {NSInteger index=self.table.selectedRow;return index>=0 ? [(NSOutlineView *)self.table itemAtRow:index]:nil;}

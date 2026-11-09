@@ -6,8 +6,69 @@ static NSData *Image(void){NSBitmapImageRep *rep=[[NSBitmapImageRep alloc] initW
 static BOOL Has(NSDictionary *report,NSString *word){for(NSDictionary *issue in report[@"issues"])if([issue[@"message"] containsString:word])return YES;return NO;}
 static NSString *AttachmentList(NSURL *archive){NSTask *task=NSTask.new;task.executableURL=[NSURL fileURLWithPath:@"/usr/bin/unzip"];task.arguments=@[@"-Z1",archive.path];NSPipe *output=NSPipe.pipe;task.standardOutput=output;task.standardError=NSFileHandle.fileHandleWithNullDevice;Check([task launchAndReturnError:NULL],@"read attachment ZIP directory");NSData *data=[output.fileHandleForReading readDataToEndOfFile];[task waitUntilExit];Check(task.terminationStatus==0,@"attachment archive is readable");return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];}
 #include "TrainingDataTests.inc"
+static void WholeAssignmentAssertions(void){
+    NSMutableDictionary *course=Fixture();FixtureGit *git=Service(course);
+    NSString *root=course[@"path"],*scope=@"Assignment [8]";
+    NSString *folder=[root stringByAppendingPathComponent:scope];
+    Check([NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:NULL],@"assignment fixture directory");
+    void (^write)(NSString *,NSString *)=^(NSString *path,NSString *value){Write([folder stringByAppendingPathComponent:path],value);};
+    write(@"README.md",@"Teacher instructions\n");write(@"template.py",@"# starter\n");write(@"removed.txt",@"Old exercise\n");write(@".gitignore",@"ignored.txt\n");
+    Git(root,@[@"add",@"--",scope]);Git(root,@[@"commit",@"-m",@"Teacher assignment"]);
+    NSString *base=Git(root,@[@"rev-parse",@"HEAD"]);course[@"teacherCommit"]=base;
+    write(@"past.md",@"Previously submitted answer\n");write(@"edited.py",@"answer = 1\n");
+    Git(root,@[@"add",@"--",scope]);Git(root,@[@"commit",@"-m",@"Earlier answer"]);
+    NSString *submitted=Git(root,@[@"rev-parse",@"HEAD"]);
+    Git(root,@[@"push",course[@"forkBare"],@"HEAD:main"]);
+    write(@"edited.py",@"answer = 2\n");Git(root,@[@"add",@"--",[scope stringByAppendingPathComponent:@"edited.py"]]);
+    write(@"edited.py",@"answer = 3\n");write(@"new.txt",@"Additional explanation\n");write(@"ignored.txt",@"Not selected\n");
+    Git(root,@[@"rm",@"--",[scope stringByAppendingPathComponent:@"removed.txt"]]);
+    NSError *error=nil;NSDictionary *binding=[git assignmentCheckScopeForCourse:course scope:scope error:&error];
+    NSSet *expected=[NSSet setWithArray:@[[scope stringByAppendingPathComponent:@"past.md"],[scope stringByAppendingPathComponent:@"edited.py"],[scope stringByAppendingPathComponent:@"new.txt"]]];
+    Check(binding && [[NSSet setWithArray:binding[@"answers"]] isEqual:expected],@"scope includes past, staged, unstaged and new answers only");
+    Check([binding[@"deleted"] isEqual:@[[scope stringByAppendingPathComponent:@"removed.txt"]]],@"deletions have their own scope");
+    NSMutableDictionary *working=course.mutableCopy;working[@"preflightMode"]=@"working";working[@"assignmentCheckScope"]=binding;
+    NSDictionary *snapshot=[git preflightSnapshotForCourse:working paths:binding[@"answers"] error:&error];
+    Check([snapshot[@"head"] isEqual:submitted] && [snapshot[@"files"][[scope stringByAppendingPathComponent:@"edited.py"]][@"text"] isEqual:@"answer = 3\n"],@"whole scope pins HEAD and uses current bytes");
+    NSDictionary *changed=[git preflightSnapshotForCourse:course paths:@[[scope stringByAppendingPathComponent:@"edited.py"]] error:&error];
+    Check([changed[@"paths"] count]==1 && !changed[@"files"][[scope stringByAppendingPathComponent:@"past.md"]],@"submission check sticks to selected changes");
+    NSDictionary *local=[git assignmentProgressForCourse:course remoteCommit:submitted error:&error];
+    Check([local[@"working"] count]==3 && [local[@"pending"] count]==0,@"post-verification edits do not invalidate verified remote commit");
+    local=[git assignmentProgressForCourse:course remoteCommit:base error:&error];
+    Check([local[@"pending"] containsObject:[scope stringByAppendingPathComponent:@"past.md"]],@"committed work distinguished from worktree edits");
+    write(@"edited.py",@"answer = 4\n");Check(!AMReviewMaterialsCurrent(snapshot,&error),@"material changed after check cannot be handed off");
+    write(@"later.md",@"New work after range confirmation\n");
+    Check(![git preflightSnapshotForCourse:working paths:binding[@"answers"] error:&error],@"changed scope requires confirmation");
+    Git(root,@[@"stash",@"push",@"--include-untracked"]);Git(root,@[@"checkout",@"-b",@"teacher-update",base]);
+    write(@"template.py",@"# updated teacher template\n");Git(root,@[@"add",@"--",scope]);Git(root,@[@"commit",@"-m",@"Update teacher template"]);
+    course[@"teacherCommit"]=Git(root,@[@"rev-parse",@"HEAD"]);
+    Git(root,@[@"checkout",@"main"]);
+    write(@"template.py",@"# updated teacher template\n");
+    binding=[git assignmentCheckScopeForCourse:course scope:scope error:&error];
+    Check(binding && ![binding[@"answers"] containsObject:[scope stringByAppendingPathComponent:@"template.py"]],@"worktree copy identical to newer teacher template excluded");
+    Git(root,@[@"stash",@"push",@"--include-untracked"]);Git(root,@[@"checkout",@"--orphan",@"unrelated-teacher"]);Git(root,@[@"commit",@"--allow-empty",@"-m",@"Unrelated root"]);
+    course[@"teacherCommit"]=Git(root,@[@"rev-parse",@"HEAD"]);Git(root,@[@"checkout",@"main"]);
+    Check(![git assignmentCheckScopeForCourse:course scope:scope error:&error],@"no common history requests manual scope");
+    Cleanup(course);
+}
+static void NotebookAssertions(void){
+    NSString *longText=[@"" stringByPaddingToLength:4100 withString:@"x" startingAtIndex:0];
+    NSDictionary *notebook=@{@"nbformat":@4,@"metadata":@{@"debug":@"not for review"},@"cells":@[
+        @{@"cell_type":@"markdown",@"source":@[@"# Experiment\n",@"Explain the result."]},
+        @{@"cell_type":@"code",@"source":@"value = 1 + 2", @"outputs":@[
+            @{@"text":longText},@{@"data":@{@"image/png":[Image() base64EncodedStringWithOptions:0],@"text/html":@"<html>never export</html>"}}]},
+        @42]};
+    NSData *data=[NSJSONSerialization dataWithJSONObject:notebook options:0 error:NULL];
+    NSDictionary *result=AMPreflightNotebook(data,@"exercise.ipynb");NSString *text=result[@"text"];
+    Check([text containsString:@"第 2 单元格"] && [text containsString:@"value = 1 + 2"] && ![text containsString:@"never export"],@"notebook extracted by cell without HTML or metadata");
+    Check([result[@"omissions"] count]==2 && [result[@"images"] count]==1,@"output truncation, unreadable cell and output image reported");
+    NSDictionary *asset=[result[@"images"] allValues].firstObject;
+    NSArray *lines=[text componentsSeparatedByString:@"\n"];
+    Check([asset[@"cell"] isEqual:@2] && [lines[[asset[@"line"] unsignedIntegerValue]-1] containsString:@"图片"],@"image evidence is bound to notebook cell and line");
+    Check(AMPreflightNotebook([@"{broken" dataUsingEncoding:NSUTF8StringEncoding],@"broken.ipynb")[@"problem"]!=nil,@"invalid notebook reported");
+}
 int main(void){@autoreleasepool{
     TrainingDataAssertions();
+    WholeAssignmentAssertions();NotebookAssertions();
     Check(NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"].length>0,@"private test store");
     NSString *md=@"![a](<图片 one.png>)\n![b][figure]\n[figure]: image.png \"title\"\n<img src='other.png'>\n```md\n![example](none.png)\n```\n`![inline](none.png)`\n\\![escaped](none.png)\n";
     NSArray *references=AMPreflightImageReferences(md);Check(references.count==3,@"inline reference HTML, but not fenced inline or escaped examples");Check([references[0][@"reference"] isEqual:@"图片 one.png"],@"spaces and unicode path");Check([AMPreflightResolveImage(@"a/report.md",@"../图%20片.png#anchor") isEqual:@"图 片.png"],@"relative within repository");for(NSString *path in @[@"../../outside",@"/private/file",@"https://example.invalid/a.png",@"file:///a",@"a%00b"]){Check(!AMPreflightResolveImage(@"a/report.md",path),@"unsafe references refused");}

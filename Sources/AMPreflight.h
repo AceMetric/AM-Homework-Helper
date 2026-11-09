@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 NS_ASSUME_NONNULL_BEGIN
 NSString *AMPreflightHash(NSData *data);
+NSDictionary *AMPreflightNotebook(NSData *data, NSString *path);
 NSString *AMPreflightSpellingProse(NSString *text);
 NSURL * _Nullable AMPreflightAttachmentArchive(NSString *batch, NSError **error);
 NSString *AMPreflightAttachmentPrompt(void);
@@ -16,6 +17,7 @@ BOOL AMReviewSaveSelection(NSDictionary *snapshot, NSString *binding, NSError **
 NSDictionary * _Nullable AMReviewSavedSelection(NSDictionary *snapshot, NSString *binding, NSError **error);
 NSArray *AMReviewRelations(NSDictionary *links, NSString *path);
 BOOL AMReviewMaterialsCurrent(NSDictionary *snapshot, NSError **error);
+NSInteger AMReviewMaterialPriority(NSString *path, NSString * _Nullable role);
 NSArray *AMReviewImageOccurrences(NSDictionary *snapshot);
 NSArray<NSURL *> *AMReviewMaterialCandidates(NSDictionary *snapshot, NSURL *root);
 NSUInteger AMOnlineReviewRemainingRequests(void);

@@ -37,11 +37,13 @@ static void PipelineAssertions(void){
         Check([record[@"state"] isEqual:@"uncertain"] && stopElapsed<5,@"interrupted commit or push retains an uncertain journal and ends within five seconds after force stop");
         Check([[NSString stringWithContentsOfFile:[root stringByAppendingPathComponent:@"answer.md"] encoding:NSUTF8StringEncoding error:NULL] containsString:@"intact"],@"force stop preserves the working file");
         BOOL foreignStaged=[stage isEqual:@"commit-with-staged"];if(foreignStaged){Write([root stringByAppendingPathComponent:@"foreign.md"],@"Separate staged work\n");Git(root,@[@"add",@"foreign.md"]);}
+        NSString *beforeVerification=Git(root,@[@"ls-files",@"--stage"]);
         git.operationCancelled=NO;NSDictionary *resolved=[git verifySubmission:record course:fixture token:@"test" retry:NO error:&error];
         Check([resolved[@"commit"] isEqual:commit] && [resolved[@"state"] isEqual:@"local"],@"verification recovers the exact already-created commit after interruption");
-        Check(foreignStaged ? [Git(root,@[@"diff",@"--cached",@"--name-only"]) containsString:@"foreign.md"]:!Git(root,@[@"diff",@"--cached",@"--name-only"]).length,@"recovery reconciles the original index and preserves foreign staged files");
+        Check([Git(root,@[@"ls-files",@"--stage"]) isEqual:beforeVerification],@"verification does not write to the index");
         resolved=[git verifySubmission:resolved course:fixture token:@"test" retry:YES error:&error];
         Check([resolved[@"state"] isEqual:@"confirmed"] && [Git(root,@[@"rev-parse",@"HEAD"]) isEqual:commit],@"retry pushes and verifies the same commit without recreating it");
+        Check(foreignStaged ? [Git(root,@[@"diff",@"--cached",@"--name-only"]) containsString:@"foreign.md"]:!Git(root,@[@"diff",@"--cached",@"--name-only"]).length,@"explicit retry reconciles our interrupted index and preserves foreign staged files");
         Check([Git(fixture[@"teacherBare"],@[@"rev-parse",@"main"]) isEqual:teacher],@"interruption recovery never changes the teacher repository");
         Cleanup(fixture);
     }

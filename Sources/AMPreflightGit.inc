@@ -6,11 +6,78 @@
     if(info.st_size<0 || info.st_size>64*1024*1024){close(fd);return @{@"problem":@"文件超过64 MB读取限制",@"version":@"oversized"};}
     NSMutableData *data=NSMutableData.data;char buffer[8192];ssize_t count;while((count=read(fd,buffer,sizeof(buffer)))>0){if(data.length+(NSUInteger)count>64*1024*1024){close(fd);return @{@"problem":@"文件在读取时增长，超过64 MB读取限制",@"version":@"oversized"};}[data appendBytes:buffer length:(NSUInteger)count];}close(fd);if(count<0)return @{@"problem":@"文件无法完整读取",@"version":@"unreadable"};return @{@"data":data,@"mode":(info.st_mode&0111) ? @"100755":@"100644"};
 }
+- (NSDictionary *)assignmentCheckScopeForCourse:(NSDictionary *)course scope:(NSString *)scope error:(NSError **)error {
+    NSString *teacher=course[@"teacherCommit"],*root=course[@"path"];
+    if(!AMPeerPath(scope) || SSSensitivePath(scope) || !AMPeerSHA(teacher) || ![self validateCourse:course error:error]){
+        if(error && !*error)*error=GitError(@"缺少已核验的老师版本或明确的作业目录。");
+        return nil;
+    }
+    SSGitResult *headResult=[self checked:@[@"rev-parse",@"--verify",@"HEAD^{commit}"] in:root token:nil error:error];
+    if(!headResult)return nil;
+    NSString *head=Trim([self string:headResult]);
+    // Criss-cross merges can have several equally valid ancestors. Ask the user in that case.
+    SSGitResult *common=[self run:@[@"merge-base",@"--all",teacher,head] in:root token:nil error:error];
+    if(!common)return nil;
+    NSArray *ancestors=NonemptyParts([self string:common],@"\n");
+    if(common.status!=0 || ancestors.count!=1 || !AMPeerSHA(ancestors.firstObject)){
+        if(error)*error=GitError(@"老师版本与本地分支没有可唯一确定的共同历史。");
+        return nil;
+    }
+    NSString *base=ancestors.firstObject;
+    __block NSError *diffError=nil;
+    SSGitResult *(^diff)(NSString *)=^SSGitResult *(NSString *commit){
+        return [self checked:@[@"--literal-pathspecs",@"diff",@"--no-ext-diff",@"--no-textconv",@"--no-renames",@"--name-status",@"-z",commit,@"--",scope] in:root token:nil error:&diffError];
+    };
+    SSGitResult *work=diff(base),*tip=[base isEqual:teacher] ? work:(work ? diff(teacher):nil);
+    if(!work || !tip){if(error)*error=diffError;return nil;}
+    SSGitResult *newFiles=[self checked:@[@"--literal-pathspecs",@"ls-files",@"--others",@"--exclude-standard",@"-z",@"--",scope] in:root token:nil error:error];
+    if(!newFiles)return nil;
+    NSArray *current=NonemptyParts([self string:tip],@"\0"),*changed=NonemptyParts([self string:work],@"\0");
+    if(current.count%2 || changed.count%2){if(error)*error=GitError(@"作业文件清单不完整。");return nil;}
+    NSMutableSet *againstTeacher=NSMutableSet.set;
+    for(NSUInteger i=1;i<current.count;i+=2)[againstTeacher addObject:current[i]];
+    NSMutableOrderedSet *answers=NSMutableOrderedSet.orderedSet,*deleted=NSMutableOrderedSet.orderedSet;
+    NSArray *untracked=NonemptyParts([self string:newFiles],@"\0");
+    NSSet *newSet=[NSSet setWithArray:untracked];
+    for(NSUInteger i=0;i<changed.count;i+=2){
+        NSString *file=changed[i+1];if(!AMPeerInScope(file,scope))continue;
+        if([changed[i] isEqual:@"D"] && ![newSet containsObject:file]){[deleted addObject:file];continue;}
+        // A teacher-only update already present locally is still a template.
+        if([againstTeacher containsObject:file])[answers addObject:file];
+    }
+    for(NSString *file in untracked)if(AMPeerInScope(file,scope))[answers addObject:file];
+    SSGitResult *end=[self checked:@[@"rev-parse",@"--verify",@"HEAD^{commit}"] in:root token:nil error:error];
+    if(!end)return nil;
+    if(![head isEqual:Trim([self string:end])]){if(error)*error=GitError(@"分支在整理文件时发生变化，请重新确认范围。");return nil;}
+    return @{@"scope":scope,@"head":head,@"teacher":teacher,@"base":base,@"answers":answers.array,@"deleted":deleted.array};
+}
+- (BOOL)checkReviewHead:(NSString *)head course:(NSDictionary *)course error:(NSError **)error {
+    NSString *root=course[@"path"];
+    SSGitResult *current=[self checked:@[@"rev-parse",@"HEAD"] in:root token:nil error:error];
+    if(current && [head isEqual:Trim([self string:current])])return YES;
+    if(current && error)*error=GitError(@"本地提交版本已变化，请重新核对文件范围。");
+    return NO;
+}
 - (NSDictionary *)preflightSnapshotForCourse:(NSDictionary *)course paths:(NSArray *)paths error:(NSError **)error {
     BOOL local=[course[@"preflightLocal"] boolValue] || [course[@"preflightMode"] isEqual:@"working"];
     if(!local && (![self validateCourse:course error:error] || ![self submissionBranch:course error:error]))return nil;
     if(!paths.count || paths.count>256){if(error)*error=GitError(@"请选择1至256个文件后再检查。其它文件未检查。");return nil;}
-    SSGitResult *head=local ? nil:[self checked:@[@"rev-parse",@"HEAD"] in:course[@"path"] token:nil error:error];if(!local && !head)return nil;
+    NSDictionary *scope=course[@"assignmentCheckScope"];
+    BOOL bound=scope!=nil;
+    if(bound && ![course[@"preflightPreview"] boolValue]){
+        NSDictionary *latest=[self assignmentCheckScopeForCourse:course scope:scope[@"scope"] error:error];
+        if(!latest)return nil;
+        if(![latest isEqual:scope]){if(error)*error=GitError(@"作业范围或版本已变化，请返回文件范围重新确认。");return nil;}
+    }
+    SSGitResult *head=local && !bound ? nil:[self checked:@[@"rev-parse",@"HEAD"] in:course[@"path"] token:nil error:error];if((!local || bound) && !head)return nil;
+    NSString *headSHA=head ? Trim([self string:head]):@"local";
+    if(bound && ![scope[@"head"] isEqual:headSHA]){
+        if(error)*error=GitError(@"本地提交版本已变化，请返回文件范围重新确认。");
+        return nil;
+    }
+    for(NSString *path in paths)if(bound && !AMPeerInScope(path,scope[@"scope"])){
+        if(error)*error=GitError(@"所选文件超出已确认的作业范围。");return nil;
+    }
     SSGitResult *tree=local ? nil:[self checked:@[@"ls-tree",@"-r",@"-z",Trim([self string:head])] in:course[@"path"] token:nil error:error];if(!local && !tree)return nil;
     NSMutableDictionary *entries=NSMutableDictionary.dictionary,*files=NSMutableDictionary.dictionary;NSMutableSet *selected=[NSMutableSet setWithArray:paths];
     for(NSString *line in NonemptyParts(local ? @"" : [self string:tree],@"\0")){NSRange tab=[line rangeOfString:@"\t"];if(tab.location==NSNotFound)continue;NSArray *fields=NonemptyParts([line substringToIndex:tab.location],@" ");if(fields.count==3)entries[[line substringFromIndex:tab.location+1]]=@{@"mode":fields[0],@"oid":fields[2]};}
@@ -32,15 +99,55 @@
         if(SSContainsSecret(data))return @{@"path":file,@"problem":@"文件含疑似凭据，禁止交给助手",@"version":@"secret"};
         NSMutableDictionary *entry=[@{@"path":file,@"mode":mode,@"data":data,@"version":AMPreflightHash(data)} mutableCopy];if(stamp)entry[@"stamp"]=stamp;NSString *ext=file.pathExtension.lowercaseString;
         if([@[@"png",@"jpg",@"jpeg",@"heic",@"tiff",@"tif",@"gif",@"bmp",@"webp"] containsObject:ext])entry[@"image"]=@YES;
+        else if([ext isEqual:@"ipynb"] && ![course[@"preflightSafetyOnly"] boolValue]){
+            NSDictionary *notebook=AMPreflightNotebook(data,file);
+            if(notebook[@"problem"])entry[@"notebookOmissions"]=@[notebook[@"problem"]];
+            else {entry[@"text"]=notebook[@"text"];entry[@"notebookOmissions"]=notebook[@"omissions"];entry[@"notebookImages"]=notebook[@"images"];}
+        }
         else {NSString *text=[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];if(text)entry[@"text"]=text;}
         return entry;
     };
     NSUInteger total=0;
-    for(NSString *path in paths){if(self.readsCancellable && self.cancelledReads){if(error)*error=GitError(@"检查已取消。");return nil;}NSDictionary *entry=read(path,YES);total+=[entry[@"data"] length];if(total>64*1024*1024){if(error)*error=GitError(@"检查材料超过64 MB，请减少选择后分批检查。");return nil;}files[path]=entry;}
+    for(NSString *path in paths){
+        if(self.readsCancellable && self.cancelledReads){if(error)*error=GitError(@"检查已取消。");return nil;}
+        NSMutableDictionary *entry=[read(path,YES) mutableCopy];
+        total+=[entry[@"data"] length];if(total>64*1024*1024){if(error)*error=GitError(@"检查材料超过64 MB，请减少选择后分批检查。");return nil;}
+        files[path]=entry;
+        NSMutableDictionary *accepted=NSMutableDictionary.dictionary;
+        NSMutableArray *omissions=[entry[@"notebookOmissions"] mutableCopy];
+        NSDictionary *assets=entry[@"notebookImages"];
+        for(NSString *key in [assets.allKeys sortedArrayUsingSelector:@selector(compare:)]){
+            NSDictionary *asset=assets[key];NSUInteger bytes=[asset[@"data"] length];
+            if(files.count+paths.count>=256 || total+bytes>64*1024*1024){
+                [omissions addObject:[NSString stringWithFormat:@"第 %@ 单元格的图片超出材料额度",asset[@"cell"]]];
+                continue;
+            }
+            files[key]=asset;accepted[key]=asset;total+=bytes;
+        }
+        if(omissions){entry[@"notebookOmissions"]=omissions;entry[@"notebookImages"]=accepted;}
+    }
     for(NSString *path in paths)if([@[@"md",@"markdown",@"mdx"] containsObject:path.pathExtension.lowercaseString])for(NSDictionary *ref in AMPreflightImageReferences(files[path][@"text"] ?: @"")){NSString *asset=AMPreflightResolveImage(path,ref[@"reference"]);if(asset && !files[asset]){if(files.count>=256){if(error)*error=GitError(@"包括引用图片在内超过256个文件，请分批检查。");return nil;}if(self.readsCancellable && self.cancelledReads){if(error)*error=GitError(@"检查已取消。");return nil;}NSDictionary *entry=[course[@"preflightExcluded"] containsObject:asset] ? @{@"path":asset,@"version":@"excluded",@"problem":@"图片已从检查范围排除，未检查"}:read(asset,local || [selected containsObject:asset]);if(entry){total+=[entry[@"data"] length];if(total>64*1024*1024){if(error)*error=GitError(@"引用图片使材料超过64 MB，请分批检查。");return nil;}files[asset]=entry;}}}
     if(files.count>256){if(error)*error=GitError(@"包括引用图片在内超过256个文件，请分批检查。");return nil;}
-    NSMutableString *stamp=[NSMutableString stringWithFormat:@"%@|%@|%@",course[@"fork"],course[@"branch"],(local ? @"local":Trim([self string:head]))];for(NSString *file in [files.allKeys sortedArrayUsingSelector:@selector(compare:)])[stamp appendFormat:@"|%@:%@:%@:%d",file,files[file][@"version"],files[file][@"mode"] ?: @"",[selected containsObject:file]];
-    return @{@"mode":local ? @"working":@"submission",@"head":local ? @"local":Trim([self string:head]),@"repository":course[@"fork"] ?: @"",@"branch":course[@"branch"] ?: @"",@"paths":paths.copy,@"files":files,@"version":AMPreflightHash([stamp dataUsingEncoding:NSUTF8StringEncoding])};
+    NSMutableDictionary *feedbackStamps=NSMutableDictionary.dictionary;
+    for(NSString *path in course[@"preflightFeedbackVersions"]){
+        NSDictionary *file=read(path,YES);
+        if(![file[@"version"] isEqual:course[@"preflightFeedbackVersions"][path]] || !file[@"stamp"]){
+            if(error)*error=GitError(@"老师评语副本已变化，请返回文件范围重新确认。");return nil;
+        }
+        feedbackStamps[path]=file[@"stamp"];
+    }
+    if(bound){
+        SSGitResult *end=[self checked:@[@"rev-parse",@"HEAD"] in:root token:nil error:error];
+        if(!end)return nil;
+        if(![headSHA isEqual:Trim([self string:end])]){if(error)*error=GitError(@"检查期间分支发生变化，请重新确认范围。");return nil;}
+    }
+    NSMutableString *stamp=[NSMutableString stringWithFormat:@"%@|%@|%@|%@|%@|%@",course[@"fork"],course[@"branch"],headSHA,scope[@"teacher"] ?: @"",scope[@"scope"] ?: @"",course[@"teacherCommit"] ?: @""];
+    NSMutableArray *versions=NSMutableArray.array;
+    for(NSString *file in [files.allKeys sortedArrayUsingSelector:@selector(compare:)])
+        [versions addObject:@[file,files[file][@"version"],files[file][@"mode"] ?: @"",@([selected containsObject:file])]];
+    [stamp appendString:AMPeerHash(versions)];
+    [stamp appendString:AMPeerHash(@[course[@"preflightRoles"] ?: @{},course[@"preflightOmissions"] ?: @[]])];
+    return @{@"mode":local ? @"working":@"submission",@"head":headSHA,@"repository":course[@"fork"] ?: @"",@"branch":course[@"branch"] ?: @"",@"paths":paths.copy,@"files":files,@"reviewRoles":course[@"preflightRoles"] ?: @{},@"scopeOmissions":course[@"preflightOmissions"] ?: @[],@"localRoot":root,@"feedbackStamps":feedbackStamps,@"version":AMPreflightHash([stamp dataUsingEncoding:NSUTF8StringEncoding])};
 }
 - (BOOL)validatePreflightIndex:(NSArray *)paths course:(NSDictionary *)course error:(NSError **)error {
     NSDictionary *snapshot=self.expectedSubmissionSnapshot;if(!snapshot)return YES;

@@ -30,7 +30,11 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property AMSubmissionHistoryController *submissionHistory;
 @property AMPeerWindowController *peerWindow;
 @property NSWindow *assignmentFeedbackWindow;
+@property NSDictionary *assignmentFeedbackConfirmation;
 @property NSDictionary *assignmentSubmissions;
+@property NSMutableDictionary *assignmentProgress;
+@property NSMutableSet *assignmentProgressReads;
+@property NSMutableSet *failedAssignmentVerifications;
 @property NSCache *assignmentFeedbackCache;
 @property NSMutableSet *assignmentFeedbackReads;
 @property NSMutableSet *unreadFeedbackKeys;
@@ -132,6 +136,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 @property BOOL discoveringExternal;
 @property NSDate *lastExternalDiscovery;
 @property NSMutableDictionary *externalOffsets;
+@property NSMutableDictionary *externalHistorySnapshots;
 @property NSMutableDictionary *externalPolling;
 @property NSMutableDictionary *completionReverifyTimes;
 #ifdef DDL_TESTING
@@ -673,7 +678,9 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (void)refreshPresentation {
     if (self.refreshing || !self.table) return; self.refreshing = YES;
     if(!self.hasUnsavedReview && self.deferredScans.count){for(NSString *fork in self.deferredScans){NSDictionary *scan=self.deferredScans[fork];self.candidates[fork]=[self retainingSkill:self.candidates[fork] current:scan[@"candidates"] documents:scan[@"documents"]];self.materials[fork]=[self retainingSkill:self.materials[fork] current:scan[@"materials"] ?: @[] documents:scan[@"documents"]];}[self.deferredScans removeAllObjects];if(!self.preview)SSWritePlist(@"discoveries.plist",self.discoveryEnvelope,NULL);}
-    NSDictionary *course = [self course]; NSString *key = self.selectedFork ?: @"all";
+    NSDictionary *course = [self course];
+    if(course && !self.view.hidden && !self.inbox && self.sections.selectedSegment==0)[self refreshAssignmentProgress:course];
+    NSString *key = self.selectedFork ?: @"all";
     NSDictionary *localCourse=nil;if(!self.inbox && !course && self.selectedFork)for(NSDictionary *c in AMCourseCatalog(self.courses))if([c[@"id"] isEqual:self.selectedFork])localCourse=c;
     if(localCourse){self.sections.segmentCount=1;[self.sections setLabel:@"任务" forSegment:0];self.sections.selectedSegment=0;self.accountLabel.stringValue=localCourse[@"name"];self.setupButton.hidden=YES;self.scanButton.hidden=YES;self.syncButton.hidden=YES;self.commitButton.hidden=YES;self.typeFilter.hidden=YES;self.typeButton.hidden=YES;self.recoveryButton.hidden=YES;self.moreButton.enabled=!self.operationsPaused;NSMutableArray *records=NSMutableArray.array;for(NSDictionary *task in self.tasksProvider ? self.tasksProvider():@[])if(![task[@"deleted"] boolValue] && [AMCourseForTask(task,AMCourseCatalog(self.courses))[@"id"] isEqual:localCourse[@"id"]] && (!self.query.length || [task[@"title"] localizedCaseInsensitiveContainsString:self.query])){NSMutableDictionary *row=task.mutableCopy;row[@"confirmed"]=@YES;row[@"subject"]=localCourse[@"name"];[records addObject:row];}[records sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"due"] compare:b[@"due"]];}];[self.courseWorkspace showCourseSummaries:@[] visible:NO];[self.courseWorkspace updateRecords:records selected:self.selectedCandidateID ?: @"" information:@"" empty:@"暂无任务" paused:self.operationsPaused];[self layoutContent];self.refreshing=NO;if(self.stateChanged)self.stateChanged();return;}
     if(self.sections.segmentCount!=3){self.sections.segmentCount=3;NSArray *labels=@[@"作业",@"仓库信息",@"提交记录"];for(NSInteger i=0;i<3;i++)[self.sections setLabel:labels[i] forSegment:i];self.sections.selectedSegment=0;}self.scanButton.hidden=NO;
@@ -729,11 +736,37 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         NSMutableDictionary *copy=[SSEnrichDiscovery(record) mutableCopy];
         NSDictionary *submission=[self submissionForAssignment:record course:course];
         if(submission){
-            copy[@"submissionLabel"]=AMSubmissionStateLabel(submission);
+
             if([@[@"local",@"uncertain"] containsObject:submission[@"state"]]){
                 BOOL canRetry=[submission[@"state"] isEqual:@"local"] && submission[@"checkedAt"] && !submission[@"confirmedAt"] && [submission[@"commit"] length];
                 copy[@"pushAction"]=canRetry ? @"retry-task-push":@"verify-task-push";
             }
+        }
+        if([record[@"confirmed"] boolValue] && course){
+            NSDictionary *last=submission[@"lastVerified"];
+            NSString *sha=last[@"commit"];
+            NSMutableString *remote=[NSMutableString stringWithString:sha.length ?
+                [NSString stringWithFormat:@"%@ · %@",[sha substringToIndex:MIN(12,sha.length)],DDLFormatDate(last[@"time"],@"M/d HH:mm")]:@"尚无核验记录"];
+            if([last[@"state"] isEqual:@"local"])[remote appendString:@" · 远端已变化"];
+            else if(submission && ![submission[@"state"] isEqual:@"confirmed"])[remote appendString:@" · 新提交待核验"];
+            BOOL incomplete=submission[@"id"] && [self.failedAssignmentVerifications containsObject:submission[@"id"]];
+            for(AMCourseOperationContext *failure in self.workflowFailures.allValues)if([failure.course[@"fork"] isEqual:course[@"fork"]] &&
+                ([failure.stage isEqual:@"核验提交记录"] || (failure.record[@"id"] && [failure.record[@"id"] isEqual:submission[@"id"]]))){
+                incomplete=YES;break;
+            }
+            if(incomplete)[remote appendString:@" · 本次核验未完成"];
+            copy[@"remoteVerification"]=remote;
+            NSString *source=record[@"path"] ?: record[@"sourcePath"],*scope=source.stringByDeletingLastPathComponent;
+            if(!AMPeerPath(scope))scope=source;
+            NSDictionary *local=[course[@"path"] length] ? self.assignmentProgress[@[course[@"fork"],course[@"branch"],course[@"path"]]]:nil;
+            BOOL working=AMPeerPath(scope) && [local[@"working"] containsObject:scope];
+            BOOL pending=AMPeerPath(scope) && [local[@"pending"] containsObject:scope];
+            NSMutableArray *labels=NSMutableArray.array;
+            if(working)[labels addObject:sha.length ? @"核验后有本地修改":@"工作区有修改"];
+            if(pending || [submission[@"state"] isEqual:@"local"])[labels addObject:@"有待推送提交"];
+            if([local[@"failed"] boolValue])[labels addObject:@"本地状态刷新未完成"];
+            if(!labels.count)[labels addObject:!AMPeerPath(scope) ? @"作业范围待确认":(local ? ([local[@"pendingKnown"] boolValue] ? @"无改动":@"工作区无改动 · 推送状态待核验"):@"尚未读取")];
+            copy[@"localProgress"]=[labels componentsJoinedByString:@" · "];
         }
         if([record[@"path"] length] && course){NSString *key=[self assignmentFeedbackKeyForCourse:course source:record[@"path"]];copy[@"newFeedback"]=@([self.unreadFeedbackKeys containsObject:key]);}
         if([record[@"confirmed"] boolValue]){
@@ -1136,6 +1169,34 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
 - (NSString *)assignmentFeedbackKeyForCourse:(NSDictionary *)course source:(NSString *)source {
     return AMPeerHash(@[course[@"fork"] ?: @"",course[@"forkID"] ?: @0,course[@"branch"] ?: @"",source ?: @""]);
 }
+- (void)confirmAssignmentFeedback:(id)sender {
+    NSDictionary *confirmation=self.assignmentFeedbackConfirmation;
+    NSArray *items=confirmation[@"items"];if(!items.count)return;
+    NSAlert *alert=NSAlert.new;alert.messageText=@"确认老师评语副本";
+    alert.informativeText=@"勾选已核对的评语文件。只有内容完全相同的版本会从答卷中排除。";
+    NSStackView *checks=[NSStackView stackViewWithViews:@[]];
+    checks.orientation=NSUserInterfaceLayoutOrientationVertical;checks.alignment=NSLayoutAttributeLeading;
+    NSMutableArray *buttons=NSMutableArray.array;
+    for(NSDictionary *item in items){
+        NSButton *button=[NSButton checkboxWithTitle:[item[@"path"] lastPathComponent] target:nil action:nil];
+        button.toolTip=item[@"path"];[checks addArrangedSubview:button];[buttons addObject:button];
+    }
+    NSScrollView *list=[[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,360,MIN(230,items.count*26))];
+    checks.frame=NSMakeRect(0,0,340,items.count*26);list.documentView=checks;list.hasVerticalScroller=YES;
+    alert.accessoryView=list;
+    [alert addButtonWithTitle:@"确认"];[alert addButtonWithTitle:@"取消"];
+    if([alert runModal]!=NSAlertFirstButtonReturn || self.assignmentFeedbackConfirmation!=confirmation)return;
+    @synchronized(NSFileManager.defaultManager){
+        id saved=SSReadPlist(@"assignment-feedback-confirmed.plist");
+        if(saved && ![saved isKindOfClass:NSDictionary.class])return;
+        NSMutableDictionary *records=[saved mutableCopy] ?: NSMutableDictionary.dictionary;
+        NSString *key=confirmation[@"key"];NSMutableDictionary *versions=[records[key] mutableCopy] ?: NSMutableDictionary.dictionary;
+        for(NSUInteger i=0;i<items.count;i++)if([buttons[i] state]==NSControlStateValueOn)
+            versions[items[i][@"path"]]=items[i][@"contentHash"];
+        records[key]=versions;NSError *error=nil;
+        if(!SSWritePlist(@"assignment-feedback-confirmed.plist",records,&error))[self showError:error];
+    }
+}
 - (void)showAssignmentFeedback:(NSDictionary *)assignment {[self readAssignmentFeedback:assignment show:YES];}
 - (void)readAssignmentFeedback:(NSDictionary *)assignment show:(BOOL)show {
     if(self.preview && !show)return;
@@ -1148,7 +1209,7 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     NSDictionary *cached=[self.assignmentFeedbackCache objectForKey:key];
     if(!show && ((cached && -[cached[@"date"] timeIntervalSinceNow]<120) || [self.assignmentFeedbackReads containsObject:key]))return;
     NSPanel *panel=nil;
-    AMDocumentView *reader=nil;
+    AMDocumentView *reader=nil;NSButton *confirm=nil;
     if(show){
         [self.assignmentFeedbackWindow close];
         panel=[[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,700,500) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
@@ -1156,7 +1217,13 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
         panel.releasedWhenClosed=NO;
         reader=AMDocumentView.new;reader.renderedOnly=YES;
         reader.markdown=cached[@"report"] ?: @"正在读取作业评语…";
-        panel.contentView=reader;self.assignmentFeedbackWindow=panel;
+        confirm=Button(@"确认评语副本…",self,@selector(confirmAssignmentFeedback:),0);
+        confirm.enabled=NO;confirm.translatesAutoresizingMaskIntoConstraints=NO;
+        NSStackView *content=[NSStackView stackViewWithViews:@[reader,confirm]];
+        content.orientation=NSUserInterfaceLayoutOrientationVertical;content.alignment=NSLayoutAttributeLeading;
+        content.edgeInsets=NSEdgeInsetsMake(0,12,12,12);content.spacing=6;
+        [reader.widthAnchor constraintEqualToAnchor:content.widthAnchor constant:-24].active=YES;
+        panel.contentView=content;self.assignmentFeedbackWindow=panel;self.assignmentFeedbackConfirmation=nil;
         [panel center];[panel makeKeyAndOrderFront:nil];
     }
     [self.assignmentFeedbackReads addObject:key];
@@ -1183,7 +1250,11 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
             SSCourseController *self=owner;if(!self)return;
             [self.assignmentFeedbackReads removeObject:key];
             BOOL viewed=show && self.assignmentFeedbackWindow==panel && panel.visible;
-            if(viewed)reader.markdown=report;
+            if(viewed){
+                reader.markdown=report;
+                confirm.enabled=feedback.count>0;
+                self.assignmentFeedbackConfirmation=feedback.count ? @{@"key":key,@"items":feedback}:nil;
+            }
             if(!feedback)return;
             [self.assignmentFeedbackCache setObject:@{@"report":report.copy,@"date":NSDate.date} forKey:key cost:report.length*2];
             if(viewed || !feedback.count || [saved isEqual:version])[self.unreadFeedbackKeys removeObject:key];
@@ -1317,11 +1388,34 @@ static NSButton *SSButton(NSString *text, id target, SEL action, NSRect frame) {
     // Reads share only the Git write barrier; model work cannot block browsing.
     dispatch_queue_t readQueue=dispatch_queue_create("ddl.preflight-read",DISPATCH_QUEUE_SERIAL);
     __weak SSSubmissionController *weakSheet=sheet;
+    BOOL courseBacked=[course[@"fork"] length] && (![course[@"preflightLocal"] boolValue] || course[@"assignmentCheckScope"]);
+    BOOL preview=self.preview;
+    BOOL (^configured)(NSError **)=^BOOL(NSError **error){
+        if(!courseBacked || preview)return YES;
+        NSArray *saved=SSReadPlist(@"courses.plist");
+        for(NSDictionary *current in saved)if([current[@"fork"] isEqual:course[@"fork"]]){
+            BOOL same=YES;
+            for(NSString *field in @[@"path",@"branch",@"forkID",@"upstream",@"upstreamID",@"teacherCommit"])
+                if(![(current[field] ?: @"") isEqual:course[field] ?: @""])same=NO;
+            if(same)return YES;
+            break;
+        }
+        if(error)*error=AMWorkflowError(@"stale",@"课程或老师版本已变化，请重新打开并确认检查范围。",nil);
+        return NO;
+    };
+    sheet.reviewScopeCurrent=^BOOL(NSDictionary *snapshot,NSError **error){
+        if(!configured(error))return NO;
+        if(!courseBacked || [snapshot[@"head"] isEqual:@"local"])return YES;
+        SSGit *git=SSGit.new;git.commandDeadline=[NSDate dateWithTimeIntervalSinceNow:15];
+        return [git checkReviewHead:snapshot[@"head"] course:course error:error];
+    };
     sheet.performCheck=^NSDictionary *(NSArray *paths,NSArray *ids,NSString *extra,NSMutableDictionary *cache,BOOL(^cancelled)(void),NSError **error){
         SSCourseController *self=owner;if(!self || cancelled())return nil;
         return AMPerformResourceOperation(NSUUID.UUID.UUIDString,@"检查文件",course[@"fork"] ?: @"本机项目",AMRepositoryResources(course,@"read"),100,cancelled,^id(NSError **problem){
         __block NSDictionary *snapshot=nil;__block NSString *requirements=nil;__block NSError *failure=nil;
-        dispatch_sync(readQueue,^{if(cancelled())return;SSGit *reader=SSGit.new;reader.readsCancellable=YES;dispatch_source_t cancellation=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_global_queue(QOS_CLASS_UTILITY,0));dispatch_source_set_timer(cancellation,dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),100*NSEC_PER_MSEC,10*NSEC_PER_MSEC);dispatch_source_set_event_handler(cancellation,^{if(cancelled())reader.cancelledReads=YES;});dispatch_resume(cancellation);NSMutableArray *selected=NSMutableArray.array;for(NSDictionary *task in tasks)if([ids containsObject:task[@"id"]])[selected addObject:task];snapshot=[reader preflightSnapshotForCourse:course paths:paths error:&failure];if(![cache[@"submissionSafetyOnly"] boolValue])requirements=[reader preflightRequirementsForCourse:course tasks:selected];dispatch_source_cancel(cancellation);});
+        dispatch_sync(readQueue,^{if(cancelled())return;SSGit *reader=SSGit.new;reader.readsCancellable=YES;dispatch_source_t cancellation=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_global_queue(QOS_CLASS_UTILITY,0));dispatch_source_set_timer(cancellation,dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),100*NSEC_PER_MSEC,10*NSEC_PER_MSEC);dispatch_source_set_event_handler(cancellation,^{if(cancelled())reader.cancelledReads=YES;});dispatch_resume(cancellation);NSMutableArray *selected=NSMutableArray.array;for(NSDictionary *task in tasks)if([ids containsObject:task[@"id"]])[selected addObject:task];NSMutableDictionary *input=course.mutableCopy;
+            if([cache[@"submissionSafetyOnly"] boolValue])input[@"preflightSafetyOnly"]=@YES;
+            snapshot=[reader preflightSnapshotForCourse:input paths:paths error:&failure];if(![cache[@"submissionSafetyOnly"] boolValue])requirements=[reader preflightRequirementsForCourse:course tasks:selected];dispatch_source_cancel(cancellation);});
         if(!snapshot || cancelled()){if(problem)*problem=failure;return nil;}
         if([cache[@"submissionSafetyOnly"] boolValue]){
             for(NSString *path in paths){NSDictionary *file=snapshot[@"files"][path];if(!file || file[@"problem"]){if(problem)*problem=[NSError errorWithDomain:@"AMSubmissionSafety" code:1 userInfo:@{NSLocalizedDescriptionKey:file[@"problem"] ?: @"所选文件已变化，请刷新。"}];return nil;}}

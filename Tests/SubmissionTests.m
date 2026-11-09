@@ -43,6 +43,57 @@ static void AssignmentFeedbackAssertions(void){
     Check(found.count==1 && [found[0][@"commit"] isEqual:review] && [found[0][@"text"] containsString:@"boundary condition"],@"direct feedback uses the pinned Git object within this assignment");
     Check([service assignmentFeedbackForCourse:fixture scope:@"assignment-6" login:@"reviewer" remote:nil error:NULL].count==0,@"the student's own feedback-like commit is excluded");
 }
+@interface HistoryCountingGit:FixtureGit
+@property NSUInteger diffs;
+@property BOOL failPage;
+@end
+@implementation HistoryCountingGit
+- (SSGitResult *)run:(NSArray *)args in:(NSString *)path token:(NSString *)token error:(NSError **)error {
+    if([args.firstObject isEqual:@"diff-tree"]){
+        self.diffs++;
+        if(self.failPage && [args containsObject:@"--stdin"]){if(error)*error=GitError(@"synthetic batch read failure");return nil;}
+    }
+    return [super run:args in:path token:token error:error];
+}
+@end
+static void HistoryBatchAssertions(void){
+    NSMutableDictionary *course=Fixture();NSString *root=course[@"path"];
+    NSString *teacher=Git(root,@[@"rev-parse",@"HEAD"]);
+    course[@"teacherCommit"]=teacher;
+    // The filename equal to a commit ID must be consumed as a path, not a new header.
+    NSString *odd=@"spaces 与\t换行\n.txt";
+    Write([root stringByAppendingPathComponent:odd],@"Synthetic answer\n");
+    Write([root stringByAppendingPathComponent:teacher],@"Synthetic hash-named answer\n");
+    Write([root stringByAppendingPathComponent:@".env"],@"synthetic config\n");
+    Git(root,@[@"add",@"--force",@"--",odd,teacher,@".env"]);Git(root,@[@"commit",@"-m",@"Answer with unusual paths"]);
+    Git(root,@[@"checkout",@"-b",@"second"]);Git(root,@[@"mv",odd,@"renamed.txt"]);Git(root,@[@"commit",@"-m",@"Rename answer"]);
+    Git(root,@[@"checkout",@"main"]);Git(root,@[@"rm",@"--",teacher]);Git(root,@[@"commit",@"-m",@"Delete hash path"]);
+    Git(root,@[@"merge",@"--no-ff",@"-m",@"Merge fixture",@"second"]);
+    for(NSUInteger i=0;i<50;i++)Git(root,@[@"commit",@"--allow-empty",@"-m",[NSString stringWithFormat:@"Synthetic page commit %lu",(unsigned long)i]]);
+    HistoryCountingGit *git=HistoryCountingGit.new;git.fixture=course;
+    NSError *error=nil;NSTimeInterval start=NSProcessInfo.processInfo.systemUptime;
+    NSArray *first=[git externalCommits:course offset:0 error:&error];NSTimeInterval batch=NSProcessInfo.processInfo.systemUptime-start;
+    Check(first.count==50 && git.diffs==1,@"one diff-tree process reads a fifty-commit page including empty commits");
+    NSDictionary *pinned=git.externalHistorySnapshot;
+    Git(root,@[@"commit",@"--allow-empty",@"-m",@"New branch tip after first page"]);
+    git.failPage=YES;Check(![git externalCommits:course offset:50 error:&error] && [git.externalHistorySnapshot isEqual:pinned],@"batch failure preserves the pinned cursor");
+    git.failPage=NO;NSArray *second=[git externalCommits:course offset:50 error:&error];
+    Check(second.count==4 && [second.firstObject[@"kind"] isEqual:@"merge"],@"page two keeps original tip and merges");
+    NSUInteger commands=git.diffs;start=NSProcessInfo.processInfo.systemUptime;
+    for(NSDictionary *row in [first arrayByAddingObjectsFromArray:second]){
+        SSGitResult *legacy=[git checked:@[@"diff-tree",@"--root",@"-m",@"--no-commit-id",@"--name-only",@"-r",@"-z",row[@"commit"],@"--"] in:root token:nil error:&error];
+        NSMutableArray *safe=NSMutableArray.array;
+        for(NSString *path in [NSOrderedSet orderedSetWithArray:NonemptyParts([git string:legacy],@"\0")])if(!SSSensitivePath(path))[safe addObject:path];
+        Check([row[@"files"] isEqual:safe],@"batch matches former read for root-like paths, merges, deletes and renames");
+    }
+    printf("History page: 1 diff-tree for 50 commits in %.0f ms; %lu individual reads in %.0f ms\n",batch*1000,(unsigned long)(git.diffs-commands),(NSProcessInfo.processInfo.systemUptime-start)*1000);
+    NSArray *fresh=[git externalCommits:course offset:0 error:&error];
+    Check([fresh.firstObject[@"message"] isEqual:@"New branch tip after first page"],@"refresh establishes a new snapshot");
+    [course removeObjectForKey:@"teacherCommit"];Git(root,@[@"update-ref",@"-d",@"refs/remotes/upstream/main"]);
+    git.externalHistorySnapshot=nil;NSArray *rootPage=[git externalCommits:course offset:50 error:&error];
+    Check(rootPage.count>second.count && ![rootPage.lastObject[@"teacherHistoryKnown"] boolValue],@"root commit remains discoverable when no teacher history is available");
+    Cleanup(course);
+}
 int main(void){@autoreleasepool{
     NSString *data=NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"];Check(data.length>0,@"isolated submission storage");
     NSMutableDictionary *f=Fixture();FixtureGit *service=Service(f);NSError *error=nil;NSString *before=Git(f[@"teacherBare"],@[@"rev-parse",@"main"]);
@@ -78,6 +129,6 @@ int main(void){@autoreleasepool{
     Check(AMRestoreBackup(@[],@[task],savedRecords,&error),@"task and record backup restores together");Check([AMBackupEnvelope(@[task],NULL)[@"submissions"] count]==savedRecords.count,@"backup contains journal without credential fields");
     Check(SSWritePlist(@"backup-transaction.plist",@{@"tasks":@[],@"submissions":savedRecords},NULL),@"simulate interrupted restore intent");Check(SSLoadTasks(NULL).count==0 && AMSubmissionRecords(NULL).count==savedRecords.count,@"startup completes restore intent without Git writes");
     NSMutableDictionary *tainted=record.mutableCopy;tainted[@"token"]=@"synthetic-not-a-token";Check(!AMDecodeBackup(@{@"format":@"am-helper-backup-v2",@"tasks":@[task],@"submissions":@[tainted]},NULL),@"unknown credential fields rejected in backup");
-    BackgroundFastForwardAssertions();AssignmentFeedbackAssertions();CompletionAssertions();CompletionGitAssertions(f,service);FreshTeacherAssertions();PipelineAssertions();
+    HistoryBatchAssertions();BackgroundFastForwardAssertions();AssignmentFeedbackAssertions();CompletionAssertions();CompletionGitAssertions(f,service);FreshTeacherAssertions();PipelineAssertions();
     Cleanup(f);printf("PASS: %lu submission record and Git safety assertions\n",(unsigned long)assertions);
 }return 0;}
