@@ -19,6 +19,7 @@ static NSTextView *PFText(NSView *root,NSRect frame,BOOL editable){
 @property NSURL *materialRoot;
 @property NSMutableDictionary *roles,*links,*origins;
 @property NSPopUpButton *roleControl,*limitControl;
+@property BOOL showsOnlineEstimate;
 @property NSButton *linkControl,*addControl,*findControl;
 @property NSMutableArray *rows;
 @property NSMutableArray *treeRoots;
@@ -148,7 +149,19 @@ static NSTextView *PFText(NSView *root,NSRect frame,BOOL editable){
         for(NSUInteger n=0;n<limit;n++)[display appendFormat:@"%4lu  %@\n",(unsigned long)n+1,lines[n]];self.text.string=display;self.text.selectedRange=NSMakeRange(0,0);[self.text scrollRangeToVisible:NSMakeRange(0,0)];}
     [self updateSummary];
 }
-- (void)updateSummary {NSUInteger count=0,images=0,unlinked=0;for(NSDictionary *row in self.rows)if(![row[@"requirements"] boolValue] && ![self.excluded containsObject:row[@"path"]]){count++;if([row[@"image"] boolValue])images++;NSString *role=self.roles[row[@"path"]] ?: self.snapshot[@"files"][row[@"path"]][@"role"];if([role isEqual:@"question"] && !self.links[row[@"path"]])unlinked++;}self.summary.stringValue=[NSString stringWithFormat:@"已选 %lu 个文件 · %lu 张图片 · %lu 项题目未关联",(unsigned long)count,(unsigned long)images,(unsigned long)unlinked];}
+- (void)updateSummary {
+    NSUInteger count=0,images=0,unlinked=0,textLength=self.requirements.length;
+    for(NSDictionary *row in self.rows)if(![row[@"requirements"] boolValue] && ![self.excluded containsObject:row[@"path"]]){
+        count++;if([row[@"image"] boolValue])images++;
+        textLength+=[self.snapshot[@"files"][row[@"path"]][@"text"] length];
+        NSString *role=self.roles[row[@"path"]] ?: self.snapshot[@"files"][row[@"path"]][@"role"];
+        if([role isEqual:@"question"] && !self.links[row[@"path"]])unlinked++;
+    }
+    if(self.showsOnlineEstimate)self.summary.stringValue=[NSString stringWithFormat:@"%lu 个文件 · %lu 张图 · 约 %lu 字文本",
+        (unsigned long)count,(unsigned long)images,(unsigned long)textLength];
+    else self.summary.stringValue=[NSString stringWithFormat:@"已选 %lu 个文件 · %lu 张图片 · %lu 项题目未关联",
+        (unsigned long)count,(unsigned long)images,(unsigned long)unlinked];
+}
 - (void)toggle:(id)sender {
     NSDictionary *node=[self selectedNode];if(!node)return;BOOL include=self.include.state!=NSControlStateValueOff;NSString *path=node[@"path"];
     for(NSDictionary *row in self.rows)if(![row[@"requirements"] boolValue] && ([row[@"path"] isEqual:path] || (!node[@"material"] && [self node:node containsPath:row[@"path"]]))){if(include)[self.excluded removeObject:row[@"path"]];else [self.excluded addObject:row[@"path"]];}

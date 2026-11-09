@@ -91,3 +91,142 @@
         }];
     }
 }
+
+- (void)configureOnlineRecognition:(id)sender {
+    NSMutableDictionary *course=[self savedCourse:[self course]];
+    if(!course || self.preview || self.operationsPaused)return;
+    NSDictionary *profile=AMOnlineReviewProfile();
+    BOOL enabled=[course[@"onlineRecognitionProfile"] isEqual:profile] && [profile[@"enabled"] boolValue];
+    if(!enabled && ![profile[@"enabled"] boolValue]){
+        AMShowOnlineReviewSettings(self.window);
+        profile=AMOnlineReviewProfile();
+        if(![profile[@"enabled"] boolValue])return;
+    }
+    NSAlert *alert=NSAlert.new;
+    alert.messageText=enabled ? @"停用这门课的在线补识别？":@"授权这门课在线补识别？";
+    alert.informativeText=enabled ? @"继续使用本机规则识别。":
+        [NSString stringWithFormat:@"仅在老师材料更新且规则仍未确定要求或截止时，发送相关老师段落到 %@（%@）。每日最多 10 次，同一材料版本最多一次。",
+         profile[@"endpoint"],profile[@"model"]];
+    [alert addButtonWithTitle:enabled ? @"停用":@"授权"];[alert addButtonWithTitle:@"取消"];
+    if([alert runModal]!=NSAlertFirstButtonReturn)return;
+    id prior=course[@"onlineRecognitionProfile"];
+    if(enabled)[course removeObjectForKey:@"onlineRecognitionProfile"];else course[@"onlineRecognitionProfile"]=profile;
+    NSError *error=nil;
+    if(!SSWritePlist(@"courses.plist",self.courses,&error)){
+        if(prior)course[@"onlineRecognitionProfile"]=prior;else [course removeObjectForKey:@"onlineRecognitionProfile"];
+        [self showError:error];
+    }
+}
+
+static BOOL AMClaimOnlineRecognition(NSString *identity){
+    @synchronized(AMOnlineReviewClient.class){
+        id saved=SSReadPlist(@"online-recognition-attempts.plist");
+        if(saved && ![saved isKindOfClass:NSDictionary.class])return NO;
+        NSDictionary *old=saved ?: @{};
+        NSMutableDictionary *attempted=[old[@"attempted"] mutableCopy] ?: NSMutableDictionary.dictionary;
+        NSString *day=DDLFormatDate(NSDate.date,@"yyyy-MM-dd");
+        NSUInteger count=[old[@"day"] isEqual:day] ? [old[@"count"] unsignedIntegerValue]:0;
+        if(attempted[identity] || count>=10)return NO;
+        attempted[identity]=NSDate.date;
+        // Claim before contacting the service. Interrupted and failed requests
+        // may still be billed, so they do not get an automatic second attempt.
+        return SSWritePlist(@"online-recognition-attempts.plist",@{@"day":day,@"count":@(count+1),@"attempted":attempted},NULL);
+    }
+}
+
+- (void)enqueueOnlineRecognition:(NSDictionary *)scan course:(NSDictionary *)course previous:(NSDictionary *)previous {
+    NSDictionary *profile=AMOnlineReviewProfile();
+    if(self.preview || self.operationsPaused || ![profile[@"enabled"] boolValue] ||
+        ![course[@"onlineRecognitionProfile"] isEqual:profile] || !AMPeerSHA(scan[@"commit"]) ||
+        [scan[@"commit"] isEqual:course[@"teacherCommit"]] || ![scan[@"onlineChangedPaths"] count])return;
+    NSMutableDictionary *documents=NSMutableDictionary.dictionary,*oldBlobs=NSMutableDictionary.dictionary;
+    for(NSDictionary *doc in scan[@"documents"])documents[doc[@"path"]]=doc;
+    for(NSDictionary *doc in previous[@"documents"])oldBlobs[doc[@"path"]]=doc[@"blobSHA"];
+    NSMutableDictionary *counts=NSMutableDictionary.dictionary;
+    for(NSDictionary *row in scan[@"candidates"])if(row[@"path"])counts[row[@"path"]]=@([counts[row[@"path"]] unsignedIntegerValue]+1);
+    for(NSDictionary *candidate in scan[@"candidates"]){
+        NSString *path=candidate[@"path"];
+        NSDictionary *document=path ? documents[path]:nil;
+        NSString *text=document[@"text"],*blob=document[@"blobSHA"];
+        NSString *snippet=candidate[@"snippet"];
+        NSDictionary *rule=SSEnrichDiscovery(candidate);
+        BOOL needsRequirements=![rule[@"submissionRequirements"] length];
+        BOOL needsDeadline=!candidate[@"due"] && !candidate[@"suggestedDue"] && ![candidate[@"dateText"] length];
+        // Restrict automatic requests to a unique assignment in this document.
+        // Ambiguous grouping and conflicting dates remain for manual review.
+        if(!document || !AMPeerSHA(blob) || ![scan[@"onlineChangedPaths"] containsObject:path] || [oldBlobs[path] isEqual:blob] || [counts[path] unsignedIntegerValue]!=1 ||
+            [candidate[@"identityUncertain"] boolValue] || (!needsRequirements && !needsDeadline) ||
+            !snippet.length || snippet.length>14000 || SSContainsSecret([snippet dataUsingEncoding:NSUTF8StringEncoding]))continue;
+        NSRange match=[text rangeOfString:snippet];
+        if(match.location==NSNotFound)continue;
+        NSUInteger firstLine=[[text substringToIndex:match.location] componentsSeparatedByString:@"\n"].count;
+        NSString *identity=AMPeerHash(@[course[@"upstream"],path,blob]);
+        [self work:@"补充识别老师要求" forCourse:course requestKey:identity priority:0 kind:AMCourseWorkModel operation:^id(NSError **error){
+            __block BOOL authorized=NO;
+            dispatch_sync(dispatch_get_main_queue(),^{
+                NSDictionary *live=[self savedCourse:course];
+                authorized=!self.operationsPaused && [live[@"onlineRecognitionProfile"] isEqual:profile] &&
+                    [live[@"teacherCommit"] isEqual:scan[@"commit"]];
+            });
+            AMCancellationCheck cancelled=AMCurrentCancellationCheck();
+            if(!authorized || (cancelled && cancelled()) || ![profile isEqual:AMOnlineReviewProfile()] ||
+                !AMClaimOnlineRecognition(identity))return @{};
+            AMOnlineReviewClient *client=AMOnlineReviewClient.new;
+            dispatch_source_t timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_global_queue(QOS_CLASS_UTILITY,0));
+            dispatch_source_set_timer(timer,dispatch_time(DISPATCH_TIME_NOW,0),150*NSEC_PER_MSEC,30*NSEC_PER_MSEC);
+            dispatch_source_set_event_handler(timer,^{if(cancelled && cancelled())[client cancelImmediately];});
+            dispatch_resume(timer);
+            NSDictionary *raw=[client recognizeFields:snippet profile:profile error:NULL];
+            dispatch_source_cancel(timer);
+            if(!raw || client.cancelled)return @{};
+            NSDictionary *valid=AMValidateRecognizedFields(snippet,raw);
+            NSMutableDictionary *update=NSMutableDictionary.dictionary;
+            if(needsRequirements && [valid[@"requirements"] count]){
+                update[@"submissionRequirements"]=[[valid[@"requirements"] valueForKey:@"quote"] componentsJoinedByString:@"\n"];
+                update[@"onlineRequirementEvidence"]=valid[@"requirements"];
+                update[@"onlineEvidenceStart"]=@(firstLine);
+            }
+            NSDictionary *deadline=valid[@"deadline"];
+            if(needsDeadline && deadline){
+                NSCalendar *calendar=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];
+                calendar.timeZone=[NSTimeZone timeZoneWithName:document[@"timeZone"] ?: @""] ?: NSTimeZone.localTimeZone;
+                NSString *line=deadline[@"quote"];
+                NSArray *parsed=SSAssignmentsFromDocument([@"# 作业\n" stringByAppendingString:line],course[@"upstream"],path,blob,NSDate.date,calendar);
+                NSDictionary *date=parsed.count==1 ? parsed.firstObject:nil;
+                if(date[@"due"] || date[@"dateOnly"] || [date[@"relative"] boolValue]){
+                    NSMutableDictionary *anchored=date.mutableCopy;
+                    anchored[@"line"]=@(firstLine+[deadline[@"line"] unsignedIntegerValue]-1);
+                    if([date[@"relative"] boolValue]){
+                        SSGit *reader=SSGit.new;
+                        if(![reader validateCourse:course error:NULL])return update;
+                        anchored=[[reader dateReferenceForCandidate:anchored head:scan[@"commit"] path:course[@"path"]] mutableCopy];
+                    }
+                    for(NSString *key in @[@"due",@"suggestedDue",@"dateBasis",@"dateOnly",@"relative",@"relativeToken",@"clock",
+                        @"needsDate",@"needsTime",@"dateText",@"deadlineText",@"timeZone",@"warnings",@"line"])if(anchored[key])update[key]=anchored[key];
+                }
+            }
+            if(update.count){update[@"onlineRecognitionProfile"]=profile;update[@"requiresReview"]=@YES;}
+            return update;
+        } completion:^(NSDictionary *update,NSError *error){
+            if(!update.count || ![self.reports[course[@"fork"]][@"commit"] isEqual:scan[@"commit"]] ||
+                ![[self savedCourse:course][@"onlineRecognitionProfile"] isEqual:profile] || ![AMOnlineReviewProfile() isEqual:profile])return;
+            NSArray *existing=self.deferredScans[course[@"fork"]][@"candidates"] ?: self.candidates[course[@"fork"]];
+            NSMutableArray *next=existing.mutableCopy;
+            NSUInteger index=[next indexOfObjectPassingTest:^BOOL(NSDictionary *row,NSUInteger i,BOOL *stop){
+                return [row[@"id"] isEqual:candidate[@"id"]] && [row[@"blobSHA"] isEqual:blob];
+            }];
+            if(!next || index==NSNotFound)return;
+            NSMutableDictionary *merged=[next[index] mutableCopy];[merged addEntriesFromDictionary:update];next[index]=merged;
+            if(self.hasUnsavedReview){
+                if(!self.deferredScans)self.deferredScans=NSMutableDictionary.dictionary;
+                NSMutableDictionary *deferred=[(self.deferredScans[course[@"fork"]] ?: scan) mutableCopy];
+                deferred[@"candidates"]=next;self.deferredScans[course[@"fork"]]=deferred;
+            }else{
+                self.candidates[course[@"fork"]]=next;
+                NSError *saveError=nil;
+                if(!SSWritePlist(@"discoveries.plist",self.discoveryEnvelope,&saveError)){self.candidates[course[@"fork"]]=existing;[self showError:saveError];return;}
+                [self refreshPresentation];
+            }
+        }];
+    }
+}

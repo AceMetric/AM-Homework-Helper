@@ -42,12 +42,22 @@ NS_ASSUME_NONNULL_END
 
 NS_ASSUME_NONNULL_BEGIN
 NSDictionary *AMOnlineReviewSettings(void);
+NSDictionary *AMOnlineReviewProfile(void);
+NSDictionary *AMOnlineReviewRates(NSDictionary *profile);
+BOOL AMOnlineReviewSaveRates(NSDictionary *profile, NSDictionary *rates, NSError **error);
+NSString *AMOnlineReviewUsageLabel(NSDictionary *profile);
+NSDictionary *AMValidateRecognizedFields(NSString *source,NSDictionary *suggestion);
+#ifdef DDL_TESTING
+NSDictionary *AMReviewBenchmarkMessages(NSDictionary *context);
+#endif
+BOOL AMOnlineReviewSaveCompatible(NSString *provider, NSString *endpoint, NSString *model, NSString *key, BOOL vision, BOOL json, BOOL enabled, NSError **error);
 NSString *AMOnlineReviewCurrentModel(void);
 BOOL AMOnlineReviewSelectModel(NSString *model,NSError **error);
 NSDictionary *AMOnlineReviewUploadSummary(void);
 BOOL AMOnlineReviewSaveSettings(BOOL enabled, NSString *key, NSError **error);
 void AMOnlineReviewCleanup(void);
 NSUInteger AMOnlineReviewPendingUploads(void);
+BOOL AMOnlineReviewRegisterWithProfile(NSDictionary *context,NSDictionary *report,NSString *courseID,NSDictionary *profile,NSError **error);
 BOOL AMOnlineReviewRegisterWithModel(NSDictionary *context,NSDictionary *report,NSString *courseID,NSString *model,NSError **error);
 BOOL AMOnlineReviewRegister(NSDictionary *context,NSDictionary *report,NSString *courseID,NSError **error);
 void AMOnlineReviewFailed(NSString *batch);
@@ -59,6 +69,10 @@ void AMShowOnlineReviewSettings(NSWindow * _Nullable parent);
 @property(nullable) NSString *operationID;
 @property(nullable) NSString *model;
 @property NSUInteger requestLimit;
+@property(copy,nullable) NSDictionary *profile;
+@property BOOL deepReview;
+- (BOOL)testProvider:(NSDictionary *)profile error:(NSError **)error;
+- (nullable NSDictionary *)recognizeFields:(NSString *)text profile:(NSDictionary *)profile error:(NSError **)error;
 @property(readonly) NSUInteger requestsUsed;
 - (void)cancelImmediately;
 - (NSDictionary * _Nullable)scoreJSON:(NSDictionary *)input instruction:(NSString *)instruction images:(NSArray *)images error:(NSError **)error;

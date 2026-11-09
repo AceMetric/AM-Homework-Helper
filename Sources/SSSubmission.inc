@@ -128,6 +128,10 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
 @property(nonatomic) BOOL checking;
 @property BOOL localChecking;
 @property BOOL reportStale;
+@property BOOL deepReview;
+@property BOOL confirmedOnlineDeep;
+@property (copy) void (^workbenchReportChanged)(NSDictionary *);
+@property (copy) void (^workbenchStatusChanged)(NSString *);
 @property BOOL closed;
 @property BOOL finalValidation;
 @property NSString *assistantFingerprint;
@@ -371,11 +375,11 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
 - (void)checkNow:(id)sender {
     if((self.checking && (!self.onlineClient || self.localChecking)) || self.closed)return;
     if(!self.performCheck){self.validation.hidden=NO;self.validation.stringValue=@"检查尚未准备好，请返回文件列表后重试。";self.validation.textColor=NSColor.systemRedColor;return;}
-    __block NSString *localID=nil;localID=AMOperationBegin(@"本机文件检查",self.course[@"fork"] ?: @"当前文件",YES,^{self.previewGeneration++;self.localChecking=NO;self.checking=self.onlineClient!=nil;self.primary.enabled=YES;self.validation.stringValue=@"检查已取消，可重新检查。";AMOperationFinish(localID,@"cancelled",@"检查已取消");});self.operationID=localID;self.operationView.operationID=self.operationID;self.operationView.hidesCancellation=NO;self.localChecking=YES;self.checking=YES;self.primary.enabled=NO;self.assistantButton.enabled=NO;self.onlineButton.enabled=NO;self.validation.textColor=Muted();self.validation.stringValue=self.finalValidation ? @"正在核对提交版本…":@"读取文件 → 检查结构、附件与未完成项…";
+    __block NSString *localID=nil;localID=AMOperationBegin(@"本机文件检查",self.course[@"fork"] ?: @"当前文件",YES,^{self.previewGeneration++;self.localChecking=NO;self.checking=self.onlineClient!=nil;self.primary.enabled=YES;if(self.workbenchStatusChanged)self.workbenchStatusChanged(@"");self.validation.stringValue=@"检查已取消，可重新检查。";AMOperationFinish(localID,@"cancelled",@"检查已取消");});self.operationID=localID;self.operationView.operationID=self.operationID;self.operationView.hidesCancellation=NO;self.localChecking=YES;self.checking=YES;self.primary.enabled=NO;self.assistantButton.enabled=NO;self.onlineButton.enabled=NO;self.validation.textColor=Muted();self.validation.stringValue=self.finalValidation ? @"正在核对提交版本…":@"读取文件 → 检查结构、附件与未完成项…";
     NSUInteger generation=++self.previewGeneration;BOOL final=self.finalValidation;self.finalValidation=NO;NSString *extra=self.supplement.string.copy;NSArray *paths=self.selectedPaths.copy,*ids=self.taskIDs.copy;NSDictionary *previous=self.report,*materialsAtStart=self.reviewMaterialsSnapshot;NSMutableDictionary *runCache=self.checkCache.mutableCopy;__weak typeof(self) owner=self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{NSError *error=nil;NSDictionary *bundle=owner.performCheck(paths,ids,extra,runCache,^BOOL{return !owner || owner.previewGeneration!=generation;},&error);
         NSError *materialError=nil;BOOL materialsCurrent=!final || !materialsAtStart || AMReviewMaterialsCurrent(materialsAtStart,&materialError);
-        dispatch_async(dispatch_get_main_queue(),^{SSSubmissionController *self=owner;if(!self || self.previewGeneration!=generation)return;self.checkCache=runCache;self.localChecking=NO;self.checking=self.onlineClient!=nil;self.primary.enabled=YES;self.assistantButton.enabled=YES;self.onlineButton.enabled=YES;AMOperationFinish(localID,bundle ? @"success":@"failed",bundle ? @"本机已检查范围完成；答案正确性尚未核对":(error.localizedDescription ?: @"检查未完成"));
+        dispatch_async(dispatch_get_main_queue(),^{SSSubmissionController *self=owner;if(!self || self.previewGeneration!=generation)return;self.checkCache=runCache;self.localChecking=NO;self.checking=self.onlineClient!=nil;self.primary.enabled=YES;if(self.workbenchStatusChanged)self.workbenchStatusChanged(@"");self.assistantButton.enabled=YES;self.onlineButton.enabled=YES;AMOperationFinish(localID,bundle ? @"success":@"failed",bundle ? @"本机已检查范围完成；答案正确性尚未核对":(error.localizedDescription ?: @"检查未完成"));
             if(self.onlineClient){self.operationID=self.onlineClient.operationID;self.operationView.operationID=self.operationID;self.operationView.hidesCancellation=YES;}
             if(!bundle || [bundle[@"report"][@"cancelled"] boolValue]){self.report=nil;self.assistantButton.enabled=NO;self.onlineButton.enabled=NO;self.validation.stringValue=error.localizedDescription ?: @"检查未完成，文件和输入已保留，可重试。";self.validation.textColor=NSColor.systemRedColor;return;}
             if(![extra isEqual:self.supplement.string]){self.report=nil;self.validation.stringValue=@"检查期间题目被修改，请重新检查。";return;}
@@ -417,12 +421,56 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
     NSMutableSet *checked=NSMutableSet.set,*unverified=NSMutableSet.set;NSUInteger rendered=0,mathPending=0;
     for(NSDictionary *row in self.report[@"coverage"]){if([row[@"kind"] isEqual:@"math"]){if([row[@"status"] hasPrefix:@"已渲染"])rendered++;else mathPending++;}else if([row[@"path"] length]){if([row[@"status"] hasPrefix:@"已检查"])[checked addObject:row[@"path"]];else [unverified addObject:row[@"path"]];}}
     NSMutableString *status=[NSMutableString stringWithFormat:@"本机：%lu 个文件已检查 · %lu 个未覆盖\n",(unsigned long)checked.count,(unsigned long)unverified.count];
-    if(effective)[status appendFormat:@"%@：%lu 个文件已检查 · %lu 项未覆盖 · %lu 项未选择发送\n",[effectiveJob[@"provider"] isEqual:@"Gemini"] ? @"Gemini":@"助手",(unsigned long)[effective[@"checked"] count],(unsigned long)groups.count,(unsigned long)[scope[@"excluded"] count]];else [status appendString:self.onlineClient ? @"在线：检查中\n":@"在线：尚未复核\n"];
+    if(effective)[status appendFormat:@"%@：%lu 个文件已检查 · %lu 项未覆盖 · %lu 项未选择发送\n",effectiveJob[@"provider"] ?: @"助手",(unsigned long)[effective[@"checked"] count],(unsigned long)groups.count,(unsigned long)[scope[@"excluded"] count]];else [status appendString:self.onlineClient ? @"在线：检查中\n":@"在线：尚未复核\n"];
     [status appendFormat:@"公式渲染：%lu 个文档完成 · %lu 个未覆盖",(unsigned long)rendered,(unsigned long)mathPending];
     self.coverage.toolTip=nil;self.coverage.string=status;
     self.coverageLabel.stringValue=[NSString stringWithFormat:@"%lu 个文件 · %lu 项建议%@",(unsigned long)checked.count,(unsigned long)unique.count,(unverified.count+groups.count) ? [NSString stringWithFormat:@" · %lu 项未覆盖",(unsigned long)(unverified.count+groups.count)]:@""];
     if(effective[@"failure"])self.coverageLabel.stringValue=@"在线复核未完成 · 已有结果保留";else if(!effective || self.onlineClient)self.coverageLabel.stringValue=[NSString stringWithFormat:@"%lu 个文件 · %@",(unsigned long)checked.count,self.onlineClient ? @"正在复核":@"在线尚未复核"];
     self.coverageLabel.toolTip=status;
+    if(self.workbenchReportChanged && self.report){
+        // Start with all original requirements. A missing or ungrounded model
+        // result must remain visibly pending instead of vanishing from the list.
+        NSMutableDictionary *matched=NSMutableDictionary.dictionary;
+        for(NSDictionary *check in effective[@"requirementChecks"]){
+            NSString *requirement=check[@"requirement"];
+            if(!matched[requirement] || ![check[@"status"] isEqual:@"checked"])matched[requirement]=check;
+        }
+        NSMutableArray *checks=NSMutableArray.array;
+        NSMutableSet *seen=NSMutableSet.set;
+        NSUInteger satisfied=0,problems=0;
+        for(NSString *raw in [self.report[@"requirements"] componentsSeparatedByString:@"\n"]){
+            NSString *requirement=[raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            if(!requirement.length || [requirement hasPrefix:@"#"] || [seen containsObject:requirement])continue;
+            [seen addObject:requirement];
+            NSDictionary *check=matched[requirement] ?: @{@"requirement":requirement,@"status":@"unchecked",@"reason":@"尚无可核对的证据"};
+            if([check[@"status"] isEqual:@"checked"])satisfied++;
+            if([@[@"issue",@"partial"] containsObject:check[@"status"]])problems++;
+            [checks addObject:check];
+            if(checks.count>=100)break;
+        }
+        NSDictionary *(^previewEvidence)(NSDictionary *)=^NSDictionary *(NSDictionary *entry){
+            NSDictionary *asset=self.snapshot[@"files"][entry[@"path"] ?: @""];
+            NSString *notebook=asset[@"notebookDocument"];
+            if(!notebook.length)return entry;
+            NSMutableDictionary *copy=entry.mutableCopy;
+            copy[@"viewPath"]=notebook;copy[@"viewLine"]=asset[@"line"] ?: @1;
+            copy[@"viewVersion"]=self.snapshot[@"files"][notebook][@"version"] ?: @"";
+            if(asset[@"cell"])copy[@"cell"]=asset[@"cell"];
+            return copy;
+        };
+        NSMutableArray *displayChecks=NSMutableArray.array,*displayIssues=NSMutableArray.array;
+        for(NSDictionary *check in checks)[displayChecks addObject:previewEvidence(check)];
+        for(NSDictionary *issue in unique)[displayIssues addObject:previewEvidence(issue)];
+        NSUInteger pending=checks.count-satisfied-problems;
+        NSString *conclusion=(problems || unique.count) ? @"发现需要处理的问题":
+            (!checks.count || pending || unverified.count || groups.count || effective[@"failure"]) ? @"还有内容待核对":@"已核对当前要求";
+        self.workbenchReportChanged(@{@"title":conclusion,@"summary":[NSString stringWithFormat:@"%lu 条已核对 · %lu 条需处理 · %lu 条待核对",(unsigned long)satisfied,(unsigned long)problems,(unsigned long)pending],
+            @"tone":(problems || pending || unique.count || groups.count) ? @"warning":@"neutral",
+            @"provider":effectiveJob[@"provider"] ?: @"本机",@"model":effectiveJob[@"model"] ?: @"",
+            @"checks":displayChecks,@"issues":displayIssues,@"coverage":status,@"date":NSDate.date,@"scope":self.checkOnly ? @"整份作业范围":@"本次提交文件",
+            @"failure":self.reviewFailure[@"reason"] ?: effective[@"failure"][@"reason"] ?: @""});
+    }
+
     self.reviewModelLabel.hidden=self.checkOnly || ![self.course[@"fork"] length];self.reviewModelLabel.stringValue=[NSString stringWithFormat:@"%@ · %@",self.course[@"fork"] ?: @"",self.course[@"branch"] ?: @""];
     [self.findingsTable reloadData];if(unique.count){NSUInteger index=[unique indexOfObjectPassingTest:^BOOL(NSDictionary *row,NSUInteger i,BOOL *stop){return [row[@"id"] isEqual:selected];}];NSUInteger target=index==NSNotFound ? 0:index;if(self.findingsTable.selectedRow==(NSInteger)target)[self tableViewSelectionDidChange:[NSNotification notificationWithName:NSTableViewSelectionDidChangeNotification object:self.findingsTable]];else [self.findingsTable selectRowIndexes:[NSIndexSet indexSetWithIndex:target] byExtendingSelection:NO];}else{self.documentPreview.markdown=AMPreflightReportMarkdown(self.report,self.snapshot,effective);[self layoutReport];}
 }
@@ -455,39 +503,49 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
     if(self.onlineClient && !self.queueOnlineRequest){AMOperationCancel(self.onlineClient.operationID);[self.onlineClient cancelImmediately];self.onlineButton.enabled=NO;self.validation.stringValue=@"正在终止复核；上传副本稍后清理，已发出的请求可能计费。";return;}
     [self pollReview:nil];if(self.reportStale || (self.checking && !self.onlineClient) || self.closed || !self.report)return;
     if(![AMOnlineReviewSettings()[@"enabled"] boolValue]){AMShowOnlineReviewSettings(self.window);if(![AMOnlineReviewSettings()[@"enabled"] boolValue])return;}
-    NSDictionary *settings=AMOnlineReviewSettings();BOOL reuse=self.confirmedOnlineSnapshot && [self.confirmedOnlineSettings[@"model"] ?: @"" isEqual:settings[@"model"] ?: @""] && [self.confirmedOnlineVersion isEqual:self.report[@"version"]] && [self.confirmedOnlineRequirements isEqual:self.requirements] && [self.confirmedOnlineSettings[@"enabled"] isEqual:settings[@"enabled"]];
-    if(!reuse){PFMaterials *materials=[[PFMaterials alloc] initWithSnapshot:self.reviewMaterialsSnapshot ?: self.snapshot report:self.report requirements:self.requirements];materials.materialRoot=[NSURL fileURLWithPath:self.course[@"path"]];materials.window.title=@"预览发送给 Gemini 的材料";materials.destination.hidden=YES;
-        for(NSView *view in materials.window.contentView.subviews){if([view.identifier isEqual:@"handoff-hint"] && [view isKindOfClass:NSTextField.class])[(NSTextField *)view setStringValue:@"只发送所选材料给 Gemini；免费服务可能使用材料改进产品。不会执行代码或提交。"];
-            if([view.identifier isEqual:@"material-prepare"] && [view isKindOfClass:NSButton.class])[(NSButton *)view setTitle:@"开始在线复核"];}
+    NSDictionary *settings=AMOnlineReviewProfile();BOOL deep=self.deepReview;
+    BOOL reuse=self.confirmedOnlineSnapshot && [self.confirmedOnlineSettings isEqual:settings] && self.confirmedOnlineDeep==deep &&
+        [self.confirmedOnlineVersion isEqual:self.report[@"version"]] && [self.confirmedOnlineRequirements isEqual:self.requirements];
+    if(!reuse){
+        PFMaterials *materials=[[PFMaterials alloc] initWithSnapshot:self.reviewMaterialsSnapshot ?: self.snapshot report:self.report requirements:self.requirements];
+        materials.materialRoot=[NSURL fileURLWithPath:self.course[@"path"]];
+        materials.window.title=[NSString stringWithFormat:@"%@ · %@",deep ? @"确认深入检查":@"确认发送",settings[@"model"]];
+        materials.destination.hidden=YES;materials.showsOnlineEstimate=YES;[materials updateSummary];
+        NSString *destination=[NSString stringWithFormat:@"将所选材料发送到 %@，使用 %@。费用由该供应商收取。",settings[@"endpoint"],settings[@"model"]];
+        for(NSView *view in materials.window.contentView.subviews){
+            if([view.identifier isEqual:@"handoff-hint"] && [view isKindOfClass:NSTextField.class])[(NSTextField *)view setStringValue:destination];
+            if([view.identifier isEqual:@"material-prepare"] && [view isKindOfClass:NSButton.class])[(NSButton *)view setTitle:@"确认发送并检查"];
+        }
         [materials.window center];NSModalResponse response=[NSApp runModalForWindow:materials.window];[materials.window orderOut:nil];if(response!=NSModalResponseOK)return;[self pollReview:nil];if(self.reportStale)return;
-        self.requirements=materials.requirements;self.reviewMaterialsSnapshot=[materials selectedSnapshot];self.reviewMaterialImages=[materials selectedImages];[self bindReviewMaterials];self.confirmedOnlineImages=[materials selectedImages];self.confirmedOnlineSnapshot=[materials selectedSnapshot];self.confirmedOnlineVersion=self.report[@"version"];self.confirmedOnlineRequirements=self.requirements;self.confirmedOnlineSettings=settings;if(![self saveReviewMaterials]){self.confirmedOnlineSnapshot=nil;return;}
+        self.requirements=materials.requirements;self.reviewMaterialsSnapshot=[materials selectedSnapshot];self.reviewMaterialImages=[materials selectedImages];[self bindReviewMaterials];self.confirmedOnlineImages=[materials selectedImages];self.confirmedOnlineSnapshot=[materials selectedSnapshot];self.confirmedOnlineVersion=self.report[@"version"];self.confirmedOnlineRequirements=self.requirements;self.confirmedOnlineSettings=settings;self.confirmedOnlineDeep=deep;if(![self saveReviewMaterials]){self.confirmedOnlineSnapshot=nil;return;}
     }
     NSArray *images=self.confirmedOnlineImages;NSDictionary *snapshot=self.confirmedOnlineSnapshot,*report=self.report,*focus=self.onlineFocus;NSString *requirements=self.requirements,*courseID=self.course[@"fork"] ?: @"";
-    NSDictionary *requestIdentity=@{@"version":report[@"version"],@"paths":snapshot[@"paths"] ?: @[],@"images":[images valueForKey:@"path"] ?: @[],@"roles":snapshot[@"reviewRoles"] ?: @{},@"links":snapshot[@"questionLinks"] ?: @{},@"requirements":requirements ?: @"",@"focus":focus ?: @{},@"model":AMOnlineReviewCurrentModel()};NSString *requestKey=[@"review|" stringByAppendingString:AMPreflightHash([NSJSONSerialization dataWithJSONObject:requestIdentity options:NSJSONWritingSortedKeys error:NULL])];
+    NSDictionary *requestIdentity=@{@"version":report[@"version"],@"paths":snapshot[@"paths"] ?: @[],@"images":[images valueForKey:@"path"] ?: @[],@"roles":snapshot[@"reviewRoles"] ?: @{},@"links":snapshot[@"questionLinks"] ?: @{},@"requirements":requirements ?: @"",@"focus":focus ?: @{},@"profile":settings,@"deep":@(deep)};NSString *requestKey=[@"review|" stringByAppendingString:AMPreflightHash([NSJSONSerialization dataWithJSONObject:requestIdentity options:NSJSONWritingSortedKeys error:NULL])];
     AMOnlineReviewClient *existing=self.onlineRequests[requestKey];if(existing){self.operationID=existing.operationID;self.operationView.operationID=self.operationID;self.validation.stringValue=@"相同范围已在处理中，可从后台任务查看进度。";return;}
+    if(self.workbenchStatusChanged)self.workbenchStatusChanged(@"正在在线检查…");
     self.checking=YES;self.primary.enabled=YES;self.assistantButton.enabled=YES;self.supplement.editable=YES;AMConfigureStopButton(self.onlineButton,@"停止复核");self.operationView.hidesCancellation=YES;self.validation.stringValue=@"准备所选材料，检查隐私与图片…";self.validation.textColor=Muted();AMOnlineReviewClient *client=AMOnlineReviewClient.new;
 #ifdef DDL_TESTING
     if(self.onlineClientFactory)client=self.onlineClientFactory();
 #endif
-    client.model=client.model ?: AMOnlineReviewCurrentModel();client.requestLimit=[snapshot[@"requestLimit"] unsignedIntegerValue];self.reviewFailure=nil;self.onlineClient=client;NSString *extraAtStart=self.supplement.string.copy;NSDate *started=NSDate.date;NSUInteger generation=++self.previewGeneration;__weak typeof(self) owner=self;
+    client.profile=settings;client.deepReview=deep;client.model=client.model ?: settings[@"model"];client.requestLimit=[snapshot[@"requestLimit"] unsignedIntegerValue];self.reviewFailure=nil;self.onlineClient=client;NSString *extraAtStart=self.supplement.string.copy;NSDate *started=NSDate.date;NSUInteger generation=++self.previewGeneration;__weak typeof(self) owner=self;
     if(!self.onlineRequests)self.onlineRequests=NSMutableDictionary.dictionary;self.onlineRequests[requestKey]=client;
     self.operationID=AMOperationEnqueue(requestKey,@"在线复核",client.model ?: AMOnlineReviewCurrentModel(),@[@"model-service"],100,^(NSString *identifier){client.operationID=identifier;NSError *error=nil;NSURL *folder=AMPreflightFolder(NSUUID.UUID.UUIDString);BOOL (^checkScope)(NSDictionary *,NSError **)=owner.reviewScopeCurrent;
         BOOL current=owner && (!checkScope || checkScope(snapshot,&error));
         NSDictionary *context=current ? AMPreflightExport(report,snapshot,requirements,images,folder,&error):nil;NSDictionary *answer=nil;
-        if(!client.cancelled && context && (!checkScope || checkScope(snapshot,&error)) && AMReviewMaterialsCurrent(snapshot,&error) && AMOnlineReviewRegisterWithModel(context,report,courseID,client.model,&error))answer=[client reviewContext:context folder:folder focus:focus progress:^(NSString *stage){dispatch_async(dispatch_get_main_queue(),^{if(owner && owner.previewGeneration==generation && !client.cancelled)owner.validation.stringValue=[stage stringByAppendingFormat:@" · 已用 %.0f 秒",-started.timeIntervalSinceNow];});} error:&error];
+        if(!client.cancelled && context && (!checkScope || checkScope(snapshot,&error)) && AMReviewMaterialsCurrent(snapshot,&error) && AMOnlineReviewRegisterWithProfile(context,report,courseID,settings,&error))answer=[client reviewContext:context folder:folder focus:focus progress:^(NSString *stage){dispatch_async(dispatch_get_main_queue(),^{if(owner && owner.previewGeneration==generation && !client.cancelled)owner.validation.stringValue=[stage stringByAppendingFormat:@" · 已用 %.0f 秒",-started.timeIntervalSinceNow];});} error:&error];
         NSError *materialError=nil;if(!AMReviewMaterialsCurrent(snapshot,&materialError) || (checkScope && !checkScope(snapshot,&materialError))){answer=nil;error=materialError;}if(client.cancelled){answer=nil;error=[NSError errorWithDomain:@"AMOnlineReview" code:NSUserCancelledError userInfo:@{NSLocalizedDescriptionKey:@"在线复核已终止，保留本机报告。"}];}if(answer){AMPreflightPoll();NSDictionary *saved=AMPreflightJobForReport(report[@"version"]);if(![saved[@"id"] isEqual:context[@"batchID"]] || !saved[@"result"]){answer=nil;error=[NSError errorWithDomain:@"AMOnlineReview" code:1 userInfo:@{NSLocalizedDescriptionKey:@"结果写入失败，保留本机报告，请重试。"}];}}if(!answer && context)AMOnlineReviewRecordFailure(context[@"batchID"],error);AMOperationFinish(client.operationID,answer ? ([answer[@"partial"] boolValue] ? @"failed":@"success"):(client.cancelled ? @"cancelled":@"failed"),answer ? ([answer[@"partial"] boolValue] ? @"复核部分完成，可查看未覆盖范围":@"复核完成"):(error.localizedDescription ?: @"在线复核未完成"));
         dispatch_async(dispatch_get_main_queue(),^{if(!owner || ![owner detachOnlineClient:client generation:generation])return;if(![extraAtStart isEqual:owner.supplement.string] || ![report[@"version"] isEqual:owner.report[@"version"]]){owner.validation.stringValue=@"原范围的复核已结束，当前填写保留；重新本机检查后可复核新范围。";return;}owner.primary.enabled=YES;owner.supplement.editable=YES;owner.onlineButton.enabled=YES;owner.assistantButton.enabled=YES;owner.acknowledge.state=NSControlStateValueOff;owner.assistantFingerprint=AMPreflightJobForReport(owner.report[@"version"])[@"fingerprint"];[owner refreshReport];[owner pollReview:nil];if(owner.reportStale)return;
             owner.validation.stringValue=answer ? ([answer[@"cached"] boolValue] ? @"已复用报告":([answer[@"partial"] boolValue] ? @"复核完成，部分材料未覆盖":@"复核完成")):(error.localizedDescription ?: @"复核已取消，保留本机报告。");
             owner.validation.textColor=answer ? Muted():NSColor.systemOrangeColor;
             if(answer && [answer[@"completedUnits"] unsignedIntegerValue]<[answer[@"totalUnits"] unsignedIntegerValue]){owner.onlineButton.title=@"继续检查";owner.validation.stringValue=[NSString stringWithFormat:@"检查未完成 · 已完成 %@/%@ 部分",answer[@"completedUnits"],answer[@"totalUnits"]];}
-            if(!answer){owner.reviewFailure=@{@"reason":error.localizedDescription ?: @"复核已取消",@"code":@(error.code)};owner.validation.stringValue=error.code==1001 ? @"输出达到上限":(client.cancelled ? @"复核已停止":@"在线复核未完成");owner.validation.toolTip=nil;owner.onlineButton.title=@"继续检查";owner.findingDetail.markdown=AMPreflightReportMarkdown(owner.report,owner.snapshot,PFEffectiveReview(owner.report[@"version"]));}
+            if(!answer){owner.reviewFailure=@{@"reason":error.localizedDescription ?: @"复核已取消",@"code":@(error.code)};[owner refreshReport];owner.validation.stringValue=error.code==1001 ? @"输出达到上限":(client.cancelled ? @"复核已停止":@"在线复核未完成");owner.validation.toolTip=nil;owner.onlineButton.title=@"继续检查";owner.findingDetail.markdown=AMPreflightReportMarkdown(owner.report,owner.snapshot,PFEffectiveReview(owner.report[@"version"]));}
 
         });
     },^(BOOL beforeStart){[client cancelImmediately];if(beforeStart)dispatch_async(dispatch_get_main_queue(),^{if(![owner detachOnlineClient:client generation:generation])return;owner.validation.stringValue=@"已取消排队，未发送材料。";});});client.operationID=self.operationID;self.operationView.operationID=self.operationID;
 }
 - (BOOL)detachOnlineClient:(AMOnlineReviewClient *)client generation:(NSUInteger)generation {
     for(NSString *key in self.onlineRequests.allKeys)if(self.onlineRequests[key]==client)[self.onlineRequests removeObjectForKey:key];
-    if(self.onlineClient!=client)return NO;self.onlineClient=self.onlineRequests.allValues.lastObject;self.checking=self.localChecking || self.onlineRequests.count>0;if(self.onlineClient)AMConfigureStopButton(self.onlineButton,@"停止复核");else{self.onlineButton.title=@"在线复核…";self.onlineButton.image=nil;self.onlineButton.imagePosition=NSNoImage;self.onlineButton.bordered=YES;self.onlineButton.toolTip=nil;self.onlineButton.accessibilityLabel=@"在线复核";}self.operationView.hidesCancellation=self.onlineClient!=nil;self.onlineButton.enabled=self.onlineClient || (self.report && !self.reportStale);
+    if(self.onlineClient!=client)return NO;if(self.workbenchStatusChanged)self.workbenchStatusChanged(@"");self.onlineClient=self.onlineRequests.allValues.lastObject;self.checking=self.localChecking || self.onlineRequests.count>0;if(self.onlineClient)AMConfigureStopButton(self.onlineButton,@"停止复核");else{self.onlineButton.title=@"在线复核…";self.onlineButton.image=nil;self.onlineButton.imagePosition=NSNoImage;self.onlineButton.bordered=YES;self.onlineButton.toolTip=nil;self.onlineButton.accessibilityLabel=@"在线复核";}self.operationView.hidesCancellation=self.onlineClient!=nil;self.onlineButton.enabled=self.onlineClient || (self.report && !self.reportStale);
     if(!self.localChecking){self.primary.enabled=YES;self.supplement.editable=YES;self.assistantButton.enabled=self.report!=nil && !self.reportStale;}
     if(self.onlineClient){self.operationID=self.onlineClient.operationID;self.operationView.operationID=self.operationID;self.operationView.hidesCancellation=YES;}
     return !self.closed && self.previewGeneration==generation && !self.onlineClient;

@@ -51,7 +51,7 @@ static NSSet *AMCoursePathIndex(NSArray *paths){
         dispatch_async(dispatch_get_main_queue(),^{
             SSCourseController *self=owner;if(!self)return;
             [self.assignmentProgressReads removeObject:key];self.assignmentProgress[key]=indexed;
-            if([[self course][@"fork"] isEqual:course[@"fork"]])[self refreshPresentation];
+            if(!self.inbox && (!self.selectedFork || [[self course][@"fork"] isEqual:course[@"fork"]]))[self refreshPresentation];
         });
     });
 }

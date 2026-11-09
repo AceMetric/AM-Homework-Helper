@@ -25,6 +25,22 @@
 - (NSArray *)retainingSkill:(NSArray *)previous current:(NSArray *)current documents:(NSArray *)documents {
     NSMutableDictionary *byID=NSMutableDictionary.dictionary;for(NSDictionary *record in SSReconcileDiscoveryIDs(previous,current))if(record[@"id"] && ![record[@"kind"] isEqual:@"exam"])byID[record[@"id"]]=record;
     for(NSDictionary *record in previous)if([record[@"recognizer"] isEqual:@"skill-v1"] && ![record[@"kind"] isEqual:@"exam"])for(NSDictionary *document in documents)if([record[@"path"] isEqual:document[@"path"]] && [record[@"repository"] isEqual:document[@"repository"]] && [record[@"blobSHA"] isEqual:document[@"blobSHA"]]){byID[record[@"id"]]=record;break;}
+    NSDictionary *onlineProfile=nil;
+    for(NSDictionary *record in previous)if(record[@"onlineRecognitionProfile"]){
+        NSDictionary *next=byID[record[@"id"]];
+        if(!next || ![next[@"blobSHA"] isEqual:record[@"blobSHA"]])continue;
+        onlineProfile=onlineProfile ?: AMOnlineReviewProfile();
+        if(![record[@"onlineRecognitionProfile"] isEqual:onlineProfile])continue;
+        BOOL authorized=NO;
+        for(NSDictionary *course in self.courses)if([course[@"upstream"] isEqual:record[@"repository"]] &&
+            [course[@"onlineRecognitionProfile"] isEqual:onlineProfile]){authorized=YES;break;}
+        if(!authorized)continue;
+        NSMutableDictionary *merged=next.mutableCopy;
+        for(NSString *key in @[@"onlineRecognitionProfile",@"onlineRequirementEvidence",@"onlineEvidenceStart",@"submissionRequirements",
+            @"due",@"suggestedDue",@"dateBasis",@"dateOnly",@"relative",@"relativeToken",@"clock",@"needsDate",@"needsTime",
+            @"dateText",@"deadlineText",@"timeZone",@"warnings",@"line",@"requiresReview"])if(record[key])merged[key]=record[key];
+        byID[record[@"id"]]=merged;
+    }
     return [byID.allValues sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"id"] compare:b[@"id"]];}];
 }
 - (NSDictionary *)readSkillCourses:(NSArray *)courses result:(NSDictionary *)result {

@@ -2,7 +2,11 @@
     NSDictionary *task=nil;for(NSDictionary *row in self.tasksProvider ? self.tasksProvider():@[])if([row[@"id"] isEqual:identifier])task=row;
     NSDictionary *course=nil;for(NSDictionary *row in self.courses)if(AMTaskBelongsToCourse(task,row)){if(course && ![task[@"courseRepository"] length]){course=nil;break;}course=row;}
     if(!course){[self status:@"这份任务未关联 GitHub 课程，请先在任务中选择课程。" ];return;}
-    if(![self selectCourseID:course[@"fork"]])return;self.inbox=NO;self.submissionTaskID=identifier;[self commit:nil];
+    if(self.checkScopeWindow){[self showCheckWorkspace];return;}
+    self.submissionTaskID=identifier;
+    SSSubmissionController *previous=self.submission.closed && self.submission.preserveClosedDraft && !self.submission.checkOnly &&
+        !self.submission.submittedSuccessfully && [self.submission.course[@"fork"] isEqual:course[@"fork"]] ? self.submission:nil;
+    [self openSubmissionForCourse:course.copy preserving:previous];
 }
 - (void)showSubmissionHistory:(NSString *)identifier {
     if(identifier){for(NSDictionary *record in AMSubmissionRecords(NULL))if([record[@"taskIDs"] containsObject:identifier]){if(![self selectCourseID:record[@"repository"]])[self selectCourseID:nil];break;}}

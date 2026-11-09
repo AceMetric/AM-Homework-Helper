@@ -3,7 +3,7 @@
   const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   let sequence=0;
   const style=document.createElement('style');style.textContent=`
-.am-plain{font:12px ui-monospace,monospace;padding:12px;background:color-mix(in srgb,var(--ink) 7%,var(--paper));border-radius:6px}.am-plain pre{margin:0;padding:0;min-height:1.6em;background:none;white-space:pre}.am-plain pre.am-text-mark{padding-left:8px;padding-right:28px}
+.am-plain{font:12px ui-monospace,monospace;padding:12px;background:color-mix(in srgb,var(--ink) 7%,var(--paper));border-radius:6px}.am-numbered pre::before{content:attr(data-line);display:inline-block;width:4ch;margin-right:1em;text-align:right;color:var(--muted);user-select:none}.am-plain pre{margin:0;padding:0;min-height:1.6em;background:none;white-space:pre}.am-plain pre.am-text-mark{padding-left:8px;padding-right:28px}
 .am-image{position:relative;display:inline-block;margin:0;max-width:100%}.am-image>img{display:block}
 .am-annotation-box{position:absolute;border:2px solid #d70015;box-sizing:border-box;pointer-events:none}.am-text-mark{position:relative;border-left:2px solid #d70015;padding-left:8px}
 .am-note{position:absolute;right:0;top:0;pointer-events:auto}.am-note-trigger{width:26px;height:26px;border:0;border-radius:6px;background:#d70015;color:white;padding:4px;cursor:pointer}.am-note-trigger svg{fill:none;stroke:currentColor;stroke-width:1.8;width:18px;height:18px}.am-note-trigger:focus-visible{outline:3px solid #087dff;outline-offset:2px}
@@ -42,7 +42,9 @@
     const direct=typeof input.image==='string' && /^am-preview:\/\/image\/[a-z0-9-]+$/.test(input.image);
     const plain=input.plain===true;
     const plainHTML=()=>{const marked=new Set([1,...(input.annotations||[]).map(n=>Number(n.line)||1)]),chunks=[],buffer=[];const flush=()=>{if(buffer.length){chunks.push('<pre>'+esc(buffer.join('\n'))+'</pre>');buffer.length=0;}};for(const [index,line] of source.split('\n').entries()){if(marked.has(index+1)){flush();chunks.push('<pre data-line="'+(index+1)+'">'+esc(line||' ')+'</pre>');}else buffer.push(line);}flush();return '<div class="am-plain">'+chunks.join('')+'</div>';};
-    let html=direct?'<figure class="am-image"><img alt="作业图片" src="'+input.image+'"></figure>':plain?plainHTML():md.render(source);if(!direct)html=DOMPurify.sanitize(html,{USE_PROFILES:{html:true},FORBID_TAGS:['script','style','iframe','object','embed','form','input','textarea','button','link','meta','base'],FORBID_ATTR:['style','srcset']});
+    const numberedHTML=()=>'<div class="am-plain am-numbered">'+source.split('\n').map((line,index)=>
+      '<pre data-line="'+(index+1)+'">'+esc(line||' ')+'</pre>').join('')+'</div>';
+    let html=direct?'<figure class="am-image"><img alt="作业图片" src="'+input.image+'"></figure>':plain?(input.numbered && source.length<250000 && source.split("\n",4001).length<=4000 ? numberedHTML():plainHTML()):md.render(source);if(!direct)html=DOMPurify.sanitize(html,{USE_PROFILES:{html:true},FORBID_TAGS:['script','style','iframe','object','embed','form','input','textarea','button','link','meta','base'],FORBID_ATTR:['style','srcset']});
     document.getElementById('content').innerHTML=html;window.scrollTo(0,0);
     for(const img of document.querySelectorAll('#content img')){img.loading=direct?'eager':'lazy';img.decoding='async';const original=img.getAttribute('src')||'';const safe=(direct && original===input.image)?input.image:input.images?.[original];if(safe && safe.startsWith('am-preview://image/'))img.src=safe;else{img.removeAttribute('src');img.alt=img.alt||'图片不可用／未获取';}}
     for(const a of document.querySelectorAll('#content a')){a.title=a.getAttribute('href')||'';let evidence=false;try{const u=new URL(a.title);evidence=u.protocol==='https:'&&u.hostname==='am-evidence.invalid'&&!u.username&&!u.password&&u.pathname==='/';}catch{}if(!evidence)a.removeAttribute('href');}

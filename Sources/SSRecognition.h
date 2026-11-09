@@ -7,6 +7,7 @@ NSString *SSSubtaskProposalVersion(NSDictionary *record);
 NSArray *SSRecognitionSlices(NSString *text,NSString *path);
 NSString *SSRecognitionCacheKey(NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings);
 NSArray * _Nullable SSCachedRecognition(NSString *repository, NSString *path, NSString *blob, NSCalendar *calendar, NSDictionary *settings, NSMutableDictionary *cache);
+NSArray *AMQuickParseImageOutline(NSString *text, NSString *sourceID, NSDate *reference, NSCalendar *calendar);
 NSArray *AMQuickParse(NSString *text, NSString *sourceID, NSDate *reference, NSCalendar *calendar);
 NSString *AMQuickDateText(NSDate *date, NSString *zone);
 NSDictionary *AMQuickMaterial(NSString *text, NSDate *reference, NSString *zone);

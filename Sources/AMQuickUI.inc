@@ -57,7 +57,8 @@
     // A deliberate new capture of already saved text gets its own identity and duplicate preview.
     if(consumed && !pending)material=AMQuickMaterial(text,material[@"referenceDate"],material[@"timeZone"]);
     NSCalendar *cal=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];cal.timeZone=[NSTimeZone timeZoneWithName:material[@"timeZone"]];
-    NSMutableArray *entries=AMQuickParse(text,material[@"id"],material[@"referenceDate"],cal).mutableCopy;
+    NSArray *imageEntries=[self.quickState[@"imageImport"] boolValue] ? AMQuickParseImageOutline(text,material[@"id"],material[@"referenceDate"],cal):nil;
+    NSMutableArray *entries=(imageEntries.count ? imageEntries:AMQuickParse(text,material[@"id"],material[@"referenceDate"],cal)).mutableCopy;
     for(NSMutableDictionary *entry in entries)entry[@"version"]=material[@"version"];
     for(NSUInteger i=0;i<entries.count;i++)for(NSDictionary *old in self.quickState[@"entries"])if([old[@"id"] isEqual:entries[i][@"id"]]){NSMutableDictionary *retained=[entries[i] mutableCopy];for(NSString *field in old[@"editedFields"] ?: ([old[@"edited"] boolValue] ? @[@"title",@"subject",@"notes",@"dateText",@"reminderOffsets"]:@[]))if(old[field])retained[field]=old[field];retained[@"edited"]=old[@"edited"] ?: @NO;retained[@"editedFields"]=old[@"editedFields"] ?: @[];retained[@"selected"]=old[@"selected"] ?: @YES;entries[i]=retained;}
     for(NSDictionary *old in self.quickState[@"entries"])if([old[@"sourceID"] isEqual:material[@"id"]] && [old[@"edited"] boolValue]){BOOL found=NO;for(NSDictionary *entry in entries)if([entry[@"id"] isEqual:old[@"id"]])found=YES;if(!found)[entries addObject:old];}
@@ -66,8 +67,67 @@
     self.quickState[@"referenceDate"]=material[@"referenceDate"];self.quickState[@"material"]=material;self.quickState[@"entries"]=entries;NSError *error=nil;BOOL saved=[self persistQuick:&error];[self refreshQuick:saved ? [NSString stringWithFormat:@"识别 %lu 项；缺日期或时间的内容保留为草稿。",(unsigned long)entries.count]:@"草稿保存失败，输入保留，请重试。"];
 }
 - (void)quickOCR:(NSImage *)image {
-    if(!image)return;NSString *operation=AMOperationBegin(@"截图识别",@"快速录入",NO,nil);NSString *before=[self.quickState[@"text"] copy];self.quickBusy=YES;[self refreshQuick:@"正在本机识别截图文字…"];__weak typeof(self) owner=self;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{NSError *error=nil;NSDictionary *ocr=DDLOCRResultFromImage(image,&error);NSString *text=ocr[@"text"];dispatch_async(dispatch_get_main_queue(),^{AMOperationFinish(operation,text.length ? @"success":@"failed",text.length ? @"截图识别完成，请核对日期和数字":@"未识别出文字");owner.quickBusy=NO;if(![owner.quickState[@"text"] isEqual:before]){[owner refreshQuick:@"识别期间输入已修改，未覆盖。请重新选择截图。" ];return;}if(!text.length){[owner refreshQuick:@"截图未识别出文字，请换一张更清晰的截图或直接粘贴。" ];return;}owner.quickState[@"text"]=text;NSMutableArray *warnings=NSMutableArray.array;for(NSDictionary *item in ocr[@"uncertain"])[warnings addObject:[NSString stringWithFormat:@"第 %@ 行：%@",item[@"line"],item[@"text"]]];[owner.quickController setOCRPreview:image warnings:warnings.count ? [@"请对照原图核对数字或日期：\n" stringByAppendingString:[warnings componentsJoinedByString:@"\n"]]:@"请对照原图核对日期、数字和符号；OCR 不能保证全部识别正确。"];[owner refreshQuick:nil];[owner parseQuick];});});
+    if(!image || self.quickBusy)return;NSString *operation=AMOperationBegin(@"截图识别",@"快速录入",NO,nil);NSString *before=[self.quickState[@"text"] copy];self.quickBusy=YES;[self refreshQuick:@"正在本机识别截图文字…"];__weak typeof(self) owner=self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{NSError *error=nil;NSDictionary *ocr=DDLOCRResultFromImage(image,&error);NSString *text=ocr[@"layoutText"];dispatch_async(dispatch_get_main_queue(),^{AMOperationFinish(operation,text.length ? @"success":@"failed",text.length ? @"截图识别完成，请核对日期和数字":@"未识别出文字");owner.quickBusy=NO;if(![owner.quickState[@"text"] isEqual:before]){[owner refreshQuick:@"识别期间输入已修改，未覆盖。请重新选择截图。" ];return;}if(!text.length){[owner refreshQuick:@"截图未识别出文字，请换一张更清晰的截图或直接粘贴。" ];return;}owner.quickState[@"text"]=text;owner.quickState[@"imageImport"]=@YES;NSMutableArray *warnings=NSMutableArray.array;for(NSDictionary *item in ocr[@"uncertain"])[warnings addObject:[NSString stringWithFormat:@"第 %@ 行：%@",item[@"line"],item[@"text"]]];[owner.quickController setOCRPreview:image segments:ocr[@"segments"] warnings:warnings.count ? [@"请对照原图核对数字或日期：\n" stringByAppendingString:[warnings componentsJoinedByString:@"\n"]]:@"请对照原图核对日期、数字和符号；OCR 不能保证全部识别正确。"];[owner refreshQuick:nil];[owner parseQuick];});});
+}
+- (void)onlineQuickOCR {
+    if(self.quickBusy || ![self.quickState[@"imageImport"] boolValue])return;
+    NSString *text=[self.quickState[@"text"] copy];
+    if(!text.length || text.length>14000 || SSContainsSecret([text dataUsingEncoding:NSUTF8StringEncoding])){
+        [self refreshQuick:@"当前截图文字过长或含疑似凭据，请先修正文字范围。"];return;
+    }
+    NSDictionary *profile=AMOnlineReviewProfile();
+    if(![profile[@"enabled"] boolValue]){
+        [self refreshQuick:@"请先在设置里配置并启用在线检查供应商。"];return;
+    }
+    NSAlert *alert=NSAlert.new;alert.messageText=@"发送截图识别文字？";
+    alert.informativeText=[NSString stringWithFormat:@"将下方文字发送到 %@，使用 %@。最多一次请求。原图留在本机。",
+        profile[@"endpoint"],profile[@"model"]];
+    NSScrollView *scroll=[[NSScrollView alloc] initWithFrame:NSMakeRect(0,0,450,180)];scroll.hasVerticalScroller=YES;
+    NSTextView *preview=[[NSTextView alloc] initWithFrame:scroll.bounds];preview.string=text;preview.editable=NO;
+    preview.textContainer.widthTracksTextView=YES;scroll.documentView=preview;alert.accessoryView=scroll;
+    [alert addButtonWithTitle:@"发送文字"];[alert addButtonWithTitle:@"取消"];
+    if([alert runModal]!=NSAlertFirstButtonReturn)return;
+    NSArray *entries=[self.quickState[@"entries"] copy];
+    AMOnlineReviewClient *client=AMOnlineReviewClient.new;
+    NSString *operation=AMOperationBegin(@"截图补识别",profile[@"model"],YES,^{[client cancelImmediately];});
+    self.quickBusy=YES;[self refreshQuick:@"正在在线核对截图文字…"];
+    __weak typeof(self) owner=self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+        NSError *error=nil;
+        NSDictionary *answer=[client recognizeFields:text profile:profile error:&error];
+        NSDictionary *fields=answer ? AMValidateRecognizedFields(text,answer):nil;
+        dispatch_async(dispatch_get_main_queue(),^{
+            AMOperationFinish(operation,fields ? @"success":client.cancelled ? @"cancelled":@"failed",fields ? @"已核对返回原文":@"截图补识别未完成");
+            owner.quickBusy=NO;
+            if(![owner.quickState[@"text"] isEqual:text] || ![owner.quickState[@"entries"] isEqual:entries]){
+                [owner refreshQuick:@"识别期间草稿已变化，已保留当前修改。"];return;
+            }
+            if(!fields){[owner refreshQuick:error.localizedDescription ?: @"在线补识别未完成，已保留本机结果。"];return;}
+            if(entries.count!=1){[owner refreshQuick:@"需先确认截图对应一项作业，再合并补识别内容。"];return;}
+            NSMutableDictionary *draft=[entries.firstObject mutableCopy];BOOL changed=NO;
+            if(![draft[@"submissionRequirements"] length] && [fields[@"requirements"] count]){
+                draft[@"submissionRequirements"]=[[fields[@"requirements"] valueForKey:@"quote"] componentsJoinedByString:@"\n"];
+                if(![draft[@"edited"] boolValue])draft[@"notes"]=SSSuggestedNotes(draft);
+                changed=YES;
+            }
+            NSString *deadline=fields[@"deadline"][@"quote"];
+            if(![draft[@"dateText"] length] && deadline.length){
+                NSDate *reference=draft[@"referenceDate"] ?: NSDate.date;
+                NSCalendar *calendar=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];
+                calendar.timeZone=[NSTimeZone timeZoneWithName:draft[@"timeZone"] ?: @""] ?: NSTimeZone.localTimeZone;
+                NSDictionary *proposed=AMQuickParse([@"作业\n" stringByAppendingString:deadline],draft[@"sourceID"],reference,calendar).firstObject;
+                if([proposed[@"dateText"] length]){
+                    draft[@"dateText"]=proposed[@"dateText"];draft[@"deadlineEvidence"]=deadline;
+                    draft[@"hint"]=@"请对照原图确认补识别日期和时刻。";changed=YES;
+                }
+            }
+            if(changed)owner.quickState[@"entries"]=@[draft];
+            NSError *save=nil;
+            BOOL persisted=!changed || [owner persistQuick:&save];
+            [owner refreshQuick:persisted ? (changed ? @"已补充待核对字段，请确认草稿。":@"没有可补充的可靠字段，已保留现有草稿。"):save.localizedDescription];
+        });
+    });
 }
 - (void)prepareQuickSkill {
     [self parseQuick];NSDictionary *material=self.quickState[@"material"];if(!material || ![material[@"text"] isEqual:self.quickState[@"text"]])return;
@@ -116,8 +176,8 @@
     NSError *error=nil;if(![self persistQuick:&error]){[self.quickController setNotice:@"草稿未保存，操作已暂停，请检查本机存储。" busy:NO];return;}
     if([action isEqual:@"close"]){[self closeQuick];return;}
     if([action isEqual:@"source-changed"]){[self parseQuick];return;}
-    if([action isEqual:@"parse"])[self parseQuick];else if([action isEqual:@"save"])[self saveQuick];else if([action isEqual:@"skill"])[self prepareQuickSkill];
-    else if([action isEqual:@"paste"]){NSString *text=[NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString];if(text.length){self.quickState[@"text"]=text;[self refreshQuick:nil];[self parseQuick];}else [self quickOCR:[[NSImage alloc] initWithPasteboard:NSPasteboard.generalPasteboard]];}
+    if([action isEqual:@"parse"])[self parseQuick];else if([action isEqual:@"save"])[self saveQuick];else if([action isEqual:@"skill"])[self prepareQuickSkill];else if([action isEqual:@"online-ocr"])[self onlineQuickOCR];
+    else if([action isEqual:@"paste"]){NSString *text=[NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString];if(text.length){[self.quickState removeObjectForKey:@"imageImport"];self.quickState[@"text"]=text;[self refreshQuick:nil];[self parseQuick];}else [self quickOCR:[[NSImage alloc] initWithPasteboard:NSPasteboard.generalPasteboard]];}
     else if([action isEqual:@"image"]){NSOpenPanel *panel=NSOpenPanel.openPanel;panel.allowedContentTypes=@[UTTypeImage];panel.allowsMultipleSelection=NO;if([panel runModal]==NSModalResponseOK)[self quickOCR:[[NSImage alloc] initWithContentsOfURL:panel.URL]];}
     else if([action isEqual:@"import"]){NSOpenPanel *panel=NSOpenPanel.openPanel;panel.allowedContentTypes=@[UTTypeJSON];if([panel runModal]!=NSModalResponseOK)return;NSDictionary *result=SSSkillReadResult(panel.URL,&error);NSDictionary *job=self.quickState[@"jobs"][result[@"batchID"] ?: @""];if(result && job)[self receiveQuickResult:result batch:job];else [self refreshQuick:@"结果不属于本机待处理批次，请重新交给助手。" ];}
 }

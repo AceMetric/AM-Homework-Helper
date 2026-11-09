@@ -8,6 +8,22 @@ static NSUInteger assertions;
 static void Check(BOOL ok,NSString *label){assertions++;if(!ok){fprintf(stderr,"FAIL: %s\n",label.UTF8String);exit(1);}}
 int main(void){@autoreleasepool{
     NSCalendar *cal=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];cal.timeZone=[NSTimeZone timeZoneWithName:@"Asia/Shanghai"];NSDate *now=DDLParseDate(@"2026-10-11 09:00",NSDate.date,cal);
+    NSArray *slide=@[@"In the coming week (due 11/10)",@"Assignment (First Practice Session tomorrow)",
+        @"Readings - Sort",@"Algorithm: Chapter 2",@"COS226: Lecture 5, 6, 7, 8",
+        @"Practice (do it after readings)",@"Implement 3 classic sort algorithms:",@"Elementary Sort, Quick Sort and Merge Sort"];
+    NSString *outline=DDLImageOutline(slide,@[@.02,@.065,@.065,@.11,@.11,@.065,@.11,@.16]);
+    NSArray *imported=AMQuickParseImageOutline(outline,@"image",now,cal);
+    NSDictionary *draft=imported.firstObject;
+    Check(imported.count==1 && [draft[@"dateText"] isEqual:@"2026-11-10"] && !AMQuickTask(draft,NULL),@"screenshot creates one draft with a shared date and no inferred time");
+    NSString *requirements=draft[@"submissionRequirements"];
+    for(NSString *fragment in @[@"阅读",@"排序实践",@"Chapter 2",@"Lecture 5, 6, 7, 8",@"Elementary Sort",@"Quick Sort",@"Merge Sort"])
+        Check([requirements containsString:fragment],fragment);
+    Check(![requirements containsString:@"Session tomorrow"] && [draft[@"notes"] containsString:@"课程安排"] &&
+        [draft[@"notes"] containsString:@"Session tomorrow"],@"classroom appointment is separate from assignment scope");
+    NSMutableDictionary *confirmed=draft.mutableCopy;confirmed[@"dateText"]=@"2026-11-10 21:00";
+    Check(AMQuickTask(confirmed,NULL)!=nil,@"confirming time saves the screenshot draft");
+    Check(!AMQuickParseImageOutline([outline stringByReplacingOccurrencesOfString:@"11/10" withString:@"11/31"],@"bad",now,cal).count,
+        @"invalid OCR date is never normalized into a different day");
     NSString *text=@"物理作业：完成运动报告\n截止：2026 年 10 月 20 日 18:00";NSArray *entries=AMQuickParse(text,@"source",now,cal);Check(entries.count==1,@"one notice captured");NSDictionary *task=AMQuickTask(entries.firstObject,NULL);Check(task && [AMQuickDateText(task[@"due"],cal.timeZone.name) isEqual:@"2026-10-20 18:00"],@"spaced date auto filled");Check([task[@"entryReferenceDate"] isEqual:now] && [task[@"entryTimeZone"] isEqual:cal.timeZone.name],@"message date basis and zone survive task persistence");Check(!task[@"sourceRepository"] && task[@"entrySourceID"],@"local source does not fake GitHub identity");
     entries=AMQuickParse(@"完成数学作业\n截止：2026年10月20日",@"s",now,cal);Check(entries.count==1 && !AMQuickTask(entries.firstObject,NULL),@"missing clock remains draft, not 23:59");Check(!DDLFieldsFromAnnouncement(@"完成数学作业，截止2026年10月20日",now,cal)[@"due"],@"legacy announcement parser also rejects missing clock");
     entries=AMQuickParse(@"物理实验报告\n截止：明天21:00",@"s",now,cal);Check(AMQuickTask(entries.firstObject,NULL)!=nil && [entries.firstObject[@"hint"] containsString:@"推算"],@"relative date uses explicit reference with warning");

@@ -7,7 +7,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSDictionary * _Nullable)assignmentCheckScopeForCourse:(NSDictionary *)course scope:(NSString *)scope error:(NSError **)error;
 - (BOOL)checkReviewHead:(NSString *)head course:(NSDictionary *)course error:(NSError **)error;
 - (NSDictionary * _Nullable)preflightSnapshotForCourse:(NSDictionary *)course paths:(NSArray *)paths error:(NSError **)error;
-- (NSString *)preflightRequirementsForCourse:(NSDictionary *)course tasks:(NSArray *)tasks;
+- (NSString *)preflightRequirementsForCourse:(NSDictionary *)course tasks:(NSArray *)tasks verifiedLines:(NSArray * _Nullable * _Nullable)verifiedLines;
 - (BOOL)validatePreflightIndex:(NSArray *)paths course:(NSDictionary *)course error:(NSError **)error;
 @property(copy, nullable) BOOL (^submissionCheckpoint)(NSDictionary *fields, NSError **error);
 - (NSDictionary * _Nullable)performRecordedCourse:(NSDictionary *)course kind:(NSString *)kind taskIDs:(NSArray *)taskIDs paths:(NSArray *)paths message:(NSString *)message token:(NSString *)token login:(NSString *)login userID:(NSNumber *)userID error:(NSError **)error;
@@ -43,6 +43,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)linkCourse:(NSDictionary *)course error:(NSError **)error;
 - (BOOL)cloneFork:(NSDictionary *)course into:(NSString *)destination token:(NSString *)token error:(NSError **)error;
 /// Read teacher documents without running recognition; optional paths bound result verification.
+- (NSDictionary *)dateReferenceForCandidate:(NSDictionary *)candidate head:(NSString *)head path:(NSString *)path;
+- (nullable NSArray<NSString *> *)changedTeacherPathsForCourse:(NSDictionary *)course from:(NSString *)oldCommit to:(NSString *)newCommit;
+- (nullable NSDictionary *)assignmentWorkbenchIndex:(NSDictionary *)course source:(NSString *)source error:(NSError **)error;
+- (nullable NSDictionary *)assignmentWorkbenchTeacherPreview:(NSDictionary *)course path:(NSString *)path error:(NSError **)error;
 - (NSDictionary * _Nullable)readCourseDocuments:(NSDictionary *)course paths:(nullable NSArray<NSString *> *)paths fetch:(BOOL)fetch cache:(NSMutableDictionary *)cache error:(NSError **)error;
 - (NSDictionary * _Nullable)scanCourse:(NSDictionary *)course cache:(NSMutableDictionary *)cache error:(NSError **)error;
 - (NSDictionary *)resolveSkillDates:(NSDictionary *)validated scans:(NSDictionary *)scans courses:(NSArray *)courses;

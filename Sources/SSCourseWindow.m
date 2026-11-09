@@ -32,6 +32,13 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     return fork.length && branch.length && path.length ? @[fork,branch,path]:nil;
 }
 @interface SSCourseController ()
+@property NSArray *presentationRows;
+@property NSArray *presentationTasks;
+@property NSDictionary *presentationTasksBySource;
+@property NSMutableDictionary *presentationDiscoveries;
+@property SSSubmissionController *workbenchCheck;
+@property NSString *workbenchCheckAssignment;
+@property NSString *checkScopeWorkbenchAssignment;
 @property AMSubmissionHistoryController *submissionHistory;
 @property AMPeerWindowController *peerWindow;
 @property NSWindow *assignmentFeedbackWindow;
@@ -231,7 +238,7 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
 - (void)updateAssignmentSubmissions:(NSDictionary *)submissions {
     if([self.assignmentSubmissions isEqual:submissions])return;
     self.assignmentSubmissions=submissions;
-    if(!self.view.hidden && [self course] && self.sections.selectedSegment==0)[self refreshPresentation];
+    if(!self.view.hidden && !self.inbox && self.sections.selectedSegment==0)[self refreshPresentation];
 }
 - (NSDictionary *)submissionForAssignment:(NSDictionary *)assignment course:(NSDictionary *)course {
     NSString *taskID=assignment[@"taskID"] ?: assignment[@"id"];
@@ -323,27 +330,44 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     self.courseWorkspace.saveHandler=self.reviewWorkspace.saveHandler;
     self.courseWorkspace.sourceHandler=self.reviewWorkspace.sourceHandler;
     self.courseWorkspace.decisionHandler=self.reviewWorkspace.decisionHandler;
+    self.courseWorkspace.workbenchLoader=^(NSString *identifier,NSString *path,NSString *mode,void(^done)(NSDictionary *,NSView *)){
+        [owner loadAssignmentWorkbench:identifier path:path mode:mode completion:done];
+    };
     self.courseWorkspace.actionHandler=^(NSString *action,NSString *identifier){
+        if([action isEqual:@"workbench-online"] || [action isEqual:@"workbench-deep"] || [action isEqual:@"workbench-stop"] || [action isEqual:@"workbench-report"]){
+            SSSubmissionController *check=owner.workbenchCheck;
+            if([owner.workbenchCheckAssignment isEqual:identifier] && check){
+                if([action isEqual:@"workbench-online"] || [action isEqual:@"workbench-deep"]){
+                    check.deepReview=[action isEqual:@"workbench-deep"];
+                    [check onlineReview:nil];check.deepReview=NO;
+                }
+                else if([action isEqual:@"workbench-stop"])[check cancel:nil];
+                else [check.window makeKeyAndOrderFront:nil];
+            }else if([action isEqual:@"workbench-stop"] && owner.checkScopeWindow){[owner closeCheckScope];[owner.courseWorkspace setWorkbenchStatus:@"" forAssignment:identifier];}
+            return;
+        }
+        if([action isEqual:@"import-screenshot"]){if(owner.importScreenshot)owner.importScreenshot(identifier);return;}
         if([action isEqual:@"course-result"]){if([owner selectCourseID:identifier]){owner.sections.selectedSegment=0;[owner.typeFilter selectItemAtIndex:0];owner.query=@"";owner.search.stringValue=@"";[owner refreshPresentation];}return;}
         if([action isEqual:@"course-local"]){[owner readCourseLocalState:identifier];return;}if([action isEqual:@"course-submit"]){if([owner selectCourseID:identifier])[owner commit:nil];return;}
         if([action isEqual:@"restore-notes"]){if(owner.restoreTaskNotes)owner.restoreTaskNotes(identifier);return;}
         if([@[@"edit-task",@"submit-task",@"check-task",@"peer-task",@"open-task",@"feedback-task",@"verify-task-push",@"retry-task-push"] containsObject:action]){
             NSDictionary *record=nil;for(NSDictionary *row in owner.visible)if([row[@"id"] isEqual:identifier])record=row;
             NSString *taskID=record[@"taskID"] ?: identifier;
+            NSDictionary *rowCourse=[owner course] ?: [owner savedCourse:@{@"fork":record[@"courseFork"] ?: @""}];
             if([action isEqual:@"edit-task"]){if(owner.editTask)owner.editTask(taskID);}
             if([action isEqual:@"submit-task"])[owner submitTask:taskID];
-            if([action isEqual:@"check-task"])[owner checkTask:taskID];
-            if([action isEqual:@"peer-task"])[owner showPeersForCourse:[owner course] source:record[@"path"]];
-            if([action isEqual:@"feedback-task"])[owner showAssignmentFeedback:record];
+            if([action isEqual:@"check-task"])[owner checkTask:taskID forWorkbench:identifier];
+            if([action isEqual:@"peer-task"])[owner showPeersForCourse:rowCourse source:record[@"path"]];
+            if([action isEqual:@"feedback-task"])[owner readAssignmentFeedback:record show:YES];
             if([@[@"verify-task-push",@"retry-task-push"] containsObject:action]){
-                NSDictionary *submission=[owner submissionForAssignment:record course:[owner course]];
+                NSDictionary *submission=[owner submissionForAssignment:record course:rowCourse];
                 NSString *state=submission[@"state"];
                 if([action isEqual:@"retry-task-push"] && [state isEqual:@"local"] && submission[@"checkedAt"] && !submission[@"confirmedAt"] && [submission[@"commit"] length])
                     [owner submissionAction:@"retry" identifier:submission[@"id"]];
                 else if([@[@"local",@"uncertain"] containsObject:state])
                     [owner submissionAction:@"verify" identifier:submission[@"id"]];
             }
-            if([action isEqual:@"open-task"]){owner.selectedCandidateID=identifier;[owner openExternalEditor:nil];}
+            if([action isEqual:@"open-task"])[owner openExternalEditorAtURL:[owner assignmentURL:record[@"path"] course:rowCourse]];
             return;
         }
         if([action isEqual:@"select"]){dispatch_async(dispatch_get_main_queue(),^{
@@ -390,9 +414,13 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     if(self.usesToolbar){for(NSView *view in @[self.scanButton,self.syncButton,self.commitButton,self.assistantButton,self.moreButton,self.reviewFilter,self.typeFilter,self.search])[view removeFromSuperview];}
     [self layoutContent];
 }
+- (BOOL)assignmentBoardActive {
+    return !self.inbox && self.sections.selectedSegment==0 && (!self.selectedFork || [self course]!=nil);
+}
 - (NSArray<NSString *> *)toolbarActionIdentifiers {
     if(self.inbox)return @[];
     if(self.selectedFork && ![self course])return @[@"AMCourseMore"];
+    if([self course] && self.assignmentBoardActive)return @[@"AMCourseScan",@"AMCourseMore"];
     return [self course] ? @[@"AMCourseScan",@"AMCourseSync",@"AMCourseSubmit",@"AMCourseMore"]:@[@"AMCourseScan",@"AMCourseMore"];
 }
 - (NSToolbarItem *)toolbarItemForIdentifier:(NSString *)identifier {
@@ -511,6 +539,7 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
 - (NSMenu *)courseActionsMenu {
     NSMenu *menu=NSMenu.new;menu.autoenablesItems=NO;NSDictionary *course=[self course];
     void (^add)(NSMenu *,NSString *,SEL,BOOL)=^(NSMenu *target,NSString *title,SEL action,BOOL enabled){NSMenuItem *item=[target addItemWithTitle:title action:action keyEquivalent:@""];item.target=self;item.enabled=enabled && !self.operationsPaused;};
+    add(menu,@"在线补识别授权…",@selector(configureOnlineRecognition:),course!=nil);
     add(menu,@"识别问题…",@selector(showRecognitionFailures:),[self recognitionFailures].count>0);
     add(menu,@"增强识别…",@selector(enhanceRecognition:),course && ![SSRecognitionSettings()[@"mode"] isEqual:@"rules"]);
     add(menu,@"交给助手识别…",@selector(exportSkillContext:),YES);
@@ -519,6 +548,8 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     add(menu,@"同学作业…",@selector(showPeers:),course!=nil && self.connected);
     [menu addItem:NSMenuItem.separatorItem];
     add(menu,@"新建课程…",@selector(newStandaloneCourse:),YES);add(menu,@"从文件夹添加…",@selector(addCoursesFromFolder:),self.connected);add(menu,@"添加仓库课程…",@selector(addFork:),YES);add(menu,@"重命名课程…",@selector(renameCatalogCourse:),course!=nil);add(menu,@"关联文件夹…",@selector(linkFolder:),course!=nil);add(menu,@"下载课程…",@selector(cloneFork:),course!=nil);add(menu,@"打开文件夹",@selector(openFolder:),[course[@"path"] length]>0);
+    add(menu,@"同步课程文件",@selector(sync:),[course[@"path"] length] && self.connected);
+    add(menu,@"选择课程改动并提交…",@selector(commit:),[course[@"path"] length] && self.connected);
     add(menu,@"在编辑器中打开",@selector(openExternalEditor:),[course[@"path"] length]>0);add(menu,@"打开终端",@selector(openExternalTerminal:),[course[@"path"] length]>0);
     if([course[@"pendingMergeTip"] length])add(menu,@"处理冲突…",@selector(continueMerge:),YES);
     if([course[@"pushFailed"] boolValue])add(menu,@"重试推送",@selector(push:),YES);
@@ -560,6 +591,9 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
 - (NSArray<NSString *> *)courseRepositoryNames {NSMutableArray *names=NSMutableArray.array;for(NSDictionary *course in self.courses)if(course[@"fork"])[names addObject:course[@"fork"]];return names.copy;}
 - (NSDictionary *)course { for (NSDictionary *course in self.courses) if ([course[@"fork"] isEqual:self.selectedFork]) return course; return nil; }
 - (NSArray *)discoveriesForFork:(NSString *)fork {
+    NSArray *cached=fork ? self.presentationDiscoveries[fork]:nil;
+    if(cached)return cached;
+    NSArray *tasks=self.presentationTasks ?: (self.tasksProvider ? self.tasksProvider():@[]);
     NSMutableArray *result = NSMutableArray.array;
     for (NSDictionary *item in [(self.candidates[fork] ?: @[]) arrayByAddingObjectsFromArray:self.materials[fork] ?: @[]]) {
         if([item[@"kind"] isEqual:@"exam"])continue;
@@ -570,14 +604,16 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
         copy[@"automaticDeferred"]=@([self.automaticDeferrals[item[@"id"]] isEqual:item[@"blobSHA"]]);
         copy[@"kind"] = kind; if (self.kindOverrides[item[@"id"]]) copy[@"kindReason"] = @"你已手动确认类型";
         BOOL exact=NO, nearby=NO;
-        for (NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[]) {
+        for (NSDictionary *task in tasks) {
             if ([task[@"sourceID"] isEqual:copy[@"id"]]) exact=YES;
             if ([task[@"sourceRepository"] isEqual:copy[@"repository"]] && [task[@"sourcePath"] isEqual:copy[@"path"]]) nearby=YES;
         }
         if (!exact && nearby) {copy[@"identityUncertain"]=@YES;NSMutableArray *warnings=[copy[@"warnings"] mutableCopy] ?: NSMutableArray.array;[warnings addObject:@"同一文档已有任务，来源匹配不确定；请核对是否是新作业，避免重复加入。旧任务保留。"];copy[@"warnings"]=warnings;}
 
         [result addObject:copy];
-    } return result;
+    }
+    if(fork && self.presentationDiscoveries)self.presentationDiscoveries[fork]=result;
+    return result;
 }
 - (BOOL)deferAutomaticImportOfTasks:(NSArray *)tasks error:(NSError **)error {
     NSMutableDictionary *next=self.automaticDeferrals.mutableCopy;
@@ -601,19 +637,23 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse answer) { if (answer == NSAlertFirstButtonReturn) { NSError *error = nil; if (![self setKind:kinds[menu.indexOfSelectedItem] forDiscovery:record error:&error]) [self showError:error]; } }];
 }
 - (NSArray *)visible {
+    if(self.presentationRows)return self.presentationRows;
     NSMutableArray *result=NSMutableArray.array;NSMutableSet *seen=NSMutableSet.set;
-    NSArray *catalog=AMCourseCatalog(self.courses),*tasks=self.tasksProvider ? self.tasksProvider():@[];
+    NSArray *catalog=AMCourseCatalog(self.courses),*tasks=self.presentationTasks ?: (self.tasksProvider ? self.tasksProvider():@[]);
     NSDictionary *selected=[self course];if(!selected)for(NSDictionary *row in catalog)if([row[@"id"] isEqual:self.selectedFork])selected=row;
     // A saved assignment replaces its suggestion in the same list instead of disappearing
     // into a second navigation segment. Teacher provenance remains separate from course identity.
-    if(!self.inbox && selected){
+    if(!self.inbox){
         for(NSDictionary *task in AMCourseDisplayTasks(tasks,catalog)){
             if([task[@"deleted"] boolValue] || [task[@"archived"] boolValue])continue;
             NSDictionary *linked=AMCourseForTask(task,catalog);
+            // General to-dos stay in Tasks. Course work and captured assignments
+            // are the two sources that belong on the cross-course board.
+            if(!linked && ![task[@"entrySourceID"] length])continue;
             if(self.selectedFork && ![linked[@"id"] isEqual:selected[@"id"]] && ![linked[@"fork"] isEqual:selected[@"fork"]])continue;
-            NSMutableDictionary *copy=task.mutableCopy;copy[@"confirmed"]=@YES;copy[@"gitCourse"]=@(selected[@"fork"]!=nil);copy[@"taskID"]=task[@"id"];copy[@"path"]=task[@"sourcePath"] ?: @"";copy[@"repository"]=task[@"sourceRepository"] ?: @"";
+            NSMutableDictionary *copy=task.mutableCopy;copy[@"confirmed"]=@YES;copy[@"gitCourse"]=@([linked[@"fork"] length]>0);copy[@"courseFork"]=linked[@"fork"] ?: @"";copy[@"courseName"]=linked[@"name"] ?: task[@"subject"] ?: @"其他";copy[@"taskID"]=task[@"id"];copy[@"path"]=task[@"sourcePath"] ?: @"";copy[@"repository"]=task[@"sourceRepository"] ?: @"";
             NSDictionary *source=[self reviewSourceWithID:task[@"sourceID"]];
-            if(source && ![task[@"seriesID"] length]){copy[@"id"]=source[@"id"];copy[@"sourceUpdate"]=@([[self stateForCandidate:source] isEqual:@"有更新"]);copy[@"snippet"]=source[@"snippet"] ?: @"";copy[@"documents"]=source[@"documents"] ?: @[source];}
+            if(source && ![task[@"seriesID"] length]){copy[@"id"]=source[@"id"];copy[@"sourceUpdate"]=@([[self stateForCandidate:source] isEqual:@"有更新"]);copy[@"snippet"]=source[@"snippet"] ?: @"";copy[@"dateText"]=source[@"dateText"] ?: @"";copy[@"line"]=source[@"line"] ?: @0;copy[@"documents"]=source[@"documents"] ?: @[source];}
             if(![seen containsObject:copy[@"id"]]){[seen addObject:copy[@"id"]];[result addObject:copy];}
         }
     }
@@ -625,7 +665,7 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
             NSArray *types=@[@"",@"assignment",@"classroom",@"exam",@"unknown"];
             if(!self.inbox && self.typeFilter.indexOfSelectedItem>0 && ![candidate[@"kind"] isEqual:types[self.typeFilter.indexOfSelectedItem]])continue;
             if(self.inbox && ((self.reviewFilter.indexOfSelectedItem==1 && ![state isEqual:@"待审核"]) || (self.reviewFilter.indexOfSelectedItem==2 && ![state isEqual:@"有更新"])))continue;
-            [seen addObject:candidate[@"id"]];[result addObject:candidate];
+            NSMutableDictionary *row=candidate.mutableCopy;row[@"courseFork"]=course[@"fork"];row[@"gitCourse"]=@YES;row[@"courseName"]=[course[@"fork"] lastPathComponent];[seen addObject:candidate[@"id"]];[result addObject:row];
         }
     }
     if(self.inbox && self.localReviewProvider)for(NSDictionary *record in self.localReviewProvider())if(!AMReviewIsDeleted(record))[result addObject:record];
@@ -680,14 +720,27 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     self.selectedFork=identifier;NSDictionary *state=self.pageStates[[@"course:" stringByAppendingString:identifier ?: @"all"]];self.query=state[@"query"] ?: @"";self.search.stringValue=self.query;self.selectedCandidateID=state[@"id"];self.sections.selectedSegment=[state[@"section"] integerValue];[self.typeFilter selectItemAtIndex:[state[@"type"] integerValue]];
     [self refreshPresentation];[self.courseWorkspace restoreScrollPositions:state[@"positions"] ?: @{}];[self.table.enclosingScrollView.contentView scrollToPoint:NSMakePoint(0,[state[@"scroll"] doubleValue])];return YES;
 }
+- (void)endPresentationSnapshot {
+    self.presentationRows=nil;self.presentationTasks=nil;self.presentationTasksBySource=nil;
+    self.presentationDiscoveries=nil;self.refreshing=NO;
+}
 - (void)refreshPresentation {
     if (self.refreshing || !self.table) return; self.refreshing = YES;
     if(!self.hasUnsavedReview && self.deferredScans.count){for(NSString *fork in self.deferredScans){NSDictionary *scan=self.deferredScans[fork];self.candidates[fork]=[self retainingSkill:self.candidates[fork] current:scan[@"candidates"] documents:scan[@"documents"]];self.materials[fork]=[self retainingSkill:self.materials[fork] current:scan[@"materials"] ?: @[] documents:scan[@"documents"]];}[self.deferredScans removeAllObjects];if(!self.preview)SSWritePlist(@"discoveries.plist",self.discoveryEnvelope,NULL);}
+    // A render uses one task/discovery snapshot, including hidden legacy table
+    // callbacks. Avoid reparsing every course for each cell in a board refresh.
+    self.presentationTasks=self.tasksProvider ? self.tasksProvider():@[];
+    NSMutableDictionary *sources=NSMutableDictionary.dictionary;
+    for(NSDictionary *task in self.presentationTasks)if([task[@"sourceID"] length] && !sources[task[@"sourceID"]])sources[task[@"sourceID"]]=task;
+    self.presentationTasksBySource=sources;
+    self.presentationDiscoveries=NSMutableDictionary.dictionary;
     NSDictionary *course = [self course];
-    if(course && !self.view.hidden && !self.inbox && self.sections.selectedSegment==0)[self refreshAssignmentProgress:course];
+    if(!self.view.hidden && !self.inbox && self.sections.selectedSegment==0){
+        for(NSDictionary *linked in course ? @[course]:self.courses)if([linked[@"path"] length])[self refreshAssignmentProgress:linked];
+    }
     NSString *key = self.selectedFork ?: @"all";
     NSDictionary *localCourse=nil;if(!self.inbox && !course && self.selectedFork)for(NSDictionary *c in AMCourseCatalog(self.courses))if([c[@"id"] isEqual:self.selectedFork])localCourse=c;
-    if(localCourse){self.sections.segmentCount=1;[self.sections setLabel:@"任务" forSegment:0];self.sections.selectedSegment=0;self.accountLabel.stringValue=localCourse[@"name"];self.setupButton.hidden=YES;self.scanButton.hidden=YES;self.syncButton.hidden=YES;self.commitButton.hidden=YES;self.typeFilter.hidden=YES;self.typeButton.hidden=YES;self.recoveryButton.hidden=YES;self.moreButton.enabled=!self.operationsPaused;NSMutableArray *records=NSMutableArray.array;for(NSDictionary *task in self.tasksProvider ? self.tasksProvider():@[])if(![task[@"deleted"] boolValue] && [AMCourseForTask(task,AMCourseCatalog(self.courses))[@"id"] isEqual:localCourse[@"id"]] && (!self.query.length || [task[@"title"] localizedCaseInsensitiveContainsString:self.query])){NSMutableDictionary *row=task.mutableCopy;row[@"confirmed"]=@YES;row[@"subject"]=localCourse[@"name"];[records addObject:row];}[records sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"due"] compare:b[@"due"]];}];[self.courseWorkspace showCourseSummaries:@[] visible:NO];[self.courseWorkspace updateRecords:records selected:self.selectedCandidateID ?: @"" information:@"" empty:@"暂无任务" paused:self.operationsPaused];[self layoutContent];self.refreshing=NO;if(self.stateChanged)self.stateChanged();return;}
+    if(localCourse){self.sections.segmentCount=1;[self.sections setLabel:@"任务" forSegment:0];self.sections.selectedSegment=0;self.accountLabel.stringValue=localCourse[@"name"];self.setupButton.hidden=YES;self.scanButton.hidden=YES;self.syncButton.hidden=YES;self.commitButton.hidden=YES;self.typeFilter.hidden=YES;self.typeButton.hidden=YES;self.recoveryButton.hidden=YES;self.moreButton.enabled=!self.operationsPaused;NSMutableArray *records=NSMutableArray.array;for(NSDictionary *task in self.tasksProvider ? self.tasksProvider():@[])if(![task[@"deleted"] boolValue] && [AMCourseForTask(task,AMCourseCatalog(self.courses))[@"id"] isEqual:localCourse[@"id"]] && (!self.query.length || [task[@"title"] localizedCaseInsensitiveContainsString:self.query])){NSMutableDictionary *row=task.mutableCopy;row[@"confirmed"]=@YES;row[@"subject"]=localCourse[@"name"];[records addObject:row];}[records sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"due"] compare:b[@"due"]];}];[self.courseWorkspace showCourseSummaries:@[] visible:NO];[self.courseWorkspace setAssignmentBoard:NO];[self.courseWorkspace updateRecords:records selected:self.selectedCandidateID ?: @"" information:@"" empty:@"暂无任务" paused:self.operationsPaused];[self layoutContent];[self endPresentationSnapshot];if(self.stateChanged)self.stateChanged();return;}
     if(self.sections.segmentCount!=3){self.sections.segmentCount=3;NSArray *labels=@[@"作业",@"仓库信息",@"提交记录"];for(NSInteger i=0;i<3;i++)[self.sections setLabel:labels[i] forSegment:i];self.sections.selectedSegment=0;}self.scanButton.hidden=NO;
 
     if(self.workflowNoticeContext)self.workflowNotice.hidden=[self.dismissedWorkflowNotices containsObject:self.workflowNoticeContext.identifier] || (self.workflowNoticeContext.course && ![self.workflowNoticeContext.course[@"fork"] isEqual:key]);
@@ -709,14 +762,14 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     self.recoveryButton.title = [course[@"pendingMergeTip"] length] ? @"处理冲突…" : @"重试推送";
 
 
-    NSArray *visible = [self visible];
+    NSArray *visible = [self visible];self.presentationRows=visible;
     NSMutableArray *reviewRecords = NSMutableArray.array;
-    for (NSDictionary *record in visible) {
+    if(self.inbox)for (NSDictionary *record in visible) {
         NSMutableDictionary *copy = [SSEnrichDiscovery(record) mutableCopy];copy[@"reviewStatus"]=[self stateForCandidate:record];
-        for (NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[]) if ([task[@"sourceID"] isEqual:record[@"id"]]) { copy[@"existingTask"] = task; break; }
+        if(record[@"id"] && sources[record[@"id"]])copy[@"existingTask"]=sources[record[@"id"]];
         [reviewRecords addObject:copy];
     }
-    NSMutableArray *jobs=NSMutableArray.array;for(NSString *key in self.skillJobs){NSMutableDictionary *row=[self.skillJobs[key] mutableCopy];row[@"id"]=key;[jobs addObject:row];}if(self.localSkillJobsProvider)[jobs addObjectsFromArray:self.localSkillJobsProvider()];[jobs addObjectsFromArray:AMPreflightJobs()];[jobs sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [b[@"date"] compare:a[@"date"]];}];[self.skillJobsController updateRecords:jobs busy:self.operationsPaused];
+    if(self.showingSkillJobs){NSMutableArray *jobs=NSMutableArray.array;for(NSString *key in self.skillJobs){NSMutableDictionary *row=[self.skillJobs[key] mutableCopy];row[@"id"]=key;[jobs addObject:row];}if(self.localSkillJobsProvider)[jobs addObjectsFromArray:self.localSkillJobsProvider()];[jobs addObjectsFromArray:AMPreflightJobs()];[jobs sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [b[@"date"] compare:a[@"date"]];}];[self.skillJobsController updateRecords:jobs busy:self.operationsPaused];}
     self.scanButton.toolTip=self.busy ? @"排队检查":(!local && !anyLocal ? @"尚未关联本地课程文件夹":@"检查新作业");
     self.syncButton.toolTip=self.connected && local ? @"同步课程文件":@"需要登录并关联本地课程文件夹。";self.commitButton.toolTip=self.connected && local ? @"提交作业":@"需要登录并关联本地课程文件夹。";
     self.reviewWorkspace.paused = self.operationsPaused;
@@ -739,7 +792,9 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     NSMutableArray *content=NSMutableArray.array;
     for(NSDictionary *record in visible){
         NSMutableDictionary *copy=[SSEnrichDiscovery(record) mutableCopy];
-        NSDictionary *submission=[self submissionForAssignment:record course:course];
+        NSDictionary *rowCourse=course ?: [self savedCourse:@{@"fork":record[@"courseFork"] ?: @""}];
+        copy[@"teacherVersion"]=rowCourse[@"teacherCommit"] ?: @"";
+        NSDictionary *submission=[self submissionForAssignment:record course:rowCourse];
         if(submission){
 
             if([@[@"local",@"uncertain"] containsObject:submission[@"state"]]){
@@ -747,7 +802,7 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
                 copy[@"pushAction"]=canRetry ? @"retry-task-push":@"verify-task-push";
             }
         }
-        if([record[@"confirmed"] boolValue] && course){
+        if([record[@"confirmed"] boolValue] && rowCourse){
             NSDictionary *last=submission[@"lastVerified"];
             NSString *sha=last[@"commit"];
             NSMutableString *remote=[NSMutableString stringWithString:sha.length ?
@@ -755,7 +810,7 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
             if([last[@"state"] isEqual:@"local"])[remote appendString:@" · 远端已变化"];
             else if(submission && ![submission[@"state"] isEqual:@"confirmed"])[remote appendString:@" · 新提交待核验"];
             BOOL incomplete=submission[@"id"] && [self.failedAssignmentVerifications containsObject:submission[@"id"]];
-            for(AMCourseOperationContext *failure in self.workflowFailures.allValues)if([failure.course[@"fork"] isEqual:course[@"fork"]] &&
+            for(AMCourseOperationContext *failure in self.workflowFailures.allValues)if([failure.course[@"fork"] isEqual:rowCourse[@"fork"]] &&
                 ([failure.stage isEqual:@"核验提交记录"] || (failure.record[@"id"] && [failure.record[@"id"] isEqual:submission[@"id"]]))){
                 incomplete=YES;break;
             }
@@ -763,7 +818,7 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
             copy[@"remoteVerification"]=remote;
             NSString *source=record[@"path"] ?: record[@"sourcePath"],*scope=source.stringByDeletingLastPathComponent;
             if(!AMPeerPath(scope))scope=source;
-            NSArray *progressKey=AMAssignmentProgressKey(course);
+            NSArray *progressKey=AMAssignmentProgressKey(rowCourse);
             NSDictionary *local=progressKey ? self.assignmentProgress[progressKey]:nil;
             BOOL working=AMPeerPath(scope) && [local[@"working"] containsObject:scope];
             BOOL pending=AMPeerPath(scope) && [local[@"pending"] containsObject:scope];
@@ -772,9 +827,12 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
             if(pending || [submission[@"state"] isEqual:@"local"])[labels addObject:@"有待推送提交"];
             if([local[@"failed"] boolValue])[labels addObject:@"本地状态刷新未完成"];
             if(!labels.count)[labels addObject:!AMPeerPath(scope) ? @"作业范围待确认":(local ? ([local[@"pendingKnown"] boolValue] ? @"无改动":@"工作区无改动 · 推送状态待核验"):@"尚未读取")];
+            // Historical status needs both a verified push and a known clean local snapshot.
+            copy[@"boardHistory"]=@([submission[@"state"] isEqual:@"confirmed"] && local && [local[@"pendingKnown"] boolValue] &&
+                ![local[@"failed"] boolValue] && AMPeerPath(scope) && !working && !pending && ![record[@"sourceUpdate"] boolValue]);
             copy[@"localProgress"]=[labels componentsJoinedByString:@" · "];
         }
-        if([record[@"path"] length] && course){NSString *key=[self assignmentFeedbackKeyForCourse:course source:record[@"path"]];copy[@"newFeedback"]=@([self.unreadFeedbackKeys containsObject:key]);}
+        if([record[@"path"] length] && rowCourse){NSString *key=[self assignmentFeedbackKeyForCourse:rowCourse source:record[@"path"]];copy[@"newFeedback"]=@([self.unreadFeedbackKeys containsObject:key]);}
         if([record[@"confirmed"] boolValue]){
             NSDictionary *source=[self reviewSourceWithID:record[@"sourceID"]];
             if(source && [source[@"kind"] isEqual:@"assignment"]){NSMutableDictionary *review=[SSEnrichDiscovery(source) mutableCopy];NSMutableDictionary *actual=record.mutableCopy;if(record[@"taskID"])actual[@"id"]=record[@"taskID"];review[@"existingTask"]=actual;review[@"reviewStatus"]=[self stateForCandidate:source];copy[@"reviewRecord"]=review;}
@@ -782,16 +840,18 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
             copy[@"reviewStatus"]=[self stateForCandidate:record];
             for(NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[])if([task[@"sourceID"] isEqual:record[@"id"]]){copy[@"existingTask"]=task;if([copy[@"reviewStatus"] isEqual:@"已导入"])copy[@"due"]=task[@"due"];break;}
         }
+        if(![copy[@"gitCourse"] boolValue] && ![copy[@"courseFork"] length])copy[@"boardHistory"]=@([copy[@"completed"] boolValue]);
         [content addObject:copy];
     }
     NSString *information=info ? self.detail.string : @"";
-    NSMutableArray *summaries=NSMutableArray.array;if(!course && !self.inbox){for(NSDictionary *snapshot in self.courseSnapshots){NSMutableDictionary *row=snapshot.mutableCopy;row[@"failed"]=AMCourseCheckPresentation(self.reports[snapshot[@"id"]] ?: @{},[snapshot[@"pending"] unsignedIntegerValue])[@"warning"];[summaries addObject:row];}[content removeAllObjects];information=@"";}[self.courseWorkspace showCourseSummaries:summaries visible:!course && !self.inbox];
+    NSMutableArray *summaries=NSMutableArray.array;if(!course && !self.inbox){for(NSDictionary *snapshot in self.courseSnapshots){NSMutableDictionary *row=snapshot.mutableCopy;row[@"failed"]=AMCourseCheckPresentation(self.reports[snapshot[@"id"]] ?: @{},[snapshot[@"pending"] unsignedIntegerValue])[@"warning"];[summaries addObject:row];}}BOOL board=!self.inbox && !info && self.sections.selectedSegment==0;[self.courseWorkspace showCourseSummaries:summaries visible:!board && !course && !self.inbox];
+    [self.courseWorkspace setAssignmentBoard:board];
     [self.courseWorkspace updateRecords:content selected:self.selectedCandidateID ?: @"" information:information empty:self.emptyLabel.stringValue paused:self.operationsPaused];
     self.presentedSection=self.sections.selectedSegment;self.presentedType=self.typeFilter.indexOfSelectedItem;self.presentedReviewFilter=self.reviewFilter.indexOfSelectedItem;
     if(!self.inbox && self.sections.selectedSegment==2 && !self.discoveringExternal)dispatch_async(dispatch_get_main_queue(),^{[self discoverExternalSubmissions:NO];});
     NSError *historyError=nil;NSArray *storedHistory=(!self.inbox && self.sections.selectedSegment==2) ? AMSubmissionRecords(&historyError):@[];if(historyError && !self.inbox && self.sections.selectedSegment==2)self.statusLabel.stringValue=historyError.localizedDescription;
     NSMutableArray *history=NSMutableArray.array;for(NSDictionary *record in storedHistory ?: @[])if(![record[@"teacherHistoryExcluded"] boolValue] && (!course || [record[@"repository"] isEqual:course[@"fork"]])){NSMutableDictionary *row=record.mutableCopy;row[@"label"]=AMSubmissionStateLabel(record);[history insertObject:row atIndex:0];}[self.submissionHistory updateReading:self.discoveringExternal];[self.submissionHistory updateRecords:history busy:self.operationsPaused];
-    [self layoutContent]; self.refreshing = NO;
+    [self layoutContent]; [self endPresentationSnapshot];
     if (self.stateChanged) self.stateChanged();
 }
 - (void)cancelReadOperation:(id)sender {AMCourseOperationContext *context=self.workflowContexts[_operationID];if(context){AMOperationCancel(context.identifier);self.cancelReadButton.enabled=NO;[self status:@"正在停止…"];return;}if(self.busy){self.git.cancelledReads=YES;[self.git cancelCurrentOperation];self.github.requestsCancelled=YES;self.cancelReadButton.enabled=NO;[self status:@"正在停止…"];} }
@@ -1088,12 +1148,18 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
             if(!scan && scanError)scanContext.failure=scanError;
             if(scan){NSDictionary *rules=scan;dispatch_async(dispatch_get_main_queue(),^{if(scanContext.cancelled || ![self workflowSourceMatches:scanContext])return;AMWithCourseContext(scanContext,^{if(self.hasUnsavedReview || self.git.cancelledReads)return;self.candidates[course[@"fork"]]=[self retainingSkill:self.candidates[course[@"fork"]] current:rules[@"candidates"] documents:rules[@"documents"]];self.materials[course[@"fork"]]=[self retainingSkill:self.materials[course[@"fork"]] current:rules[@"materials"] documents:rules[@"documents"]];[self status:[SSCourseRecognitionSettings(recognitionSettings,course)[@"mode"] isEqual:@"rules"] ? @"规则结果已显示，正在整理结果…":@"规则结果已显示，正在补充模型分析…"];});});
                 NSMutableDictionary *cachedSettings=recognitionSettings.mutableCopy;cachedSettings[@"cacheOnly"]=@YES;scan=[self.git enhanceScan:scan course:course settings:cachedSettings paths:nil cache:cache];}
+            if(scan && course[@"onlineRecognitionProfile"]){
+                NSArray *changed=course[@"teacherCommit"] ?
+                    [reader changedTeacherPathsForCourse:course from:course[@"teacherCommit"] to:scan[@"commit"]] : [scan[@"documents"] valueForKey:@"path"];
+                if(changed.count){NSMutableDictionary *annotated=scan.mutableCopy;annotated[@"onlineChangedPaths"]=changed;scan=annotated;}
+            }
             result[course[@"fork"]] = scan ?: @{@"error":scanError.localizedDescription ?: @"扫描失败",@"detail":scanError.userInfo[@"SSDetail"] ?: scanError.localizedDescription ?: @"",@"issue":scanError.userInfo[@"SSIssue"] ?: @"git"};
         }
         return [self retainWorkflowResult:result cache:cache error:error];
     } completion:^(NSDictionary *result, NSError *error) {
         if (!result) { [self finishSetupScan:nil error:error courses:courses];[self showError:error]; return; }
         NSMutableArray *messages = NSMutableArray.array;
+        NSDictionary *previousReports=self.reports.copy;
         NSMutableDictionary *reports = [self.reports mutableCopy] ?: NSMutableDictionary.dictionary;for(NSDictionary *input in courses){NSDictionary *current=[self savedCourse:input];BOOL same=current!=nil;for(NSString *field in @[@"path",@"branch",@"upstream",@"forkID",@"upstreamID",@"ownerID"])if(![(input[field] ?: NSNull.null) isEqual:current[field] ?: NSNull.null])same=NO;if(same && result[input[@"fork"]])reports[input[@"fork"]]=result[input[@"fork"]];}self.reports=reports;
         for (NSMutableDictionary *course in self.courses) {
             NSDictionary *scan = result[course[@"fork"]]; if (!scan) continue;BOOL same=NO;for(NSDictionary *input in courses)if([input[@"fork"] isEqual:course[@"fork"]]){same=YES;for(NSString *field in @[@"path",@"branch",@"upstream",@"forkID",@"upstreamID",@"ownerID"])if(![(input[field] ?: NSNull.null) isEqual:course[field] ?: NSNull.null])same=NO;}if(!same)continue;
@@ -1114,7 +1180,10 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
         [self saveCourses]; [self refreshCourses];
         [self finishSetupScan:result error:error courses:courses];[self postRecognitionSummary];
         if(automatic)for(NSDictionary *input in courses){NSDictionary *live=[self savedCourse:input];if(result[input[@"fork"]][@"commit"] && [result[input[@"fork"]][@"commit"] isEqual:live[@"teacherCommit"]])[self enqueueCleanCourseUpdate:live];}
-        for(NSDictionary *course in courses)if(!result[course[@"fork"]][@"error"])[self enqueueAutomaticEnhancement:result[course[@"fork"]] course:course settings:recognitionSettings];
+        for(NSDictionary *course in courses)if(result[course[@"fork"]][@"commit"] && !result[course[@"fork"]][@"error"]){
+            [self enqueueOnlineRecognition:result[course[@"fork"]] course:course previous:previousReports[course[@"fork"]]];
+            [self enqueueAutomaticEnhancement:result[course[@"fork"]] course:course settings:recognitionSettings];
+        }
         if (courses.count > 1) {NSUInteger failed=0;for(NSDictionary *course in courses)if(result[course[@"fork"]][@"error"])failed++;self.statuses[@"all"]=failed ? [NSString stringWithFormat:@"%lu 门课程检查未完成",(unsigned long)failed]:[NSString stringWithFormat:@"已检查 %lu 门课程",(unsigned long)courses.count];self.errorDetails[@"all"]=[messages componentsJoinedByString:@"\n"]; } else if (!messages.count) [self status:@"请先关联本地课程文件夹，再检查作业。"];
     }];
 }
@@ -1158,14 +1227,96 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
 }
 - (void)openFolder:(id)sender { NSString *path = [self course][@"path"]; if (path.length) [NSWorkspace.sharedWorkspace openURL:[NSURL fileURLWithPath:path]]; }
 #include "AMCourseStatus.inc"
-- (NSURL *)currentAssignmentURL {
-    NSString *root=[self course][@"path"];if(!root.length)return nil;
-    NSString *path=nil;for(NSDictionary *row in self.visible)if([row[@"id"] isEqual:self.selectedCandidateID])path=row[@"path"];
-    if(AMPeerPath(path)){NSURL *candidate=[[NSURL fileURLWithPath:root] URLByAppendingPathComponent:path];NSString *resolved=candidate.URLByResolvingSymlinksInPath.path,*boundary=[root stringByResolvingSymlinksInPath];if([resolved hasPrefix:[boundary stringByAppendingString:@"/"]] && [NSFileManager.defaultManager fileExistsAtPath:resolved])return candidate;}
+- (void)loadAssignmentWorkbench:(NSString *)identifier path:(NSString *)path mode:(NSString *)mode completion:(void(^)(NSDictionary *,NSView *))done {
+    NSDictionary *record=nil;
+    for(NSDictionary *row in self.visible)if([row[@"id"] isEqual:identifier]){record=row;break;}
+    NSDictionary *course=([self course] ?: [self savedCourse:@{@"fork":record[@"courseFork"] ?: @""}]).copy;
+    NSString *source=record[@"path"] ?: @"",*scope=source.stringByDeletingLastPathComponent;
+    if(!AMPeerPath(scope))scope=source;
+    if(![course[@"path"] length] || !AMPeerPath(source) || SSSensitivePath(source)){done(@{@"error":@"尚无已确认的作业目录"},nil);return;}
+    if([mode isEqual:@"edit"]){
+        if(AMPeerInScope(path,scope))[self openExternalEditorAtURL:[self assignmentURL:path course:course]];
+        done(@{},nil);return;
+    }
+    NSDictionary *submission=[self submissionForAssignment:record course:course];
+    BOOL requirements=[mode isEqual:@"teacher-requirements"];
+    BOOL jump=[mode isEqual:@"evidence"] || requirements;if(jump)mode=@"teacher";
+    BOOL regionMode=[mode hasPrefix:@"region-"];
+    NSArray *location=[mode hasPrefix:@"line-"] || regionMode ? [[mode substringFromIndex:regionMode ? 7:5] componentsSeparatedByString:@":"]:@[];
+    NSUInteger targetLine=regionMode ? 0:[location.firstObject integerValue];
+    NSMutableArray *region=NSMutableArray.array;
+    if(regionMode)for(NSString *value in [location.firstObject componentsSeparatedByString:@","])if(region.count<4)[region addObject:@(value.doubleValue)];
+    NSString *version=location.count==2 ? location.lastObject:@"";
+    if([mode isEqual:@"teacher"])path=source;
+    if(![mode isEqual:@"index"] && (!AMPeerInScope(path,scope) || SSSensitivePath(path))){done(@{@"error":@"文件不在作业范围内"},nil);return;}
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+        SSGit *reader=SSGit.new;reader.commandDeadline=[NSDate dateWithTimeIntervalSinceNow:12];NSError *error=nil;
+        if([mode isEqual:@"index"]){
+            NSDictionary *index=[reader assignmentWorkbenchIndex:course source:source error:&error];
+            NSMutableArray *personal=NSMutableArray.array;
+            NSString *taskID=record[@"taskID"] ?: identifier;
+            for(NSDictionary *row in AMSubmissionRecords(NULL))if([row[@"repository"] isEqual:course[@"fork"]] && [row[@"branch"] isEqual:course[@"branch"]] && [row[@"taskIDs"] containsObject:taskID]){
+                if(personal.count>=50)break;
+                [personal addObject:row];
+            }
+            NSMutableDictionary *result=index.mutableCopy ?: [@{@"error":@"暂时无法读取作业文件"} mutableCopy];
+            if(!personal.count && submission) [personal addObject:submission];
+            result[@"personalHistory"]=personal;
+            dispatch_async(dispatch_get_main_queue(),^{done(result,nil);});
+            return;
+        }
+        NSMutableDictionary *options=course.mutableCopy;options[@"preflightPreview"]=@YES;
+        NSDictionary *snapshot=[mode isEqual:@"teacher"] ? [reader assignmentWorkbenchTeacherPreview:course path:path error:&error] :
+            [reader preflightSnapshotForCourse:options paths:@[path] error:&error];
+        dispatch_async(dispatch_get_main_queue(),^{
+            NSDictionary *live=[self savedCourse:course];
+            if(![live[@"path"] isEqual:course[@"path"]] || ![live[@"branch"] isEqual:course[@"branch"]] ||
+               ([mode isEqual:@"teacher"] && ![live[@"teacherCommit"] isEqual:course[@"teacherCommit"]])){done(@{@"error":@"课程版本已变化，请刷新"},nil);return;}
+            if(!snapshot[@"files"][path]){done(@{@"error":[mode isEqual:@"teacher"] ? @"已核验的老师原文暂不可读":@"文件暂不可读"},nil);return;}
+            AMDocumentView *preview=[[AMDocumentView alloc] initWithFrame:NSMakeRect(0,0,560,460)];
+            NSMutableDictionary *presentation=snapshot.mutableCopy;
+            presentation[@"workbenchLineNumbers"]=@YES;
+            NSString *problem=snapshot[@"files"][path][@"problem"];
+            if(problem.length){done(@{@"error":problem},nil);return;}
+            [preview loadSnapshot:presentation path:path];
+            if([mode isEqual:@"teacher"]){
+                NSString *evidence=record[@"dateText"];
+                if(requirements){
+                    NSString *text=record[@"sourceRequirements"] ?: SSEnrichDiscovery(record)[@"submissionRequirements"];
+                    for(NSString *line in [text componentsSeparatedByString:@"\n"])if(line.length && ![line hasPrefix:@"#"]){evidence=line;break;}
+                }
+                NSUInteger line=[record[@"line"] unsignedIntegerValue];
+                NSString *text=snapshot[@"files"][path][@"text"];
+                NSRange match=evidence.length ? [text rangeOfString:evidence]:NSMakeRange(NSNotFound,0);
+                if(match.location!=NSNotFound)line=[[text substringToIndex:match.location] componentsSeparatedByString:@"\n"].count;
+                if(jump && line)[preview locateLine:line];
+            }
+            if(version.length && ![snapshot[@"files"][path][@"version"] isEqual:version]){
+                done(@{@"error":@"文件已变化。请重新检查后定位依据。"},nil);return;
+            }
+            if(targetLine)[preview locateLine:targetLine];
+            if(region.count==4)[preview highlightRegion:region];
+            done(@{},preview);
+        });
+    });
+}
+- (NSURL *)assignmentURL:(NSString *)path course:(NSDictionary *)course {
+    NSString *root=course[@"path"];if(!root.length)return nil;
+    if(AMPeerPath(path) && !SSSensitivePath(path)){
+        NSURL *candidate=[[NSURL fileURLWithPath:root] URLByAppendingPathComponent:path];
+        NSString *resolved=candidate.URLByResolvingSymlinksInPath.path,*boundary=[root stringByResolvingSymlinksInPath];
+        if([resolved hasPrefix:[boundary stringByAppendingString:@"/"]] && [NSFileManager.defaultManager fileExistsAtPath:resolved])return candidate;
+        NSString *scope=path.stringByDeletingLastPathComponent;
+        if(AMPeerPath(scope) && ![scope isEqual:path])return [self assignmentURL:scope course:course];
+    }
     return [NSURL fileURLWithPath:root];
 }
 - (void)openExternalEditor:(id)sender {
-    NSURL *target=[self currentAssignmentURL];if(!target)return;
+    NSString *path=nil;for(NSDictionary *row in self.visible)if([row[@"id"] isEqual:self.selectedCandidateID])path=row[@"path"];
+    [self openExternalEditorAtURL:[self assignmentURL:path course:[self course]]];
+}
+- (void)openExternalEditorAtURL:(NSURL *)target {
+    if(!target)return;
     NSString *bundle=[NSUserDefaults.standardUserDefaults stringForKey:@"AMExternalEditorBundleID"];
     NSURL *application=bundle.length ? [NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:bundle]:nil;
     if(!application){NSOpenPanel *panel=NSOpenPanel.openPanel;panel.message=@"选择编辑器";panel.directoryURL=[NSURL fileURLWithPath:@"/Applications"];panel.canChooseDirectories=NO;panel.allowedContentTypes=@[UTTypeApplication];if([panel runModal]!=NSModalResponseOK)return;application=panel.URL;NSString *identifier=[NSBundle bundleWithURL:application].bundleIdentifier;if(identifier.length)[NSUserDefaults.standardUserDefaults setObject:identifier forKey:@"AMExternalEditorBundleID"];}
@@ -1206,7 +1357,7 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
 - (void)showAssignmentFeedback:(NSDictionary *)assignment {[self readAssignmentFeedback:assignment show:YES];}
 - (void)readAssignmentFeedback:(NSDictionary *)assignment show:(BOOL)show {
     if(self.preview && !show)return;
-    NSDictionary *course=[self course].copy;
+    NSDictionary *course=([self course] ?: [self savedCourse:@{@"fork":assignment[@"courseFork"] ?: @""}]).copy;
     NSString *source=assignment[@"path"],*scope=source.stringByDeletingLastPathComponent;
     if(!AMPeerPath(scope))scope=source;
     if(![course[@"path"] length] || !AMPeerPath(scope))return;
@@ -1421,7 +1572,10 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
         __block NSDictionary *snapshot=nil;__block NSString *requirements=nil;__block NSError *failure=nil;
         dispatch_sync(readQueue,^{if(cancelled())return;SSGit *reader=SSGit.new;reader.readsCancellable=YES;dispatch_source_t cancellation=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_global_queue(QOS_CLASS_UTILITY,0));dispatch_source_set_timer(cancellation,dispatch_time(DISPATCH_TIME_NOW,100*NSEC_PER_MSEC),100*NSEC_PER_MSEC,10*NSEC_PER_MSEC);dispatch_source_set_event_handler(cancellation,^{if(cancelled())reader.cancelledReads=YES;});dispatch_resume(cancellation);NSMutableArray *selected=NSMutableArray.array;for(NSDictionary *task in tasks)if([ids containsObject:task[@"id"]])[selected addObject:task];NSMutableDictionary *input=course.mutableCopy;
             if([cache[@"submissionSafetyOnly"] boolValue])input[@"preflightSafetyOnly"]=@YES;
-            snapshot=[reader preflightSnapshotForCourse:input paths:paths error:&failure];if(![cache[@"submissionSafetyOnly"] boolValue])requirements=[reader preflightRequirementsForCourse:course tasks:selected];dispatch_source_cancel(cancellation);});
+            snapshot=[reader preflightSnapshotForCourse:input paths:paths error:&failure];if(![cache[@"submissionSafetyOnly"] boolValue]){
+                NSArray *verified=nil;requirements=[reader preflightRequirementsForCourse:course tasks:selected verifiedLines:&verified];
+                if(snapshot && verified.count){NSMutableDictionary *bound=snapshot.mutableCopy;bound[@"verifiedTextRequirements"]=verified;snapshot=bound;}
+            }dispatch_source_cancel(cancellation);});
         if(!snapshot || cancelled()){if(problem)*problem=failure;return nil;}
         if([cache[@"submissionSafetyOnly"] boolValue]){
             for(NSString *path in paths){NSDictionary *file=snapshot[@"files"][path];if(!file || file[@"problem"]){if(problem)*problem=[NSError errorWithDomain:@"AMSubmissionSafety" code:1 userInfo:@{NSLocalizedDescriptionKey:file[@"problem"] ?: @"所选文件已变化，请刷新。"}];return nil;}}
@@ -1519,7 +1673,12 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
 }
 - (NSString *)stateForCandidate:(NSDictionary *)candidate {
     if (candidate[@"kind"] && ![candidate[@"kind"] isEqual:@"assignment"]) return SSActivityKindLabel(candidate[@"kind"]);
-    for (NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[]) if ([task[@"sourceID"] isEqual:candidate[@"id"]]){
+    NSArray *tasks=nil;
+    if(self.presentationTasksBySource){
+        NSDictionary *task=candidate[@"id"] ? self.presentationTasksBySource[candidate[@"id"]]:nil;
+        tasks=task ? @[task]:@[];
+    }else tasks=self.tasksProvider ? self.tasksProvider():@[];
+    for (NSDictionary *task in tasks) if ([task[@"sourceID"] isEqual:candidate[@"id"]]){
         if(![task[@"sourceBlobSHA"] isEqual:candidate[@"blobSHA"]])return @"有更新";
         if(task[@"sourceContextVersion"] && ![task[@"sourceContextVersion"] isEqual:SSRecordSourceVersion(candidate)])return @"有更新";
         if((candidate[@"suggestedSubtasks"] || candidate[@"additionalSubtaskSuggestions"]) && ![(task[@"sourceSubtaskVersion"] ?: @"") isEqual:SSSubtaskProposalVersion(candidate)])return @"有更新";return @"已导入";

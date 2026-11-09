@@ -17,6 +17,29 @@ static NSDictionary *ReviewResult(NSDictionary *context,BOOL invalid){
     return @{@"format":@"am-preflight-results-v1",@"batchID":context[@"batchID"],@"reportVersion":context[@"reportVersion"],@"findings":findings,@"checked":checked,@"unverified":@[]};
 }
 int main(void){@autoreleasepool{
+    if([NSProcessInfo.processInfo.arguments containsObject:@"--benchmark-fixtures"]){
+        NSMutableArray *fixtures=NSMutableArray.array;
+        NSArray *cases=@[
+            @[@"math",@"证明当 x = 0 时 x² = x × x。\n写出 x = 0 的代入结果。",
+              @"# 作业\n证明当 x = 0 时 x² = x × x。\n写出 x = 0 的代入结果。",@"# 解答\n代入 x = 0，左边 x² = 0² = 0。\n右边 x × x = 0 × 0 = 0，所以等式成立。"],
+            @[@"code",@"实现 reverse_words，保持单词拼写。\n去掉多余空白。",
+              @"# 作业\n实现 reverse_words，保持单词拼写。\n去掉多余空白。",
+              @"def reverse_words(s):\n    return s[::-1]\n"],
+            @[@"notebook",@"报告两次实验的均值。\n给出实验单位。",
+              @"# 作业\n报告两次实验的均值。\n给出实验单位。",@"## 第 1 单元格 · markdown\n两次数据为 2 和 4。\n## 第 2 单元格 · code\nmean = (2 + 4) / 2\n输出 1（文字）\n3\n"]];
+        for(NSArray *row in cases){
+            NSString *kind=row[0],*requirements=row[1],*question=row[2],*answer=row[3];
+            NSString *path=[kind isEqual:@"code"] ? @"answer.py":([kind isEqual:@"notebook"] ? @"answer.ipynb":@"answer.md");
+            NSDictionary *context=@{@"format":@"am-preflight-context-v1",@"batchID":@"fixture",@"reportVersion":@"v",
+                @"requirements":requirements,@"documents":@[
+                    @{@"path":@"prompt.md",@"version":@"prompt-fixture",@"text":question,@"role":@"question"},
+                    @{@"path":path,@"version":@"answer-fixture",@"text":answer,@"role":@"answer"}],
+                @"questionLinks":@{@"prompt.md":@[@{@"path":path}]},@"images":@[],@"excluded":@[],@"uncovered":@[]};
+            [fixtures addObject:@{@"name":kind,@"messages":AMReviewBenchmarkMessages(context),@"context":context}];
+        }
+        puts([[[NSString alloc] initWithData:JSON(fixtures) encoding:NSUTF8StringEncoding] UTF8String]);
+        return 0;
+    }
     Check(NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"].length>0,@"isolated test directory required");SSWritePlist(@"online-review-settings.plist",@{@"enabled":@YES},NULL);
     AMOnlineReviewClient *client=AMOnlineReviewClient.new;client.waitForRetry=^BOOL(NSTimeInterval seconds){Check(seconds>=4 && seconds<=60,@"bounded exponential retry delay");return YES;};client.credentialProvider=^NSString *{return @"synthetic-connection-key";};
     __block NSUInteger uploads=0,generations=0,requests=0,deletes=0,gets=0,counts=0,maxImages=0;__block NSUInteger transientFailures=0;__block NSString *mode=@"normal";__block NSDictionary *current=nil;
@@ -92,5 +115,58 @@ int main(void){@autoreleasepool{
     SSWritePlist(@"online-review-usage.plist",@{@"day":@"fixture",@"count":@0},NULL);current=Context(0,@"bounded-recovery",&folder);mode=@"split-success";client.requestLimit=2;before=generations;error=nil;result=[client reviewContext:current folder:folder focus:nil progress:nil error:&error];Check(result && [result[@"completedUnits"] integerValue]==1 && [result[@"totalUnits"] integerValue]==2 && generations==before+2 && [result[@"partial"] boolValue],@"truncated project splits only within confirmed generation cap and saves completed unit");
     AMOnlineReviewClient *resumed=AMOnlineReviewClient.new;resumed.credentialProvider=client.credentialProvider;resumed.transport=client.transport;resumed.requestLimit=4;resumed.model=client.model;current=Context(0,@"bounded-recovery",&folder);before=generations;result=[resumed reviewContext:current folder:folder focus:nil progress:nil error:&error];Check(result && [result[@"completedUnits"] integerValue]==2 && generations==before+1 && [result[@"checked"] count]==2,@"fresh client and new batch resume only unfinished immutable unit");NSDictionary *generationDiagnostic=SSReadPlist(@"online-review-diagnostic.plist");Check([generationDiagnostic[@"thoughtsTokenCount"] integerValue]==67 && [generationDiagnostic[@"promptTokenCount"] integerValue]==123 && ![generationDiagnostic.description containsString:@"F = m"],@"safe token accounting contains no source material");
     client.requestLimit=4;current=Context(0,@"blocked-case",&folder);mode=@"blocked";before=generations;error=nil;result=[client reviewContext:current folder:folder focus:nil progress:nil error:&error];Check(!result && error.code==1003 && generations==before+1,@"blocked content is distinct and never automatically split or replayed");
+    // Compact checks use the same evidence validator and never retry a billable request.
+    SSWritePlist(@"online-review-usage.plist",@{@"day":@"fixture",@"count":@0},NULL);
+    SSWritePlist(@"online-review-settings.plist",@{@"provider":@"deepseek",@"providerModel":@"deepseek-flash",@"enabled":@YES,@"json":@YES},NULL);
+    NSDictionary *profile=AMOnlineReviewProfile();
+    AMOnlineReviewClient *compact=AMOnlineReviewClient.new;compact.profile=profile;compact.credentialProvider=smoke.credentialProvider;
+    __block NSUInteger compactCalls=0;__block BOOL failCompact=NO;
+    compact.transport=^NSData *(NSURLRequest *request,NSHTTPURLResponse **response,NSError **error){
+        compactCalls++;
+        Check([request.URL.absoluteString isEqual:@"https://api.deepseek.com/chat/completions"] &&
+            [request.allHTTPHeaderFields[@"Authorization"] isEqual:@"Bearer synthetic-smoke-key"],@"compatible credentials stay on the exact chosen endpoint");
+        Check(!request.allHTTPHeaderFields[@"x-goog-api-key"],@"provider credentials are isolated");
+        NSDictionary *body=[NSJSONSerialization JSONObjectWithData:request.HTTPBody options:0 error:NULL];
+        Check([body[@"response_format"][@"type"] isEqual:@"json_object"] && [body[@"thinking"][@"type"] isEqual:@"disabled"],@"compact fast JSON request");
+        NSDictionary *user=body[@"messages"][1];
+        NSDictionary *manifest=[NSJSONSerialization JSONObjectWithData:[user[@"content"] dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
+        Check([manifest[@"r"] count]==1 && [manifest[@"files"] count]==2,@"literal file requirement is resolved locally, while both answers remain visible");
+        NSDictionary *answer=@{@"checks":@[@{@"r":@1,@"s":@"partial",@"f":@1,@"l":@2,@"q":@"F = m * a",@"why":@"只展示了公式",@"fix":@"补充单位和代入过程"}],@"read":@[@1,@2]};
+        NSString *encoded=[[NSString alloc] initWithData:JSON(answer) encoding:NSUTF8StringEncoding];
+        *response=[[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:failCompact ? 503:200 HTTPVersion:@"HTTP/1.1" headerFields:@{}];
+        return JSON(@{@"choices":@[@{@"finish_reason":@"stop",@"message":@{@"content":encoded}}],@"usage":@{@"prompt_tokens":@180,@"completion_tokens":@45,@"total_tokens":@225}});
+    };
+    NSDictionary *(^prepareCompact)(NSString *,NSURL **)=^NSDictionary *(NSString *suffix,NSURL **target){
+        NSMutableDictionary *input=Context(0,suffix,target).mutableCopy;
+        input[@"requirements"]=@"提交 report.md\nExplain why F = m * a.";
+        input[@"questionLinks"]=@{@"analysis.py":@[@{@"path":@"report.md"}]};
+        [JSON(input) writeToURL:[*target URLByAppendingPathComponent:@"context.local.json"] atomically:YES];
+        return input;
+    };
+    current=prepareCompact(@"compact", &folder);error=nil;
+    result=[compact reviewContext:current folder:folder focus:nil progress:nil error:&error];
+    Check(result && compactCalls==1 && [result[@"requirementChecks"] count]==2 &&
+        [result[@"issues"][0][@"evidence"] isEqual:@"F = m * a"],@"compact report retains local and validated model evidence");
+    Check([result[@"requirementChecks"][0][@"status"] isEqual:@"partial"],@"partial requirement remains distinct");
+    NSArray *usage=SSReadPlist(@"online-provider-usage.plist");
+    Check([usage.lastObject[@"input"] isEqual:@180] && [usage.lastObject[@"output"] isEqual:@45],@"records actual returned token usage");
+    current=prepareCompact(@"compact",&folder);result=[compact reviewContext:current folder:folder focus:nil progress:nil error:&error];
+    Check([result[@"cached"] boolValue] && compactCalls==1,@"same compact payload reuses successful report");
+    failCompact=YES;current=prepareCompact(@"compact-failed",&folder);error=nil;
+    result=[compact reviewContext:current folder:folder focus:nil progress:nil error:&error];
+    Check(!result && compactCalls==2 && error.code==503,@"failed compact requests do not retry automatically");
+    usage=SSReadPlist(@"online-provider-usage.plist");
+    Check(![usage.lastObject[@"known"] boolValue],@"failed generation records unknown usage");
+    SSWritePlist(@"online-review-settings.plist",@{@"provider":@"compatible",@"endpoint":@"https://example.invalid/v1",
+        @"providerModel":@"fixture",@"enabled":@YES},NULL);
+    current=prepareCompact(@"changed-endpoint",&folder);error=nil;
+    result=[compact reviewContext:current folder:folder focus:nil progress:nil error:&error];
+    Check(!result && compactCalls==2,@"changed provider invalidates previous authorization before network use");
+    NSDictionary *fields=AMValidateRecognizedFields(@"完成报告\n明天上课\nDue 11/10",
+        @{@"requirements":@[@{@"line":@1,@"quote":@"完成报告"},@{@"line":@2,@"quote":@"invented"}],
+          @"deadline":@{@"line":@3,@"quote":@"Due 11/10"}});
+    Check([fields[@"requirements"] count]==1 && [fields[@"deadline"][@"line"] isEqual:@3],@"recognition accepts only exact matching source lines");
+    Check(!AMValidateRecognizedFields(@"Practice session tomorrow",
+        @{@"deadline":@{@"line":@1,@"quote":@"Practice session tomorrow"}})[@"deadline"],@"classroom appointment rejected as deadline");
     printf("PASS: %lu online project, quota, cache, cleanup and evidence assertions\n",(unsigned long)checks);
 }return 0;}

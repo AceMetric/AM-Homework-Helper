@@ -94,7 +94,38 @@ static void HistoryBatchAssertions(void){
     Check(rootPage.count>second.count && ![rootPage.lastObject[@"teacherHistoryKnown"] boolValue],@"root commit remains discoverable when no teacher history is available");
     Cleanup(course);
 }
+static void WorkbenchAssertions(void){
+    NSMutableDictionary *fixture=Fixture();FixtureGit *service=Service(fixture);
+    NSString *root=fixture[@"path"];
+    NSString *before=Git(root,@[@"rev-parse",@"HEAD"]);
+    Check([NSFileManager.defaultManager createDirectoryAtPath:[root stringByAppendingPathComponent:@"assignment-1/sub"]
+        withIntermediateDirectories:YES attributes:nil error:NULL],@"workbench fixture scope created");
+    NSString *readme=@"assignment-1/README.md";
+    Write([root stringByAppendingPathComponent:readme],@"# Teacher instructions\nSubmit report.md.\n");
+    Write([root stringByAppendingPathComponent:@"assignment-1/sub/prompt.md"],@"Original teacher material\n");
+    Git(root,@[@"add",@"assignment-1"]);Git(root,@[@"commit",@"-m",@"Publish homework"]);
+    NSString *teacher=Git(root,@[@"rev-parse",@"HEAD"]);fixture[@"teacherCommit"]=teacher;
+    Write([root stringByAppendingPathComponent:readme],@"# Locally edited instructions\n");
+    Write([root stringByAppendingPathComponent:@"assignment-1/report.md"],@"Student answer\n");
+    Write([root stringByAppendingPathComponent:@"assignment-1/.env"],@"synthetic unrelated setting\n");
+    Write([root stringByAppendingPathComponent:@"outside.md"],@"Outside the assignment\n");
+    NSDictionary *index=[service assignmentWorkbenchIndex:fixture source:readme error:NULL];
+    NSArray *paths=index[@"paths"];
+    Check(paths.count==3 && [paths containsObject:@"assignment-1/sub/prompt.md"] && [paths containsObject:@"assignment-1/report.md"],
+        @"workbench includes scoped nested files and untracked answers");
+    Check(![paths containsObject:@"assignment-1/.env"] && ![paths containsObject:@"outside.md"],@"sensitive and unrelated files do not appear in the tree");
+    NSDictionary *preview=[service assignmentWorkbenchTeacherPreview:fixture path:readme error:NULL];
+    Check([preview[@"files"][readme][@"text"] containsString:@"Teacher instructions"] &&
+        ![preview[@"files"][readme][@"text"] containsString:@"Locally edited"],@"teacher preview is pinned independently of the worktree");
+    Check([index[@"teacherHistory"][0][@"id"] isEqual:teacher],@"teacher history uses the pinned source version");
+    NSArray *changed=[service changedTeacherPathsForCourse:fixture from:before to:teacher];
+    Check([changed containsObject:readme] && ![changed containsObject:@"assignment-1/report.md"],
+        @"supplementation delta only includes changed teacher paths");
+    Check([Git(root,@[@"rev-parse",@"HEAD"]) isEqual:teacher],@"workbench reads never change the branch");
+    Cleanup(fixture);
+}
 int main(void){@autoreleasepool{
+    WorkbenchAssertions();
     NSString *data=NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"];Check(data.length>0,@"isolated submission storage");
     NSMutableDictionary *f=Fixture();FixtureGit *service=Service(f);NSError *error=nil;NSString *before=Git(f[@"teacherBare"],@[@"rev-parse",@"main"]);
     Write([f[@"path"] stringByAppendingPathComponent:@"answer.md"],@"An original answer\n");

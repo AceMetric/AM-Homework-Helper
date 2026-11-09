@@ -4,6 +4,7 @@
 #import "DDLCore.h"
 #import "DDLImport.h"
 #import "AMPreflight.h"
+#import "SSSecurity.h"
 #import "AMRenderer.h"
 #import "ThemeIcon.h"
 #import "SSLocalData.h"
@@ -786,6 +787,19 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(woke:) name:NSSystemClockDidChangeNotification object:nil];
     [NSWorkspace.sharedWorkspace.notificationCenter addObserver:self selector:@selector(accessibilityChanged:) name:NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification object:nil];
     self.courseWindow = [self makeCourseController];self.courseWindow.usesToolbar=YES;
+    self.courseWindow.importScreenshot = ^(NSString *path) {
+        [weakSelf quickEntry:nil];
+        if(!weakSelf.quickController)return;
+        if(path.length){
+            NSImage *image=[[NSImage alloc] initWithContentsOfFile:path];
+            if(image)[weakSelf quickOCR:image];
+            else [weakSelf refreshQuick:@"无法读取这张截图，请选择图片文件。"];
+        }else{
+            NSImage *image=[[NSImage alloc] initWithPasteboard:NSPasteboard.generalPasteboard];
+            if(image)[weakSelf quickOCR:image];
+            else [weakSelf quickAction:@"image" payload:weakSelf.quickController.snapshot];
+        }
+    };
     self.courseWindow.tasksProvider = ^NSArray * { return [weakSelf snapshot]; };
     self.courseWindow.localReviewProvider=^NSArray * {return [weakSelf quickReviewRecords];};
     [self loadQuick];
@@ -1092,7 +1106,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     NSMutableArray *items=NSMutableArray.array;
     NSArray *names=@[@"总览",@"日历",@"任务",@"待审核作业"],*icons=@[@"square.grid.2x2",@"calendar",@"checklist",@"tray"];
     for(NSUInteger page=0;page<names.count;page++)[items addObject:@{@"id":[NSString stringWithFormat:@"page:%lu",(unsigned long)page],@"label":names[page],@"symbol":icons[page],@"pending":page==3 ? @(self.courseWindow.pendingCount):@0}];
-    NSMutableArray *courses=[NSMutableArray arrayWithObject:@{@"id":@"course:",@"label":@"所有课程",@"symbol":@"books.vertical"}];
+    NSMutableArray *courses=[NSMutableArray arrayWithObject:@{@"id":@"course:",@"label":@"作业看板",@"symbol":@"rectangle.grid.2x2"}];
     for(NSDictionary *course in self.courseWindow.courseSnapshots ?: @[])[courses addObject:@{@"id":[@"course:" stringByAppendingString:course[@"id"]],@"label":course[@"name"] ?: @"课程",@"symbol":course[@"symbol"] ?: @"book.closed",@"pending":course[@"pending"] ?: @0,@"status":course[@"status"] ?: @""}];
     [items addObject:@{@"id":@"courses",@"label":@"课程",@"children":courses}];
     NSString *selected=self.page==4 ? [@"course:" stringByAppendingString:self.courseWindow.selectedCourseID ?: @""]:[NSString stringWithFormat:@"page:%ld",(long)self.page];
@@ -1202,7 +1216,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     Clear(self.header);
     NSString *title = @[@"今日与近期安排", @"日历", @"任务", @"待审核作业", @"课程", @"开始使用"][self.page];
     if(self.page==0 && self.weeklyMode)title=@"每周安排";
-    if(self.page==4){title=@"所有课程";for(NSDictionary *course in self.courseWindow.courseSnapshots)if([course[@"id"] isEqual:self.courseWindow.selectedCourseID])title=course[@"name"];}
+    if(self.page==4){title=@"作业看板";for(NSDictionary *course in self.courseWindow.courseSnapshots)if([course[@"id"] isEqual:self.courseWindow.selectedCourseID])title=course[@"name"];}
     Put(self.header, Text(title, 22, NSFontWeightSemibold, Ink()), 0, 4, w - 152, 32);
     NSString *subtitle=self.page==0 ? DDLFormatDate(NSDate.date,@"M月d日 EEEE"):@"";
     if(self.page==0 && self.courseWindow.pendingCount){NSButton *pending=Button([NSString stringWithFormat:@"%lu 项待审核",(unsigned long)self.courseWindow.pendingCount],self,@selector(navigate:),0);pending.tag=3;Put(self.header,pending,w-148,4,148,32);}
@@ -1495,7 +1509,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     return nil;
 }
 - (void)refreshPageToolbar {
-    NSMutableArray *desired=NSMutableArray.array;if(self.page==0)[desired addObject:@"AMOverviewMode"];if(self.page==1)[desired addObject:@"AMCalendarStatus"];if(self.page==4){[desired addObject:@"AMCourseSections"];[desired addObjectsFromArray:self.courseWindow.toolbarActionIdentifiers];}if(self.page==2)[desired addObjectsFromArray:@[@"AMTaskFilter",@"AMSort"]];[desired addObject:NSToolbarFlexibleSpaceItemIdentifier];[desired addObject:@"AMActivity"];if(self.submissionCompletionUndoAvailable)[desired addObject:@"AMUndoSubmissionCompletion"];if(self.page<3)[desired addObjectsFromArray:@[@"AMSearch",@"AMNewTask"]];else if(self.page==4){if(self.courseWindow.navigationControl.selectedSegment==0)[desired addObject:@"AMCourseFilter"];[desired addObject:@"AMCourseSearch"];}
+    NSMutableArray *desired=NSMutableArray.array;if(self.page==0)[desired addObject:@"AMOverviewMode"];if(self.page==1)[desired addObject:@"AMCalendarStatus"];if(self.page==4){[desired addObject:@"AMCourseSections"];[desired addObjectsFromArray:self.courseWindow.toolbarActionIdentifiers];}if(self.page==2)[desired addObjectsFromArray:@[@"AMTaskFilter",@"AMSort"]];[desired addObject:NSToolbarFlexibleSpaceItemIdentifier];[desired addObject:@"AMActivity"];if(self.submissionCompletionUndoAvailable)[desired addObject:@"AMUndoSubmissionCompletion"];if(self.page<3)[desired addObjectsFromArray:@[@"AMSearch",@"AMNewTask"]];else if(self.page==4 && !self.courseWindow.assignmentBoardActive){if(self.courseWindow.navigationControl.selectedSegment==0)[desired addObject:@"AMCourseFilter"];[desired addObject:@"AMCourseSearch"];}
     NSToolbar *toolbar=self.window.toolbar;
     for(NSInteger index=(NSInteger)toolbar.items.count-1;index>=0;index--)if(![desired containsObject:toolbar.items[index].itemIdentifier])[toolbar removeItemAtIndex:index];
     for(NSUInteger index=0;index<desired.count;index++){if(index<toolbar.items.count && [toolbar.items[index].itemIdentifier isEqual:desired[index]])continue;[toolbar insertItemWithItemIdentifier:desired[index] atIndex:index];}

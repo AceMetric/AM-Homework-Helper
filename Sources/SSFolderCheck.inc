@@ -1,12 +1,18 @@
 // Independent local checking has its own scope and never edits course binding.
 - (void)closeCheckScope {
     self.checkScopeGeneration++;self.checkPreviewGeneration++;
+    if(self.checkScopeWorkbenchAssignment)[self.courseWorkspace setWorkbenchStatus:@"" forAssignment:self.checkScopeWorkbenchAssignment];
+    self.checkScopeWorkbenchAssignment=nil;
     if(self.checkScopeWindow.sheetParent)[self.window endSheet:self.checkScopeWindow];
     [self.checkScopeWindow orderOut:nil];self.checkScopeWindow=nil;self.checkScope=nil;AMOperationFinish(self.checkScopeOperation,@"cancelled",@"文件整理已取消");self.checkScopeOperation=nil;
 }
 - (void)showCheckWorkspace {if(self.checkScopeWindow)[self.checkScopeWindow makeKeyAndOrderFront:nil];else [self status:@"还没有打开的检查工作区；请选择任务，再点击“检查作业文件…”。"];}
-- (void)checkTask:(NSString *)identifier {
+- (void)checkTask:(NSString *)identifier {[self checkTask:identifier forWorkbench:nil];}
+- (void)checkTask:(NSString *)identifier forWorkbench:(NSString *)assignment {
     if(self.checkScopeWindow){[self showCheckWorkspace];return;}
+    if(assignment.length && self.workbenchCheck.checking){
+        [self showTaskCheckProblem:@"另一份检查正在后台运行。可以在活动中查看或停止。"];return;
+    }
     NSString *blocked=[self taskCheckBlockReason];if(blocked){[self showTaskCheckProblem:blocked];return;}
     NSDictionary *task=nil,*linked=nil;for(NSDictionary *row in self.tasksProvider ? self.tasksProvider():@[])if([row[@"id"] isEqual:identifier])task=row.copy;
     if(!task){[self showTaskCheckProblem:@"这项任务已不存在，请重新选择任务。"];return;}
@@ -19,10 +25,11 @@
         NSString *otherSource=other[@"sourcePath"],*otherScope=otherSource.stringByDeletingLastPathComponent;
         if(AMPeerInScope(otherScope,scope) || AMPeerInScope(scope,otherScope)){automatic=NO;break;}
     }
-    [self prepareCheckScopeForTask:task course:linked scope:automatic ? scope:nil reason:@"无法自动确定独立的作业目录，请确认范围。"];
+    [self prepareCheckScopeForTask:task course:linked scope:automatic ? scope:nil reason:@"无法自动确定独立的作业目录，请确认范围。" workbench:assignment];
 }
-- (void)prepareCheckScopeForTask:(NSDictionary *)task course:(NSDictionary *)linked scope:(NSString *)assignmentScope reason:(NSString *)reason {
+- (void)prepareCheckScopeForTask:(NSDictionary *)task course:(NSDictionary *)linked scope:(NSString *)assignmentScope reason:(NSString *)reason workbench:(NSString *)assignment {
     NSString *identifier=task[@"id"];
+    BOOL automaticallyStart=assignment.length && assignmentScope.length;
     NSArray<NSURL *> *urls=nil;
     if(assignmentScope)urls=@[[NSURL fileURLWithPath:linked[@"path"]]];
     else {
@@ -39,14 +46,19 @@
     if(!folder)for(NSURL *url in urls){NSString *parent=url.path.stringByDeletingLastPathComponent.stringByStandardizingPath;while(![parent isEqual:root] && ![parent hasPrefix:[root stringByAppendingString:@"/"]] && ![root isEqual:@"/"])root=root.stringByDeletingLastPathComponent;}
     NSString *blocked=[self taskCheckBlockReason];if(blocked){[self showTaskCheckProblem:blocked];return;}
     NSMutableDictionary *course=linked.mutableCopy ?: NSMutableDictionary.dictionary;course[@"path"]=assignmentScope ? root.stringByResolvingSymlinksInPath:root;course[@"preflightMode"]=@"working";course[@"preflightLocal"]=@YES;
+    self.checkScopeWorkbenchAssignment=assignment;
     self.checkScope=AMCheckScopeController.new;self.checkScopeWindow=AMMakeCheckWorkspace(self.window);self.checkScopeWindow.title=@"检查整份作业 · 文件范围";self.checkScopeWindow.contentViewController=self.checkScope;
     __weak typeof(self) owner=self;
     self.checkScope.actionHandler=^(NSDictionary *request){
-        if([request[@"action"] isEqual:@"refresh"] && assignmentScope){[owner closeCheckScope];[owner checkTask:identifier];return;}
+        if([request[@"action"] isEqual:@"refresh"] && assignmentScope){[owner closeCheckScope];[owner checkTask:identifier forWorkbench:assignment];return;}
         if([request[@"action"] isEqual:@"cancel"]){[owner closeCheckScope];return;}
         if([request[@"action"] isEqual:@"preview"]){NSString *path=request[@"selected"];NSDictionary *record=nil;for(NSDictionary *row in owner.checkScopeRecords)if([row[@"path"] isEqual:path])record=row;if(![record[@"selectable"] boolValue])return;NSUInteger version=++owner.checkPreviewGeneration;NSMutableDictionary *previewCourse=course.mutableCopy;previewCourse[@"preflightPreview"]=@YES;dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{SSGit *reader=SSGit.new;NSDictionary *snapshot=[reader preflightSnapshotForCourse:previewCourse paths:@[path] error:NULL];dispatch_async(dispatch_get_main_queue(),^{if(owner.checkPreviewGeneration!=version || !owner.checkScope)return;AMDocumentView *preview=[[AMDocumentView alloc] initWithFrame:NSMakeRect(0,0,600,460)];[preview loadSnapshot:snapshot ?: @{} path:path];[owner.checkScope setPreview:preview];});});return;}
         if(![request[@"action"] isEqual:@"check"] || ![request[@"paths"] count])return;
-        if(owner.operationsPaused || (owner.busy && !owner.git.readsCancellable)){[owner.checkScope setProgress:@"正在写入课程文件或准备退出，请等待结束后再开始检查。"];return;}
+        if(owner.operationsPaused || (owner.busy && !owner.git.readsCancellable)){
+            [owner.checkScope setProgress:@"正在写入课程文件或准备退出，请等待结束后再开始检查。"];
+            if(automaticallyStart){[owner.courseWorkspace setWorkbenchStatus:@"" forAssignment:assignment];[owner showCheckWorkspace];}
+            return;
+        }
         NSArray *paths=[request[@"paths"] copy];NSMutableArray *changes=NSMutableArray.array;for(NSString *path in paths)[changes addObject:@{@"path":path,@"status":@"当前本机文件",@"sensitive":@(SSSensitivePath(path))}];
         NSSet *selection=[NSSet setWithArray:paths];
         NSMutableArray *excluded=NSMutableArray.array,*omissions=NSMutableArray.array;
@@ -60,18 +72,44 @@
             }
         }
         course[@"preflightFeedbackVersions"]=feedbackVersions;course[@"preflightExcluded"]=excluded;course[@"preflightOmissions"]=omissions;
+        if(assignment.length){
+            // The workspace owns this background check separately from the
+            // submission sheet, so checking never consumes the submit draft.
+            [owner closeCheckScope];
+            [owner.workbenchCheck cancel:nil];
+            SSSubmissionController *check=[[SSSubmissionController alloc] initWithCourse:course changes:changes];
+            owner.workbenchCheck=check;owner.workbenchCheckAssignment=assignment;[owner.courseWorkspace setWorkbenchActive:assignment];
+            check.checkOnly=YES;check.message.hidden=YES;
+            check.window.title=@"检查详情";
+            [check configureTasks:@[task] selected:@[identifier]];
+            [owner configurePreflight:check course:course tasks:@[task]];
+            __weak SSCourseController *controller=owner;
+            check.workbenchStatusChanged=^(NSString *message){[controller.courseWorkspace setWorkbenchStatus:message forAssignment:assignment];};
+            check.workbenchReportChanged=^(NSDictionary *report){[controller.courseWorkspace setWorkbenchReport:report forAssignment:assignment];};
+            check.finished=^{[controller.courseWorkspace setWorkbenchStatus:@"" forAssignment:assignment];controller.workbenchCheck=nil;controller.workbenchCheckAssignment=nil;[controller.courseWorkspace setWorkbenchActive:nil];};
+            for(NSButton *item in check.checks)if(item.enabled)item.state=NSControlStateValueOn;
+            [owner.courseWorkspace setWorkbenchStatus:@"正在本机检查…" forAssignment:assignment];
+            [check save:nil];
+            return;
+        }
         AMCheckScopeController *scopeController=owner.checkScope;NSWindow *scope=owner.checkScopeWindow;owner.checkScopeGeneration++;
         owner.submission=[[SSSubmissionController alloc] initWithCourse:course changes:changes];owner.submission.checkOnly=YES;owner.submission.message.hidden=YES;
         [owner.submission configureTasks:@[task] selected:@[identifier]];
         NSView *reportRoot=owner.submission.window.contentView;owner.submission.window=scope;scope.contentView=reportRoot;reportRoot.frame=NSMakeRect(0,0,NSWidth(scope.contentView.bounds),NSHeight(scope.contentView.bounds));reportRoot.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;scope.title=@"检查整份作业 · 检查报告";
         [owner configurePreflight:owner.submission course:course tasks:@[task]];
+        NSString *assignmentID=[task[@"sourceID"] length] ? task[@"sourceID"]:identifier;
+        owner.submission.workbenchReportChanged=^(NSDictionary *report){
+            [owner.courseWorkspace setWorkbenchReport:report forAssignment:assignmentID];
+        };
         for(NSButton *check in owner.submission.checks)if(check.enabled)check.state=NSControlStateValueOn;owner.submission.draftBaseline=[owner.submission draftValues];
         owner.submission.finished=^{owner.submission=nil;[owner closeCheckScope];};
         owner.submission.backToScope=^{SSSubmissionController *report=owner.submission;report.finished=nil;[report cancel:nil];owner.submission=nil;((AMCheckWindow *)scope).onConfirm=nil;((AMCheckWindow *)scope).onCancel=^{[owner closeCheckScope];};scope.contentViewController=scopeController;scope.title=@"检查整份作业 · 文件范围";[scope makeKeyAndOrderFront:nil];};
         owner.submission.readPreview=^(NSString *path,void(^ready)(NSString *)){ready(@"当前本机文件，只读检查；不创建提交或推送。");};
         ((AMCheckWindow *)scope).onConfirm=^{[owner.submission save:nil];};((AMCheckWindow *)scope).onCancel=^{[owner.submission cancel:nil];};[owner.submission save:nil];[scope makeKeyAndOrderFront:nil];
     };
-    [self.checkScopeWindow makeKeyAndOrderFront:nil];NSUInteger generation=++self.checkScopeGeneration;self.checkScopeOperation=AMOperationBegin(@"整理作业文件",root.lastPathComponent,YES,^{[owner closeCheckScope];});
+    if(automaticallyStart)[self.courseWorkspace setWorkbenchStatus:@"正在整理作业范围…" forAssignment:assignment];
+    else [self.checkScopeWindow makeKeyAndOrderFront:nil];
+    NSUInteger generation=++self.checkScopeGeneration;self.checkScopeOperation=AMOperationBegin(@"整理作业文件",root.lastPathComponent,YES,^{[owner closeCheckScope];});
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
         NSError *error=nil;NSArray *records=nil;
         NSDictionary *binding=nil;
@@ -111,11 +149,21 @@
         dispatch_async(dispatch_get_main_queue(),^{if(!owner || owner.checkScopeGeneration!=generation)return;
             if(assignmentScope && !binding){
                 [owner closeCheckScope];
-                [owner prepareCheckScopeForTask:task course:linked scope:nil reason:[NSString stringWithFormat:@"%@ 请手动确认文件范围。",error.localizedDescription ?: @"未能自动确定作业范围。"]];
+                [owner prepareCheckScopeForTask:task course:linked scope:nil reason:[NSString stringWithFormat:@"%@ 请手动确认文件范围。",error.localizedDescription ?: @"未能自动确定作业范围。"] workbench:assignment];
                 return;
             }
             if(binding)course[@"assignmentCheckScope"]=binding;
             [owner.checkScope setRefreshAvailable:binding!=nil];
-            owner.checkScopeRecords=records;AMOperationFinish(owner.checkScopeOperation,error ? @"failed":@"success",error.localizedDescription ?: @"文件范围已准备好");[owner.checkScope update:records busy:NO notice:error.localizedDescription ?: (binding ? @"已选相对老师版本有改动的答卷，包括此前提交的答案。":@"核对文件范围后开始；未检查项已列出。")] ;});
+            owner.checkScopeRecords=records;AMOperationFinish(owner.checkScopeOperation,error ? @"failed":@"success",error.localizedDescription ?: @"文件范围已准备好");[owner.checkScope update:records busy:NO notice:error.localizedDescription ?: (binding ? @"已选相对老师版本有改动的答卷，包括此前提交的答案。":@"核对文件范围后开始；未检查项已列出。")];
+            if(automaticallyStart){
+                NSMutableArray *selected=NSMutableArray.array;
+                for(NSDictionary *row in records)if([row[@"selectable"] boolValue] && (!row[@"defaultSelected"] || [row[@"defaultSelected"] boolValue]))[selected addObject:row[@"path"]];
+                if(selected.count){void (^action)(NSDictionary *)=owner.checkScope.actionHandler;action(@{@"action":@"check",@"paths":selected});}
+                else{
+                    [owner.courseWorkspace setWorkbenchStatus:@"" forAssignment:assignment];
+                    [owner.checkScopeWindow makeKeyAndOrderFront:nil];
+                }
+            }
+        });
     });
 }

@@ -3,6 +3,80 @@ static NSString *AMQuickVersion(NSString *text,NSDate *reference,NSString *zone)
 NSDictionary *AMQuickMaterial(NSString *text,NSDate *reference,NSString *zone) {
     return @{@"id":NSUUID.UUID.UUIDString,@"version":AMQuickVersion(text,reference,zone),@"text":text,@"referenceDate":reference,@"timeZone":zone};
 }
+// A single dated heading can govern several work groups. Only the heading
+// supplies their shared due date; a nested classroom appointment stays in notes.
+NSArray *AMQuickParseImageOutline(NSString *text,NSString *sourceID,NSDate *reference,NSCalendar *calendar) {
+    NSArray *lines=[text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+    NSString *heading=RTrim(lines.firstObject ?: @"");
+    NSRegularExpression *date=[NSRegularExpression regularExpressionWithPattern:@"(?i)\\b(?:due|deadline)\\s*[:：]?\\s*(\\d{1,2})[/／](\\d{1,2})(?![/／\\d])" options:0 error:NULL];
+    NSTextCheckingResult *match=[date firstMatchInString:heading options:0 range:NSMakeRange(0,heading.length)];
+    BOOL approximate=NO;
+    if(!match){
+        // In a dated weekly heading, tolerate one common OCR reading of
+        // “due”. The captured characters stay visible and time stays unset.
+        NSRegularExpression *suspect=[NSRegularExpression regularExpressionWithPattern:
+            @"(?i)\\b(?:coming|this|next)\\s+week\\s*[(（]\\s*aue\\s*(\\d{1,2})[/／](\\d{1,2})\\s*[)）]" options:0 error:NULL];
+        match=[suspect firstMatchInString:heading options:0 range:NSMakeRange(0,heading.length)];
+        approximate=match!=nil;
+    }
+    if(!match || lines.count<3)return @[];
+    NSRegularExpression *bullet=[NSRegularExpression regularExpressionWithPattern:@"^(\\s*)[-*•●○◦▪■]\\s+(.+)$" options:0 error:NULL];
+    NSMutableArray *groups=NSMutableArray.array,*appointments=NSMutableArray.array;
+    NSMutableArray *group=nil;
+    NSUInteger baseIndent=NSNotFound,topicCount=0;
+    BOOL sorting=NO;
+    for(NSUInteger i=1;i<lines.count;i++){
+        NSString *line=lines[i];if(!RTrim(line).length)continue;
+        NSTextCheckingResult *item=[bullet firstMatchInString:line options:0 range:NSMakeRange(0,line.length)];
+        if(!item)return @[];
+        NSUInteger depth=[item rangeAtIndex:1].length;
+        NSString *body=[line substringWithRange:[item rangeAtIndex:2]];
+        if([date firstMatchInString:body options:0 range:NSMakeRange(0,body.length)])return @[];
+        if(baseIndent==NSNotFound)baseIndent=depth;
+        if(depth<baseIndent)return @[];
+        if(depth==baseIndent){
+            NSString *lower=body.lowercaseString;
+            if([lower containsString:@"session"] && ([lower containsString:@"tomorrow"] || [lower containsString:@"in class"])){
+                [appointments addObject:body];group=nil;continue;
+            }
+            group=NSMutableArray.array;
+            [groups addObject:group];
+            topicCount++;
+        }
+        if(group){
+            NSString *content=[line substringFromIndex:MIN(baseIndent,line.length)];
+            if([body localizedCaseInsensitiveContainsString:@"Lecture "])
+                content=[[NSRegularExpression regularExpressionWithPattern:@"(?<=\\d),(?=\\d)" options:0 error:NULL]
+                    stringByReplacingMatchesInString:content options:0 range:NSMakeRange(0,content.length) withTemplate:@", "];
+            [group addObject:content];
+        }
+        else if(depth>baseIndent)[appointments addObject:body];
+        if([body.lowercaseString containsString:@"sort"])sorting=YES;
+    }
+    if(topicCount<2)return @[];
+    NSDateComponents *day=[calendar components:NSCalendarUnitYear fromDate:reference];
+    day.month=[[heading substringWithRange:[match rangeAtIndex:1]] integerValue];
+    day.day=[[heading substringWithRange:[match rangeAtIndex:2]] integerValue];
+    NSDate *suggestion=[calendar dateFromComponents:day];
+    if(!suggestion || [calendar component:NSCalendarUnitMonth fromDate:suggestion]!=day.month ||
+        [calendar component:NSCalendarUnitDay fromDate:suggestion]!=day.day)return @[];
+    NSMutableArray *blocks=NSMutableArray.array;
+    for(NSArray *lines in groups){
+        NSString *label=[lines.firstObject lowercaseString];
+        NSString *title=[label hasPrefix:@"- reading"] ? @"阅读":([label hasPrefix:@"- practice"] && sorting ? @"排序实践":nil);
+        [blocks addObject:title ? [NSString stringWithFormat:@"### %@\n%@",title,[lines componentsJoinedByString:@"\n"]]:[lines componentsJoinedByString:@"\n"]];
+    }
+    NSString *requirements=[blocks componentsJoinedByString:@"\n\n"];
+    NSString *summary=sorting ? @"排序阅读与实践":@"作业阅读与实践";
+    NSString *notes=appointments.count ? [NSString stringWithFormat:@"%@\n\n### 课程安排\n%@",requirements,[appointments componentsJoinedByString:@"\n"]]:requirements;
+    NSString *dateOnly=[NSString stringWithFormat:@"%04ld-%02ld-%02ld",(long)day.year,(long)day.month,(long)day.day];
+    return @[[@{@"id":[sourceID stringByAppendingString:@":outline"],@"sourceID":sourceID,@"version":RHash(text),@"referenceDate":reference,
+        @"title":summary,@"subject":@"其他",@"summary":summary,@"submissionRequirements":requirements,@"notes":notes,@"evidence":text,
+        @"deadlineEvidence":heading,@"timeZone":calendar.timeZone.name,@"dateText":dateOnly,@"selected":@YES,@"edited":@NO,
+        @"reminderOffsets":DDLDefaultReminderOffsets(),@"hint":approximate ? @"标题的截止标记可能被 OCR 错读。请对照原图核对日期并补全时间。":
+            @"各组共用标题中的截止日期。年份按所选来源日期建议，请补全截止时间。",
+        @"imageOutline":@YES} mutableCopy]];
+}
 NSArray *AMQuickParse(NSString *text,NSString *sourceID,NSDate *reference,NSCalendar *calendar) {
     if(![text isKindOfClass:NSString.class] || text.length>100000 || !RTrim(text).length)return @[];
     NSArray *blocks=SSActivityBlocks(text,@"material.md",YES);

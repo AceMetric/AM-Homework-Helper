@@ -69,6 +69,28 @@ NSDate *DDLPersonalDueDate(NSDate *announcedDue, NSInteger leadDays, NSCalendar 
     return [calendar dateByAddingUnit:NSCalendarUnitDay value:-leadDays toDate:announcedDue options:0];
 }
 
+// Cluster nearly aligned left edges. OCR often omits bullet glyphs, so
+// horizontal offsets carry the hierarchy even when the text has no markers.
+NSString *DDLImageOutline(NSArray<NSString *> *lines,NSArray *origins){
+    if(lines.count!=origins.count)return [lines componentsJoinedByString:@"\n"];
+    NSMutableArray<NSNumber *> *anchors=NSMutableArray.array;
+    for(id origin in origins)if([origin isKindOfClass:NSNumber.class])[anchors addObject:origin];
+    [anchors sortUsingSelector:@selector(compare:)];
+    NSMutableArray<NSNumber *> *levels=NSMutableArray.array;
+    for(NSNumber *x in anchors)if(!levels.count || x.doubleValue-levels.lastObject.doubleValue>.025)[levels addObject:x];
+    NSMutableArray *result=NSMutableArray.array;
+    for(NSUInteger index=0;index<lines.count;index++){
+        NSString *line=lines[index];id x=origins[index];
+        if(!line.length || ![x isKindOfClass:NSNumber.class]){[result addObject:line];continue;}
+        NSUInteger level=0;while(level+1<levels.count && [x doubleValue]>=levels[level+1].doubleValue-.009)level++;
+        NSString *value=AMReplace(line,@"^\\s*[•●○◦▪■‣]\\s*",@"");
+        if(!level && [value isEqual:line]){[result addObject:line];continue;}
+        NSString *indent=[@"" stringByPaddingToLength:MIN(level,8)*2 withString:@" " startingAtIndex:0];
+        [result addObject:[NSString stringWithFormat:@"%@- %@",indent,value]];
+    }
+    return [result componentsJoinedByString:@"\n"];
+}
+
 NSDictionary *DDLOCRResultFromImage(NSImage *image, NSError **error) {
     NSData *tiff = image.TIFFRepresentation;
     NSBitmapImageRep *bitmap = tiff ? [[NSBitmapImageRep alloc] initWithData:tiff] : nil;
@@ -79,7 +101,9 @@ NSDictionary *DDLOCRResultFromImage(NSImage *image, NSError **error) {
     }
     VNRecognizeTextRequest *request = [VNRecognizeTextRequest new];
     request.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
-    request.recognitionLanguages = @[@"zh-Hans", @"en-US"];
+    request.recognitionLanguages = @[@"en-US", @"zh-Hans"];
+    request.automaticallyDetectsLanguage = YES;
+    request.customWords = @[@"due",@"deadline",@"assignment"];
     request.usesLanguageCorrection = YES;
     VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithData:png options:@{}];
     if (![handler performRequests:@[request] error:error]) return nil;
@@ -88,12 +112,12 @@ NSDictionary *DDLOCRResultFromImage(NSImage *image, NSError **error) {
         if (fabs(delta) > 0.025) return delta > 0 ? NSOrderedAscending : NSOrderedDescending;
         return a.boundingBox.origin.x < b.boundingBox.origin.x ? NSOrderedAscending : NSOrderedDescending;
     }];
-    NSMutableArray *lines=NSMutableArray.array,*segments=NSMutableArray.array,*uncertain=NSMutableArray.array;CGFloat lastY=-1,lastHeight=0;
+    NSMutableArray *lines=NSMutableArray.array,*origins=NSMutableArray.array,*segments=NSMutableArray.array,*uncertain=NSMutableArray.array;CGFloat lastY=-1,lastHeight=0;
     for(VNRecognizedTextObservation *observation in sorted){NSArray<VNRecognizedText *> *candidates=[observation topCandidates:2];VNRecognizedText *top=candidates.firstObject;NSString *value=top.string;if(!value.length)continue;CGRect box=observation.boundingBox;BOOL sameRow=lastY>=0 && fabs(lastY-box.origin.y)<MAX(.012,MIN(lastHeight,box.size.height)*.55);BOOL gap=lastY>=0 && lastY-box.origin.y>MAX(.04,lastHeight*1.9);
-        if(sameRow && lines.count)lines[lines.count-1]=[lines.lastObject stringByAppendingFormat:@" %@",value];else {if(gap)[lines addObject:@""];[lines addObject:value];}
+        if(sameRow && lines.count)lines[lines.count-1]=[lines.lastObject stringByAppendingFormat:@" %@",value];else {if(gap){[lines addObject:@""];[origins addObject:NSNull.null];}[lines addObject:value];[origins addObject:@(box.origin.x)];}
         BOOL doubt=top.confidence<.8 && AMHas(value,@"[0-9]|截止|due|deadline");if(candidates.count>1 && top.confidence<.95 && ![candidates[1].string isEqual:value] && AMHas(value,@"[0-9]"))doubt=YES;
         NSDictionary *segment=@{@"text":value,@"confidence":@(top.confidence),@"line":@(lines.count),@"box":@[@(box.origin.x),@(box.origin.y),@(box.size.width),@(box.size.height)],@"uncertain":@(doubt)};[segments addObject:segment];if(doubt)[uncertain addObject:segment];lastY=box.origin.y;lastHeight=box.size.height;
     }
-    return @{@"text":[lines componentsJoinedByString:@"\n"],@"segments":segments,@"uncertain":uncertain};
+    return @{@"text":[lines componentsJoinedByString:@"\n"],@"layoutText":DDLImageOutline(lines,origins),@"segments":segments,@"uncertain":uncertain};
 }
 NSString *DDLOCRTextFromImage(NSImage *image,NSError **error){return DDLOCRResultFromImage(image,error)[@"text"];}

@@ -161,13 +161,76 @@
     if(!ok && error)*error=[NSError errorWithDomain:@"AMPreflight" code:2 userInfo:@{NSLocalizedDescriptionKey:@"文件或分支在检查后发生变化，请重新检查。",@"SSPreflightStale":@YES}];return ok;
 }
 
-- (NSString *)preflightRequirementsForCourse:(NSDictionary *)course tasks:(NSArray *)tasks {
+- (NSString *)preflightRequirementsForCourse:(NSDictionary *)course tasks:(NSArray *)tasks verifiedLines:(NSArray **)verifiedLines {
+    NSMutableOrderedSet *trusted=NSMutableOrderedSet.orderedSet;
     NSMutableArray *blocks=NSMutableArray.array;for(NSDictionary *task in tasks){NSString *blob=task[@"sourceBlobSHA"],*text=nil;
         if([blob isKindOfClass:NSString.class] && [blob rangeOfString:@"^[a-f0-9]{40,64}$" options:NSRegularExpressionSearch].location!=NSNotFound && [self validateCourse:course error:NULL]){
             SSGitResult *size=[self run:@[@"cat-file",@"-s",blob] in:course[@"path"] token:nil error:NULL];if(size.status==0 && Trim([self string:size]).longLongValue<=384*1024){SSGitResult *r=[self run:@[@"cat-file",@"blob",blob] in:course[@"path"] token:nil error:NULL];if(r.status==0 && !SSContainsSecret(r.data))text=[[NSString alloc] initWithData:r.data encoding:NSUTF8StringEncoding];}
         }
-        if(text.length)[blocks addObject:[NSString stringWithFormat:@"老师原文：%@ · %@ · %@\n%@",task[@"sourceRepository"] ?: @"",task[@"sourcePath"] ?: @"",blob,text]];
+        if(text.length){
+            [blocks addObject:[NSString stringWithFormat:@"老师原文：%@ · %@ · %@\n%@",task[@"sourceRepository"] ?: @"",task[@"sourcePath"] ?: @"",blob,text]];
+            // Only the pinned teacher blob can attest that the text itself
+            // contains the question. Linked media still needs explicit coverage.
+            if(verifiedLines && [task[@"sourceRepository"] isEqual:course[@"upstream"]] &&
+               [task[@"sourcePath"] length] && ![text containsString:@"]("] &&
+               ![text localizedCaseInsensitiveContainsString:@"<img"] &&
+               ![text localizedCaseInsensitiveContainsString:@"https://"]){
+                NSString *path=task[@"sourcePath"];
+                NSDictionary *verified=[self assignmentWorkbenchTeacherPreview:course path:path error:NULL][@"files"][path];
+                if([verified[@"version"] isEqual:blob])for(NSString *line in [text componentsSeparatedByString:@"\n"]){
+                    NSString *trim=Trim(line);
+                    if(trim.length && ![trim hasPrefix:@"#"])[trusted addObject:trim];
+                }
+            }
+        }
         else if([task[@"entryEvidence"] length])[blocks addObject:[NSString stringWithFormat:@"录入通知：%@\n%@",task[@"title"],task[@"entryEvidence"]]];
         else [blocks addObject:[NSString stringWithFormat:@"关联摘要（未取得完整题目，请核对）：%@\n%@\n%@",task[@"title"],task[@"sourceSummary"] ?: @"",task[@"sourceRequirements"] ?: @""]];
-    }return [blocks componentsJoinedByString:@"\n\n"];
+    }if(verifiedLines)*verifiedLines=trusted.array;return [blocks componentsJoinedByString:@"\n\n"];
+}
+
+- (NSArray<NSString *> *)changedTeacherPathsForCourse:(NSDictionary *)course from:(NSString *)oldCommit to:(NSString *)newCommit {
+    if(!AMPeerSHA(oldCommit) || !AMPeerSHA(newCommit) || ![self validateCourse:course error:NULL])return nil;
+    if([oldCommit isEqual:newCommit])return @[];
+    SSGitResult *diff=[self checked:@[@"diff",@"--name-only",@"--no-renames",@"--no-ext-diff",@"--no-textconv",@"-z",oldCommit,newCommit,@"--"]
+        in:course[@"path"] token:nil error:NULL];
+    return diff ? NonemptyParts([self string:diff],@"\0"):nil;
+}
+
+// Workbench reads use the same validated repository and pinned teacher commit as preflight.
+- (NSDictionary *)assignmentWorkbenchIndex:(NSDictionary *)course source:(NSString *)source error:(NSError **)error {
+    if(!AMPeerPath(source) || SSSensitivePath(source) || ![self validateCourse:course error:error])return nil;
+    NSString *scope=source.stringByDeletingLastPathComponent;
+    if(!AMPeerPath(scope))scope=source;
+    NSString *root=course[@"path"],*teacher=course[@"teacherCommit"];
+    SSGitResult *files=[self checked:@[@"--literal-pathspecs",@"ls-files",@"-c",@"-o",@"--exclude-standard",@"-z",@"--",scope] in:root token:nil error:error];
+    if(!files)return nil;
+    NSMutableOrderedSet *paths=NSMutableOrderedSet.orderedSet;
+    for(NSString *path in NonemptyParts([self string:files],@"\0")){
+        if(AMPeerInScope(path,scope) && !SSSensitivePath(path))[paths addObject:path];
+        if(paths.count>=1000)break;
+    }
+    NSMutableArray *history=NSMutableArray.array;
+    if(AMPeerSHA(teacher)){
+        // NUL fields preserve whitespace in paths and commit subjects.
+        SSGitResult *log=[self checked:@[@"--literal-pathspecs",@"log",@"-z",@"-50",@"--format=%H%x00%aI%x00%s",teacher,@"--",scope] in:root token:nil error:NULL];
+        NSArray *fields=[[self string:log] componentsSeparatedByString:@"\0"];
+        for(NSUInteger index=0;index+2<fields.count;index+=3)
+            if(AMPeerSHA(fields[index]))[history addObject:@{@"id":fields[index],@"date":fields[index+1],@"title":fields[index+2]}];
+    }
+    return @{@"paths":[paths.array sortedArrayUsingSelector:@selector(localizedStandardCompare:)],@"teacherHistory":history};
+}
+
+- (NSDictionary *)assignmentWorkbenchTeacherPreview:(NSDictionary *)course path:(NSString *)path error:(NSError **)error {
+    NSString *teacher=course[@"teacherCommit"],*root=course[@"path"];
+    if(!AMPeerSHA(teacher) || !AMPeerPath(path) || SSSensitivePath(path) || ![self validateCourse:course error:error])return nil;
+    SSGitResult *tree=[self checked:@[@"--literal-pathspecs",@"ls-tree",@"-l",teacher,@"--",path] in:root token:nil error:error];
+    NSString *entry=[self string:tree];
+    NSRange separator=[entry rangeOfString:@"\t"];
+    if(separator.location==NSNotFound)return nil;
+    NSArray *fields=NonemptyParts([entry substringToIndex:separator.location],@" ");
+    if(fields.count!=4 || ![@[@"100644",@"100755"] containsObject:fields[0]] || !AMPeerSHA(fields[2]) || [fields[3] longLongValue]>1024*1024)return nil;
+    SSGitResult *blob=[self checked:@[@"cat-file",@"blob",fields[2]] in:root token:nil error:error];
+    NSString *content=[[NSString alloc] initWithData:blob.data encoding:NSUTF8StringEncoding];
+    if(!content || [content rangeOfString:@"\0"].location!=NSNotFound || SSContainsSecret(blob.data))return nil;
+    return @{@"files":@{path:@{@"text":content,@"version":fields[2]}}};
 }
