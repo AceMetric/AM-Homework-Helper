@@ -107,7 +107,7 @@
         else {NSString *text=[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];if(text)entry[@"text"]=text;}
         return entry;
     };
-    NSUInteger total=0;
+    NSUInteger total=0,acceptedImages=0;
     for(NSString *path in paths){
         if(self.readsCancellable && self.cancelledReads){if(error)*error=GitError(@"检查已取消。");return nil;}
         NSMutableDictionary *entry=[read(path,YES) mutableCopy];
@@ -118,11 +118,11 @@
         NSDictionary *assets=entry[@"notebookImages"];
         for(NSString *key in [assets.allKeys sortedArrayUsingSelector:@selector(compare:)]){
             NSDictionary *asset=assets[key];NSUInteger bytes=[asset[@"data"] length];
-            if(files.count+paths.count>=256 || total+bytes>64*1024*1024){
+            if(acceptedImages+paths.count>=256 || total+bytes>64*1024*1024){
                 [omissions addObject:[NSString stringWithFormat:@"第 %@ 单元格的图片超出材料额度",asset[@"cell"]]];
                 continue;
             }
-            files[key]=asset;accepted[key]=asset;total+=bytes;
+            files[key]=asset;accepted[key]=asset;total+=bytes;acceptedImages++;
         }
         if(omissions){entry[@"notebookOmissions"]=omissions;entry[@"notebookImages"]=accepted;}
     }

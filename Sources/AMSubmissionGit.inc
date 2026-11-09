@@ -174,7 +174,11 @@
         }
         if(![self pushCourse:course expectedHead:commit token:token error:error])return nil;
         return [self verifySubmission:next course:course token:token retry:NO error:error];
-    }else{next[@"state"]=@"local";next[@"issue"]=record[@"confirmedAt"] ? @"remote-changed":@"not-on-remote";}
+    }else{
+        next[@"state"]=@"local";
+        // Keep the recovery marker across a read-only check so an explicit retry can repair the index.
+        if(![next[@"issue"] isEqual:@"index-recovery-needed"])next[@"issue"]=record[@"confirmedAt"] ? @"remote-changed":@"not-on-remote";
+    }
     next[@"workflowResult"]=[next[@"state"] isEqual:@"confirmed"] ? @"completed":([next[@"state"] isEqual:@"local"] ? @"needs-action":@"uncertain");next[@"workflowStage"]=@"verify";self.lastWorkflowRecord=next;if(!AMStoreSubmission(next,error))return nil;return next;
 }
 - (NSDictionary *)performRecordedCourse:(NSDictionary *)course kind:(NSString *)kind taskIDs:(NSArray *)taskIDs paths:(NSArray *)paths message:(NSString *)message token:(NSString *)token login:(NSString *)login userID:(NSNumber *)userID error:(NSError **)error {

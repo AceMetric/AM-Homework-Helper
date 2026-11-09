@@ -33,6 +33,20 @@ static void ResizeSubmission(void) {
     [sheet cancel:nil];Check(!sheet.expandedPreview.visible,@"closing submission also closes its expanded preview");
 }
 static NSUInteger ReaderCount(NSView *root){NSUInteger count=[root isKindOfClass:AMDocumentView.class] ? 1:0;for(NSView *child in root.subviews)count+=ReaderCount(child);return count;}
+static void NotebookConsentRegression(void){
+    NSData *image=PreviewImage();
+    NSString *path=@".notebook-output/synthetic/cell-2-output-1.png";
+    NSDictionary *snapshot=@{@"mode":@"submission",@"paths":@[@"exercise.ipynb"],@"files":@{
+        @"exercise.ipynb":@{@"text":@"## 第 2 单元格\nvalue = 3"},
+        path:@{@"image":@YES,@"data":image}
+    }};
+    NSDictionary *report=@{@"images":@[@{@"path":path,@"document":@"exercise.ipynb",@"line":@2,@"notebookOutput":@YES}]};
+    PFMaterials *review=[[PFMaterials alloc] initWithSnapshot:snapshot report:report requirements:@""];
+    Check(![review selectedImages].count,@"notebook image is excluded until the user includes it");
+    [review rebuildTree:path];[review.include performClick:nil];
+    Check([[review selectedImages].firstObject[@"path"] isEqual:path] && [[review selectedSnapshot][@"paths"] isEqual:snapshot[@"paths"]],@"image consent does not change submission paths");
+    [review.window orderOut:nil];
+}
 static void ReportViewRegression(void){
     SSSubmissionController *reader=[[SSSubmissionController alloc] initWithCourse:@{@"fork":@"student/annotated",@"branch":@"main"} changes:@[]];[reader buildCheckPage];
     NSData *one=PreviewImage();NSBitmapImageRep *other=[[NSBitmapImageRep alloc] initWithData:one];[other setColor:[NSColor colorWithDeviceRed:1 green:0 blue:0 alpha:1] atX:0 y:0];NSData *two=[other representationUsingType:NSBitmapImageFileTypePNG properties:@{}];Check(![AMPreflightHash(one) isEqual:AMPreflightHash(two)],@"image fixtures have distinct content identities");
@@ -82,6 +96,6 @@ int main(void){@autoreleasepool{
     Check(!recovery.closed && recovery.primary.enabled && recovery.filesPrimary.enabled && [recovery.message.stringValue isEqual:@"Retry this exact draft"],@"precommit failure restores usable controls and retains the exact draft");
     recovery.performCheck=sheet.performCheck;recovery.submit=sheet.submit;[host beginSheet:recovery.window completionHandler:nil];[recovery.fileCheckButton performClick:nil];Wait(^BOOL{return !recovery.checking && recovery.report!=nil;});Check(!recovery.checkPage.hidden,@"reopened submission can actually run checks again");
     [recovery resumeAfterSubmissionFailure:[NSError errorWithDomain:@"AMPreflight" code:2 userInfo:@{@"SSPreflightStale":@YES,NSLocalizedDescriptionKey:@"Refresh files"}]];__block BOOL refreshed=NO;recovery.refreshFiles=^{refreshed=YES;};[recovery refreshFileList:nil];Check(recovery.reportStale && !recovery.primary.enabled && recovery.acknowledge.state==NSControlStateValueOff && refreshed,@"stale selection blocks old submit and exposes a working refresh action");[recovery cancel:nil];
-    ReportViewRegression();
+    ReportViewRegression();NotebookConsentRegression();
     [host close];printf("PASS: %lu preflight controls, draft and automatic-result assertions\n",(unsigned long)checks);
 }return 0;}
