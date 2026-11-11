@@ -694,6 +694,8 @@ private struct SettingsWorkspace:View {
     @Published var summaries:[NSDictionary]=[]
     @Published var showSummary=false
     @Published var assignmentBoard=false
+    @Published var managingCourses=false
+    var boardCourseID=""
     @Published var workbenchReports:[String:NSDictionary]=[:]
     @Published var workbenchStatus:[String:String]=[:]
     @Published var workbenchActive:String?
@@ -873,6 +875,7 @@ private struct AssignmentBoard: View {
                     Text("全部课程").tag("")
                     ForEach(courses,id:\.self){Text($0).tag($0)}
                 }.labelsHidden().fixedSize()
+                WorkspaceButton(title:"课程管理",enabled:true,prominent:false,identity:"assignment-course-management"){state.managingCourses=true}.fixedSize()
                 Button { state.action?("import-screenshot","") } label: { Label("导入截图",systemImage:"text.viewfinder") }
             }
             HStack {
@@ -1247,12 +1250,18 @@ private struct CourseWorkspace:View {
     }
     private var summaries:some View {
         List{ForEach(workspaceRows(state.summaries)){row in let r=row.record
-            HStack(spacing:12){VStack(alignment:.leading,spacing:6){Label(string(r,"name"),systemImage:"books.vertical").fontWeight(.medium);Text("新作业 \((r["newCount"] as? NSNumber)?.intValue ?? 0) · 更新建议 \((r["updateCount"] as? NSNumber)?.intValue ?? 0)").font(.caption);Text(string(r,"status")).font(.caption).foregroundStyle(flag(r,"failed") ? Color.orange:Color.secondary).fixedSize(horizontal:false,vertical:true);if !string(r,"personal").isEmpty{Text("老师仓库："+string(r,"teacher")).font(.caption).foregroundStyle(.secondary);Text("个人仓库："+string(r,"personal")).font(.caption).foregroundStyle(.secondary);Text("本地目录："+string(r,"folder")).font(.caption).foregroundStyle(.secondary).help(string(r,"folderDetail"));Text("检查："+string(r,"checked")+" · "+string(r,"localState")).font(.caption).foregroundStyle(.secondary);DisclosureGroup("本地改动"){ForEach((r["localFiles"] as? [String] ?? []),id:\.self){Text($0).font(.caption).textSelection(.enabled)};Button("刷新状态"){state.action?("course-local",identifier(r))};Button("选择提交文件…"){state.action?("course-submit",identifier(r))}}}};Spacer();WorkspaceButton(title:"\((r["pending"] as? NSNumber)?.intValue ?? 0) 项待审核",enabled:true,prominent:false,identity:"course-summary-"+identifier(r)){DispatchQueue.main.async{state.action?("course-result",identifier(r))}}.fixedSize()}.padding(.vertical,8)
+            HStack(spacing:12){VStack(alignment:.leading,spacing:6){Label(string(r,"name"),systemImage:"books.vertical").fontWeight(.medium);Text("新作业 \((r["newCount"] as? NSNumber)?.intValue ?? 0) · 更新建议 \((r["updateCount"] as? NSNumber)?.intValue ?? 0)").font(.caption);Text(string(r,"status")).font(.caption).foregroundStyle(flag(r,"failed") ? Color.orange:Color.secondary).fixedSize(horizontal:false,vertical:true);if !string(r,"personal").isEmpty{Text("老师仓库："+string(r,"teacher")).font(.caption).foregroundStyle(.secondary);Text("个人仓库："+string(r,"personal")).font(.caption).foregroundStyle(.secondary);Text("本地目录："+string(r,"folder")).font(.caption).foregroundStyle(.secondary).help(string(r,"folderDetail"));Text("检查："+string(r,"checked")+" · "+string(r,"localState")).font(.caption).foregroundStyle(.secondary);DisclosureGroup("本地改动"){ForEach((r["localFiles"] as? [String] ?? []),id:\.self){Text($0).font(.caption).textSelection(.enabled)};Button("刷新状态"){state.action?("course-local",identifier(r))};Button("选择提交文件…"){state.action?("course-submit",identifier(r))}}}};Spacer();WorkspaceButton(title:"\((r["pending"] as? NSNumber)?.intValue ?? 0) 项待审核",enabled:true,prominent:false,identity:"course-summary-"+identifier(r)){DispatchQueue.main.async{state.managingCourses=false;state.action?("course-result",identifier(r))}}.fixedSize()}.padding(.vertical,8)
         }}.listStyle(.inset)
     }
     var body:some View {
         GeometryReader { geometry in
-            if state.assignmentBoard {
+            if state.assignmentBoard && state.managingCourses {
+                VStack(alignment:.leading,spacing:0) {
+                    Button("返回作业看板"){state.managingCourses=false}.buttonStyle(.link).padding(12)
+                    summaries
+                }
+            }
+            else if state.assignmentBoard {
                 ZStack {
                     AssignmentBoard(state:state).opacity(state.showingDetail && state.current != nil ? 0:1)
                         .allowsHitTesting(!state.showingDetail || state.current == nil)
@@ -1305,6 +1314,11 @@ private struct CourseWorkspace:View {
     @objc public func setWorkbenchStatus(_ message:String, forAssignment id:String) {state.workbenchStatus[id]=message}
     @objc public func setWorkbenchReport(_ report:NSDictionary, forAssignment id:String) {
         state.workbenchReports[id]=workspaceSnapshot(report) as? NSDictionary
+    }
+    @objc public func setBoardCourseID(_ id:String){
+        if state.boardCourseID != id {
+            state.boardCourseID=id;state.showingDetail=false;state.managingCourses=false
+        }
     }
     @objc public func setAssignmentBoard(_ visible:Bool) { if state.assignmentBoard != visible {state.assignmentBoard=visible} }
     @objc public func showCourseSummaries(_ records:[NSDictionary],visible:Bool){state.summaries=workspaceRecords(records);state.showSummary=visible}

@@ -82,6 +82,7 @@ int main(int argc,const char *argv[]){@autoreleasepool{
     Press(courses.reviewWorkspace.view,@"review-confirm-batch");Check(app.tasks.count>0 && !app.window.attachedSheet,@"batch button saves valid current results without sheet");
     Check([SSReadPlist(@"tasks.plist") isEqual:app.snapshot],@"batch results reload exactly");
     route.tag=4;[app navigate:route];[courses selectCourseID:nil];[courses refreshPresentation];Drain();
+    Press(courses.courseWorkspace.view,@"assignment-course-management");Drain();
     NSString *summaryCourse=[courses.courses.firstObject objectForKey:@"fork"];Check(summaryCourse.length>0,@"course summary has explicit target");Press(courses.courseWorkspace.view,[@"course-summary-" stringByAppendingString:summaryCourse]);Check([courses.selectedCourseID isEqual:summaryCourse] && courses.sections.selectedSegment==0,@"all-course summary button opens explicit course result");
     route.tag=3;[app navigate:route];[courses selectCourseID:nil];[courses refreshPresentation];
 

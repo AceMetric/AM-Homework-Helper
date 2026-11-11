@@ -509,7 +509,7 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
     if(!reuse){
         PFMaterials *materials=[[PFMaterials alloc] initWithSnapshot:self.reviewMaterialsSnapshot ?: self.snapshot report:self.report requirements:self.requirements];
         materials.materialRoot=[NSURL fileURLWithPath:self.course[@"path"]];
-        materials.window.title=[NSString stringWithFormat:@"%@ · %@",deep ? @"确认深入检查":@"确认发送",settings[@"model"]];
+        materials.window.title=[NSString stringWithFormat:@"%@ · %@ · %@",deep ? @"确认深入检查":@"确认发送",@{@"gemini":@"Gemini",@"deepseek":@"DeepSeek",@"compatible":@"兼容接口"}[settings[@"provider"]] ?: @"在线模型",settings[@"model"]];
         materials.destination.hidden=YES;materials.showsOnlineEstimate=YES;[materials updateSummary];
         NSString *destination=[NSString stringWithFormat:@"将所选材料发送到 %@，使用 %@。费用由该供应商收取。",settings[@"endpoint"],settings[@"model"]];
         for(NSView *view in materials.window.contentView.subviews){

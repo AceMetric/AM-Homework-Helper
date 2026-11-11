@@ -845,6 +845,7 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     }
     NSString *information=info ? self.detail.string : @"";
     NSMutableArray *summaries=NSMutableArray.array;if(!course && !self.inbox){for(NSDictionary *snapshot in self.courseSnapshots){NSMutableDictionary *row=snapshot.mutableCopy;row[@"failed"]=AMCourseCheckPresentation(self.reports[snapshot[@"id"]] ?: @{},[snapshot[@"pending"] unsignedIntegerValue])[@"warning"];[summaries addObject:row];}}BOOL board=!self.inbox && !info && self.sections.selectedSegment==0;[self.courseWorkspace showCourseSummaries:summaries visible:!board && !course && !self.inbox];
+    [self.courseWorkspace setBoardCourseID:self.selectedFork ?: @""];
     [self.courseWorkspace setAssignmentBoard:board];
     [self.courseWorkspace updateRecords:content selected:self.selectedCandidateID ?: @"" information:information empty:self.emptyLabel.stringValue paused:self.operationsPaused];
     self.presentedSection=self.sections.selectedSegment;self.presentedType=self.typeFilter.indexOfSelectedItem;self.presentedReviewFilter=self.reviewFilter.indexOfSelectedItem;
