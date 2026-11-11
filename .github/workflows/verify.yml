@@ -13,8 +13,8 @@ permissions:
   contents: read
 jobs:
   verify:
-    # Pin a supported ARM image; macOS 14 runners were retired in November 2026.
-    runs-on: macos-15
+    # Use the supported macOS 26 ARM image and SDK used for release builds.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
         with:
