@@ -17,7 +17,9 @@ static void Check(BOOL ok,NSString *message){assertions++;if(!ok){fprintf(stderr
 @property NSString *submittedCourse;
 @end
 @implementation CompletionCourse
-- (void)commit:(id)sender {self.submittedCourse=self.selectedCourseID;}
+- (void)openSubmissionForCourse:(NSDictionary *)course preserving:(SSSubmissionController *)previous {
+    self.submittedCourse=course[@"fork"];
+}
 - (void)work:(NSString *)message forCourse:(NSDictionary *)course requestKey:(NSString *)scope priority:(NSInteger)priority operation:(id (^)(NSError **))operation completion:(void (^)(id,NSError *))completion {self.queuedVerifications++;}
 @end
 int main(void){@autoreleasepool{
