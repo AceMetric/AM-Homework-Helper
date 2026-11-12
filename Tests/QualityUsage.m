@@ -26,8 +26,12 @@ int main(void){@autoreleasepool{
     // First hosting-view creation includes one-time AppKit/SwiftUI setup. Measure
     // it separately from common selection; never benchmark the cached same row.
     NSButton *selection=NSButton.new;selection.identifier=app.tasks[450][@"id"];start=NSDate.date;[app selectTask:selection];NSTimeInterval coldSelect=-start.timeIntervalSinceNow;
+    EditorController *inspector=app.editor;
     NSUInteger beforeSelections=app.contentRenders;NSMutableArray<NSNumber *> *samples=NSMutableArray.array;
-    for(NSUInteger i=1;i<=7;i++){selection.identifier=app.tasks[450+i][@"id"];start=NSDate.date;[app selectTask:selection];[samples addObject:@(-start.timeIntervalSinceNow)];Check([app.selectedTaskID isEqual:selection.identifier],@"consecutive selections preserve stable identity");}
+    for(NSUInteger i=1;i<=7;i++){selection.identifier=app.tasks[450+i][@"id"];start=NSDate.date;[app selectTask:selection];[samples addObject:@(-start.timeIntervalSinceNow)];Check([app.selectedTaskID isEqual:selection.identifier],@"consecutive selections preserve stable identity");
+        Check(app.editor==inspector && [app.editor.task[@"id"] isEqual:selection.identifier] &&
+            [app.editor.selectedDate isEqual:app.tasks[450+i][@"due"]] && !app.editor.hasUnsavedChanges,
+            @"reused inspector contains the selected task and a clean editing baseline");}
     Check(app.contentRenders==beforeSelections,@"switching existing rows does not rebuild unrelated task presentation");
     NSArray<NSNumber *> *ordered=[samples sortedArrayUsingSelector:@selector(compare:)];NSTimeInterval select=ordered[ordered.count/2].doubleValue;
     printf("TIMING: first detail %.4fs; seven distinct selections median %.4fs, maximum %.4fs\n",coldSelect,select,ordered.lastObject.doubleValue);

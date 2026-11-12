@@ -992,13 +992,24 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     BOOL found=NO;for(NSDictionary *task in self.selectionTasks)if([task[@"id"] isEqual:self.selectedTaskID]){found=YES;break;}
     if(!found && !(self.editor.embedded && self.editor.hasUnsavedChanges)){if(self.editor.embedded)[self closeEditor];self.selectedTaskID=nil;self.focusedTaskID=nil;}
 }
+- (BOOL)canReuseTaskInspectorForTask:(NSDictionary *)task {
+    EditorController *editor=self.editor;
+    if(!task || !editor.embedded || editor.window.sheetParent || editor.candidate || editor.hasUnsavedChanges || NSWidth(self.root.bounds)<880)return NO;
+    // Ordinary clean tasks share the same controls. Keep recurrence and source
+    // review transitions on their existing initialization and draft-resolution path.
+    for(NSDictionary *value in @[editor.task ?: @{},task])
+        if(value[@"seriesID"] || value[@"sourceID"] || value[@"sourceRepository"] || value[@"_reviewCandidate"])return NO;
+    return editor.repeatMode.indexOfSelectedItem==0;
+}
 - (void)selectTask:(NSButton *)sender {
-    if(![self.selectedTaskID isEqual:sender.identifier] && ![self resolveTaskEditor]){[self.nativeTasks focusSelection];return;}
+    BOOL reused=![self.selectedTaskID isEqual:sender.identifier] && [self canReuseTaskInspectorForTask:[self taskWithID:sender.identifier]];
+    if(![self.selectedTaskID isEqual:sender.identifier] && !reused && ![self resolveTaskEditor]){[self.nativeTasks focusSelection];return;}
     self.selectedTaskID=sender.identifier;if(self.calendarMode)self.focusedTaskID=sender.identifier;
     // Selecting an existing row changes only selection, inspector and geometry.
     // Rebuilding every course, filter count and task row repeats unrelated work.
     if((self.page==2 || (self.page==0 && !self.weeklyMode)) && [self.nativeTasks selectTaskIdentifier:self.selectedTaskID]){[self layoutTaskArea];[self renderTaskDetailsIn:self.taskDetails];}
     else [self render];[self focusSelectedTaskRow];
+    if(reused)dispatch_async(dispatch_get_main_queue(),^{[self applyVerifiedSubmissions];});
 }
 - (void)focusSelectedTaskRow {
     if(self.page==2 || (self.page==0 && !self.weeklyMode)){[self.nativeTasks focusSelection];return;}
@@ -1020,7 +1031,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)renderTaskDetailsIn:(Surface *)panel {
     NSDictionary *task=[self taskWithID:self.selectedTaskID];if(!task)return;
     if([task[@"deleted"] boolValue] && !(self.editor.embedded && self.editor.hasUnsavedChanges && [self.editor.task[@"id"] isEqual:self.selectedTaskID])){Clear(panel);Put(panel,Text(@"该任务已删除，可从任务菜单恢复",13,NSFontWeightRegular,Muted()),16,16,MAX(1,NSWidth(panel.bounds)-32),44);return;}
-    if(self.editor && (!self.editor.embedded || ![self.editor.task[@"id"] isEqual:self.selectedTaskID]))return;
+    if(self.editor && (!self.editor.embedded || (![self.editor.task[@"id"] isEqual:self.selectedTaskID] && ![self canReuseTaskInspectorForTask:task])))return;
     if(!self.editor){self.editor=[[EditorController alloc] initWithTask:task owner:self];self.editor.embedded=YES;}
     else if(!self.editor.hasUnsavedChanges && ![self.editor.task isEqual:task]){
         EditorController *current=self.editor;current.task=task.copy;current.selectedCourseIdentity=AMCourseForTask(task,AMCourseCatalog(self.courseWindow.submissionCourses ?: @[]))[@"id"] ?: @"";current.proposedSubtasks=task[@"subtasks"] ?: @[];current.titleField.stringValue=task[@"title"] ?: @"";current.subjectField.stringValue=task[@"subject"] ?: @"";current.notesField.string=task[@"notes"] ?: @"";[current.priority selectItemAtIndex:MAX(0,MIN(2,[task[@"priority"] integerValue]))];current.reminderField.stringValue=DDLFormatReminderOffsets(DDLReminderOffsetsForTask(task));[current updateDate:task[@"due"]];current.initialValues=[current formValues];[current.sharedForm loadRecord:[current sharedFormRecord] resetBaseline:YES];[current.sharedPlanner updateTask:task];
