@@ -24,7 +24,17 @@ if(![element isKindOfClass:NSView.class]){
 if(![element isKindOfClass:NSView.class] && [[element accessibilityLabel] isEqual:@"AI 检查"]){
     for(id view in Elements(window.contentView))if([view isKindOfClass:NSSegmentedControl.class] && [(NSSegmentedControl *)view segmentCount]==3){NSSegmentedControl *control=view;location=[control convertPoint:NSMakePoint(NSMidX(control.bounds),NSMidY(control.bounds)) toView:nil];break;}
 }
-NSView *hit=[window.contentView hitTest:[window.contentView.superview convertPoint:location fromView:nil]];Check(hit!=nil,@"window hit test resolves a visible control");NSTimeInterval now=NSProcessInfo.processInfo.systemUptime;NSEvent *up=[NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:location modifierFlags:0 timestamp:now+.02 windowNumber:window.windowNumber context:nil eventNumber:2 clickCount:1 pressure:0];[NSApp postEvent:up atStart:YES];NSEvent *down=[NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:location modifierFlags:0 timestamp:now windowNumber:window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1];[window makeKeyWindow];
+NSView *hit=nil;
+#ifdef AM_FOREGROUND_TEST
+hit=[window.contentView hitTest:[window.contentView.superview convertPoint:location fromView:nil]];
+Check(hit!=nil,@"window hit test resolves a visible control");
+#else
+// A quiet window may not have a themed window-server container on CI. Test
+// native component hit regions in their own parent coordinates instead. The
+// foreground lane above remains the full-window routing gate.
+if([element isKindOfClass:NSView.class]){NSView *view=element;hit=[view hitTest:[view.superview convertPoint:location fromView:nil]];Check(hit!=nil,@"native component hit region resolves its target");}
+#endif
+NSTimeInterval now=NSProcessInfo.processInfo.systemUptime;NSEvent *up=[NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:location modifierFlags:0 timestamp:now+.02 windowNumber:window.windowNumber context:nil eventNumber:2 clickCount:1 pressure:0];[NSApp postEvent:up atStart:YES];NSEvent *down=[NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:location modifierFlags:0 timestamp:now windowNumber:window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1];[window makeKeyWindow];
 #ifdef AM_FOREGROUND_TEST
 NSPoint original=NSEvent.mouseLocation;
 NSPoint actual=[window convertPointToScreen:location];
