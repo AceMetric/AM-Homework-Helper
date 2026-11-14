@@ -1084,7 +1084,7 @@ private struct AssignmentWorkbench: View {
                 } else {
                     Button(state.workbenchReports[id] == nil ? "检查文件" : "重新检查文件") {
                         state.action?("check-task",id)
-                    }.buttonStyle(.borderedProminent).disabled(state.paused || !flag(record,"confirmed"))
+                    }.buttonStyle(.bordered).disabled(state.paused || !flag(record,"confirmed"))
                     HStack {
                         WorkspaceButton(title:"AI 检查…",prominent:true,identity:"assignment-online"){state.action?("workbench-online",id)}.fixedSize()
                         Menu("更多") {Button("深入检查…"){state.action?("workbench-deep",id)}}.menuStyle(.borderlessButton).fixedSize()
