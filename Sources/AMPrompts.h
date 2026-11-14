@@ -4,8 +4,8 @@
 // Keep prompt and validation revisions separate. Both enter report/cache keys.
 static inline NSString *AMCoursePromptVersion(void){return @"course-activities-v6";}
 static inline NSString *AMCourseValidationVersion(void){return @"activity-evidence-v4";}
-static inline NSString *AMReviewPromptVersion(void){return @"whole-project-v6";}
-static inline NSString *AMReviewValidationVersion(void){return @"review-evidence-v6";}
+static inline NSString *AMReviewPromptVersion(void){return @"whole-project-v7";}
+static inline NSString *AMReviewValidationVersion(void){return @"review-evidence-v7";}
 static inline NSDictionary *AMCourseOutputSchema(void){
     NSMutableDictionary *fields=NSMutableDictionary.dictionary;
     for(NSString *key in @[@"title",@"summary",@"submissionRequirements",@"evidence",@"summaryEvidence",@"requirementsEvidence",@"deadlineEvidence"])fields[key]=@{@"type":@"string"};

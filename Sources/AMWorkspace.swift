@@ -44,6 +44,20 @@ private struct WorkspaceExpandedSection<Content:View>:View {
 private extension View {
     func amPrimaryAction()->some View {self.buttonStyle(.borderedProminent)}
     func amSecondaryActions()->some View {self.buttonStyle(.bordered)}
+    func amGlassChrome()->some View {modifier(WorkspaceGlassChrome())}
+}
+// Glass belongs to the operation layer. Reading surfaces remain opaque; the
+// system accessibility preference also provides a stable, high-contrast fallback.
+private struct WorkspaceGlassChrome:ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduced
+    @ViewBuilder func body(content:Content)->some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26.0,*), !reduced {content.glassEffect(.regular,in:RoundedRectangle(cornerRadius:12))}
+        else {content.background(Color(nsColor:AMAppearance.surface),in:RoundedRectangle(cornerRadius:12))}
+        #else
+        content.background(Color(nsColor:AMAppearance.surface),in:RoundedRectangle(cornerRadius:12))
+        #endif
+    }
 }
 private struct WorkspaceSection<Content:View>:View {
     let title:String
@@ -444,6 +458,33 @@ private struct WorkspaceButton:NSViewRepresentable {
         button.keyEquivalent=saveShortcut ? "\r":"";button.keyEquivalentModifierMask = .command
     }
 }
+// A real native hit target makes the whole card operable and exposes the same
+// stable identity to keyboard users and mouse-path regression tests.
+private final class AssignmentCardButton:NSButton {
+    override func mouseDown(with event:NSEvent){
+        guard isEnabled, !isRepeatedWorkspaceEvent(event) else{return}
+        window?.makeFirstResponder(self)
+        _ = sendAction(action,to:target)
+    }
+    override func mouseUp(with event:NSEvent){}
+    override func keyDown(with event:NSEvent){if event.keyCode==36 || event.keyCode==49 {performClick(nil)} else {super.keyDown(with:event)}}
+}
+private struct AssignmentCardTarget:NSViewRepresentable {
+    let label:String
+    let identity:String
+    let action:()->Void
+    func makeCoordinator()->WorkspaceButton.Target{WorkspaceButton.Target()}
+    func makeNSView(context:Context)->NSButton {
+        let button=AssignmentCardButton(title:"",target:context.coordinator,action:#selector(WorkspaceButton.Target.press(_:)))
+        button.isBordered=false;button.isTransparent=false;button.focusRingType = .exterior
+        // Selection follows the mouse press, as in a native source list. Nested
+        // action buttons own their regions and keep normal release semantics.
+        button.sendAction(on:.leftMouseDown)
+        button.setContentHuggingPriority(.defaultLow,for:.horizontal);button.setContentHuggingPriority(.defaultLow,for:.vertical)
+        return button
+    }
+    func updateNSView(_ button:NSButton,context:Context){context.coordinator.action=action;button.setAccessibilityLabel(label);button.setAccessibilityIdentifier("assignment-card-"+identity)}
+}
 private struct ReviewSaveBar:View {
     @ObservedObject var state:ReviewState
     let advance:Bool
@@ -712,6 +753,7 @@ private struct SettingsWorkspace:View {
     @Published var paused=false
     var action:((String,String)->Void)?
     let review=ReviewState()
+    @Published var workbenchStale:[String:Set<String>]=[:]
     private var draftRow:NSDictionary?
     private var refreshedSelection=""
     init() {
@@ -770,14 +812,15 @@ private struct CourseReviewPane:View {
 private struct AssignmentBoard: View {
     @StateObject private var ui = AssignmentBoardState()
     @ObservedObject var state: CourseState
+    let suspended: Bool
     @AppStorage("AMHiddenAssignments") private var hiddenData = Data()
 
     private var hidden: Set<String> { (try? JSONDecoder().decode(Set<String>.self, from: hiddenData)) ?? [] }
     private var assignments: [NSDictionary] {
-        state.records.filter { flag($0,"confirmed") || string($0,"kind") == "assignment" }
+        suspended ? [] : state.records.filter { flag($0,"confirmed") || string($0,"kind") == "assignment" }
     }
     private var courses: [String] {
-        Set(assignments.map { string($0,"courseName") }).filter { !$0.isEmpty }.sorted()
+        Set(state.records.map { string($0,"courseName") }).filter { !$0.isEmpty }.sorted()
     }
     private var matching: [NSDictionary] {
         let concealed = hidden
@@ -799,6 +842,7 @@ private struct AssignmentBoard: View {
         return suggested.isEmpty || flag(row,"confirmed") ? string(row,"title") : suggested
     }
     private func requirements(_ row: NSDictionary) -> String {
+        if let items=row["requirementItems"] as? [NSDictionary], !items.isEmpty {return items.map{string($0,"text")}.joined(separator:"\n\n")}
         let saved = string(row,"sourceRequirements")
         return saved.isEmpty ? string(row,"submissionRequirements") : saved
     }
@@ -818,57 +862,63 @@ private struct AssignmentBoard: View {
     private func card(_ row: NSDictionary) -> some View {
         let id = identifier(row)
         let summary = string(row,"sourceSummary").isEmpty ? string(row,"summary") : string(row,"sourceSummary")
-        let deadline = string(row,"dateText").isEmpty ? string(row,"entryDeadlineEvidence") : string(row,"dateText")
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(string(row,"courseName")).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Text((string(row,"path") as NSString).deletingLastPathComponent).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                Spacer()
-                Menu {
-                    Button(hidden.contains(id) ? "恢复显示" : "隐藏作业") { toggleHidden(id) }
-                } label: { Image(systemName:"ellipsis").accessibilityLabel("作业选项") }
-                .menuStyle(.borderlessButton).fixedSize()
-            }
-            Button { open(row) } label: {
-                Text(title(row)).font(.headline).multilineTextAlignment(.leading)
-                    .frame(maxWidth:.infinity, alignment:.leading).contentShape(Rectangle())
-            }.buttonStyle(.plain)
-            if !summary.isEmpty { Text(summary).foregroundStyle(.secondary).lineLimit(2) }
-            if !requirements(row).isEmpty {
-                DisclosureGroup("作业要求", isExpanded: Binding(get:{ui.expanded.contains(id)}, set:{
-                    if $0 { ui.expanded.insert(id) } else { ui.expanded.remove(id) }
-                })) {
-                    VStack(alignment:.leading,spacing:6) {
-                        Text(requirements(row)).textSelection(.enabled)
-                        if !string(row,"path").isEmpty { Button("查看原文") { open(row,evidence:"teacher-requirements") }.buttonStyle(.link) }
-                    }.frame(maxWidth:.infinity,alignment:.leading).padding(.top,4)
-                }
-            }
-            if let due = row["due"] as? Date {
-                HStack {
-                    Label(due.formatted(date:.abbreviated,time:.shortened), systemImage:"calendar")
-                        .foregroundStyle(due < Date() && !flag(row,"boardHistory") ? Color.orange : Color.secondary)
-                    if !deadline.isEmpty {
-                        Button("截止依据") { open(row,evidence:"evidence") }.buttonStyle(.link).help(deadline)
+        // The primary button owns the complete card. Independent overlay buttons
+        // consume their own clicks; there is no parent tap gesture to double-fire.
+        return GroupBox {
+        ZStack(alignment:.topLeading) {
+            VStack(alignment:.leading,spacing:8) {
+                    HStack {
+                        Text(string(row,"courseName")).font(.caption.weight(.semibold)).lineLimit(1)
+                        Text((string(row,"path") as NSString).deletingLastPathComponent).font(.caption).lineLimit(1)
+                        Spacer(minLength:32)
+                    }.foregroundStyle(.secondary).frame(height:18)
+                    Text(title(row)).font(.system(size:13,weight:.semibold)).lineLimit(2).frame(height:36,alignment:.topLeading)
+                    Text(summary).font(.system(size:13)).foregroundStyle(.secondary).lineSpacing(2).lineLimit(2).frame(height:32,alignment:.topLeading)
+                    Color.clear.frame(height:26)
+                    if let due=row["due"] as? Date {
+                        Label(due.formatted(.dateTime.month().day().hour().minute()),systemImage:"calendar")
+                            .font(.system(size:12,weight:.medium)).lineLimit(1)
+                            .foregroundStyle(due < Date() && !flag(row,"completed") ? Color.orange:Color.secondary)
+                            .frame(maxWidth:.infinity,minHeight:20,alignment:.leading)
+                    } else {Label("截止待确认",systemImage:"calendar.badge.exclamationmark").font(.caption)}
+                    Spacer(minLength:0)
+                    Text(flag(row,"confirmed") ? (flag(row,"completed") ? "已完成":"进行中") : "待确认")
+                        .font(.caption.weight(.medium)).foregroundStyle(flag(row,"completed") ? Color.green:Color.secondary)
+                    Text(string(row,"boardProgress")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }.frame(maxWidth:.infinity,alignment:.leading).padding(12).frame(height:248)
+                    .overlay(AssignmentCardTarget(label:"打开作业："+title(row),identity:id){open(row)})
+            VStack(alignment:.leading,spacing:0) {
+                HStack {Spacer();Menu {
+                    Button(hidden.contains(id) ? "恢复显示":"隐藏作业"){toggleHidden(id)}
+                } label:{Image(systemName:"ellipsis").accessibilityLabel("作业选项")}.menuStyle(.borderlessButton).fixedSize()}.frame(height:18)
+                Spacer().frame(height:92)
+                WorkspaceButton(title:"作业要求 · \((row["requirementItems"] as? [NSDictionary])?.count ?? 0) 条",identity:"assignment-requirements-"+id) { ui.expanded.insert(id) }.fixedSize()
+                    .popover(isPresented:Binding(get:{ui.expanded.contains(id)},set:{if !$0{ui.expanded.remove(id)}})) {
+                        ScrollView {VStack(alignment:.leading,spacing:12) {
+                            Text("作业要求").font(.headline)
+                            Text(requirements(row).isEmpty ? "尚未识别要求，可查看原文或编辑补充。":requirements(row)).textSelection(.enabled)
+                            WorkspaceButton(title:"查看原文",identity:"assignment-source"){ui.expanded.remove(id);open(row,evidence:"teacher-requirements")}.fixedSize()
+                        }.padding(16)}.frame(width:380,height:320)
                     }
-                }.font(.caption)
-            } else { Label("截止待确认",systemImage:"calendar.badge.exclamationmark").foregroundStyle(.secondary).font(.caption) }
-            HStack {
-                Text(flag(row,"boardHistory") ? (flag(row,"gitCourse") ? "已核验推送":"已完成") :
-                     flag(row,"confirmed") ? (string(row,"localProgress").contains("核验后") ? "提交后有修改" : "进行中") : "待审核")
-                    .font(.caption.weight(.medium)).foregroundStyle(flag(row,"boardHistory") ? Color.green : Color.secondary)
-                Spacer()
-                if flag(row,"gitCourse"), !string(row,"path").isEmpty {
-                    Button { state.action?("feedback-task", id) } label: {
-                        Label(flag(row,"newFeedback") ? "新评语":"评语",systemImage:"text.bubble")
-                    }.buttonStyle(.link)
-                }
-            }
-        }.padding(14).background(Color(nsColor:AMAppearance.surface),in:RoundedRectangle(cornerRadius:10))
-            .overlay(RoundedRectangle(cornerRadius:10).strokeBorder(Color(nsColor:AMAppearance.separator),lineWidth:1))
+                Spacer().frame(height:8)
+                if row["due"] != nil {
+                    AssignmentCardTarget(label:"截止依据",identity:"deadline-"+id){open(row,evidence:"evidence")}.frame(height:20)
+                } else {Color.clear.frame(height:20)}
+                Spacer().frame(height:20)
+                HStack {
+                    Spacer()
+                    if flag(row,"gitCourse"), !string(row,"path").isEmpty {
+                        WorkspaceButton(title:flag(row,"newFeedback") ? "新评语":"评语",identity:"assignment-feedback-"+id){state.action?("feedback-task",id)}.fixedSize()
+                    }
+                }.frame(height:26)
+                Spacer().frame(height:14)
+            }.padding(12)
+        }.frame(height:248)
+        }.groupBoxStyle(.automatic)
     }
     var body: some View {
         VStack(alignment:.leading,spacing:12) {
+            Text("作业看板").font(.system(size:22,weight:.semibold))
             HStack {
                 TextField("搜索作业、编号或课程",text:$ui.query).textFieldStyle(.roundedBorder)
                 Picker("课程",selection:$ui.course) {
@@ -876,8 +926,8 @@ private struct AssignmentBoard: View {
                     ForEach(courses,id:\.self){Text($0).tag($0)}
                 }.labelsHidden().fixedSize()
                 WorkspaceButton(title:"课程管理",enabled:true,prominent:false,identity:"assignment-course-management"){state.managingCourses=true}.fixedSize()
-                Button { state.action?("import-screenshot","") } label: { Label("导入截图",systemImage:"text.viewfinder") }
-            }
+                Button { state.action?("new-assignment","") } label: { Label("添加作业",systemImage:"plus") }
+            }.padding(8).amGlassChrome()
             HStack {
                 Picker("作业状态",selection:$ui.history) {
                     Text("进行中").tag(false); Text("历史").tag(true)
@@ -888,10 +938,10 @@ private struct AssignmentBoard: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     if matching.isEmpty { Label("暂无符合条件的作业",systemImage:"tray").foregroundStyle(.secondary).padding(.top,20) }
-                    LazyVGrid(columns:[GridItem(.adaptive(minimum:260,maximum:370),spacing:12)],alignment:.leading,spacing:12) {
+                    LazyVGrid(columns:[GridItem(.adaptive(minimum:320,maximum:420),spacing:12,alignment:.top)],alignment:.leading,spacing:12) {
                         ForEach(workspaceRows(matching)){ row in card(row.record).id(identifier(row.record)) }
                     }
-                }.onAppear { if let position=ui.listPosition { proxy.scrollTo(position) } }
+                }.onAppear { if let position=ui.listPosition { proxy.scrollTo(position) } }.onChange(of:suspended){hidden in if !hidden,let position=ui.listPosition{DispatchQueue.main.async{proxy.scrollTo(position)}}}
             }
         }.padding(16).onDrop(of:["public.file-url"],isTargeted:nil) { providers in
             guard let provider=providers.first,providers.count==1 else { return false }
@@ -973,7 +1023,7 @@ private struct AssignmentWorkbench: View {
                         Label((node.id as NSString).lastPathComponent,systemImage:"folder").lineLimit(1)
                     }
                 }
-            }.listStyle(.sidebar)
+            }.listStyle(.inset).scrollContentBackground(.hidden)
         }.padding(.top,10)
     }
     private var readingPane: some View {
@@ -986,7 +1036,9 @@ private struct AssignmentWorkbench: View {
                 }
             }.padding(10)
             Divider()
-            if let preview=ui.preview, ui.previewError.isEmpty {
+            if !flag(record,"gitCourse") {
+                ScrollView {Text(string(record,"notes").isEmpty ? string(record,"sourceRequirements"):string(record,"notes")).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.leading).padding(16)}
+            } else if let preview=ui.preview, ui.previewError.isEmpty {
                 CheckPreviewHost(preview:preview)
             } else if !ui.previewError.isEmpty {
                 ScrollView {
@@ -1004,10 +1056,13 @@ private struct AssignmentWorkbench: View {
                 Text("提交").tag(0);Text("AI 检查").tag(1);Text("历史").tag(2)
             }.pickerStyle(.segmented).labelsHidden()
             if ui.tab==0 {
-                Text("远端核验").font(.headline)
-                Text(string(record,"remoteVerification").isEmpty ? "尚无核验记录" : string(record,"remoteVerification")).foregroundStyle(.secondary)
-                Text("本地进度").font(.headline)
-                Text(string(record,"localProgress")).foregroundStyle(.secondary)
+                Text(flag(record,"completed") ? "任务已完成":"任务进行中").font(.headline)
+                if flag(record,"gitCourse") {
+                    Text("远端核验").font(.headline)
+                    Text(string(record,"remoteVerification").isEmpty ? "尚无核验记录" : string(record,"remoteVerification")).foregroundStyle(.secondary)
+                    Text("本地进度").font(.headline)
+                    Text(string(record,"localProgress")).foregroundStyle(.secondary)
+                }
                 Spacer()
                 if flag(record,"gitCourse") && flag(record,"confirmed") {
                     let action=string(record,"pushAction")
@@ -1017,27 +1072,26 @@ private struct AssignmentWorkbench: View {
                 }
             } else if ui.tab==1 {
                 if let report=state.workbenchReports[id] {
-                    ScrollView { checkReport(report) }
+                    if let changed=state.workbenchStale[id], !changed.isEmpty {Text(changed.contains("*") ? "老师要求已更新，旧结果仅供参考。":"部分文件已变化，对应检查结果需要更新。").font(.caption).foregroundStyle(.orange)}
+                    ScrollView { checkReport(report).frame(maxWidth:.infinity,alignment:.topLeading).padding(.top,4) }.id(id+"-report")
                 } else {
                     Text("对照老师要求检查答卷，并定位到对应文件。").foregroundStyle(.secondary)
                     Spacer()
                 }
+                Group {
                 if let status=state.workbenchStatus[id], !status.isEmpty {
                     HStack { ProgressView().controlSize(.small);Text(status);Spacer();Button("停止"){state.action?("workbench-stop",id)} }
                 } else {
-                    Button(state.workbenchReports[id] == nil ? "检查整份作业" : "重新检查") {
+                    Button(state.workbenchReports[id] == nil ? "检查文件" : "重新检查文件") {
                         state.action?("check-task",id)
                     }.buttonStyle(.borderedProminent).disabled(state.paused || !flag(record,"confirmed"))
-                    if state.workbenchReports[id] != nil && state.workbenchActive == id {
-                        HStack {
-                            Button("在线检查…"){state.action?("workbench-online",id)}
-                            Menu("更多") {
-                                Button("深入检查…"){state.action?("workbench-deep",id)}
-                                Button("材料与报告…"){state.action?("workbench-report",id)}
-                            }.menuStyle(.borderlessButton).fixedSize()
-                        }.disabled(state.paused)
-                    }
+                    HStack {
+                        WorkspaceButton(title:"AI 检查…",prominent:true,identity:"assignment-online"){state.action?("workbench-online",id)}.fixedSize()
+                        Menu("更多") {Button("深入检查…"){state.action?("workbench-deep",id)}}.menuStyle(.borderlessButton).fixedSize()
+                    }.disabled(state.paused || !flag(record,"confirmed"))
+
                 }
+                }.frame(height:88,alignment:.bottomLeading)
             } else {
                 ScrollView {
                     VStack(alignment:.leading,spacing:10) {
@@ -1084,12 +1138,12 @@ private struct AssignmentWorkbench: View {
                 .background((string(report,"tone")=="warning" ? Color.orange:Color.accentColor).opacity(0.12),in:RoundedRectangle(cornerRadius:8))
             Text("逐条对照作业要求").font(.headline)
             if let checks=report["checks"] as? [NSDictionary], !checks.isEmpty {
-                ForEach(workspaceRows(checks,key:"requirement")) { row in
+                ForEach(workspaceRows(checks,key:"requirementID")) { row in
                     let status=string(row.record,"status")
                     VStack(alignment:.leading,spacing:5) {
-                        Text(["checked":"已核对","partial":"部分满足","issue":"发现问题","missing-material":"缺少材料"][status] ?? "待核对")
+                        Text(["checked":"已核对","partial":"部分满足","issue":"发现问题","missing-material":"材料不足","unchecked":"尚未检查"][status] ?? "尚未检查")
                             .font(.caption.weight(.semibold)).foregroundStyle(status=="checked" ? Color.green:Color.orange)
-                        Text(string(row.record,"requirement")).fontWeight(.medium)
+                        Text(.init(string(row.record,"requirement"))).fontWeight(.medium)
                         Text(string(row.record,"reason")).foregroundStyle(.secondary)
                         evidence(row.record)
                     }
@@ -1126,9 +1180,10 @@ private struct AssignmentWorkbench: View {
         }
     }
     var body: some View {
-        let narrow=width<850
+        let narrow=width<1100
         VStack(alignment:.leading,spacing:0) {
             HStack {
+                WorkspaceButton(title:"返回",identity:"assignment-back"){if state.review.resolve(){state.showingDetail=false}}.fixedSize().accessibilityLabel("返回作业看板")
                 Button { ui.showFiles.toggle(); if narrow && ui.showFiles { ui.showInspector=false } } label: {
                     Label("文件",systemImage:"sidebar.left")
                 }.help("显示或收起文件树")
@@ -1151,7 +1206,7 @@ private struct AssignmentWorkbench: View {
                 Button { ui.showInspector.toggle(); if narrow && ui.showInspector { ui.showFiles=false } } label: {
                     Label("提交与检查",systemImage:"sidebar.right")
                 }.help("显示或收起提交、检查和历史")
-            }.padding(.horizontal,12).padding(.bottom,10)
+            }.padding(.horizontal,12).frame(height:56).amGlassChrome()
             Divider()
             HSplitView {
                 if ui.showFiles { filePane.frame(minWidth:155,idealWidth:195,maxWidth:270) }
@@ -1160,11 +1215,13 @@ private struct AssignmentWorkbench: View {
             }
         }.onAppear {
             ui.showFiles = !narrow
+            if !flag(record,"gitCourse"){ui.loaded=true;ui.showFiles=false;return}
             refresh()
             let path=state.workbenchPaths[id] ?? ""
             if let evidence=state.workbenchEvidence { state.workbenchEvidence=nil;open(source,mode:evidence) }
             else { open(path.isEmpty ? source:path,mode:path.isEmpty ? "teacher":"working") }
         }.onChange(of:string(record,"teacherVersion")) { _ in
+            if state.workbenchReports[id] != nil {state.workbenchStale[id,default:[]].insert("*")}
             refresh()
             if ui.teacher { open(source,mode:"teacher") }
         }.onDisappear { ui.generation = UUID() }
@@ -1263,17 +1320,14 @@ private struct CourseWorkspace:View {
             }
             else if state.assignmentBoard {
                 ZStack {
-                    AssignmentBoard(state:state).opacity(state.showingDetail && state.current != nil ? 0:1)
+                    AssignmentBoard(state:state,suspended:state.showingDetail && state.current != nil).opacity(state.showingDetail && state.current != nil ? 0:1)
                         .allowsHitTesting(!state.showingDetail || state.current == nil)
                         .accessibilityHidden(state.showingDetail && state.current != nil)
                     if state.showingDetail, let record=state.current {
                         VStack(alignment:.leading,spacing:0) {
-                            Button { if state.review.resolve() { state.showingDetail=false } } label: {
-                                Label("作业看板",systemImage:"chevron.left")
-                            }.buttonStyle(.link).padding(12)
                             if !state.workbenchReview {
                                 AssignmentWorkbench(state:state,record:record,width:geometry.size.width).id(identifier(record))
-                            } else {detailPane}
+                            } else {VStack(alignment:.leading,spacing:0){WorkspaceButton(title:"返回作业",identity:"assignment-review-back"){if state.review.resolve(){state.workbenchReview=false}}.fixedSize().padding(12);detailPane}}
                         }
                     }
                 }
@@ -1314,6 +1368,10 @@ private struct CourseWorkspace:View {
     @objc public func setWorkbenchStatus(_ message:String, forAssignment id:String) {state.workbenchStatus[id]=message}
     @objc public func setWorkbenchReport(_ report:NSDictionary, forAssignment id:String) {
         state.workbenchReports[id]=workspaceSnapshot(report) as? NSDictionary
+        state.workbenchStale[id]=[]
+    }
+    @objc public func markWorkbenchFile(_ path:String, version:String, forAssignment id:String) {
+        if let report=state.workbenchReports[id],let versions=report["fileVersions"] as? [String:String],let old=versions[path],old != version {state.workbenchStale[id,default:[]].insert(path)}
     }
     @objc public func setBoardCourseID(_ id:String){
         if state.boardCourseID != id {
@@ -1749,7 +1807,7 @@ private struct QuickEntryView:View {
         HStack{Text("从文字或截图录入").font(.title2.bold());Spacer();Button("保存草稿并关闭"){state.send("close")}.keyboardShortcut(.cancelAction)}
 
         HStack(alignment:.top,spacing:8){CaptureTextEditor(text:$state.text).frame(height:state.ocrImage == nil ? 90:150).overlay(RoundedRectangle(cornerRadius:6).stroke(Color(nsColor:.separatorColor)));if let image=state.ocrImage{VStack(alignment:.leading,spacing:4){Image(nsImage:image).resizable().scaledToFit().frame(maxHeight:100).accessibilityLabel("录入截图原图");ScrollView{Text(state.ocrWarnings).font(.caption).foregroundStyle(.orange).textSelection(.enabled)}.frame(height:40);HStack{Button("放大原图…"){state.ocrBoxes=[];state.showingOriginal=true};Button("关闭"){state.ocrImage=nil}.accessibilityLabel("关闭截图对照")}}.frame(width:min(260,geo.size.width * 0.36))}}.onChange(of:state.text){_ in state.send("draft")}.task(id:state.text){let value=state.text;try? await Task.sleep(nanoseconds:450_000_000);if !Task.isCancelled && !state.busy && !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && state.parsedText != value{state.send("source-changed")}}
-        HStack{Button("粘贴"){state.send("paste")};Button("选择截图…"){state.send("image")};WorkspaceButton(title:"重新识别",enabled:!state.busy,prominent:false,identity:"quick-parse"){state.send("parse")}.fixedSize();Button("助手识别…"){state.send("skill")};Spacer();if state.busy{ProgressView().progressViewStyle(.linear).frame(width:160)}}
+        HStack{Button("粘贴"){state.send("paste")};Button("选择截图…"){state.send("image")};WorkspaceButton(title:"空白创建…",identity:"quick-manual"){state.send("manual")};WorkspaceButton(title:"重新识别",enabled:!state.busy,prominent:false,identity:"quick-parse"){state.send("parse")}.fixedSize();Button("助手识别…"){state.send("skill")};Spacer();if state.busy{ProgressView().progressViewStyle(.linear).frame(width:160)}}
         HStack{Toggle("指定消息日期",isOn:$state.explicitReference).onChange(of:state.explicitReference){_ in state.send("draft")};if state.explicitReference{DatePicker("",selection:$state.reference).labelsHidden().onChange(of:state.reference){_ in state.send("draft")}};Spacer()}
         HStack{Button("全选"){for i in state.entries.indices{let copy=state.entries[i].mutableCopy() as! NSMutableDictionary;copy["selected"]=true;state.entries[i]=copy};state.send("draft")};Button("取消选择"){for i in state.entries.indices{let copy=state.entries[i].mutableCopy() as! NSMutableDictionary;copy["selected"]=false;state.entries[i]=copy};state.send("draft")};Text("已选 \(state.entries.filter{flag($0,"selected")}.count) / \(state.entries.count)").foregroundStyle(.secondary);Spacer()}
         if geo.size.width<760{VStack(spacing:0){rows.frame(height:150);Divider();details}}else{HStack(spacing:0){rows.frame(width:260);Divider();details}}

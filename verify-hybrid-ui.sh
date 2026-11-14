@@ -7,7 +7,9 @@ python3 Tools/prepare-renderer.py >/dev/null
 SPARKLE_DIR=$(python3 Tools/prepare-sparkle.py)
 SWIFTUI_DIR=$(python3 Tools/prepare-swiftui.py)
 export CLANG_MODULE_CACHE_PATH="$TASK_DIR/build/module-cache"
-clang -DDDL_TESTING=1 -fobjc-arc -fblocks -Wall -Wextra -Werror -Wno-unused-parameter -O2 -mmacosx-version-min=13.0 \
+ui_flags=()
+if [[ "${AM_UI_FOREGROUND:-0}" == 1 ]]; then ui_flags=(-DAM_FOREGROUND_TEST=1); fi
+clang "${ui_flags[@]}" -DDDL_TESTING=1 -fobjc-arc -fblocks -Wall -Wextra -Werror -Wno-unused-parameter -O2 -mmacosx-version-min=13.0 \
  -I"$SWIFTUI_DIR" -L"$SWIFTUI_DIR" -lAMUI -Wl,-rpath,"$SWIFTUI_DIR" \
  -framework Cocoa -framework PDFKit -framework WebKit -framework UserNotifications -framework Vision -framework UniformTypeIdentifiers -framework CFNetwork -framework Security -lz -F"$SPARKLE_DIR" -framework Sparkle -Wl,-rpath,"$SPARKLE_DIR" \
  "Tests/${AM_UI_TEST:-HybridUI}.m" Sources/DDLCore.m Sources/DDLImport.m Sources/SSRecognition.m Sources/SSAssignments.m Sources/SSLocalData.m Sources/SSGitHub.m Sources/SSGit.m Sources/SSSecurity.m Sources/DDLUI.m Sources/SSUpdateController.m Sources/SSExitCoordinator.m -o "build/tests/${AM_UI_TEST:-HybridUI}"

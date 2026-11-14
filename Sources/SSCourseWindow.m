@@ -37,7 +37,11 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
 @property NSDictionary *presentationTasksBySource;
 @property NSMutableDictionary *presentationDiscoveries;
 @property SSSubmissionController *workbenchCheck;
+@property NSCache *workbenchPreviews;
+@property NSMutableDictionary *workbenchPreviewRequests;
 @property NSString *workbenchCheckAssignment;
+@property NSString *pendingWorkbenchOnline;
+@property BOOL pendingWorkbenchDeep;
 @property NSString *checkScopeWorkbenchAssignment;
 @property AMSubmissionHistoryController *submissionHistory;
 @property AMPeerWindowController *peerWindow;
@@ -336,6 +340,11 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     self.courseWorkspace.actionHandler=^(NSString *action,NSString *identifier){
         if([action isEqual:@"workbench-online"] || [action isEqual:@"workbench-deep"] || [action isEqual:@"workbench-stop"] || [action isEqual:@"workbench-report"]){
             SSSubmissionController *check=owner.workbenchCheck;
+            if(([action isEqual:@"workbench-online"] || [action isEqual:@"workbench-deep"]) && !([owner.workbenchCheckAssignment isEqual:identifier] && check)){
+                NSDictionary *row=nil;for(NSDictionary *record in owner.visible)if([record[@"id"] isEqual:identifier]){row=record;break;}
+                owner.pendingWorkbenchOnline=identifier;owner.pendingWorkbenchDeep=[action isEqual:@"workbench-deep"];
+                [owner checkTask:row[@"taskID"] ?: identifier forWorkbench:identifier];if(!owner.checkScopeWindow && !owner.workbenchCheck)owner.pendingWorkbenchOnline=nil;return;
+            }
             if([owner.workbenchCheckAssignment isEqual:identifier] && check){
                 if([action isEqual:@"workbench-online"] || [action isEqual:@"workbench-deep"]){
                     check.deepReview=[action isEqual:@"workbench-deep"];
@@ -343,9 +352,10 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
                 }
                 else if([action isEqual:@"workbench-stop"])[check cancel:nil];
                 else [check.window makeKeyAndOrderFront:nil];
-            }else if([action isEqual:@"workbench-stop"] && owner.checkScopeWindow){[owner closeCheckScope];[owner.courseWorkspace setWorkbenchStatus:@"" forAssignment:identifier];}
+            }else if([action isEqual:@"workbench-stop"] && owner.checkScopeWindow){owner.pendingWorkbenchOnline=nil;[owner closeCheckScope];[owner.courseWorkspace setWorkbenchStatus:@"" forAssignment:identifier];}
             return;
         }
+        if([action isEqual:@"new-assignment"]){if(owner.newAssignment)owner.newAssignment();return;}
         if([action isEqual:@"import-screenshot"]){if(owner.importScreenshot)owner.importScreenshot(identifier);return;}
         if([action isEqual:@"course-result"]){if([owner selectCourseID:identifier]){owner.sections.selectedSegment=0;[owner.typeFilter selectItemAtIndex:0];owner.query=@"";owner.search.stringValue=@"";[owner refreshPresentation];}return;}
         if([action isEqual:@"course-local"]){[owner readCourseLocalState:identifier];return;}if([action isEqual:@"course-submit"]){if([owner selectCourseID:identifier])[owner commit:nil];return;}
@@ -441,7 +451,8 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     self.cancelReadButton.hidden=!self.busy;self.progress.hidden=!self.busy;self.progressRow.hidden=!self.busy;
     // The activity toolbar owns feedback; status changes never move the workspace.
     self.operationStatus.hidden=YES;
-    [self.view layoutSubtreeIfNeeded];CGFloat workspaceTop=NSMaxY(self.nativeHeader.frame)+8;
+    self.nativeHeader.hidden=self.assignmentBoardActive;
+    [self.view layoutSubtreeIfNeeded];CGFloat workspaceTop=self.assignmentBoardActive ? 0:NSMaxY(self.nativeHeader.frame)+8;
     self.table.enclosingScrollView.frame = NSMakeRect(0, 184, w, MAX(112, h - 348));
     self.detail.enclosingScrollView.frame = NSMakeRect(0, h - 152, w, 104); self.reviewButton.frame = NSMakeRect(w - 152, h - 40, 152, 36);
     self.typeButton.frame = NSMakeRect(0, h - 40, 136, 36);
@@ -775,8 +786,8 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     self.reviewWorkspace.paused = self.operationsPaused;
     if (self.inbox) [self.reviewWorkspace updateRecords:reviewRecords];
     NSString *selectedID = self.selectedCandidateID; NSPoint scrollPosition = self.table.enclosingScrollView.contentView.bounds.origin;
-    [self.table reloadData]; [self.table deselectAll:nil];
-    if (selectedID) for (NSUInteger i = 0; i < visible.count; i++) if ([visible[i][@"id"] isEqual:selectedID]) { [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:i] byExtendingSelection:NO]; break; }
+    if(!self.assignmentBoardActive){[self.table reloadData]; [self.table deselectAll:nil];}
+    if (!self.assignmentBoardActive && selectedID) for (NSUInteger i = 0; i < visible.count; i++) if ([visible[i][@"id"] isEqual:selectedID]) { [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:i] byExtendingSelection:NO]; break; }
     [self.table.enclosingScrollView.contentView scrollToPoint:scrollPosition];
     BOOL info = !self.inbox && self.sections.selectedSegment == 1;
     self.table.enclosingScrollView.hidden = info || !visible.count;
@@ -784,7 +795,7 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     self.emptyLabel.stringValue = !self.courses.count ? @"尚未添加课程" : (course && !local ? @"这门课尚未关联本地文件夹" : (self.query.length ? @"没有匹配的作业" : (self.inbox ? @"暂无待审核作业" : @"暂无作业")));
     self.emptyLabel.maximumNumberOfLines = 2; self.emptyLabel.lineBreakMode = NSLineBreakByWordWrapping;
     self.table.backgroundColor = Card(); self.detail.textColor = Ink(); ThemeEditor(self.detail);
-    if (info) [self report:nil]; else [self candidateSelected:nil];
+    if (info) [self report:nil]; else if(!self.assignmentBoardActive)[self candidateSelected:nil];
     self.reviewButton.hidden = info;
     self.table.tableColumns.firstObject.title = self.inbox ? @"作业" : @"课程内容";
     self.typeButton.hidden = info;
@@ -827,9 +838,8 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
             if(pending || [submission[@"state"] isEqual:@"local"])[labels addObject:@"有待推送提交"];
             if([local[@"failed"] boolValue])[labels addObject:@"本地状态刷新未完成"];
             if(!labels.count)[labels addObject:!AMPeerPath(scope) ? @"作业范围待确认":(local ? ([local[@"pendingKnown"] boolValue] ? @"无改动":@"工作区无改动 · 推送状态待核验"):@"尚未读取")];
-            // Historical status needs both a verified push and a known clean local snapshot.
-            copy[@"boardHistory"]=@([submission[@"state"] isEqual:@"confirmed"] && local && [local[@"pendingKnown"] boolValue] &&
-                ![local[@"failed"] boolValue] && AMPeerPath(scope) && !working && !pending && ![record[@"sourceUpdate"] boolValue]);
+            copy[@"boardProgress"]=[record[@"completed"] boolValue] && working ? @"完成后有修改" :
+                working ? @"有本地修改":pending ? @"待推送":([submission[@"state"] isEqual:@"confirmed"] ? @"已核验推送":@"");
             copy[@"localProgress"]=[labels componentsJoinedByString:@" · "];
         }
         if([record[@"path"] length] && rowCourse){NSString *key=[self assignmentFeedbackKeyForCourse:rowCourse source:record[@"path"]];copy[@"newFeedback"]=@([self.unreadFeedbackKeys containsObject:key]);}
@@ -840,7 +850,10 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
             copy[@"reviewStatus"]=[self stateForCandidate:record];
             for(NSDictionary *task in self.tasksProvider ? self.tasksProvider() : @[])if([task[@"sourceID"] isEqual:record[@"id"]]){copy[@"existingTask"]=task;if([copy[@"reviewStatus"] isEqual:@"已导入"])copy[@"due"]=task[@"due"];break;}
         }
-        if(![copy[@"gitCourse"] boolValue] && ![copy[@"courseFork"] length])copy[@"boardHistory"]=@([copy[@"completed"] boolValue]);
+        // Completion belongs to the task store, including explicit manual
+        // completion. A later Git observation only changes the progress badge.
+        copy[@"boardHistory"]=@([copy[@"confirmed"] boolValue] && [copy[@"completed"] boolValue]);
+        if(!copy[@"requirementItems"]){NSString *text=copy[@"sourceRequirements"] ?: copy[@"submissionRequirements"] ?: @"";copy[@"requirementItems"]=SSRequirementItems(text,copy[@"path"] ?: @"",copy[@"sourceBlobSHA"] ?: copy[@"blobSHA"] ?: @"");}
         [content addObject:copy];
     }
     NSString *information=info ? self.detail.string : @"";
@@ -1250,6 +1263,8 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     NSString *version=location.count==2 ? location.lastObject:@"";
     if([mode isEqual:@"teacher"])path=source;
     if(![mode isEqual:@"index"] && (!AMPeerInScope(path,scope) || SSSensitivePath(path))){done(@{@"error":@"文件不在作业范围内"},nil);return;}
+    NSString *previewRequest=nil;
+    if(![mode isEqual:@"index"]){if(!self.workbenchPreviewRequests)self.workbenchPreviewRequests=NSMutableDictionary.dictionary;previewRequest=NSUUID.UUID.UUIDString;self.workbenchPreviewRequests[identifier]=previewRequest;}
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
         SSGit *reader=SSGit.new;reader.commandDeadline=[NSDate dateWithTimeIntervalSinceNow:12];NSError *error=nil;
         if([mode isEqual:@"index"]){
@@ -1270,16 +1285,26 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
         NSDictionary *snapshot=[mode isEqual:@"teacher"] ? [reader assignmentWorkbenchTeacherPreview:course path:path error:&error] :
             [reader preflightSnapshotForCourse:options paths:@[path] error:&error];
         dispatch_async(dispatch_get_main_queue(),^{
+            // A newer file selection supersedes this read before any WebKit
+            // initialization. The caller also checks its view generation.
+            if(previewRequest && ![self.workbenchPreviewRequests[identifier] isEqual:previewRequest]){done(@{@"cancelled":@YES},nil);return;}
             NSDictionary *live=[self savedCourse:course];
             if(![live[@"path"] isEqual:course[@"path"]] || ![live[@"branch"] isEqual:course[@"branch"]] ||
                ([mode isEqual:@"teacher"] && ![live[@"teacherCommit"] isEqual:course[@"teacherCommit"]])){done(@{@"error":@"课程版本已变化，请刷新"},nil);return;}
             if(!snapshot[@"files"][path]){done(@{@"error":[mode isEqual:@"teacher"] ? @"已核验的老师原文暂不可读":@"文件暂不可读"},nil);return;}
-            AMDocumentView *preview=[[AMDocumentView alloc] initWithFrame:NSMakeRect(0,0,560,460)];
+            // Reopening an unchanged file retains its WebKit view, zoom and
+            // reading position. Keep only four detached/current previews; every
+            // key includes the local repository identity and immutable content.
+            if(!self.workbenchPreviews){self.workbenchPreviews=NSCache.new;self.workbenchPreviews.countLimit=4;}
+            NSArray *previewKey=@[course[@"ownerID"] ?: @"",course[@"fork"] ?: @"",course[@"path"] ?: @"",course[@"branch"] ?: @"",[mode isEqual:@"teacher"] ? @"teacher":@"working",path,snapshot[@"files"][path][@"version"] ?: @""];
+            AMDocumentView *preview=[self.workbenchPreviews objectForKey:previewKey];BOOL retained=preview!=nil;
+            if(!preview)preview=[[AMDocumentView alloc] initWithFrame:NSMakeRect(0,0,560,460)];
             NSMutableDictionary *presentation=snapshot.mutableCopy;
             presentation[@"workbenchLineNumbers"]=@YES;
             NSString *problem=snapshot[@"files"][path][@"problem"];
             if(problem.length){done(@{@"error":problem},nil);return;}
-            [preview loadSnapshot:presentation path:path];
+            if(![mode isEqual:@"teacher"])[self.courseWorkspace markWorkbenchFile:path version:snapshot[@"files"][path][@"version"] ?: @"" forAssignment:identifier];
+            if(!retained){[preview loadSnapshot:presentation path:path];[self.workbenchPreviews setObject:preview forKey:previewKey];}
             if([mode isEqual:@"teacher"]){
                 NSString *evidence=record[@"dateText"];
                 if(requirements){

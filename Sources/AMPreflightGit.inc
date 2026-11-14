@@ -177,10 +177,7 @@
                ![text localizedCaseInsensitiveContainsString:@"https://"]){
                 NSString *path=task[@"sourcePath"];
                 NSDictionary *verified=[self assignmentWorkbenchTeacherPreview:course path:path error:NULL][@"files"][path];
-                if([verified[@"version"] isEqual:blob])for(NSString *line in [text componentsSeparatedByString:@"\n"]){
-                    NSString *trim=Trim(line);
-                    if(trim.length && ![trim hasPrefix:@"#"])[trusted addObject:trim];
-                }
+                if([verified[@"version"] isEqual:blob])for(NSDictionary *item in SSRequirementItems(text,path,blob))[trusted addObject:item[@"text"]];
             }
         }
         else if([task[@"entryEvidence"] length])[blocks addObject:[NSString stringWithFormat:@"录入通知：%@\n%@",task[@"title"],task[@"entryEvidence"]]];

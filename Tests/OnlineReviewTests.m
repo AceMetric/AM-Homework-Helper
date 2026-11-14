@@ -145,6 +145,7 @@ int main(void){@autoreleasepool{
     };
     current=prepareCompact(@"compact", &folder);error=nil;
     result=[compact reviewContext:current folder:folder focus:nil progress:nil error:&error];
+    if(!result || [result[@"requirementChecks"] count]!=2 || ![result[@"issues"] count])fprintf(stderr,"compact validation: %s error=%s\n",result.description.UTF8String,error.localizedDescription.UTF8String);
     Check(result && compactCalls==1 && [result[@"requirementChecks"] count]==2 &&
         [result[@"issues"][0][@"evidence"] isEqual:@"F = m * a"],@"compact report retains local and validated model evidence");
     Check([result[@"requirementChecks"][0][@"status"] isEqual:@"partial"],@"partial requirement remains distinct");

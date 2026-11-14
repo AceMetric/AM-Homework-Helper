@@ -1,0 +1,32 @@
+[
+  {
+    "name": "soft-wrap",
+    "text": "# Exercises\n- Explain the method\n  and compare the two results.\n- Submit results.txt",
+    "expected": [
+      "Explain the method and compare the two results.",
+      "Submit results.txt"
+    ]
+  },
+  {
+    "name": "conditional-english",
+    "text": "# Requirements\n- If a problem is skipped, include an explanation and submit an alternative investigation.",
+    "expected": [
+      "If a problem is skipped, include an explanation and submit an alternative investigation."
+    ]
+  },
+  {
+    "name": "source-header",
+    "text": "老师原文：teacher/course · week-2/README.md · abc123\n# 任务\n---\n完成报告。",
+    "expected": [
+      "完成报告。"
+    ]
+  },
+  {
+    "name": "mixed",
+    "text": "# 作业要求\n1. 实现 Merge Sort。\n2. 提交分析报告，说明 O(n * log n) 的复杂度。",
+    "expected": [
+      "实现 Merge Sort。",
+      "提交分析报告，说明 O(n * log n) 的复杂度。"
+    ]
+  }
+]

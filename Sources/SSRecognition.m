@@ -143,6 +143,7 @@ NSDictionary *SSEnrichDiscovery(NSDictionary *record) {
     }
     if (!copy[@"summary"]) {NSArray *content=summary.count ? summary.array : fallback.array;copy[@"summary"] = [content componentsJoinedByString:@"\n"];}
     if (!copy[@"submissionRequirements"]) copy[@"submissionRequirements"] = [requirements.array componentsJoinedByString:@"\n"];
+    if([record[@"snippet"] length])copy[@"requirementItems"]=SSRequirementItems(record[@"snippet"],record[@"path"] ?: @"",record[@"blobSHA"] ?: @"");
     if (!copy[@"recognizer"]) copy[@"recognizer"] = @"rules-v9";
     return copy;
 }

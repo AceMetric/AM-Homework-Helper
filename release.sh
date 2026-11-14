@@ -26,6 +26,11 @@ zsh verify-review-materials.sh
 zsh verify-quick-entry.sh
 zsh verify-import.sh
 zsh verify-homework.sh
+zsh verify-requirements.sh
+zsh verify-requirements.sh Tests/Fixtures/requirements-holdout.json
+AM_UI_TEST=AssignmentWorkspaceUsage zsh verify-hybrid-ui.sh
+AM_UI_TEST=WorkbenchStateUsage zsh verify-hybrid-ui.sh
+AM_UI_TEST=AssignmentCompletionUsage zsh verify-hybrid-ui.sh
 zsh verify-github-cli.sh
 zsh verify-forms.sh
 zsh verify-course-ui.sh

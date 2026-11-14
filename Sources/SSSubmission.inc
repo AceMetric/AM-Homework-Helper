@@ -369,8 +369,13 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
 }
 - (NSString *)materialsBinding {NSString *identity=[NSString stringWithFormat:@"%@|%@|%@",self.course[@"fork"] ?: @"",self.course[@"branch"] ?: @"",[self.course[@"path"] stringByResolvingSymlinksInPath] ?: @""];return AMPreflightHash([identity dataUsingEncoding:NSUTF8StringEncoding]);}
 - (BOOL)saveReviewMaterials {NSError *error=nil;if(!AMReviewSaveSelection(self.reviewMaterialsSnapshot,[self materialsBinding],&error)){self.validation.stringValue=error.localizedDescription ?: @"检查材料保存失败，当前输入已保留，可重试。";return NO;}return YES;}
-- (void)bindReviewMaterials {if(!self.report || !self.reviewMaterialsSnapshot)return;self.requirements=self.reviewMaterialsSnapshot[@"reviewRequirements"] ?: self.requirements;NSMutableDictionary *versions=NSMutableDictionary.dictionary;for(NSString *path in self.reviewMaterialsSnapshot[@"files"])versions[path]=self.reviewMaterialsSnapshot[@"files"][path][@"version"] ?: @"";NSDictionary *identity=@{@"base":self.report[@"reviewBaseVersion"] ?: self.report[@"version"],@"files":versions,@"roles":self.reviewMaterialsSnapshot[@"reviewRoles"] ?: @{},@"links":self.reviewMaterialsSnapshot[@"questionLinks"] ?: @{},@"paths":self.reviewMaterialsSnapshot[@"paths"] ?: @[],@"excluded":self.reviewMaterialsSnapshot[@"materialExcluded"] ?: @[],@"requirements":self.requirements ?: @""};NSMutableDictionary *report=self.report.mutableCopy;report[@"reviewBaseVersion"]=identity[@"base"];report[@"version"]=AMPreflightHash([NSJSONSerialization dataWithJSONObject:identity options:NSJSONWritingSortedKeys error:NULL]);self.report=report;}
-- (void)toggleSupplement:(id)sender{if(self.checking || !self.snapshot)return;PFMaterials *materials=[[PFMaterials alloc] initWithSnapshot:self.reviewMaterialsSnapshot ?: self.snapshot report:self.report requirements:self.requirements];materials.materialRoot=[NSURL fileURLWithPath:self.course[@"path"]];for(NSView *v in materials.window.contentView.subviews)if([v.identifier isEqual:@"material-prepare"])[(NSButton *)v setTitle:@"保存材料"];[materials.window center];NSModalResponse response=[NSApp runModalForWindow:materials.window];[materials.window orderOut:nil];if(response!=NSModalResponseOK)return;self.reviewMaterialsSnapshot=[materials selectedSnapshot];self.reviewMaterialImages=[materials selectedImages];self.requirements=materials.requirements;[self bindReviewMaterials];self.confirmedOnlineSnapshot=nil;self.reviewFailure=nil;self.acknowledge.state=NSControlStateValueOff;if([self saveReviewMaterials])self.validation.stringValue=@"检查材料已保存 · 提交文件不变";}
+- (void)bindReviewMaterials {if(!self.report || !self.reviewMaterialsSnapshot)return;self.requirements=self.reviewMaterialsSnapshot[@"reviewRequirements"] ?: self.requirements;NSMutableDictionary *versions=NSMutableDictionary.dictionary;for(NSString *path in self.reviewMaterialsSnapshot[@"files"])versions[path]=self.reviewMaterialsSnapshot[@"files"][path][@"version"] ?: @"";NSDictionary *identity=@{@"base":self.report[@"reviewBaseVersion"] ?: self.report[@"version"],@"files":versions,@"roles":self.reviewMaterialsSnapshot[@"reviewRoles"] ?: @{},@"links":self.reviewMaterialsSnapshot[@"questionLinks"] ?: @{},@"paths":self.reviewMaterialsSnapshot[@"paths"] ?: @[],@"excluded":self.reviewMaterialsSnapshot[@"materialExcluded"] ?: @[],@"requirements":self.requirements ?: @""};NSMutableDictionary *report=self.report.mutableCopy;
+    // Material confirmation may change the teacher question. Both the rendered
+    // checklist and request must use that exact confirmed text and its version.
+    report[@"requirements"]=self.requirements ?: @"";
+    report[@"requirementItems"]=SSRequirementItems(self.requirements ?: @"",@"",self.report[@"snapshotVersion"] ?: @"");
+    report[@"reviewBaseVersion"]=identity[@"base"];report[@"version"]=AMPreflightHash([NSJSONSerialization dataWithJSONObject:identity options:NSJSONWritingSortedKeys error:NULL]);self.report=report;}
+- (void)toggleSupplement:(id)sender{if(self.checking || !self.snapshot)return;PFMaterials *materials=[[PFMaterials alloc] initWithSnapshot:self.reviewMaterialsSnapshot ?: self.snapshot report:self.report requirements:self.requirements];materials.materialRoot=[NSURL fileURLWithPath:self.course[@"path"]];for(NSView *v in materials.window.contentView.subviews)if([v.identifier isEqual:@"material-prepare"])[(NSButton *)v setTitle:@"保存材料"];[materials.window center];NSModalResponse response=[NSApp runModalForWindow:materials.window];[materials.window orderOut:nil];if(response!=NSModalResponseOK)return;self.reviewMaterialsSnapshot=[materials selectedSnapshot];self.reviewMaterialImages=[materials selectedImages];self.requirements=materials.requirements;[self bindReviewMaterials];self.confirmedOnlineSnapshot=nil;self.reviewFailure=nil;self.acknowledge.state=NSControlStateValueOff;if([self saveReviewMaterials])self.validation.stringValue=@"检查材料已保存 · 提交文件不变";[self refreshReport];}
 - (void)backToFiles:(id)sender {if(self.checking && (!self.onlineClient || self.localChecking))return;if(self.onlineClient)self.previewGeneration++;if(self.checkOnly && self.backToScope){self.backToScope();return;}self.window.contentMinSize=NSMakeSize(760,self.taskChecks ? 676:580);self.checkPage.hidden=YES;for(NSView *view in self.window.contentView.subviews)if(view!=self.checkPage)view.hidden=NO;self.validation=self.filesValidation;self.report=nil;self.snapshot=nil;self.finalValidation=NO;self.window.defaultButtonCell=self.filesPrimary.cell;[self layoutFiles];}
 - (void)checkNow:(id)sender {
     if((self.checking && (!self.onlineClient || self.localChecking)) || self.closed)return;
@@ -432,17 +437,17 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
         // result must remain visibly pending instead of vanishing from the list.
         NSMutableDictionary *matched=NSMutableDictionary.dictionary;
         for(NSDictionary *check in effective[@"requirementChecks"]){
-            NSString *requirement=check[@"requirement"];
+            NSString *requirement=check[@"requirementID"] ?: SSRequirementID(check[@"requirement"] ?: @"");
             if(!matched[requirement] || ![check[@"status"] isEqual:@"checked"])matched[requirement]=check;
         }
         NSMutableArray *checks=NSMutableArray.array;
         NSMutableSet *seen=NSMutableSet.set;
         NSUInteger satisfied=0,problems=0;
-        for(NSString *raw in [self.report[@"requirements"] componentsSeparatedByString:@"\n"]){
-            NSString *requirement=[raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        for(NSDictionary *item in self.report[@"requirementItems"] ?: SSRequirementItems(self.report[@"requirements"] ?: @"",@"",self.report[@"snapshotVersion"] ?: @"")){
+            NSString *requirement=item[@"text"];
             if(!requirement.length || [requirement hasPrefix:@"#"] || [seen containsObject:requirement])continue;
             [seen addObject:requirement];
-            NSDictionary *check=matched[requirement] ?: @{@"requirement":requirement,@"status":@"unchecked",@"reason":@"尚无可核对的证据"};
+            NSDictionary *check=matched[item[@"id"]] ?: matched[SSRequirementID(requirement)] ?: @{@"requirement":requirement,@"requirementID":item[@"id"],@"status":@"unchecked",@"reason":effective ? @"模型未返回有依据的判断，可核对材料后重试。":@"尚未进行内容检查。"};
             if([check[@"status"] isEqual:@"checked"])satisfied++;
             if([@[@"issue",@"partial"] containsObject:check[@"status"]])problems++;
             [checks addObject:check];
@@ -462,9 +467,10 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
         for(NSDictionary *check in checks)[displayChecks addObject:previewEvidence(check)];
         for(NSDictionary *issue in unique)[displayIssues addObject:previewEvidence(issue)];
         NSUInteger pending=checks.count-satisfied-problems;
-        NSString *conclusion=(problems || unique.count) ? @"发现需要处理的问题":
+        NSString *conclusion=!effective ? @"文件检查完成，内容尚未检查":(problems || unique.count) ? @"发现需要处理的问题":
             (!checks.count || pending || unverified.count || groups.count || effective[@"failure"]) ? @"还有内容待核对":@"已核对当前要求";
-        self.workbenchReportChanged(@{@"title":conclusion,@"summary":[NSString stringWithFormat:@"%lu 条已核对 · %lu 条需处理 · %lu 条待核对",(unsigned long)satisfied,(unsigned long)problems,(unsigned long)pending],
+        NSMutableDictionary *fileVersions=NSMutableDictionary.dictionary;for(NSString *path in self.snapshot[@"files"])fileVersions[path]=self.snapshot[@"files"][path][@"version"] ?: @"";
+        self.workbenchReportChanged(@{@"fileVersions":fileVersions,@"title":conclusion,@"summary":[NSString stringWithFormat:@"%lu 条已核对 · %lu 条需处理 · %lu 条待核对",(unsigned long)satisfied,(unsigned long)problems,(unsigned long)pending],
             @"tone":(problems || pending || unique.count || groups.count) ? @"warning":@"neutral",
             @"provider":effectiveJob[@"provider"] ?: @"本机",@"model":effectiveJob[@"model"] ?: @"",
             @"checks":displayChecks,@"issues":displayIssues,@"coverage":status,@"date":NSDate.date,@"scope":self.checkOnly ? @"整份作业范围":@"本次提交文件",

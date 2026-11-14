@@ -4,7 +4,10 @@
 #import "AMDocumentRules.h"
 #import <CommonCrypto/CommonDigest.h>
 
-static NSRegularExpression *Regex(NSString *pattern) { return [NSRegularExpression regularExpressionWithPattern:pattern options:NSRegularExpressionCaseInsensitive error:NULL]; }
+static NSRegularExpression *Regex(NSString *pattern) {
+    static NSCache *cache;static dispatch_once_t once;dispatch_once(&once,^{cache=NSCache.new;cache.countLimit=256;});
+    NSRegularExpression *value=[cache objectForKey:pattern];if(!value){value=[NSRegularExpression regularExpressionWithPattern:pattern options:NSRegularExpressionCaseInsensitive error:NULL];if(value)[cache setObject:value forKey:pattern];}return value;
+}
 static BOOL Match(NSString *text, NSString *pattern) { return [Regex(pattern) firstMatchInString:text options:0 range:NSMakeRange(0, text.length)] != nil; }
 static NSString *Replace(NSString *text, NSString *pattern, NSString *value) { return [Regex(pattern) stringByReplacingMatchesInString:text options:0 range:NSMakeRange(0, text.length) withTemplate:value]; }
 BOOL SSIsSupportedDocument(NSString *path) {
@@ -247,4 +250,56 @@ NSDictionary *SSApplyDateReference(NSDictionary *candidate, NSDate *referenceDat
     if (!suggestion) return candidate;
     NSMutableDictionary *copy = candidate.mutableCopy; copy[@"suggestedDue"] = suggestion;
     copy[@"dateBasis"] = @{@"commit":commit, @"date":referenceDate}; return copy;
+}
+
+// Stable within a material version. Model responses refer to these IDs instead
+// of relying on punctuation or Markdown being reproduced byte for byte.
+NSString *SSRequirementID(NSString *text) {
+    NSData *data=[text dataUsingEncoding:NSUTF8StringEncoding];unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(data.bytes,(CC_LONG)data.length,digest);NSMutableString *key=[NSMutableString stringWithString:@"req-"];
+    for(NSUInteger i=0;i<12;i++)[key appendFormat:@"%02x",digest[i]];return key;
+}
+NSArray<NSDictionary *> *SSRequirementItems(NSString *text,NSString *path,NSString *version) {
+    static NSCache *cache;static dispatch_once_t once;dispatch_once(&once,^{cache=NSCache.new;cache.countLimit=256;cache.totalCostLimit=8*1024*1024;});
+    NSArray *cacheKey=@[text,path,version];NSArray *cached=[cache objectForKey:cacheKey];if(cached)return cached;
+    NSArray *lines=[[[text stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"] stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"] componentsSeparatedByString:@"\n"];
+    NSMutableArray *blocks=NSMutableArray.array;NSMutableDictionary *current=nil;
+    NSString *group=@"作业要求",*sourcePath=path,*sourceVersion=version;BOOL fence=NO,taskSection=NO;NSUInteger number=0,sourceOffset=0;
+    for(NSString *raw in lines){
+        number++;NSString *line=[raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if(Match(line,@"^(```|~~~)")){fence=!fence;current=nil;continue;}
+        if(fence)continue;
+        if([line hasPrefix:@"老师原文："]){
+            NSArray *parts=[line componentsSeparatedByString:@" · "];
+            if(parts.count>=3){sourcePath=parts[1];sourceVersion=parts[2];sourceOffset=number;}
+            current=nil;group=@"作业要求";taskSection=NO;continue;
+        }
+        if(Match(line,@"^#{1,6}\\s+")){group=Replace(line,@"^#{1,6}\\s+",@"");taskSection=Match(group,@"任务|要求|练习|习题|实践|提交|tasks?|requirements?|exercises?|problems?|practice|deliverables?");current=nil;continue;}
+        if(!line.length){current=nil;continue;}
+        if(Match(line,@"^(?:[-*_]\\s*){3,}$|^(?:老师原文|录入通知|关联摘要|用户补充题目)[：:]|^截止(?:时间|日期)?[：:]|^Due[ :]|^Deadline[ :]|^\\|[ :|-]+\\|$")){current=nil;continue;}
+        BOOL bullet=Match(line,@"^(?:[-*+]\\s+|[0-9]+[.)、]\\s*)");
+        NSUInteger indent=raw.length-[raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet].length;
+        NSString *body=Replace(line,@"^(?:[-*+]\\s+|[0-9]+[.)、]\\s*)",@"");
+        // Bare numbered headings such as '1.' belong to the next paragraph,
+        // rather than becoming empty requirements of their own.
+        if(!body.length){current=nil;taskSection=YES;continue;}
+        BOOL continuation=current && ((!bullet && (indent>0 || !Match(body,@"^(?:完成|提交|实现|撰写|编写|阅读|证明|计算|处理|写出|解释|设计|回答|Complete|Submit|Implement|Write|Read|Prove|Calculate|Explain|Design|Solve|Answer|Compare|Derive|Include|Use|Name|Report)"))) || (bullet && indent>[current[@"indent"] unsignedIntegerValue]));
+        if(continuation){current[@"text"]=[current[@"text"] stringByAppendingFormat:@" %@",body];current[@"endLine"]=@(number-sourceOffset);continue;}
+        BOOL actionable=Match(body,@"完成|提交|命名|格式|实现|撰写|编写|写出|说明|描述|讨论|核对|验证|保存|阅读|证明|计算|绘制|画出|整理|推导|处理|解答|回答|比较|分析|解释|补充|标明|\\b(?:complete|submit|implement|write|read|prove|calculate|solve|answer|compare|explain|derive|include|must|should|use|name|report|design)\\b");
+        if(!actionable && !(bullet && taskSection)) {current=nil;continue;}
+        if(Match(body,@"^(?:截止|deadline|due)")){current=nil;continue;}
+        current=[@{@"text":body,@"group":group,@"line":@(number-sourceOffset),@"endLine":@(number-sourceOffset),@"path":sourcePath,@"version":sourceVersion,@"indent":@(indent)} mutableCopy];[blocks addObject:current];
+    }
+    NSMutableArray *items=NSMutableArray.array;
+    for(NSDictionary *block in blocks){
+        // Only paired Markdown emphasis is presentation syntax. Keep arithmetic
+        // operators such as Python's x**2 and literal code unchanged.
+        NSString *body=Replace(block[@"text"],@"(?<![\\w`])\\*\\*(\\S(?:[^*\\n]*?\\S)?)\\*\\*(?![\\w`])",@"$1");
+        body=Replace(body,@"`",@"");
+        if(!body.length)continue;
+        NSString *identity=[NSString stringWithFormat:@"%@|%@|%@|%@|%@",block[@"path"],block[@"version"],block[@"group"],block[@"line"],body];
+        NSString *condition=Match(body,@"若|如果|可以跳过|\\bif\\b|\\bunless\\b") ? body:@"";
+        [items addObject:@{@"id":SSRequirementID(identity),@"text":body,@"group":block[@"group"],@"condition":condition,@"path":block[@"path"],@"version":block[@"version"],@"line":block[@"line"],@"endLine":block[@"endLine"]}];
+    }
+    NSArray *result=items.copy;[cache setObject:result forKey:cacheKey cost:text.length*2+items.count*512];return result;
 }

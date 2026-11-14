@@ -205,7 +205,7 @@ NSDictionary *AMPreflightCheckWithProgress(NSDictionary *snapshot,NSString *requ
     [coverage addObject:@{@"path":@"",@"status":@"未检查：答案、推导、中文语义及程序运行；可交给助手复核"}];
     NSArray *sorted=[issues sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){NSArray *levels=@[@"error",@"warning",@"info"];NSUInteger x=[levels indexOfObject:a[@"severity"]],y=[levels indexOfObject:b[@"severity"]];return x<y ? NSOrderedAscending : x>y ? NSOrderedDescending:NSOrderedSame;}];
     NSMutableArray *uniqueImages=NSMutableArray.array;NSMutableSet *imagePaths=NSMutableSet.set;for(NSDictionary *image in images)if(![imagePaths containsObject:image[@"path"]]){[imagePaths addObject:image[@"path"]];[uniqueImages addObject:image];}
-    return @{@"requirements":requirements ?: @"",@"version":AMPreflightHash([[NSString stringWithFormat:@"preflight-v4-renderer6|%@|%@",snapshot[@"version"],requirements] dataUsingEncoding:NSUTF8StringEncoding]),@"snapshotVersion":snapshot[@"version"],@"issues":sorted,@"coverage":coverage,@"images":uniqueImages,@"date":NSDate.date,@"assistant":@"未检查"};
+    return @{@"requirementItems":SSRequirementItems(requirements ?: @"",@"",snapshot[@"version"] ?: @""),@"requirements":requirements ?: @"",@"version":AMPreflightHash([[NSString stringWithFormat:@"preflight-v4-renderer6|%@|%@",snapshot[@"version"],requirements] dataUsingEncoding:NSUTF8StringEncoding]),@"snapshotVersion":snapshot[@"version"],@"issues":sorted,@"coverage":coverage,@"images":uniqueImages,@"date":NSDate.date,@"assistant":@"未检查"};
 }
 static BOOL PFWrite(NSData *data,NSURL *url,NSError **error){
     if(![url.path isEqual:url.URLByResolvingSymlinksInPath.path]){if(error)*error=RError(@"交换目录不安全。");return NO;}
@@ -248,7 +248,7 @@ NSDictionary *AMPreflightExport(NSDictionary *report,NSDictionary *snapshot,NSSt
             [uncovered addObject:[NSString stringWithFormat:@"%@：%@",path,status]];
     }
     NSMutableDictionary *links=NSMutableDictionary.dictionary;NSMutableSet *sent=[NSMutableSet setWithArray:[documents valueForKey:@"path"]];[sent addObjectsFromArray:[assets valueForKey:@"path"]];for(NSString *question in snapshot[@"questionLinks"]){NSMutableArray *validLinks=NSMutableArray.array;for(NSDictionary *link in AMReviewRelations(snapshot[@"questionLinks"],question)){NSString *answer=link[@"answer"];if(![sent containsObject:question] || ![sent containsObject:answer])continue;if(![snapshot[@"files"][question][@"version"] isEqual:link[@"sourceVersion"]] || ![snapshot[@"files"][answer][@"version"] isEqual:link[@"answerVersion"]]){if(error)*error=RError(@"题目与解答关联已过期，请重新确认。");return nil;}[validLinks addObject:link];}if(validLinks.count)links[question]=validLinks.count==1 ? validLinks[0]:validLinks;}
-    NSDictionary *context=@{@"excluded":excluded.array,@"uncovered":uncovered.array,@"unverifiedImages":@[],@"format":@"am-preflight-context-v1",@"instructions":AMReviewPrompt(),@"batchID":folder.lastPathComponent,@"reportVersion":report[@"version"],@"snapshotVersion":snapshot[@"version"],@"requirements":requirements ?: @"",@"verifiedTextRequirements":snapshot[@"verifiedTextRequirements"] ?: @[],@"imageOccurrences":occurrences,@"questionLinks":links,@"requestLimit":snapshot[@"requestLimit"] ?: @4,@"documents":documents,@"images":assets};
+    NSDictionary *context=@{@"excluded":excluded.array,@"uncovered":uncovered.array,@"unverifiedImages":@[],@"format":@"am-preflight-context-v1",@"instructions":AMReviewPrompt(),@"batchID":folder.lastPathComponent,@"reportVersion":report[@"version"],@"snapshotVersion":snapshot[@"version"],@"requirements":requirements ?: @"",@"requirementItems":SSRequirementItems(requirements ?: @"",@"",report[@"snapshotVersion"] ?: @""),@"verifiedTextRequirements":snapshot[@"verifiedTextRequirements"] ?: @[],@"imageOccurrences":occurrences,@"questionLinks":links,@"requestLimit":snapshot[@"requestLimit"] ?: @4,@"documents":documents,@"images":assets};
     NSData *json=[NSJSONSerialization dataWithJSONObject:context options:NSJSONWritingPrettyPrinted error:error];if(!json || !PFWrite(json,[folder URLByAppendingPathComponent:@"context.local.json"],error))return nil;
     NSString *skill=[NSString stringWithContentsOfFile:[NSBundle.mainBundle pathForResource:@"am-homework-extract" ofType:@"md"] ?: @"Skills/am-homework-extract/SKILL.md" encoding:NSUTF8StringEncoding error:NULL];if(!skill.length || !PFWrite([skill dataUsingEncoding:NSUTF8StringEncoding],[folder URLByAppendingPathComponent:@"SKILL.md"],error))return nil;
     return context;
@@ -299,15 +299,18 @@ NSDictionary *AMPreflightValidateResult(id result,NSDictionary *context,NSError 
     for(id reason in result[@"unverified"])if([reason isKindOfClass:NSString.class] && [reason length]<1000 && !SSContainsSecret([reason dataUsingEncoding:NSUTF8StringEncoding]))[unverified addObject:reason];
     for(NSString *path in [[sources allKeys] sortedArrayUsingSelector:@selector(compare:)])if(![checked containsObject:path]){BOOL explained=NO;for(NSString *reason in unverified)if([reason hasPrefix:[path stringByAppendingString:@"："]] || [reason hasPrefix:[path stringByAppendingString:@":"]]){explained=YES;break;}if(!explained)[unverified addObject:[NSString stringWithFormat:@"%@：未返回检查结果",path]];}
     if(context[@"imageOccurrences"] && ![context[@"questionLinks"] count] && ![context[@"verifiedTextRequirements"] count])[unverified addObject:@"未关联实际题目，尚未核对解答对应关系与要求完整性。"];
+    NSArray *requirementItems=context[@"requirementItems"] ?: SSRequirementItems(context[@"requirements"] ?: @"",@"",context[@"snapshotVersion"] ?: @"");
+    NSSet *requirementTexts=[NSSet setWithArray:[requirementItems valueForKey:@"text"]];
     NSMutableArray *requirementChecks=NSMutableArray.array;
     for(id check in [result[@"requirementChecks"] isKindOfClass:NSArray.class] ? result[@"requirementChecks"]:@[]){
-        if(![check isKindOfClass:NSDictionary.class] || ![check[@"requirement"] isKindOfClass:NSString.class] || ![check[@"requirement"] length] || ![check[@"reason"] isKindOfClass:NSString.class] || ![@[@"checked",@"partial",@"issue",@"missing-material",@"unchecked"] containsObject:check[@"status"]] || ![context[@"requirements"] containsString:check[@"requirement"]])continue;
+        if(![check isKindOfClass:NSDictionary.class] || ![check[@"requirement"] isKindOfClass:NSString.class] || ![check[@"requirement"] length] || ![check[@"reason"] isKindOfClass:NSString.class] || ![@[@"checked",@"partial",@"issue",@"missing-material",@"unchecked"] containsObject:check[@"status"]] || ![requirementTexts containsObject:check[@"requirement"]])continue;
         if([check[@"origin"] isEqual:@"local-file"]){
             NSDictionary *local=PFExactFileRequirement(check[@"requirement"],context[@"documents"]);
             if(local)[requirementChecks addObject:local];
             continue;
         }
         NSMutableDictionary *copy=[@{@"requirement":check[@"requirement"],@"status":check[@"status"],@"reason":check[@"reason"]} mutableCopy];
+        for(NSDictionary *item in requirementItems)if([item[@"text"] isEqual:check[@"requirement"]]){copy[@"requirementID"]=item[@"id"];break;}
         NSDictionary *source=[check[@"path"] isKindOfClass:NSString.class] ? sources[check[@"path"]]:nil;
         BOOL grounded=source && [source[@"version"] isEqual:check[@"version"]];
         if(grounded && source[@"text"]){

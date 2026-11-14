@@ -36,7 +36,7 @@ int main(){@autoreleasepool{
     Check([app control:app.search textView:(NSTextView *)app.search.currentEditor doCommandBySelector:@selector(cancelOperation:)] && !app.search.currentEditor && [app.search.stringValue isEqual:@"persistent search"],@"Escape exits search and retains its contents");
     NSSearchField *search=app.search;[app render];Check(app.search==search,@"normal refresh retains the search control");app.search.stringValue=@"";
     NSToolbarItem *plus=nil;for(NSToolbarItem *item in app.window.toolbar.items){Check(![@[@"AMOperations",@"AMCheckWorkspace"] containsObject:item.itemIdentifier],@"idle toolbar has no ambiguous progress or checking icons");if([item.itemIdentifier isEqual:@"AMNewTask"])plus=item;}
-    Check(plus.action==@selector(addTask:) && ![plus isKindOfClass:NSMenuToolbarItem.class],@"plus is the shared manual new-task action");[NSApp sendAction:plus.action to:plus.target from:plus];Check(app.editor!=nil && app.quickController==nil,@"plus opens manual form directly");[app closeEditor];
+    Check(plus.action==@selector(quickEntry:) && ![plus isKindOfClass:NSMenuToolbarItem.class],@"plus is the shared text and screenshot capture action");[NSApp sendAction:plus.action to:plus.target from:plus];Check(app.quickController!=nil,@"plus opens the shared capture form");[app closeQuick];
     ThemeSegmentedControl *tabs=Segments(@[@"课程内容",@"已加入任务",@"仓库信息",@"提交记录"],nil,NULL);for(NSInteger index=0;index<4;index++){tabs.selectedSegment=index;Check(tabs.selectedSegment==index,@"all navigation segments can be selected");}if(@available(macOS 26.0,*))Check([[tabs valueForKey:@"borderShape"] integerValue]==1,@"capsule shape requested through public system API");
     app.page=1;[app refreshPageToolbar];NSToolbarItem *calendarItem=nil;for(NSToolbarItem *item in app.window.toolbar.items)if([item.itemIdentifier isEqual:@"AMCalendarStatus"])calendarItem=item;
     Check(calendarItem.view==app.calendarStatus && app.calendarStatus.superview!=app.root,@"calendar filter belongs to native toolbar, not stretched body controls");
@@ -68,14 +68,14 @@ int main(){@autoreleasepool{
     for(NSString *appearance in @[NSAppearanceNameAqua,NSAppearanceNameDarkAqua])for(NSNumber *width in @[@692,@1120])for(NSNumber *recovery in @[@NO,@YES]){
         course.view.appearance=[NSAppearance appearanceNamed:appearance];course.recoveryButton.hidden=!recovery.boolValue;course.recoveryButton.title=@"处理冲突…";
         [course.view setFrameSize:NSMakeSize(width.doubleValue,520)];[course layoutContent];[course.view layoutSubtreeIfNeeded];
-        Check(course.operationStatus.hidden && NSMinY(course.courseWorkspace.view.frame)==NSMaxY(course.nativeHeader.frame)+8,@"running, recovery and completed feedback never push course content down");
+        Check(course.operationStatus.hidden && NSMinY(course.courseWorkspace.view.frame)==(course.assignmentBoardActive ? 0:NSMaxY(course.nativeHeader.frame)+8),@"running, recovery and completed feedback never push course content down");
         Check(course.cancelReadButton.enabled && course.cancelReadButton.action==@selector(cancelReadOperation:),@"activity cancellation retains the same operation target");
     }
     [course cancelReadOperation:nil];Check(course.git.cancelledReads && !course.cancelReadButton.enabled && [course.statusLabel.stringValue containsString:@"正在停止"],@"cancel remains connected to the active read after layout changes");
     course.busy=NO;course.git.readsCancellable=NO;course.git.cancelledReads=NO;course.git.operationCancelled=NO;course.github.requestsCancelled=NO;[course refreshPresentation];
     Check(course.cancelReadButton.hidden && course.progress.hidden,@"finished course check removes the cancel action and progress bar");
     course.statusLabel.stringValue=@"";course.recoveryButton.hidden=YES;[course layoutContent];
-    Check(course.operationStatus.hidden && NSMinY(course.courseWorkspace.view.frame)==NSMaxY(course.nativeHeader.frame)+8,@"idle course has no empty progress area");course.view.appearance=nil;
+    Check(course.operationStatus.hidden && NSMinY(course.courseWorkspace.view.frame)==(course.assignmentBoardActive ? 0:NSMaxY(course.nativeHeader.frame)+8),@"idle course has no empty progress area");course.view.appearance=nil;
     // A real scheduler path with synthetic work only; no repository or network access.
     [course.courses addObject:[@{@"fork":@"student/scheduled-fixture",@"upstream":@"teacher/fixture",@"path":@"/synthetic/no-git-operations"} mutableCopy]];course.preview=NO;__block BOOL firstStarted=NO,firstFinished=NO,secondFinished=NO;__block NSUInteger invocations=0;
     dispatch_semaphore_t release=dispatch_semaphore_create(0);

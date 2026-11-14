@@ -85,8 +85,16 @@
             [owner configurePreflight:check course:course tasks:@[task]];
             __weak SSCourseController *controller=owner;
             check.workbenchStatusChanged=^(NSString *message){[controller.courseWorkspace setWorkbenchStatus:message forAssignment:assignment];};
-            check.workbenchReportChanged=^(NSDictionary *report){[controller.courseWorkspace setWorkbenchReport:report forAssignment:assignment];};
-            check.finished=^{[controller.courseWorkspace setWorkbenchStatus:@"" forAssignment:assignment];controller.workbenchCheck=nil;controller.workbenchCheckAssignment=nil;[controller.courseWorkspace setWorkbenchActive:nil];};
+            check.workbenchReportChanged=^(NSDictionary *report){
+                [controller.courseWorkspace setWorkbenchReport:report forAssignment:assignment];
+                if([controller.pendingWorkbenchOnline isEqual:assignment]){
+                    BOOL deep=controller.pendingWorkbenchDeep;controller.pendingWorkbenchOnline=nil;
+                    // Explicit AI action prepares the same local snapshot first;
+                    // the existing consent sheet remains the only send boundary.
+                    dispatch_async(dispatch_get_main_queue(),^{SSSubmissionController *active=controller.workbenchCheck;if([controller.workbenchCheckAssignment isEqual:assignment] && !active.checking){active.deepReview=deep;[active onlineReview:nil];active.deepReview=NO;}});
+                }
+            };
+            check.finished=^{if(![controller.workbenchCheckAssignment isEqual:assignment])return;[controller.courseWorkspace setWorkbenchStatus:@"" forAssignment:assignment];controller.workbenchCheck=nil;controller.workbenchCheckAssignment=nil;[controller.courseWorkspace setWorkbenchActive:nil];};
             for(NSButton *item in check.checks)if(item.enabled)item.state=NSControlStateValueOn;
             [owner.courseWorkspace setWorkbenchStatus:@"正在本机检查…" forAssignment:assignment];
             [check save:nil];

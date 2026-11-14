@@ -1,0 +1,97 @@
+[
+  {
+    "name": "multiline",
+    "text": "# 要求\n- 提交单个 Markdown 文件，\n  命名为 answer.md。",
+    "expected": [
+      "提交单个 Markdown 文件， 命名为 answer.md。"
+    ]
+  },
+  {
+    "name": "separator",
+    "text": "# 作业\n---\n## 任务\n1. 完成学习笔记\n***\n2. 计算速度。",
+    "expected": [
+      "完成学习笔记",
+      "计算速度。"
+    ]
+  },
+  {
+    "name": "conditional",
+    "text": "# 规则\n- 若已熟练可以跳过习题，但必须标明已跳过，\n  并提交不低于原题深度的探索报告。",
+    "expected": [
+      "若已熟练可以跳过习题，但必须标明已跳过， 并提交不低于原题深度的探索报告。"
+    ]
+  },
+  {
+    "name": "nested",
+    "text": "# Requirements\n- Submit a report:\n  - Include results.\n  - Explain limitations.",
+    "expected": [
+      "Submit a report: Include results. Explain limitations."
+    ]
+  },
+  {
+    "name": "fenced",
+    "text": "# 任务\n完成函数。\n```python\n# 提交假的要求\nraise Exception()\n```\n提交 report.md",
+    "expected": [
+      "完成函数。",
+      "提交 report.md"
+    ]
+  },
+  {
+    "name": "background",
+    "text": "# 背景\n本章介绍牛顿力学。\n这是一个数据集。",
+    "expected": []
+  },
+  {
+    "name": "attachment",
+    "text": "# 任务\n1. 完成附件中的数值分析任务。\n2. 提交数据处理代码。",
+    "expected": [
+      "完成附件中的数值分析任务。",
+      "提交数据处理代码。"
+    ]
+  },
+  {
+    "name": "english",
+    "text": "# Requirements\n1. Implement a queue.\n2. Explain its complexity.",
+    "expected": [
+      "Implement a queue.",
+      "Explain its complexity."
+    ]
+  },
+  {
+    "name": "math",
+    "text": "# 要求\n证明 F = m * a。\n写出代入结果。",
+    "expected": [
+      "证明 F = m * a。",
+      "写出代入结果。"
+    ]
+  },
+  {
+    "name": "bare-number",
+    "text": "# 任务\n1.\n完成学习笔记\n2.\n处理数据并绘制曲线。",
+    "expected": [
+      "完成学习笔记",
+      "处理数据并绘制曲线。"
+    ]
+  },
+  {
+    "name": "markup",
+    "text": "# 提交要求\n- 提交 **report.md**，附 `code.py`。",
+    "expected": [
+      "提交 report.md，附 code.py。"
+    ]
+  },
+  {
+    "name": "deadline",
+    "text": "# 要求\n截止时间：本周日21:00\n- 提交实验报告。",
+    "expected": [
+      "提交实验报告。"
+    ]
+  },
+  {
+    "name": "exponent-operators",
+    "text": "# 要求\n- 实现 `x**2 + y**3` 并解释结果。",
+    "expected": [
+      "实现 x**2 + y**3 并解释结果。"
+    ]
+  }
+]

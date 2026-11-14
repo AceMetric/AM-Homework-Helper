@@ -27,13 +27,14 @@
 }
 - (void)quickEntry:(id)sender {
     if(self.quickWindow){[self.quickWindow makeKeyAndOrderFront:nil];return;}if(self.window.attachedSheet && self.window.attachedSheet!=self.editor.window)return;
-    [self loadQuick];if(!self.quickState){[self render];return;}
+    [self loadQuick];if(self.page==4 && self.courseWindow.selectedCourseID.length)self.quickState[@"defaultCourseID"]=self.courseWindow.selectedCourseID;else [self.quickState removeObjectForKey:@"defaultCourseID"];if(!self.quickState){[self render];return;}
     self.quickController=AMQuickEntryController.new;__weak typeof(self) owner=self;
     self.quickController.actionHandler=^(NSString *action,NSDictionary *payload){[owner quickAction:action payload:payload];};
     self.quickWindow=[[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,1000,760) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];self.quickWindow.title=@"从文字或截图录入";self.quickWindow.contentMinSize=NSMakeSize(650,640);self.quickWindow.delegate=self;self.quickWindow.releasedWhenClosed=NO;self.quickWindow.contentViewController=self.quickController;[self.quickWindow setContentSize:NSMakeSize(1000,760)];
     [self refreshQuick:nil];[(self.editor && !self.editor.embedded ? self.editor.window:self.window) beginSheet:self.quickWindow completionHandler:nil];
 }
 - (void)closeQuick {
+    self.quickParseGeneration++;[self.quickParseQueue cancelAllOperations];
     [self.quickPersistTimer invalidate];self.quickPersistTimer=nil;
     if(self.quickWindow.sheetParent)[self.quickWindow.sheetParent endSheet:self.quickWindow];[self.quickWindow orderOut:nil];self.quickWindow=nil;self.quickController=nil;
 }
@@ -57,14 +58,29 @@
     // A deliberate new capture of already saved text gets its own identity and duplicate preview.
     if(consumed && !pending)material=AMQuickMaterial(text,material[@"referenceDate"],material[@"timeZone"]);
     NSCalendar *cal=[NSCalendar calendarWithIdentifier:NSCalendarIdentifierGregorian];cal.timeZone=[NSTimeZone timeZoneWithName:material[@"timeZone"]];
-    NSArray *imageEntries=[self.quickState[@"imageImport"] boolValue] ? AMQuickParseImageOutline(text,material[@"id"],material[@"referenceDate"],cal):nil;
-    NSMutableArray *entries=(imageEntries.count ? imageEntries:AMQuickParse(text,material[@"id"],material[@"referenceDate"],cal)).mutableCopy;
-    for(NSMutableDictionary *entry in entries)entry[@"version"]=material[@"version"];
+    // One parser runs at a time. Replaced inputs cancel queued work and a
+    // generation check rejects a late result without overwriting edited drafts.
+    NSUInteger generation=++self.quickParseGeneration;BOOL imageImport=[self.quickState[@"imageImport"] boolValue];
+    if(!self.quickParseQueue){self.quickParseQueue=NSOperationQueue.new;self.quickParseQueue.maxConcurrentOperationCount=1;self.quickParseQueue.qualityOfService=NSQualityOfServiceUserInitiated;}
+    [self.quickParseQueue cancelAllOperations];
+    NSBlockOperation *operation=NSBlockOperation.new;__weak NSBlockOperation *weakOperation=operation;
+    [operation addExecutionBlock:^{
+        if(weakOperation.cancelled)return;
+        NSArray *imageEntries=imageImport ? AMQuickParseImageOutline(text,material[@"id"],material[@"referenceDate"],cal):nil;
+        NSMutableArray *entries=(imageEntries.count ? imageEntries:AMQuickParse(text,material[@"id"],material[@"referenceDate"],cal)).mutableCopy;
+        dispatch_async(dispatch_get_main_queue(),^{
+            if(generation!=self.quickParseGeneration || ![self.quickState[@"text"] isEqual:text])return;
+    for(NSMutableDictionary *entry in entries){entry[@"version"]=material[@"version"];
+        NSString *courseID=self.quickState[@"defaultCourseID"];if(courseID.length){entry[@"courseID"]=courseID;for(NSDictionary *row in self.courseWindow.courseSnapshots)if([row[@"id"] isEqual:courseID])entry[@"subject"]=row[@"name"];}
+    }
     for(NSUInteger i=0;i<entries.count;i++)for(NSDictionary *old in self.quickState[@"entries"])if([old[@"id"] isEqual:entries[i][@"id"]]){NSMutableDictionary *retained=[entries[i] mutableCopy];for(NSString *field in old[@"editedFields"] ?: ([old[@"edited"] boolValue] ? @[@"title",@"subject",@"notes",@"dateText",@"reminderOffsets"]:@[]))if(old[field])retained[field]=old[field];retained[@"edited"]=old[@"edited"] ?: @NO;retained[@"editedFields"]=old[@"editedFields"] ?: @[];retained[@"selected"]=old[@"selected"] ?: @YES;entries[i]=retained;}
     for(NSDictionary *old in self.quickState[@"entries"])if([old[@"sourceID"] isEqual:material[@"id"]] && [old[@"edited"] boolValue]){BOOL found=NO;for(NSDictionary *entry in entries)if([entry[@"id"] isEqual:old[@"id"]])found=YES;if(!found)[entries addObject:old];}
     for(NSDictionary *old in self.quickState[@"entries"])if(![old[@"sourceID"] isEqual:material[@"id"]])[entries addObject:old];
     NSMutableDictionary *materials=[self.quickState[@"materials"] mutableCopy] ?: NSMutableDictionary.dictionary;materials[material[@"id"]]=material;self.quickState[@"materials"]=materials;
     self.quickState[@"referenceDate"]=material[@"referenceDate"];self.quickState[@"material"]=material;self.quickState[@"entries"]=entries;NSError *error=nil;BOOL saved=[self persistQuick:&error];[self refreshQuick:saved ? [NSString stringWithFormat:@"识别 %lu 项；缺日期或时间的内容保留为草稿。",(unsigned long)entries.count]:@"草稿保存失败，输入保留，请重试。"];
+        });
+    }];
+    [self.quickParseQueue addOperation:operation];
 }
 - (void)quickOCR:(NSImage *)image {
     if(!image || self.quickBusy)return;NSString *operation=AMOperationBegin(@"截图识别",@"快速录入",NO,nil);NSString *before=[self.quickState[@"text"] copy];self.quickBusy=YES;[self refreshQuick:@"正在本机识别截图文字…"];__weak typeof(self) owner=self;
@@ -174,6 +190,7 @@
     if(self.quickUpdating || !self.quickState)return;[self.quickState addEntriesFromDictionary:payload];
     if([action isEqual:@"draft"]){[self.quickPersistTimer invalidate];__weak typeof(self) owner=self;self.quickPersistTimer=[NSTimer scheduledTimerWithTimeInterval:.4 repeats:NO block:^(NSTimer *timer){NSError *error=nil;if(![owner persistQuick:&error])[owner.quickController setNotice:@"草稿保存失败，请重试。" busy:owner.quickBusy];else [owner pollQuickResults];}];return;}
     NSError *error=nil;if(![self persistQuick:&error]){[self.quickController setNotice:@"草稿未保存，操作已暂停，请检查本机存储。" busy:NO];return;}
+    if([action isEqual:@"manual"]){[self closeQuick];[self addTask:nil];return;}
     if([action isEqual:@"close"]){[self closeQuick];return;}
     if([action isEqual:@"source-changed"]){[self parseQuick];return;}
     if([action isEqual:@"parse"])[self parseQuick];else if([action isEqual:@"save"])[self saveQuick];else if([action isEqual:@"skill"])[self prepareQuickSkill];else if([action isEqual:@"online-ocr"])[self onlineQuickOCR];

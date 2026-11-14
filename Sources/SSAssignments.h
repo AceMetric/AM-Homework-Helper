@@ -22,4 +22,8 @@ NSString *SSActivityKindLabel(NSString *kind);
 NSDictionary *SSApplyDateReference(NSDictionary *candidate, NSDate *referenceDate,
     NSString *commit, NSCalendar *calendar);
 
+/// Structured, source-bound requirements shared by recognition and review.
+NSArray<NSDictionary *> *SSRequirementItems(NSString *text, NSString *path, NSString *version);
+NSString *SSRequirementID(NSString *text);
+
 NS_ASSUME_NONNULL_END

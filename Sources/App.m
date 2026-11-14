@@ -376,6 +376,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSTimer *quickPersistTimer;
 @property BOOL quickUpdating;
 @property BOOL quickBusy;
+@property NSUInteger quickParseGeneration;
+@property NSOperationQueue *quickParseQueue;
 @property BOOL weeklyMode;
 @property NSInteger weekOffset;
 @property AMWeeklyPlanningController *weeklyController;
@@ -801,6 +803,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
         }
     };
     self.courseWindow.tasksProvider = ^NSArray * { return [weakSelf snapshot]; };
+    self.courseWindow.newAssignment=^{[weakSelf quickEntry:nil];};
     self.courseWindow.localReviewProvider=^NSArray * {return [weakSelf quickReviewRecords];};
     [self loadQuick];
     self.courseWindow.localSkillJobsProvider=^NSArray * {return [weakSelf.quickState[@"jobs"] allValues] ?: @[];};
@@ -884,7 +887,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     [app addItem:[NSMenuItem separatorItem]]; [app addItemWithTitle:@"隐藏 AM's Homework Helper" action:@selector(hide:) keyEquivalent:@"h"];
     [app addItemWithTitle:@"退出 AM's Homework Helper" action:@selector(terminate:) keyEquivalent:@"q"];
     NSMenuItem *fileItem = [NSMenuItem new]; [menu addItem:fileItem]; NSMenu *file = [[NSMenu alloc] initWithTitle:@"文件"]; fileItem.submenu = file;
-    NSMenuItem *add = [file addItemWithTitle:@"新建任务" action:@selector(addTask:) keyEquivalent:@"n"]; add.target = self;
+    NSMenuItem *add = [file addItemWithTitle:@"新建任务" action:@selector(quickEntry:) keyEquivalent:@"n"]; add.target = self;
     NSMenuItem *quick=[file addItemWithTitle:@"从文字或截图录入…" action:@selector(quickEntry:) keyEquivalent:@"n"];quick.target=self;quick.keyEquivalentModifierMask=NSEventModifierFlagCommand|NSEventModifierFlagShift;
     NSMenuItem *courses = [file addItemWithTitle:@"GitHub 课程与作业…" action:@selector(openCourses:) keyEquivalent:@"g"]; courses.target = self;
     NSMenuItem *import = [file addItemWithTitle:@"粘贴并识别 DDL" action:@selector(importClipboard:) keyEquivalent:@"v"]; import.target = self; import.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
@@ -957,9 +960,10 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 }
 - (void)layoutHeaderAndPages {
     CGFloat headerHeight=self.calendarMode ? self.calendarHeader.fittingSize.height+4:(self.page==0 ? 76:40);
-    self.headerHeight.constant=MAX(40,ceil(headerHeight));
+    BOOL compactCourse=self.page==4 && self.courseWindow.assignmentBoardActive;
+    self.header.hidden=compactCourse;self.headerHeight.constant=compactCourse ? 0:MAX(40,ceil(headerHeight));
     [self.root layoutSubtreeIfNeeded];
-    CGFloat top=NSMaxY(self.header.frame)+16,w=NSWidth(self.root.bounds),h=NSHeight(self.root.bounds);
+    CGFloat top=NSMaxY(self.header.frame)+(compactCourse ? 0:16),w=NSWidth(self.root.bounds),h=NSHeight(self.root.bounds);
     NSRect frame=NSMakeRect(24,top,MAX(0,w-48),MAX(0,h-top-24));
     BOOL courseWasHidden=self.courseWindow.view.hidden;self.courseWindow.view.hidden=self.page<3 || self.page==5;if(courseWasHidden!=self.courseWindow.view.hidden)dispatch_async(dispatch_get_main_queue(),^{[self applyVerifiedSubmissions];});self.helpController.view.hidden=self.page!=5;
     self.helpController.view.frame=frame;
@@ -1511,7 +1515,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     if([identifier isEqual:@"AMCourseSections"])return SegmentToolbarItem(identifier,@"课程分区",self.courseWindow.navigationControl);
     if([identifier isEqual:@"AMUndoSubmissionCompletion"]){NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"撤销自动完成";item.toolTip=@"撤销自动完成（⌘Z）";item.image=[NSImage imageWithSystemSymbolName:@"arrow.uturn.backward" accessibilityDescription:item.label];item.target=self;item.action=@selector(undo:);item.bordered=YES;return item;}
     if([identifier isEqual:@"AMSearch"]){NSSearchToolbarItem *item=[[NSSearchToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"搜索任务";item.visibilityPriority=NSToolbarItemVisibilityPriorityHigh;item.searchField=self.search;item.preferredWidthForSearchField=240;return item;}
-    if([identifier isEqual:@"AMNewTask"]){NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"新建任务";item.visibilityPriority=NSToolbarItemVisibilityPriorityHigh;item.toolTip=@"新建任务（⌘N）";item.image=[NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:item.label];item.target=self;item.action=@selector(addTask:);item.bordered=YES;
+    if([identifier isEqual:@"AMNewTask"]){NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"新建任务";item.visibilityPriority=NSToolbarItemVisibilityPriorityHigh;item.toolTip=@"新建任务（⌘N）";item.image=[NSImage imageWithSystemSymbolName:@"plus" accessibilityDescription:item.label];item.target=self;item.action=@selector(quickEntry:);item.bordered=YES;
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
         if(@available(macOS 26.0,*))item.style=NSToolbarItemStyleProminent;
 #endif
@@ -1520,7 +1524,8 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     return nil;
 }
 - (void)refreshPageToolbar {
-    NSMutableArray *desired=NSMutableArray.array;if(self.page==0)[desired addObject:@"AMOverviewMode"];if(self.page==1)[desired addObject:@"AMCalendarStatus"];if(self.page==4){[desired addObject:@"AMCourseSections"];[desired addObjectsFromArray:self.courseWindow.toolbarActionIdentifiers];}if(self.page==2)[desired addObjectsFromArray:@[@"AMTaskFilter",@"AMSort"]];[desired addObject:NSToolbarFlexibleSpaceItemIdentifier];[desired addObject:@"AMActivity"];if(self.submissionCompletionUndoAvailable)[desired addObject:@"AMUndoSubmissionCompletion"];if(self.page<3)[desired addObjectsFromArray:@[@"AMSearch",@"AMNewTask"]];else if(self.page==4 && !self.courseWindow.assignmentBoardActive){if(self.courseWindow.navigationControl.selectedSegment==0)[desired addObject:@"AMCourseFilter"];[desired addObject:@"AMCourseSearch"];}
+    NSMutableArray *desired=NSMutableArray.array;if(self.page==0)[desired addObject:@"AMOverviewMode"];if(self.page==1)[desired addObject:@"AMCalendarStatus"];if(self.page==4){[desired addObject:@"AMCourseSections"];[desired addObjectsFromArray:self.courseWindow.toolbarActionIdentifiers];}if(self.page==2)[desired addObjectsFromArray:@[@"AMTaskFilter",@"AMSort"]];[desired addObject:NSToolbarFlexibleSpaceItemIdentifier];[desired addObject:@"AMActivity"];if(self.submissionCompletionUndoAvailable)[desired addObject:@"AMUndoSubmissionCompletion"];if(self.page<3)[desired addObject:@"AMSearch"];else if(self.page==4 && !self.courseWindow.assignmentBoardActive){if(self.courseWindow.navigationControl.selectedSegment==0)[desired addObject:@"AMCourseFilter"];[desired addObject:@"AMCourseSearch"];}
+    [desired addObject:@"AMNewTask"];
     NSToolbar *toolbar=self.window.toolbar;
     for(NSInteger index=(NSInteger)toolbar.items.count-1;index>=0;index--)if(![desired containsObject:toolbar.items[index].itemIdentifier])[toolbar removeItemAtIndex:index];
     for(NSUInteger index=0;index<desired.count;index++){if(index<toolbar.items.count && [toolbar.items[index].itemIdentifier isEqual:desired[index]])continue;[toolbar insertItemWithItemIdentifier:desired[index] atIndex:index];}
