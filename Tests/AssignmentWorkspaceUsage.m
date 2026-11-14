@@ -32,7 +32,9 @@ Check(hit!=nil,@"window hit test resolves a visible control");
 // A quiet window may not have a themed window-server container on CI. Test
 // native component hit regions in their own parent coordinates instead. The
 // foreground lane above remains the full-window routing gate.
-if([element isKindOfClass:NSView.class]){NSView *view=element;hit=[view hitTest:[view.superview convertPoint:location fromView:nil]];Check(hit!=nil,@"native component hit region resolves its target");}
+if([element isKindOfClass:NSView.class]){NSView *view=element;NSPoint parentPoint=[view.superview convertPoint:location fromView:nil];hit=[view hitTest:parentPoint];
+    if(!hit){fprintf(stderr,"quiet hit failure: class=%s label=%s bounds=%s frame=%s parentPoint=%s hidden=%d ancestorHidden=%d\n",NSStringFromClass(view.class).UTF8String,[[element accessibilityLabel] UTF8String],NSStringFromRect(view.bounds).UTF8String,NSStringFromRect(view.frame).UTF8String,NSStringFromPoint(parentPoint).UTF8String,view.hidden,view.hiddenOrHasHiddenAncestor);for(NSView *ancestor=view.superview;ancestor;ancestor=ancestor.superview)fprintf(stderr,"ancestor: %s frame=%s bounds=%s hidden=%d\n",NSStringFromClass(ancestor.class).UTF8String,NSStringFromRect(ancestor.frame).UTF8String,NSStringFromRect(ancestor.bounds).UTF8String,ancestor.hidden);}
+    Check(hit!=nil,@"native component hit region resolves its target");}
 #endif
 NSTimeInterval now=NSProcessInfo.processInfo.systemUptime;NSEvent *up=[NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:location modifierFlags:0 timestamp:now+.02 windowNumber:window.windowNumber context:nil eventNumber:2 clickCount:1 pressure:0];[NSApp postEvent:up atStart:YES];NSEvent *down=[NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:location modifierFlags:0 timestamp:now windowNumber:window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1];[window makeKeyWindow];
 #ifdef AM_FOREGROUND_TEST
