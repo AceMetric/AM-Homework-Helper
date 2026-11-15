@@ -13,12 +13,15 @@ sdk = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
 version = subprocess.check_output([compiler, '--version'])
 sdk_version = subprocess.check_output(['xcrun', '--show-sdk-version'])
 sdk_build = subprocess.check_output(['xcrun', '--show-sdk-build-version'])
-fingerprint = hashlib.sha256(source.read_bytes() + version + sdk.encode() + sdk_version + sdk_build).hexdigest()
+# Compiler versions can advance independently of AppKit's SDK declarations.
+# Runtime availability alone cannot make a missing property compile on macOS 26 SDKs.
+features = ['-D', 'AM_HAS_SEGMENT_ROLES'] if int(sdk_version.split(b'.')[0]) >= 27 else []
+fingerprint = hashlib.sha256(source.read_bytes() + pathlib.Path(__file__).read_bytes() + version + sdk.encode() + sdk_version + sdk_build).hexdigest()
 marker = output / '.source-hash'
 library = output / 'libAMUI.dylib'
 header = output / 'AMUI-Swift.h'
 if not (library.exists() and header.exists() and marker.exists() and marker.read_text() == fingerprint):
-    subprocess.run([compiler, '-emit-library', '-emit-objc-header', '-emit-objc-header-path', str(header),
+    subprocess.run([compiler, *features, '-emit-library', '-emit-objc-header', '-emit-objc-header-path', str(header),
                     '-module-name', 'AMUI', '-target', 'arm64-apple-macosx13.0', '-sdk', sdk, '-O',
                     '-module-cache-path', str(root / 'build/module-cache'),
                     '-Xlinker', '-install_name', '-Xlinker', '@rpath/libAMUI.dylib',

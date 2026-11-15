@@ -77,7 +77,7 @@ private struct WorkspaceSegments:NSViewRepresentable {
         let control=NSSegmentedControl(labels:labels,trackingMode:.selectOne,target:context.coordinator,action:#selector(Target.choose(_:)))
         control.segmentStyle = .automatic;control.segmentDistribution = .fit
         if #available(macOS 26.0,*) {control.borderShape = .capsule}
-        #if compiler(>=6.3)
+        #if AM_HAS_SEGMENT_ROLES
         if #available(macOS 27.0,*) {control.role = navigation ? .tabs:.valueSelection}
         #endif
         return control
