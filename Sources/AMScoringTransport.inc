@@ -6,6 +6,7 @@
     if(!SSValidateRecognitionSettings(settings,error) || [settings[@"mode"] isEqual:@"rules"])return nil;
     if(!AMScoringImagesValid(images)){if(error)*error=RError(@"评分图片无效、重复或超过24MB，未发送");return nil;}
     NSData *inputData=[NSJSONSerialization dataWithJSONObject:input options:0 error:error];if(!inputData || inputData.length>500000 || SSContainsSecret(inputData)){if(error && !*error)*error=RError(@"评分材料过大或含疑似凭据，未发送");return nil;}
+    if([settings[@"mode"] isEqual:@"chatgpt"]){if(![settings[@"cloudConsent"] boolValue]){if(error)*error=RError(@"请先确认评分材料发送范围。");return nil;}self.scoringRequestsUsed++;return AMChatGPTGenerate(input,instruction,images,@"review",^BOOL{return self.scoringCancelled;},error);}
     BOOL cloud=[settings[@"mode"] isEqual:@"cloud"];NSString *key=cloud ? [self cloudKeyForEndpoint:settings[@"endpoint"]]:nil;
     if(cloud && (![settings[@"cloudConsent"] boolValue] || !key.length)){if(error)*error=RError(@"请确认发送范围并配置评分模型密钥");return nil;}
 

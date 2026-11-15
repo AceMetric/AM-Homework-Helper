@@ -396,6 +396,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 @property NSSearchField *search;
 @property NSSegmentedControl *calendarStatus;
 @property NSSegmentedControl *overviewModeControl;
+@property NSMutableDictionary<NSString *,NSToolbarItem *> *pageToolbarItems;
 @property NSScrollView *calendarScroll;
 @property Surface *calendarDocument;
 @property NSDate *calendarBaseMonth;
@@ -708,10 +709,11 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     // 将系统睡眠事件转发给独立计时存储；不在唤醒时自动重启计时。
     static dispatch_once_t timeObserverOnce;dispatch_once(&timeObserverOnce,^{[NSWorkspace.sharedWorkspace.notificationCenter addObserverForName:NSWorkspaceWillSleepNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note){[NSNotificationCenter.defaultCenter postNotificationName:@"AMSystemWillSleep" object:nil];}];});
 
-#ifndef DDL_TESTING
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{AMOnlineReviewCleanup();});
-#endif
     self.preview = [NSProcessInfo.processInfo.arguments containsObject:@"--preview"];if(self.preview)AMUseTransientCourses();
+#ifndef DDL_TESTING
+    // Preview is isolated: it must not clean up a real account's remote uploads.
+    if(!self.preview)dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{AMOnlineReviewCleanup();});
+#endif
     // Leave appearance unset so macOS controls light/dark mode.
     NSApp.appearance=nil;
     AMInstallRenderer();
@@ -739,7 +741,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.recurrenceSeries=self.preview ? @[]:SSRecurrenceSeries(NULL);
     self.updates = [[SSUpdateController alloc] initWithPreview:self.preview];
     [self installMenu];
-    self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1280, 840) styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView) backing:NSBackingStoreBuffered defer:NO];
+    self.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1180, 760) styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView) backing:NSBackingStoreBuffered defer:NO];
     self.window.title = self.preview ? @"AM's Homework Helper · 界面预览" : @"AM's Homework Helper"; self.window.titleVisibility = NSWindowTitleHidden; self.window.titlebarAppearsTransparent = YES;
     self.window.contentMinSize = NSMakeSize(960, 640); self.window.releasedWhenClosed = NO; self.window.delegate = self; self.window.movableByWindowBackground = YES;
     if (self.preview && [NSProcessInfo.processInfo.arguments containsObject:@"--compact"]) [self.window setContentSize:NSMakeSize(960, 640)];
@@ -781,7 +783,12 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     self.statusItem = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
     self.statusItem.button.image = [NSImage imageWithSystemSymbolName:@"checklist" accessibilityDescription:@"AM's Homework Helper"];
     self.statusItem.button.imagePosition = NSImageLeft; self.statusItem.button.target = self; self.statusItem.button.action = @selector(statusClick:); [self.statusItem.button sendActionOn:NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp];
-    [self layout]; [self.window center]; [self showWindow];
+    [self layout];
+    // Initial sizing respects the usable display, including menu bar and Dock.
+    // Ordinary refreshes never resize an already-open user window.
+    NSScreen *initialScreen=self.window.screen ?: NSScreen.mainScreen;
+    if(initialScreen){NSRect frame=self.window.frame,available=NSInsetRect(initialScreen.visibleFrame,16,16);frame.size.width=MIN(frame.size.width,available.size.width);frame.size.height=MIN(frame.size.height,available.size.height);[self.window setFrame:frame display:NO];}
+    [self.window center]; [self showWindow];
     if (!self.preview) { UNUserNotificationCenter.currentNotificationCenter.delegate = self; [self refreshPermission]; [self refreshReminders]; }
     self.ticker = [NSTimer timerWithTimeInterval:60 target:self selector:@selector(tick:) userInfo:nil repeats:YES]; [NSRunLoop.mainRunLoop addTimer:self.ticker forMode:NSRunLoopCommonModes];
     [NSWorkspace.sharedWorkspace.notificationCenter addObserver:self selector:@selector(woke:) name:NSWorkspaceDidWakeNotification object:nil];
@@ -1194,7 +1201,9 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
             [alert addButtonWithTitle:@"启用云端识别"]; [alert addButtonWithTitle:@"取消"]; if ([alert runModal]!=NSAlertFirstButtonReturn) return @"尚未启用云端；设置保留供继续编辑。";
         }
         if ([settings[@"mode"] isEqual:@"cloud"] && key.length && !SSWriteSecret(@"recognition-api",@{@"key":key,@"endpoint":settings[@"endpoint"]})) return @"密钥未能存入钥匙串，设置尚未保存。";
-        NSMutableDictionary *next=settings.mutableCopy; next[@"cloudConsent"]=@([settings[@"mode"] isEqual:@"cloud"]);
+        if([settings[@"mode"] isEqual:@"chatgpt"] && ![settings[@"cloudCourses"] count])return @"请选择允许发送老师原文的课程。";
+        NSMutableDictionary *next=settings.mutableCopy; next[@"cloudConsent"]=@([@[@"cloud",@"chatgpt"] containsObject:settings[@"mode"]]);
+        if([settings[@"mode"] isEqual:@"chatgpt"])next[@"authorizedRegistration"]=AMChatGPTProfile(@"recognition")[@"registration"];
         [next removeObjectForKey:@"autoCompleteSubmittedAssignments"];
         if(!SSWritePlist(@"recognition-settings.plist",next,&error))return error.localizedDescription ?: @"设置保存失败。";
         if(!AMSetSubmissionAutoCompletionEnabled([settings[@"autoCompleteSubmittedAssignments"] boolValue],&error)){SSWritePlist(@"recognition-settings.plist",previous,NULL);return error.localizedDescription ?: @"设置保存失败。";}
@@ -1202,6 +1211,7 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     };
     self.settingsController.actionHandler = ^(NSString *action) {
 
+        if([action isEqual:@"chatgpt"]){AMShowChatGPTSettings(owner.settingsController.view.window);return;}
         if (![owner dismissSettings]) return;
         if ([action isEqual:@"account"]) [owner accountSettings:nil];
         else if([action isEqual:@"online-review"])AMShowOnlineReviewSettings(owner.window);
@@ -1505,9 +1515,17 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
 - (void)dismissSearchAtWindowPoint:(NSPoint)point {if(self.search.currentEditor && !NSPointInRect([self.search convertPoint:point fromView:nil],self.search.bounds))[self endSearchEditing];}
 - (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)command {if(control==self.search && command==@selector(cancelOperation:)){[self endSearchEditing];return YES;}return NO;}
 - (void)showWindow { [self.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES]; }
-- (NSArray *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar{return @[@"AMOverviewMode",@"AMCalendarStatus",@"AMCourseSections",@"AMTaskFilter",@"AMSort",@"AMSearch",@"AMNewTask",@"AMActivity",@"AMCourseScan",@"AMCourseSync",@"AMCourseSubmit",@"AMCourseMore",@"AMCourseSearch",@"AMCourseFilter",@"AMUndoSubmissionCompletion",NSToolbarFlexibleSpaceItemIdentifier,NSToolbarSpaceItemIdentifier];}
+- (NSArray *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar{return @[@"AMOverviewMode",@"AMCalendarStatus",@"AMCourseSections",@"AMCourseBack",@"AMCourseFiles",@"AMTaskFilter",@"AMSort",@"AMSearch",@"AMNewTask",@"AMActivity",@"AMCourseScan",@"AMCourseSync",@"AMCourseSubmit",@"AMCourseMore",@"AMCourseSearch",@"AMCourseFilter",@"AMUndoSubmissionCompletion",NSToolbarFlexibleSpaceItemIdentifier,NSToolbarSpaceItemIdentifier];}
 - (NSArray *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar{return @[NSToolbarFlexibleSpaceItemIdentifier];}
 - (NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSString *)identifier willBeInsertedIntoToolbar:(BOOL)flag {
+    // A native control must retain one toolbar-item owner across navigation.
+    // Rewrapping the same view can leave AppKit constraints in the old viewer.
+    NSToolbarItem *item=self.pageToolbarItems[identifier];if(item)return item;
+    item=[self makePageToolbarItem:identifier];
+    if(item){if(!self.pageToolbarItems)self.pageToolbarItems=NSMutableDictionary.dictionary;self.pageToolbarItems[identifier]=item;}
+    return item;
+}
+- (NSToolbarItem *)makePageToolbarItem:(NSString *)identifier {
     if([identifier isEqual:@"AMActivity"])return AMActivityToolbarItem(identifier);
     if([identifier hasPrefix:@"AMCourse"] && ![identifier isEqual:@"AMCourseSections"])return [self.courseWindow toolbarItemForIdentifier:identifier];
     if([identifier isEqual:@"AMOverviewMode"]){if(!self.overviewModeControl)self.overviewModeControl=Segments(@[@"今日",@"本周"],self,@selector(changeOverviewMode:));self.overviewModeControl.selectedSegment=self.weeklyMode ? 1:0;return SegmentToolbarItem(identifier,@"总览显示方式",self.overviewModeControl);}
@@ -1524,14 +1542,21 @@ static void ConfigureCalendarCell(CalendarDayCell *cell, BOOL selected) {
     return nil;
 }
 - (void)refreshPageToolbar {
-    NSMutableArray *desired=NSMutableArray.array;if(self.page==0)[desired addObject:@"AMOverviewMode"];if(self.page==1)[desired addObject:@"AMCalendarStatus"];if(self.page==4){[desired addObject:@"AMCourseSections"];[desired addObjectsFromArray:self.courseWindow.toolbarActionIdentifiers];}if(self.page==2)[desired addObjectsFromArray:@[@"AMTaskFilter",@"AMSort"]];[desired addObject:NSToolbarFlexibleSpaceItemIdentifier];[desired addObject:@"AMActivity"];if(self.submissionCompletionUndoAvailable)[desired addObject:@"AMUndoSubmissionCompletion"];if(self.page<3)[desired addObject:@"AMSearch"];else if(self.page==4 && !self.courseWindow.assignmentBoardActive){if(self.courseWindow.navigationControl.selectedSegment==0)[desired addObject:@"AMCourseFilter"];[desired addObject:@"AMCourseSearch"];}
+    NSMutableArray *desired=NSMutableArray.array;if(self.page==0)[desired addObject:@"AMOverviewMode"];if(self.page==1)[desired addObject:@"AMCalendarStatus"];if(self.page==4){
+        NSArray *actions=self.courseWindow.toolbarActionIdentifiers;
+        // Drill-down navigation always starts at the same leading position.
+        // Course management and the workbench must not place Back after tabs.
+        if(![actions containsObject:@"AMCourseBack"])[desired addObject:@"AMCourseSections"];
+        [desired addObjectsFromArray:actions];
+    }if(self.page==2)[desired addObjectsFromArray:@[@"AMTaskFilter",@"AMSort"]];[desired addObject:NSToolbarFlexibleSpaceItemIdentifier];[desired addObject:@"AMActivity"];if(self.submissionCompletionUndoAvailable)[desired addObject:@"AMUndoSubmissionCompletion"];if(self.page<3)[desired addObject:@"AMSearch"];else if(self.page==4 && !self.courseWindow.assignmentBoardActive){if(self.courseWindow.navigationControl.selectedSegment==0)[desired addObject:@"AMCourseFilter"];[desired addObject:@"AMCourseSearch"];}
     [desired addObject:@"AMNewTask"];
     NSToolbar *toolbar=self.window.toolbar;
     for(NSInteger index=(NSInteger)toolbar.items.count-1;index>=0;index--)if(![desired containsObject:toolbar.items[index].itemIdentifier])[toolbar removeItemAtIndex:index];
-    for(NSUInteger index=0;index<desired.count;index++){if(index<toolbar.items.count && [toolbar.items[index].itemIdentifier isEqual:desired[index]])continue;[toolbar insertItemWithItemIdentifier:desired[index] atIndex:index];}
+    for(NSUInteger index=0;index<desired.count;index++){if(index<toolbar.items.count && [toolbar.items[index].itemIdentifier isEqual:desired[index]])continue;NSUInteger old=[toolbar.items indexOfObjectPassingTest:^BOOL(NSToolbarItem *item,NSUInteger position,BOOL *stop){return [item.itemIdentifier isEqual:desired[index]];}];if(old!=NSNotFound)[toolbar removeItemAtIndex:old];[toolbar insertItemWithItemIdentifier:desired[index] atIndex:index];}
     for(NSToolbarItem *item in toolbar.items){
-        if([item.itemIdentifier isEqual:@"AMOverviewMode"] && [item.view isKindOfClass:NSSegmentedControl.class])[(NSSegmentedControl *)item.view setSelectedSegment:self.weeklyMode ? 1:0];
-        if([item.itemIdentifier hasPrefix:@"AMCourse"] && [item.view isKindOfClass:NSButton.class]){NSButton *button=(id)item.view;item.label=button.title;item.menuFormRepresentation.title=button.title;item.menuFormRepresentation.enabled=button.enabled;}
+        if([item.itemIdentifier isEqual:@"AMOverviewMode"])self.overviewModeControl.selectedSegment=self.weeklyMode ? 1:0;
+        AMSyncSegmentToolbarItem(item);
+        if([item.itemIdentifier hasPrefix:@"AMCourse"] && [item.view isKindOfClass:NSButton.class]){NSButton *button=(id)item.view;if(button.title.length){item.label=button.title;item.menuFormRepresentation.title=button.title;}item.menuFormRepresentation.enabled=button.enabled;}
     }
 }
 - (void)showCheckWorkspace:(id)sender{[self.courseWindow showCheckWorkspace];}

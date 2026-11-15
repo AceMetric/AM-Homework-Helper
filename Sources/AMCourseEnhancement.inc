@@ -19,7 +19,7 @@
 }
 - (void)showRecognitionFailures:(id)sender {
     NSArray *failures=[self recognitionFailures];if(!failures.count)return;
-    NSAlert *alert=NSAlert.new;alert.messageText=[NSString stringWithFormat:@"%lu 份材料未完成增强",(unsigned long)failures.count];NSDictionary *settings=SSRecognitionSettings();BOOL cloud=[settings[@"mode"] isEqual:@"cloud"];
+    NSAlert *alert=NSAlert.new;alert.messageText=[NSString stringWithFormat:@"%lu 份材料未完成增强",(unsigned long)failures.count];NSDictionary *settings=SSRecognitionSettings();BOOL cloud=[@[@"cloud",@"chatgpt"] containsObject:settings[@"mode"]];
     alert.informativeText=cloud ? [NSString stringWithFormat:@"重试仅发送这些文件到 %@（%@），可能产生费用。",[NSURL URLWithString:settings[@"endpoint"]].host ?: @"所选服务",settings[@"model"] ?: @"模型"]:@"可用结果已保留。重试仅处理以下文件。";
     NSView *accessory=[[NSView alloc] initWithFrame:NSMakeRect(0,0,550,230)];NSPopUpButton *source=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(0,202,550,26)];
     NSMutableArray *lines=NSMutableArray.array;for(NSDictionary *row in failures){[source addItemWithTitle:[NSString stringWithFormat:@"%@ · %@",row[@"course"],row[@"path"]]];NSMutableOrderedSet *reasons=NSMutableOrderedSet.orderedSet;for(NSDictionary *issue in row[@"issues"])[reasons addObject:[NSString stringWithFormat:@"%@：%@",issue[@"field"] ?: @"结果",issue[@"reason"] ?: @"未通过核验"]];[lines addObject:[NSString stringWithFormat:@"%@ · %@\n%@",row[@"course"],row[@"path"],[reasons.array componentsJoinedByString:@"；"]]];}
@@ -34,7 +34,7 @@
 }
 - (void)enhanceRecognition:(id)sender {
     NSDictionary *course=[self course].copy;if(!course || ![course[@"path"] length]){[self status:@"请选择已关联本机文件夹的课程，再增强识别。" ];return;}
-    NSDictionary *settings=SSRecognitionSettings();BOOL cloud=[settings[@"mode"] isEqual:@"cloud"];
+    NSDictionary *settings=SSRecognitionSettings();BOOL cloud=[@[@"cloud",@"chatgpt"] containsObject:settings[@"mode"]];
     if([settings[@"mode"] isEqual:@"rules"] || (cloud && ![settings[@"cloudCourses"] containsObject:course[@"fork"]])){[self status:@"请先在设置中配置识别服务，并选择允许增强的课程。免费规则识别仍可用。" ];return;}
     if(self.hasUnsavedReview && ![self resolveUnsavedReview])return;
     [self work:@"准备老师材料与本机识别结果…" forCourse:course requestKey:@"prepare-enhancement" priority:100 kind:AMCourseWorkScan operation:^id(NSError **error){self.git.recognitionSettings=@{@"mode":@"rules"};NSMutableDictionary *cache=AMScanCacheLoad(error);if(!cache)return nil;return [self.git scanCourse:course cache:cache error:error];} completion:^(NSDictionary *scan,NSError *error){
@@ -95,11 +95,11 @@
 - (void)configureOnlineRecognition:(id)sender {
     NSMutableDictionary *course=[self savedCourse:[self course]];
     if(!course || self.preview || self.operationsPaused)return;
-    NSDictionary *profile=AMOnlineReviewProfile();
+    NSDictionary *profile=AMOnlineRecognitionProfile();
     BOOL enabled=[course[@"onlineRecognitionProfile"] isEqual:profile] && [profile[@"enabled"] boolValue];
     if(!enabled && ![profile[@"enabled"] boolValue]){
         AMShowOnlineReviewSettings(self.window);
-        profile=AMOnlineReviewProfile();
+        profile=AMOnlineRecognitionProfile();
         if(![profile[@"enabled"] boolValue])return;
     }
     NSAlert *alert=NSAlert.new;
@@ -135,7 +135,7 @@ static BOOL AMClaimOnlineRecognition(NSString *identity){
 }
 
 - (void)enqueueOnlineRecognition:(NSDictionary *)scan course:(NSDictionary *)course previous:(NSDictionary *)previous {
-    NSDictionary *profile=AMOnlineReviewProfile();
+    NSDictionary *profile=AMOnlineRecognitionProfile();
     if(self.preview || self.operationsPaused || ![profile[@"enabled"] boolValue] ||
         ![course[@"onlineRecognitionProfile"] isEqual:profile] || !AMPeerSHA(scan[@"commit"]) ||
         [scan[@"commit"] isEqual:course[@"teacherCommit"]] || ![scan[@"onlineChangedPaths"] count])return;
@@ -169,7 +169,7 @@ static BOOL AMClaimOnlineRecognition(NSString *identity){
                     [live[@"teacherCommit"] isEqual:scan[@"commit"]];
             });
             AMCancellationCheck cancelled=AMCurrentCancellationCheck();
-            if(!authorized || (cancelled && cancelled()) || ![profile isEqual:AMOnlineReviewProfile()] ||
+            if(!authorized || (cancelled && cancelled()) || ![profile isEqual:AMOnlineRecognitionProfile()] ||
                 !AMClaimOnlineRecognition(identity))return @{};
             AMOnlineReviewClient *client=AMOnlineReviewClient.new;
             dispatch_source_t timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_global_queue(QOS_CLASS_UTILITY,0));
@@ -182,8 +182,8 @@ static BOOL AMClaimOnlineRecognition(NSString *identity){
             NSDictionary *valid=AMValidateRecognizedFields(snippet,raw);
             NSMutableDictionary *update=NSMutableDictionary.dictionary;
             if(needsRequirements && [valid[@"requirements"] count]){
-                update[@"submissionRequirements"]=[[valid[@"requirements"] valueForKey:@"quote"] componentsJoinedByString:@"\n"];
-                update[@"onlineRequirementEvidence"]=valid[@"requirements"];
+                NSMutableArray *labels=NSMutableArray.array;for(NSDictionary *item in valid[@"requirements"]){NSString *label=item[@"text"] ?: item[@"quote"];if([item[@"condition"] length])label=[NSString stringWithFormat:@"%@（%@）",label,item[@"condition"]];[labels addObject:label];}update[@"submissionRequirements"]=[labels componentsJoinedByString:@"\n"];
+                NSMutableArray *anchored=NSMutableArray.array;for(NSDictionary *item in valid[@"requirements"]){NSMutableDictionary *entry=item.mutableCopy;entry[@"line"]=@(firstLine+[item[@"line"] unsignedIntegerValue]-1);entry[@"path"]=path;entry[@"teacherBlob"]=blob;[anchored addObject:entry];}update[@"onlineRequirementEvidence"]=anchored;
                 update[@"onlineEvidenceStart"]=@(firstLine);
             }
             NSDictionary *deadline=valid[@"deadline"];
@@ -209,7 +209,7 @@ static BOOL AMClaimOnlineRecognition(NSString *identity){
             return update;
         } completion:^(NSDictionary *update,NSError *error){
             if(!update.count || ![self.reports[course[@"fork"]][@"commit"] isEqual:scan[@"commit"]] ||
-                ![[self savedCourse:course][@"onlineRecognitionProfile"] isEqual:profile] || ![AMOnlineReviewProfile() isEqual:profile])return;
+                ![[self savedCourse:course][@"onlineRecognitionProfile"] isEqual:profile] || ![AMOnlineRecognitionProfile() isEqual:profile])return;
             NSArray *existing=self.deferredScans[course[@"fork"]][@"candidates"] ?: self.candidates[course[@"fork"]];
             NSMutableArray *next=existing.mutableCopy;
             NSUInteger index=[next indexOfObjectPassingTest:^BOOL(NSDictionary *row,NSUInteger i,BOOL *stop){

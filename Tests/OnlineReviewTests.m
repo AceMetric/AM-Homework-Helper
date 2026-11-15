@@ -130,8 +130,8 @@ int main(void){@autoreleasepool{
         Check([body[@"response_format"][@"type"] isEqual:@"json_object"] && [body[@"thinking"][@"type"] isEqual:@"disabled"],@"compact fast JSON request");
         NSDictionary *user=body[@"messages"][1];
         NSDictionary *manifest=[NSJSONSerialization JSONObjectWithData:[user[@"content"] dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
-        Check([manifest[@"r"] count]==1 && [manifest[@"files"] count]==2,@"literal file requirement is resolved locally, while both answers remain visible");
-        NSDictionary *answer=@{@"checks":@[@{@"r":@1,@"s":@"partial",@"f":@1,@"l":@2,@"q":@"F = m * a",@"why":@"只展示了公式",@"fix":@"补充单位和代入过程"}],@"read":@[@1,@2]};
+        Check([manifest[@"teacher"] isEqual:@"提交 report.md\nExplain why F = m * a."] && [manifest[@"files"] count]==2,@"semantic extraction sees confirmed teacher text and both answers");
+        NSDictionary *answer=@{@"requirements":@[@{@"text":@"解释牛顿第二定律",@"condition":@"",@"line":@2,@"quote":@"Explain why F = m * a."},@{@"text":@"提交 report.md",@"condition":@"",@"line":@1,@"quote":@"提交 report.md"}],@"checks":@[@{@"r":@1,@"s":@"partial",@"f":@1,@"l":@2,@"q":@"F = m * a",@"why":@"只展示了公式",@"fix":@"补充单位和代入过程"}],@"read":@[@1,@2]};
         NSString *encoded=[[NSString alloc] initWithData:JSON(answer) encoding:NSUTF8StringEncoding];
         *response=[[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:failCompact ? 503:200 HTTPVersion:@"HTTP/1.1" headerFields:@{}];
         return JSON(@{@"choices":@[@{@"finish_reason":@"stop",@"message":@{@"content":encoded}}],@"usage":@{@"prompt_tokens":@180,@"completion_tokens":@45,@"total_tokens":@225}});

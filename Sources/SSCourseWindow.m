@@ -33,6 +33,8 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
 }
 @interface SSCourseController ()
 @property NSArray *presentationRows;
+// NSTableView keeps this generation until the next explicit reload, including late layout callbacks.
+@property NSArray *tableRows;
 @property NSArray *presentationTasks;
 @property NSDictionary *presentationTasksBySource;
 @property NSMutableDictionary *presentationDiscoveries;
@@ -162,6 +164,9 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
 @property NSArray<NSButton *> *actionButtons;
 @property NSDictionary *reports;
 @property SSSubmissionController *submission;
+@property BOOL embeddingSubmission;
+@property NSString *pendingSubmissionDraftKey;
+@property NSMutableDictionary<NSString *,SSSubmissionController *> *submissionSessions;
 @property NSWindow *checkScopeWindow;
 @property AMCheckScopeController *checkScope;
 @property NSArray *checkScopeRecords;
@@ -338,6 +343,31 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
         [owner loadAssignmentWorkbench:identifier path:path mode:mode completion:done];
     };
     self.courseWorkspace.actionHandler=^(NSString *action,NSString *identifier){
+        if([action isEqual:@"workbench-enter"]){
+            if(owner.stateChanged)owner.stateChanged();
+            NSDictionary *record=nil;for(NSDictionary *row in owner.visible)if([row[@"id"] isEqual:identifier]){record=row;break;}
+            if(![record[@"confirmed"] boolValue] || ![record[@"gitCourse"] boolValue])return;
+            NSDictionary *course=[owner savedCourse:@{@"fork":record[@"courseFork"] ?: @""}].copy;
+            if(!course || owner.operationsPaused)return;
+            NSString *taskID=record[@"taskID"] ?: identifier;
+            NSString *key=[NSString stringWithFormat:@"%@|%@|%@|%@",course[@"fork"],course[@"branch"],course[@"path"],taskID];
+            if(!owner.submissionSessions)owner.submissionSessions=NSMutableDictionary.dictionary;
+            SSSubmissionController *session=owner.submissionSessions[key];
+            if(owner.submission.submissionInFlight && owner.submission!=session){[owner status:@"另一份作业正在提交，当前预览可继续使用。"];return;}
+            if(owner.submission!=session && owner.submission && !owner.submission.window.sheetParent){[owner.submission cancel:nil];owner.submission.preserveClosedDraft=YES;}
+            if(session && owner.submission==session && !session.closed){[owner.courseWorkspace setEmbeddedSubmission:session.embeddedPane forAssignment:identifier];return;}
+            owner.embeddingSubmission=YES;owner.submissionTaskID=taskID;owner.pendingSubmissionDraftKey=key;
+            [owner openSubmissionForCourse:course preserving:session];owner.embeddingSubmission=NO;owner.pendingSubmissionDraftKey=nil;
+            session=owner.submission;
+            if(!session)return;
+            if(!session.embeddedPane){session.embeddedPane=[[AMSubmissionPane alloc] initWithFrame:NSMakeRect(0,0,296,600)];session.embeddedPane.session=session;}
+            session.embeddedCheck=^{SSCourseController *current=owner;if(current)[current checkTask:taskID forWorkbench:identifier];};
+            owner.submissionSessions[key]=session;[session publishEmbeddedState];
+            [owner.courseWorkspace setEmbeddedSubmission:session.embeddedPane forAssignment:identifier];return;
+        }
+
+        if([@[@"workbench-back",@"workbench-navigation"] containsObject:action]){if(owner.stateChanged)owner.stateChanged();return;}
+
         if([action isEqual:@"workbench-online"] || [action isEqual:@"workbench-deep"] || [action isEqual:@"workbench-stop"] || [action isEqual:@"workbench-report"]){
             SSSubmissionController *check=owner.workbenchCheck;
             if(([action isEqual:@"workbench-online"] || [action isEqual:@"workbench-deep"]) && !([owner.workbenchCheckAssignment isEqual:identifier] && check)){
@@ -427,7 +457,12 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
 - (BOOL)assignmentBoardActive {
     return !self.inbox && self.sections.selectedSegment==0 && (!self.selectedFork || [self course]!=nil);
 }
+- (BOOL)showingWorkbench {return self.courseWorkspace.showingWorkbench;}
+- (void)returnToAssignmentBoard:(id)sender {[self.courseWorkspace returnToBoard];}
+- (void)toggleWorkbenchFiles:(id)sender {[self.courseWorkspace toggleWorkbenchFiles];}
 - (NSArray<NSString *> *)toolbarActionIdentifiers {
+    if(self.courseWorkspace.showingCourseManagement)return @[@"AMCourseBack"];
+    if(self.showingWorkbench)return @[@"AMCourseBack",@"AMCourseFiles"];
     if(self.inbox)return @[];
     if(self.selectedFork && ![self course])return @[@"AMCourseMore"];
     if([self course] && self.assignmentBoardActive)return @[@"AMCourseScan",@"AMCourseMore"];
@@ -435,6 +470,14 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
 }
 - (NSToolbarItem *)toolbarItemForIdentifier:(NSString *)identifier {
     (void)self.view;
+    if([@[@"AMCourseBack",@"AMCourseFiles"] containsObject:identifier]){
+        BOOL back=[identifier isEqual:@"AMCourseBack"];
+        NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=back ? @"返回作业看板":@"显示文件树";item.toolTip=item.label;item.navigational=YES;
+        NSButton *button=[NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:back ? @"chevron.left":@"sidebar.left" accessibilityDescription:item.label] target:self action:back ? @selector(returnToAssignmentBoard:):@selector(toggleWorkbenchFiles:)];
+        button.title=@"";button.imagePosition=NSImageOnly;button.bezelStyle=NSBezelStyleTexturedRounded;button.accessibilityLabel=item.label;
+        if(back){button.keyEquivalent=@"[";button.keyEquivalentModifierMask=NSEventModifierFlagCommand;}
+        item.view=button;return item;
+    }
     if([identifier isEqual:@"AMCourseSearch"]){NSSearchToolbarItem *item=[[NSSearchToolbarItem alloc] initWithItemIdentifier:identifier];item.label=@"搜索课程内容";item.visibilityPriority=NSToolbarItemVisibilityPriorityHigh;item.searchField=self.search;item.preferredWidthForSearchField=220;return item;}
     NSDictionary *controls=@{@"AMCourseScan":self.scanButton,@"AMCourseSync":self.syncButton,@"AMCourseSubmit":self.commitButton,@"AMCourseMore":self.moreButton,@"AMCourseFilter":self.typeFilter};
     NSControl *control=controls[identifier];if(!control)return nil;
@@ -640,7 +683,8 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
 }
 - (void)changeType:(id)sender {
     NSInteger row = self.table.selectedRow; if (self.operationsPaused || row < 0 || row >= (NSInteger)self.visible.count) return;
-    NSDictionary *record = self.visible[row]; if ([record[@"confirmed"] boolValue]) return;
+    NSArray *rows=self.tableRows;if(row<0 || row>=(NSInteger)rows.count || self.assignmentBoardActive)return;
+    NSDictionary *record = rows[row]; if ([record[@"confirmed"] boolValue]) return;
     NSAlert *alert = NSAlert.new; alert.messageText = @"确认课程内容类型"; alert.informativeText = @"作业进入待审核；课上任务只在课程页显示。";
     NSPopUpButton *menu = [[PastelPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 280, 32) pullsDown:NO]; [menu addItemsWithTitles:@[@"作业", @"课上任务", @"考试", @"待确认类型"]];
     NSArray *kinds = @[@"assignment", @"classroom", @"exam", @"unknown"]; NSInteger selected = [kinds indexOfObject:record[@"kind"]]; [menu selectItemAtIndex:selected == NSNotFound ? 3 : selected]; [menu itemAtIndex:2].hidden=YES; alert.accessoryView = menu;
@@ -786,7 +830,12 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     self.reviewWorkspace.paused = self.operationsPaused;
     if (self.inbox) [self.reviewWorkspace updateRecords:reviewRecords];
     NSString *selectedID = self.selectedCandidateID; NSPoint scrollPosition = self.table.enclosingScrollView.contentView.bounds.origin;
-    if(!self.assignmentBoardActive){[self.table reloadData]; [self.table deselectAll:nil];}
+    BOOL hadRows=self.tableRows.count>0;
+    NSMutableArray *tableRows=NSMutableArray.array;
+    if(!self.assignmentBoardActive)for(NSDictionary *record in visible){NSMutableDictionary *row=record.mutableCopy;row[@"tableDisplayState"]=[self stateForCandidate:record];[tableRows addObject:row.copy];}
+    self.tableRows=tableRows.copy;
+    if(!self.assignmentBoardActive || hadRows)[self.table reloadData];
+    if(!self.assignmentBoardActive)[self.table deselectAll:nil];
     if (!self.assignmentBoardActive && selectedID) for (NSUInteger i = 0; i < visible.count; i++) if ([visible[i][@"id"] isEqual:selectedID]) { [self.table selectRowIndexes:[NSIndexSet indexSetWithIndex:i] byExtendingSelection:NO]; break; }
     [self.table.enclosingScrollView.contentView scrollToPoint:scrollPosition];
     BOOL info = !self.inbox && self.sections.selectedSegment == 1;
@@ -853,6 +902,8 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
         // Completion belongs to the task store, including explicit manual
         // completion. A later Git observation only changes the progress badge.
         copy[@"boardHistory"]=@([copy[@"confirmed"] boolValue] && [copy[@"completed"] boolValue]);
+        NSArray *generated=copy[@"onlineRequirementEvidence"];
+        if([generated isKindOfClass:NSArray.class] && [generated.firstObject[@"text"] isKindOfClass:NSString.class])copy[@"requirementItems"]=generated;
         if(!copy[@"requirementItems"]){NSString *text=copy[@"sourceRequirements"] ?: copy[@"submissionRequirements"] ?: @"";copy[@"requirementItems"]=SSRequirementItems(text,copy[@"path"] ?: @"",copy[@"sourceBlobSHA"] ?: copy[@"blobSHA"] ?: @"");}
         [content addObject:copy];
     }
@@ -1253,7 +1304,9 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
         done(@{},nil);return;
     }
     NSDictionary *submission=[self submissionForAssignment:record course:course];
-    BOOL requirements=[mode isEqual:@"teacher-requirements"];
+    NSString *quotedEvidence=nil;
+    if([mode hasPrefix:@"teacher-quote:"]){NSData *data=[[NSData alloc] initWithBase64EncodedString:[mode substringFromIndex:14] options:0];if(!data.length || data.length>6000){done(@{@"error":@"原文引用格式无效，请重新检查。"},nil);return;}quotedEvidence=[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];}
+    BOOL requirements=[mode isEqual:@"teacher-requirements"] || quotedEvidence.length>0;
     BOOL jump=[mode isEqual:@"evidence"] || requirements;if(jump)mode=@"teacher";
     BOOL regionMode=[mode hasPrefix:@"region-"];
     NSArray *location=[mode hasPrefix:@"line-"] || regionMode ? [[mode substringFromIndex:regionMode ? 7:5] componentsSeparatedByString:@":"]:@[];
@@ -1306,14 +1359,15 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
             if(![mode isEqual:@"teacher"])[self.courseWorkspace markWorkbenchFile:path version:snapshot[@"files"][path][@"version"] ?: @"" forAssignment:identifier];
             if(!retained){[preview loadSnapshot:presentation path:path];[self.workbenchPreviews setObject:preview forKey:previewKey];}
             if([mode isEqual:@"teacher"]){
-                NSString *evidence=record[@"dateText"];
-                if(requirements){
+                NSString *evidence=quotedEvidence ?: record[@"dateText"];
+                if(requirements && !quotedEvidence){
                     NSString *text=record[@"sourceRequirements"] ?: SSEnrichDiscovery(record)[@"submissionRequirements"];
                     for(NSString *line in [text componentsSeparatedByString:@"\n"])if(line.length && ![line hasPrefix:@"#"]){evidence=line;break;}
                 }
                 NSUInteger line=[record[@"line"] unsignedIntegerValue];
                 NSString *text=snapshot[@"files"][path][@"text"];
                 NSRange match=evidence.length ? [text rangeOfString:evidence]:NSMakeRange(NSNotFound,0);
+                if(quotedEvidence && match.location==NSNotFound){done(@{@"error":@"当前老师说明中未找到这条引用，请在材料确认页查看对应来源。"},preview);return;}
                 if(match.location!=NSNotFound)line=[[text substringToIndex:match.location] componentsSeparatedByString:@"\n"].count;
                 if(jump && line)[preview locateLine:line];
             }
@@ -1631,11 +1685,12 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     [self openSubmissionForCourse:course preserving:previous];
 }
 - (void)openSubmissionForCourse:(NSDictionary *)course preserving:(SSSubmissionController *)previous {
+    BOOL embedded=self.embeddingSubmission || previous.embeddedPane!=nil;
     if(previous)for(NSString *field in @[@"fork",@"branch",@"path"])if(![(previous.course[field] ?: NSNull.null) isEqual:course[field] ?: NSNull.null]){previous=nil;break;}
-    if(!previous && self.submission && !self.submission.closed && [self.submission.course isEqual:course]){[self.submission.window makeKeyAndOrderFront:nil];return;}
+    if(!embedded && !previous && self.submission && !self.submission.closed && [self.submission.course isEqual:course]){[self.submission.window makeKeyAndOrderFront:nil];return;}
     if(self.submission && !self.submission.closed && self.submission!=previous && self.window.attachedSheet){[self status:@"请先完成或关闭当前提交窗口，输入已保留"];return;}
-    if(self.submission && !self.submission.closed && self.submission.filesPreparing && [self.submission.course isEqual:course]){[self.submission.window makeKeyAndOrderFront:nil];return;}
-    SSSubmissionController *sheet=previous ?: [[SSSubmissionController alloc] initWithCourse:course changes:@[]];self.submission=sheet;sheet.closed=NO;sheet.preserveClosedDraft=NO;
+    if(!embedded && self.submission && !self.submission.closed && self.submission.filesPreparing && [self.submission.course isEqual:course]){[self.submission.window makeKeyAndOrderFront:nil];return;}
+    SSSubmissionController *sheet=previous ?: [[SSSubmissionController alloc] initWithCourse:course changes:@[]];self.submission=sheet;if(self.pendingSubmissionDraftKey)sheet.embeddedDraftKey=self.pendingSubmissionDraftKey;sheet.closed=NO;sheet.preserveClosedDraft=NO;sheet.selectOwnedNewFiles=embedded;
     if(sheet.checkPage){[sheet backToFiles:nil];sheet.reportStale=YES;}
     NSMutableArray *related=NSMutableArray.array;for(NSDictionary *task in self.tasksProvider ? self.tasksProvider():@[])if(![task[@"deleted"] boolValue] && AMTaskBelongsToCourse(task,course))[related addObject:task];
     [self configurePreflight:sheet course:course tasks:related];[sheet configureTasks:related selected:previous ? [previous chosenTasks]:(self.submissionTaskID ? @[self.submissionTaskID]:@[])];self.submissionTaskID=nil;
@@ -1643,12 +1698,24 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     sheet.refreshFiles=^{SSCourseController *owner=preparationOwner;SSSubmissionController *current=preparingSheet;if(owner && current && owner.submission==current && !current.filesPreparing)[owner openSubmissionForCourse:course preserving:current];};
     sheet.viewExistingSubmissions=^{SSCourseController *owner=preparationOwner;SSSubmissionController *current=preparingSheet;if(!owner || !current || ![owner selectCourseID:course[@"fork"]])return;[current cancel:nil];current.preserveClosedDraft=YES;owner.sections.selectedSegment=2;[owner refreshPresentation];};
     [sheet beginFilePreparation];NSUInteger generation=++sheet.filesReadGeneration;
-    if(!sheet.window.sheetParent){if(self.window.attachedSheet){[sheet finishFilePreparation:AMWorkflowError(@"busy",@"请先关闭当前编辑窗口",nil)];return;}[self.window beginSheet:sheet.window completionHandler:nil];}
-    [self work:@"读取本地文件" forCourse:course requestKey:@"local-files" priority:100 kind:AMCourseWorkLocal operation:^id(NSError **error) { return [self.git changesForCourse:course error:error]; } completion:^(NSArray *changes, NSError *error) {
+    if(!embedded && !sheet.window.sheetParent){if(self.window.attachedSheet){[sheet finishFilePreparation:AMWorkflowError(@"busy",@"请先关闭当前编辑窗口",nil)];return;}[self.window beginSheet:sheet.window completionHandler:nil];}
+    __block BOOL pendingConfirmed=NO;NSString *pendingRecord=sheet.submissionRecordID;
+    __block NSDictionary *savedDraft=nil;NSString *draftKey=sheet.embeddedDraftKey;
+    [self work:@"读取本地文件" forCourse:course requestKey:@"local-files" priority:100 kind:AMCourseWorkLocal operation:^id(NSError **error) { if(pendingRecord.length)for(NSDictionary *record in AMSubmissionRecords(NULL))if([record[@"id"] isEqual:pendingRecord] && [record[@"state"] isEqual:@"confirmed"])pendingConfirmed=YES;if(draftKey.length && !previous){id stored=SSReadPlist(@"submission-drafts.plist");id draft=[stored isKindOfClass:NSDictionary.class] ? stored[draftKey]:nil;if([draft isKindOfClass:NSDictionary.class] && [draft[@"paths"] isKindOfClass:NSArray.class] && [draft[@"message"] isKindOfClass:NSString.class]){BOOL valid=YES;for(id path in draft[@"paths"])if(![path isKindOfClass:NSString.class])valid=NO;if(valid)savedDraft=draft;}}return [self.git changesForCourse:course error:error]; } completion:^(NSArray *changes, NSError *error) {
         if(sheet.closed || sheet.filesReadGeneration!=generation || self.submission!=sheet)return;
         sheet.filesReadOperation=nil;if(!changes){NSError *failure=error ?: AMWorkflowError(@"directory",@"无法读取课程文件",nil);[sheet finishFilePreparation:failure];AMCourseOperationContext *context=AMCourseContext(self);NSDictionary *problem=AMWorkflowProblem(failure,context.stage,nil);BOOL distinct=![@[@"retry",@"none"] containsObject:problem[@"command"]];sheet.fileRecoveryButton.hidden=!distinct;sheet.fileRecoveryButton.title=problem[@"action"];__weak AMCourseOperationContext *recoveryContext=context;sheet.fileRecovery=^{SSSubmissionController *current=preparingSheet;AMCourseOperationContext *failed=recoveryContext;if(current && failed.recovery){[current cancel:nil];current.preserveClosedDraft=YES;failed.recovery();}};return;}
         if(self.operationsPaused){[sheet finishFilePreparation:AMWorkflowError(@"cancelled",@"已停止",nil)];return;}
-        [sheet replaceFileChanges:changes];[sheet finishFilePreparation:nil];
+        if(pendingConfirmed){sheet.submissionNeedsVerification=NO;sheet.submittedSuccessfully=YES;}
+        // A successful previous transaction cannot lock later, explicitly refreshed edits.
+        if(sheet.submittedSuccessfully && changes.count)sheet.submittedSuccessfully=NO;
+        [sheet replaceFileChanges:changes];
+        if(savedDraft){
+            if([savedDraft[@"scope"] boolValue]){sheet.scopeToggle.state=NSControlStateValueOn;[sheet replaceFileChanges:changes];}
+            NSSet *selected=[NSSet setWithArray:savedDraft[@"paths"] ?: @[]];
+            for(NSUInteger i=0;i<sheet.checks.count;i++)sheet.checks[i].state=[selected containsObject:sheet.changes[i][@"path"]] ? NSControlStateValueOn:NSControlStateValueOff;
+            sheet.selectedFilePaths=selected.mutableCopy;sheet.message.stringValue=savedDraft[@"message"] ?: @"";sheet.messageEdited=[savedDraft[@"edited"] boolValue];
+        }
+        [sheet finishFilePreparation:nil];
         __weak typeof(self) weakSelf = self;__weak SSSubmissionController *originalSheet=self.submission;
         self.submission.refreshFiles=^{SSCourseController *owner=weakSelf;SSSubmissionController *sheet=originalSheet;if(owner && sheet && owner.submission==sheet)[owner openSubmissionForCourse:course preserving:sheet];};
         self.submission.readPreview = ^(NSString *file, void (^ready)(NSString *)) {
@@ -1662,6 +1729,7 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
         };
         self.submission.submit = ^(NSArray *paths, NSString *message) {
             SSCourseController *self = weakSelf;SSSubmissionController *submitted=originalSheet;if (!self || !submitted) return;
+        submitted.submissionInFlight=YES;[submitted publishEmbeddedState];
         __block NSDictionary *operationRecord=nil;NSArray *taskIDs=submitted.taskIDs.copy;NSDictionary *snapshot=submitted.snapshot.copy,*review=submitted.reviewSummary.copy;
         [self work:@"正在检查、提交并推送到自己的 fork…" forCourse:course requestKey:[NSString stringWithFormat:@"%@|%@|%@|%@",paths,message,snapshot[@"version"],taskIDs] priority:100 kind:AMCourseWorkSubmission operation:^id(NSError **innerError) {
             if(self.git.progress)self.git.progress(@"核验 GitHub 登录…");
@@ -1671,30 +1739,38 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
             NSDictionary *result=[self.git performRecordedCourse:course kind:@"submission" taskIDs:taskIDs paths:paths message:message token:token login:user[@"login"] userID:user[@"id"] error:innerError];
             operationRecord=result;return @([result[@"state"] isEqual:@"confirmed"]);
         } completion:^(NSNumber *ok, NSError *innerError) {
+            submitted.submissionInFlight=NO;
+            submitted.submissionRecordID=operationRecord[@"id"];
+            submitted.submissionNeedsVerification=[operationRecord[@"commit"] length]>0 && !ok.boolValue;
+            if(ok.boolValue)submitted.submittedSuccessfully=YES;
+            if(submitted.embeddedPane){submitted.closed=NO;submitted.validation.stringValue=ok.boolValue ? @"提交已保存，推送结果请查看远端核验。":(innerError.localizedDescription ?: @"提交未完成，请重试。");[submitted publishEmbeddedState];}
+
             if (self.exitSubmissionInFlight) { self.submissionFailedDuringExit = !ok.boolValue; self.exitSubmissionInFlight = NO; }
             if (!innerError && (ok.boolValue || [operationRecord[@"state"] isEqual:@"confirmed"])) { submitted.submittedSuccessfully=YES;[[self savedCourse:course] removeObjectForKey:@"pushFailed"]; [self saveCourses]; [self status:@"所选文件已提交到自己的仓库"]; }
             else {
-                if([operationRecord[@"commit"] length] || ([operationRecord[@"before"] length] && [operationRecord[@"state"] isEqual:@"uncertain"])){[self savedCourse:course][@"pushFailed"]=@YES;[self saveCourses];if(innerError)[self showError:innerError];[self status:[operationRecord[@"commit"] length] ? @"本地提交已保留，请到“提交记录”核验或重试。":@"提交结果尚未确认，请到“提交记录”核验后再试。"];return;}
+                if([operationRecord[@"commit"] length] || ([operationRecord[@"before"] length] && [operationRecord[@"state"] isEqual:@"uncertain"])){[self savedCourse:course][@"pushFailed"]=@YES;[self saveCourses];if(innerError && !submitted.embeddedPane)[self showError:innerError];[self status:[operationRecord[@"commit"] length] ? @"本地提交已保留，请到“提交记录”核验或重试。":@"提交结果尚未确认，请到“提交记录”核验后再试。"];return;}
                 if ([innerError.userInfo[@"SSPendingPush"] boolValue]) { [self savedCourse:course][@"pushFailed"] = @YES; [self saveCourses]; }
-                else if (!self.window.attachedSheet && self.submission==submitted && innerError.code!=NSUserCancelledError) {
+                else if (!submitted.embeddedPane && !self.window.attachedSheet && self.submission==submitted && innerError.code!=NSUserCancelledError) {
                     [submitted resumeAfterSubmissionFailure:innerError];
                     [self.window beginSheet:submitted.window completionHandler:nil];
                 }
-                [self showError:innerError];
+                if(!submitted.embeddedPane)[self showError:innerError];
             }
         }];
         };
     }];
     for(AMCourseOperationContext *context in self.workflowContexts.allValues)if(context.kind==AMCourseWorkLocal && [context.course isEqual:course]){sheet.filesReadOperation=context.identifier;sheet.preparationOperationView.operationID=context.identifier;context.submissionDraft=sheet;break;}
 }
-- (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView { return self.visible.count; }
+- (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView { return tableView==self.table && !self.assignmentBoardActive ? self.tableRows.count:0; }
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)column row:(NSInteger)row {
-    NSDictionary *candidate = self.visible[row]; NSString *key = column.identifier;
+    NSArray *rows=self.tableRows;
+    if(tableView!=self.table || self.assignmentBoardActive || row<0 || row>=(NSInteger)rows.count || ![rows[row] isKindOfClass:NSDictionary.class])return nil;
+    NSDictionary *candidate = rows[row]; NSString *key = column.identifier;
     NSString *value = @"";
     if ([key isEqual:@"title"]) value = candidate[@"title"];
     else if ([key isEqual:@"due"]) value = candidate[@"deadlineText"] ? [candidate[@"deadlineText"] stringByAppendingString:@" · 待确认"] : (candidate[@"dateOnly"] && [candidate[@"needsTime"] boolValue] ? [candidate[@"dateOnly"] stringByAppendingString:@" · 待补时间"] : (!candidate[@"due"] ? @"未说明时间" : ([candidate[@"needsDate"] boolValue] ? @"日期待确认" : DDLFormatDate(candidate[@"due"], @"yyyy-MM-dd HH:mm"))));
     else if ([key isEqual:@"source"]) value = [NSString stringWithFormat:@"%@:%@", candidate[@"path"], candidate[@"line"]];
-    else if ([key isEqual:@"state"]) { NSString *state = [self stateForCandidate:candidate]; value = [candidate[@"confirmed"] boolValue] ? ([candidate[@"completed"] boolValue] ? @"✓ 已完成" : @"○ 待完成") : [NSString stringWithFormat:@"%@ %@", [state isEqual:@"已导入"] ? @"✓" : ([state isEqual:@"有更新"] ? @"↻" : @"○"), state]; }
+    else if ([key isEqual:@"state"]) { NSString *state = candidate[@"tableDisplayState"] ?: @"待审核"; value = [candidate[@"confirmed"] boolValue] ? ([candidate[@"completed"] boolValue] ? @"✓ 已完成" : @"○ 待完成") : [NSString stringWithFormat:@"%@ %@", [state isEqual:@"已导入"] ? @"✓" : ([state isEqual:@"有更新"] ? @"↻" : @"○"), state]; }
     NSTextField *label = Text(value ?: @"", 13, NSFontWeightRegular, Ink()); label.lineBreakMode = NSLineBreakByTruncatingMiddle; label.toolTip = value; return label;
 }
 - (NSString *)stateForCandidate:(NSDictionary *)candidate {
@@ -1711,10 +1787,11 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
     }
     return @"待审核";
 }
-- (void)tableViewSelectionDidChange:(NSNotification *)notification { if (!self.refreshing) [self candidateSelected:nil]; }
+- (void)tableViewSelectionDidChange:(NSNotification *)notification { if (!self.refreshing && !self.assignmentBoardActive) [self candidateSelected:nil]; }
 - (void)candidateSelected:(id)sender {
     NSInteger row = self.table.selectedRow;
-    NSDictionary *candidate = row >= 0 && row < (NSInteger)self.visible.count ? self.visible[row] : nil;
+    NSArray *rows=self.tableRows;
+    NSDictionary *candidate = !self.assignmentBoardActive && row >= 0 && row < (NSInteger)rows.count ? rows[row] : nil;
     BOOL assignment = !candidate[@"kind"] || [candidate[@"kind"] isEqual:@"assignment"];
     if(candidate)self.selectedCandidateID = candidate[@"id"]; BOOL canStart = self.inbox && !candidate && self.pendingReviewCandidates.count > 0;
     self.reviewButton.enabled = canStart || (candidate != nil && (assignment || [candidate[@"confirmed"] boolValue])); self.reviewButton.title = canStart ? @"开始审核…" : ([candidate[@"confirmed"] boolValue] ? @"编辑任务…" : @"审核作业…");

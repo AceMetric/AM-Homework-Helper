@@ -1,0 +1,54 @@
+[
+  {
+    "id": "code-complete",
+    "teacher": "实现 add(a,b)，返回两个输入的和；用文字说明方法。",
+    "documents": [
+      {
+        "path": "answer.py",
+        "text": "def add(a,b):\n    return a+b\n"
+      },
+      {
+        "path": "report.md",
+        "text": "方法：直接返回 a 与 b 的和。"
+      }
+    ],
+    "expected": "checked"
+  },
+  {
+    "id": "code-error",
+    "teacher": "实现 reverse_words(s)，反转单词顺序但保持每个单词的拼写不变。",
+    "documents": [
+      {
+        "path": "answer.py",
+        "text": "def reverse_words(s):\n    return s[::-1]\n"
+      }
+    ],
+    "expected": "issue"
+  },
+  {
+    "id": "math-error",
+    "teacher": "展开 (x+y)^2，写出推导。",
+    "documents": [
+      {
+        "path": "answer.md",
+        "text": "(x+y)^2 = x^2 + y^2，因为分别平方即可。"
+      }
+    ],
+    "expected": "issue"
+  },
+  {
+    "id": "cross-file-error",
+    "teacher": "根据 data.csv 的两个测量值计算均值，并在报告中说明单位。",
+    "documents": [
+      {
+        "path": "data.csv",
+        "text": "value,unit\n2,m\n4,m\n"
+      },
+      {
+        "path": "report.md",
+        "text": "两个测量值的均值是 5 m。"
+      }
+    ],
+    "expected": "issue"
+  }
+]

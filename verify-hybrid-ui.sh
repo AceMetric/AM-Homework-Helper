@@ -9,10 +9,12 @@ SWIFTUI_DIR=$(python3 Tools/prepare-swiftui.py)
 export CLANG_MODULE_CACHE_PATH="$TASK_DIR/build/module-cache"
 ui_flags=()
 if [[ "${AM_UI_FOREGROUND:-0}" == 1 ]]; then ui_flags=(-DAM_FOREGROUND_TEST=1); fi
+if [[ "${AM_UI_HOLD_REVIEW:-0}" == 1 && "${AM_UI_TEST:-}" == AssignmentWorkspaceUsage ]]; then ui_flags+=(-DAM_HOLD_REVIEW=1); fi
 clang "${ui_flags[@]}" -DDDL_TESTING=1 -fobjc-arc -fblocks -Wall -Wextra -Werror -Wno-unused-parameter -O2 -mmacosx-version-min=13.0 \
  -I"$SWIFTUI_DIR" -L"$SWIFTUI_DIR" -lAMUI -Wl,-rpath,"$SWIFTUI_DIR" \
  -framework Cocoa -framework PDFKit -framework WebKit -framework UserNotifications -framework Vision -framework UniformTypeIdentifiers -framework CFNetwork -framework Security -lz -F"$SPARKLE_DIR" -framework Sparkle -Wl,-rpath,"$SPARKLE_DIR" \
  "Tests/${AM_UI_TEST:-HybridUI}.m" Sources/DDLCore.m Sources/DDLImport.m Sources/SSRecognition.m Sources/SSAssignments.m Sources/SSLocalData.m Sources/SSGitHub.m Sources/SSGit.m Sources/SSSecurity.m Sources/DDLUI.m Sources/SSUpdateController.m Sources/SSExitCoordinator.m -o "build/tests/${AM_UI_TEST:-HybridUI}"
+if [[ "${AM_UI_COMPILE_ONLY:-0}" == 1 ]]; then exit 0; fi
 ui_result=$(python3 Tools/run-quiet-test.py "build/tests/${AM_UI_TEST:-HybridUI}" --preview 2>&1) || { print -r -- "$ui_result"; exit 1; }
 print -r -- "$ui_result"
 [[ "$ui_result" == *"PASS:"* ]]

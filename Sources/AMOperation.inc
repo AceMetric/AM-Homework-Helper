@@ -6,7 +6,14 @@ static NSMutableDictionary *AMOperationRows,*AMOperationCancels,*AMScheduledJobs
 static NSUInteger AMJobSequence;
 static NSObject *AMOperationLock(void){static NSObject *lock;static dispatch_once_t once;dispatch_once(&once,^{lock=NSObject.new;AMOperationRows=NSMutableDictionary.dictionary;AMOperationCancels=NSMutableDictionary.dictionary;AMScheduledJobs=NSMutableDictionary.dictionary;});return lock;}
 static void AMOperationNotify(void){dispatch_async(dispatch_get_main_queue(),^{[NSNotificationCenter.defaultCenter postNotificationName:AMOperationsChanged object:nil];});}
-static NSString *AMResourceIdentity(NSString *claim){return [claim hasPrefix:@"read|"] ? [claim substringFromIndex:5]:claim;}
+static NSString *AMResourceIdentity(NSString *claim){if([claim hasPrefix:@"limit:chatgpt-model:"])return @"limit:chatgpt-model";return [claim hasPrefix:@"read|"] ? [claim substringFromIndex:5]:claim;}
+NSArray *AMModelResourcesForProvider(NSString *provider){
+    if(![provider isEqual:@"chatgpt"])return @[@"model-service"];
+    NSUInteger capacity=[SSReadPlist(@"chatgpt-preferences.plist")[@"concurrency"] unsignedIntegerValue];capacity=capacity ? MIN(8,capacity):2;
+    // Encode the queue capacity when scheduling, so the scheduler never reads
+    // preferences or account credentials while holding its global lock.
+    return @[[NSString stringWithFormat:@"limit:chatgpt-model:%lu",(unsigned long)capacity]];
+}
 static BOOL AMResourceConflicts(NSString *a,NSString *b){return [AMResourceIdentity(a) isEqual:AMResourceIdentity(b)] && !([a hasPrefix:@"read|"] && [b hasPrefix:@"read|"]);}
 static NSString *AMResourceHash(NSString *value){NSData *data=[value dataUsingEncoding:NSUTF8StringEncoding];unsigned char digest[CC_SHA256_DIGEST_LENGTH];CC_SHA256(data.bytes,(CC_LONG)data.length,digest);NSMutableString *text=NSMutableString.string;for(NSUInteger i=0;i<sizeof(digest);i++)[text appendFormat:@"%02x",digest[i]];return text;}
 static NSString *AMResourceLocation(NSString *path){struct stat info;if(stat(path.fileSystemRepresentation,&info)==0)return [NSString stringWithFormat:@"%llu:%llu",(unsigned long long)info.st_dev,(unsigned long long)info.st_ino];return path;}
@@ -37,7 +44,7 @@ static void AMOperationPump(void){
         for(NSMutableDictionary *job in ordered){
             NSMutableDictionary *row=AMOperationRows[job[@"id"]];if(![row[@"state"] isEqual:@"queued"])continue;
             NSMutableArray *blockers=NSMutableArray.array;
-            for(NSString *resource in job[@"resources"]){NSUInteger capacity=[resource isEqual:@"limit:background-course"] ? 2:1;NSMutableArray *owners=NSMutableArray.array;
+            for(NSString *resource in job[@"resources"]){NSUInteger capacity=[resource isEqual:@"limit:background-course"] ? 2:1;if([resource hasPrefix:@"limit:chatgpt-model:"])capacity=MAX(1,MIN(8,[[resource componentsSeparatedByString:@":"].lastObject integerValue]));NSMutableArray *owners=NSMutableArray.array;
                 for(NSDictionary *active in ordered){NSDictionary *other=AMOperationRows[active[@"id"]];if(![other[@"state"] isEqual:@"running"] || [active[@"resourcesReleased"] boolValue])continue;for(NSString *held in active[@"resources"])if(AMResourceConflicts(resource,held)){[owners addObject:other];break;}}
                 if(owners.count>=capacity)[blockers addObjectsFromArray:owners];
                 // Do not let new readers or low priority work starve a queued writer.
@@ -116,7 +123,7 @@ NSArray *AMExitBlockingOperations(void){NSMutableArray *rows=NSMutableArray.arra
 static NSMutableDictionary *AMModelWaiters;
 AMCancellationCheck AMCurrentCancellationCheck(void){return NSThread.currentThread.threadDictionary[@"AMOperationCancellation"];}
 BOOL AMCurrentOperationCancelled(void){AMCancellationCheck stop=AMCurrentCancellationCheck();return stop && stop();}
-id AMPerformModelOperation(NSString *key,NSString *target,BOOL manual,BOOL (^cancelled)(void),id (^perform)(NSError **),NSError **error){return AMPerformResourceOperation([@"model|" stringByAppendingString:key],@"分析材料",target,@[@"model-service"],manual ? 100:0,cancelled,perform,error);}
+id AMPerformModelOperation(NSString *key,NSString *target,BOOL manual,BOOL (^cancelled)(void),id (^perform)(NSError **),NSError **error){return AMPerformResourceOperation([@"model|" stringByAppendingString:key],@"分析材料",target,AMModelResourcesForProvider(SSReadPlist(@"recognition-settings.plist")[@"mode"] ?: @"local"),manual ? 100:0,cancelled,perform,error);}
 id AMPerformResourceOperation(NSString *key,NSString *kind,NSString *target,NSArray *resources,NSInteger priority,BOOL (^cancelled)(void),id (^perform)(NSError **),NSError **error){
     NSString *ancestor=NSThread.currentThread.threadDictionary[@"AMOperationParent"];BOOL covered=resources.count>0;
     @synchronized(AMOperationLock()){NSDictionary *held=ancestor ? AMScheduledJobs[ancestor]:nil;if(!held || [held[@"resourcesReleased"] boolValue])covered=NO;for(NSString *claim in resources){BOOL found=NO;for(NSString *owned in held[@"resources"])if([AMResourceIdentity(claim) isEqual:AMResourceIdentity(owned)] && (![owned hasPrefix:@"read|"] || [claim hasPrefix:@"read|"]))found=YES;if(!found)covered=NO;}}

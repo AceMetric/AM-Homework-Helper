@@ -13,9 +13,27 @@ static NSTextField *AMSubmissionStepLabel(NSInteger step,BOOL checkOnly){
 #import "AMOnlineReviewUI.inc"
 static NSDictionary *PFEffectiveReviewJob(NSString *version){for(NSDictionary *job in [AMPreflightJobs() reverseObjectEnumerator])if([job[@"reportVersion"] isEqual:version] && job[@"result"] && ![job[@"cleaned"] boolValue])return job;return nil;}
 static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=PFEffectiveReviewJob(version)[@"result"],*job=AMPreflightJobForReport(version);if(job[@"failure"]){NSMutableDictionary *copy=[result mutableCopy] ?: NSMutableDictionary.dictionary;copy[@"failure"]=job[@"failure"];copy[@"partial"]=@YES;return copy;}return result;}
+@class SSSubmissionController;
+@interface AMSubmissionPane:NSView <NSTextFieldDelegate>
+@property(weak) SSSubmissionController *session;
+@property NSButton *all,*reload,*scope,*primary,*check;
+@property NSScrollView *list;
+@property NSTextField *notes,*message,*status;
+@property NSArray *rows;
+@property NSArray<NSButton *> *buttons;
+- (void)refresh;
+@end
 // Private sheet, shared controls. Only the captured course and selected paths leave this UI.
 @interface SSSubmissionController : NSWindowController <NSTableViewDataSource,NSTableViewDelegate,NSTextViewDelegate,NSTextFieldDelegate>
 @property NSArray *changes;
+@property AMSubmissionPane *embeddedPane;
+@property BOOL submissionInFlight;
+@property BOOL submissionNeedsVerification;
+@property NSString *submissionRecordID;
+@property BOOL selectOwnedNewFiles;
+@property NSMutableSet *seenOwnedPaths;
+@property NSString *embeddedDraftKey;
+@property(copy) void (^embeddedCheck)(void);
 @property NSArray *allFileChanges;
 @property NSArray *relatedTasks;
 @property NSArray *scopePaths;
@@ -39,6 +57,11 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
 - (void)replaceFileChanges:(NSArray *)changes;
 - (void)beginFilePreparation;
 - (void)finishFilePreparation:(NSError *)error;
+- (void)selectionChanged:(NSButton *)sender;
+- (void)toggleScope:(id)sender;
+- (NSArray *)chosenPaths;
+- (void)publishEmbeddedState;
+- (void)saveEmbeddedDraft;
 
 @property NSArray<NSButton *> *checks;
 @property NSTextField *message;
@@ -161,6 +184,15 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
 - (instancetype)initWithCourse:(NSDictionary *)course changes:(NSArray *)changes;
 @end
 @implementation SSSubmissionController
+- (void)publishEmbeddedState {[self.embeddedPane refresh];}
+- (void)saveEmbeddedDraft {
+    if(!self.embeddedDraftKey.length)return;
+    NSString *key=self.embeddedDraftKey.copy;
+    NSDictionary *draft=@{@"paths":[self chosenPaths],@"message":self.message.stringValue ?: @"",@"edited":@(self.messageEdited),@"scope":@(self.scopeToggle.state==NSControlStateValueOn)};
+    static dispatch_queue_t writes;static dispatch_once_t once;dispatch_once(&once,^{writes=dispatch_queue_create("am.submission-drafts",DISPATCH_QUEUE_SERIAL);});
+    // Serialize read-modify-write off the main thread. No tokens, file bodies, or model material are stored.
+    dispatch_async(writes,^{NSMutableDictionary *saved=[SSReadPlist(@"submission-drafts.plist") mutableCopy] ?: NSMutableDictionary.dictionary;saved[key]=draft;SSWritePlist(@"submission-drafts.plist",saved,NULL);});
+}
 @synthesize checking=_checking;
 - (void)setChecking:(BOOL)checking {_checking=checking;self.operationView.hidden=!checking;self.validation.hidden=checking;}
 - (void)submissionSplitResized:(NSNotification *)notification {[self layoutFiles];}
@@ -225,12 +257,19 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
     NSSet *selected=[NSSet setWithArray:[self chosenPaths] ?: @[]];self.selectedFilePaths=selected.mutableCopy;self.allFileChanges=changes;if(self.scopePaths.count && self.scopeToggle.state!=NSControlStateValueOn){NSMutableArray *within=NSMutableArray.array;for(NSDictionary *change in changes){BOOL included=NO;for(NSString *scope in self.scopePaths)if([change[@"path"] isEqual:scope] || [change[@"path"] hasPrefix:[scope stringByAppendingString:@"/"]])included=YES;if(included)[within addObject:change];}changes=within;}self.changes=changes;
     Surface *list=Box(Card(),0);list.frame=NSMakeRect(0,0,320,MAX(160,changes.count*64));NSMutableArray *checks=NSMutableArray.array;
     for(NSUInteger i=0;i<changes.count;i++){NSDictionary *change=changes[i];NSButton *check=[NSButton checkboxWithTitle:change[@"path"] target:self action:@selector(selectionChanged:)];check.tag=i;check.toolTip=change[@"path"];check.enabled=![change[@"sensitive"] boolValue];check.state=check.enabled && [selected containsObject:change[@"path"]] ? NSControlStateValueOn:NSControlStateValueOff;check.font=[NSFont systemFontOfSize:13];Put(list,check,8,i*64+4,304,28);[checks addObject:check];NSButton *view=Button(@"查看",self,@selector(showPreview:),3);view.tag=i;Put(list,view,252,i*64+32,60,28);NSString *state=[change[@"sensitive"] boolValue] ? (change[@"exclusionReason"] ?: @"敏感文件，已排除"):[NSString stringWithFormat:@"变更状态 %@",change[@"status"]];Put(list,Text(state,11,NSFontWeightRegular,Muted()),8,i*64+32,236,24);}
+    if(self.selectOwnedNewFiles && self.scopePaths.count){
+        if(!self.seenOwnedPaths)self.seenOwnedPaths=NSMutableSet.set;
+        // Only trustworthy assignment paths are selected automatically. Previously
+        // unchecked paths and ambiguous/out-of-scope files retain user control.
+        for(NSUInteger i=0;i<changes.count;i++){NSString *path=changes[i][@"path"];NSButton *button=checks[i];BOOL owned=NO;for(NSString *scope in self.scopePaths)if([path isEqual:scope] || [path hasPrefix:[scope stringByAppendingString:@"/"]])owned=YES;if(owned && button.enabled && ![self.seenOwnedPaths containsObject:path]){button.state=NSControlStateValueOn;[self.selectedFilePaths addObject:path];}if(owned)[self.seenOwnedPaths addObject:path];}
+    }
     self.checks=checks;self.fileListScroll.documentView=list;[self layoutFiles];
 }
 - (void)beginFilePreparation {
-    if(self.previewCancellation)self.previewCancellation();self.previewGeneration++;self.filesPreparing=YES;self.fileRecoveryButton.hidden=YES;self.existingSubmissionsButton.hidden=YES;self.preparationArea.hidden=NO;self.preparationHeight.active=NO;self.preparationOperationView.hidden=NO;self.reloadFilesButton.enabled=NO;self.selectAllFilesButton.enabled=NO;self.filesPrimary.enabled=NO;self.filesValidation.stringValue=@"";self.preview.string=@"";[self layoutFiles];
+    if(self.previewCancellation)self.previewCancellation();self.previewGeneration++;self.filesPreparing=YES;[self publishEmbeddedState];self.fileRecoveryButton.hidden=YES;self.existingSubmissionsButton.hidden=YES;self.preparationArea.hidden=NO;self.preparationHeight.active=NO;self.preparationOperationView.hidden=NO;self.reloadFilesButton.enabled=NO;self.selectAllFilesButton.enabled=NO;self.filesPrimary.enabled=NO;self.filesValidation.stringValue=@"";self.preview.string=@"";[self layoutFiles];
 }
 - (void)finishFilePreparation:(NSError *)error {
+    dispatch_async(dispatch_get_main_queue(),^{[self publishEmbeddedState];});
     self.filesPreparing=NO;self.existingSubmissionsButton.hidden=error!=nil || self.changes.count>0;self.reloadFilesButton.enabled=YES;self.selectAllFilesButton.enabled=!error && self.changes.count>0;self.filesPrimary.enabled=!error && self.changes.count>0;self.preparationOperationView.hidden=YES;
     self.preparationArea.hidden=NO;self.preparationHeight.active=NO;
     self.filesValidation.stringValue=error ? error.localizedDescription:(self.changes.count ? @"请选择文件":@"没有待提交修改");self.filesValidation.textColor=error ? NSColor.systemOrangeColor:Muted();self.preview.string=self.changes.count ? @"未选择预览文件":@"";if(!error && self.changes.count)[self selectionChanged:nil];[self layoutFiles];
@@ -262,7 +301,7 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
     __weak typeof(self) owner=self;[self.resultTimer invalidate];self.resultTimer=[NSTimer scheduledTimerWithTimeInterval:3 repeats:YES block:^(NSTimer *timer){[owner pollReview:nil];}];
 }
 #include "AMSubmissionFiles.inc"
-- (void)refreshFileList:(id)sender{if(self.refreshFiles)self.refreshFiles();}
+- (void)refreshFileList:(id)sender{if(self.filesPreparing || self.submissionInFlight)return;if(self.refreshFiles)self.refreshFiles();}
 
 - (BOOL)saveForExit { self.validation.stringValue=self.checkOnly ? @"请完成检查或关闭此窗口，再退出。":@"请先完成检查，并明确点击提交；可选择稍后退出。";return NO; }
 - (void)toggleAllFiles:(id)sender {if(self.filesPreparing)return;BOOL all=YES;for(NSButton *check in self.checks)if(check.enabled && check.state!=NSControlStateValueOn)all=NO;for(NSButton *check in self.checks)if(check.enabled)check.state=all ? NSControlStateValueOff:NSControlStateValueOn;[self selectionChanged:nil];}
@@ -298,7 +337,7 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
     if(!self.performCheck){self.validation.hidden=NO;self.validation.stringValue=@"检查尚未准备好，请刷新文件后重试。";return;}
     NSArray *paths=[self chosenPaths],*ids=[self chosenTasks];NSString *message=[self.message.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if(!paths.count || !message.length){self.validation.stringValue=@"请选择文件并填写提交说明。";return;}
-    self.selectedPaths=paths;self.taskIDs=ids;self.checking=YES;self.localChecking=YES;self.filesPrimary.enabled=NO;self.primary.enabled=NO;self.validation.stringValue=@"正在检查提交文件…";
+    self.selectedPaths=paths;self.taskIDs=ids;self.checking=YES;self.localChecking=YES;self.filesPrimary.enabled=NO;self.primary.enabled=NO;self.validation.stringValue=@"正在检查提交文件…";[self publishEmbeddedState];
     NSUInteger generation=++self.previewGeneration;__weak typeof(self) owner=self;
     NSMutableDictionary *cache=NSMutableDictionary.dictionary;cache[@"submissionSafetyOnly"]=@YES;
     __block NSString *operation=nil;operation=AMOperationBegin(@"检查提交文件",self.course[@"fork"],YES,^{SSSubmissionController *sheet=owner;if(!sheet)return;sheet.previewGeneration++;sheet.checking=NO;sheet.localChecking=NO;sheet.filesPrimary.enabled=YES;sheet.primary.enabled=YES;sheet.validation.stringValue=@"已取消";AMOperationFinish(operation,@"cancelled",@"已取消");});self.operationID=operation;
@@ -308,7 +347,7 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
         dispatch_async(dispatch_get_main_queue(),^{SSSubmissionController *sheet=owner;if(!sheet || sheet.previewGeneration!=generation)return;
             sheet.checking=NO;sheet.localChecking=NO;sheet.filesPrimary.enabled=YES;sheet.primary.enabled=YES;
             BOOL unchanged=[paths isEqual:[sheet chosenPaths]] && [ids isEqual:[sheet chosenTasks]] && [message isEqual:[sheet.message.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]];
-            if(!bundle || !unchanged){NSString *reason=error.localizedDescription ?: (unchanged ? @"文件检查未完成，请重试。":@"文件选择或说明已变化，请再次提交。");sheet.validation.stringValue=reason;sheet.validation.textColor=NSColor.systemOrangeColor;AMOperationFinish(operation,@"failed",reason);return;}
+            if(!bundle || !unchanged){NSString *reason=error.localizedDescription ?: (unchanged ? @"文件检查未完成，请重试。":@"文件选择或说明已变化，请再次提交。");sheet.validation.stringValue=reason;sheet.validation.textColor=NSColor.systemOrangeColor;AMOperationFinish(operation,@"failed",reason);[sheet publishEmbeddedState];return;}
             // The Git transaction revalidates this exact snapshot before staging. AI findings
             // are optional and cannot turn a security failure into a successful submission.
             sheet.snapshot=bundle[@"snapshot"];sheet.reviewSummary=@{@"coverage":@"local",@"date":NSDate.date,@"count":@0,@"acknowledged":@NO};
@@ -443,14 +482,18 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
         NSMutableArray *checks=NSMutableArray.array;
         NSMutableSet *seen=NSMutableSet.set;
         NSUInteger satisfied=0,problems=0;
-        for(NSDictionary *item in self.report[@"requirementItems"] ?: SSRequirementItems(self.report[@"requirements"] ?: @"",@"",self.report[@"snapshotVersion"] ?: @"")){
+        NSArray *displayItems=effective[@"semanticRequirements"];
+        if(!displayItems && effective)displayItems=self.report[@"requirementItems"];
+        for(NSDictionary *item in displayItems ?: @[]){
             NSString *requirement=item[@"text"];
             if(!requirement.length || [requirement hasPrefix:@"#"] || [seen containsObject:requirement])continue;
             [seen addObject:requirement];
             NSDictionary *check=matched[item[@"id"]] ?: matched[SSRequirementID(requirement)] ?: @{@"requirement":requirement,@"requirementID":item[@"id"],@"status":@"unchecked",@"reason":effective ? @"模型未返回有依据的判断，可核对材料后重试。":@"尚未进行内容检查。"};
             if([check[@"status"] isEqual:@"checked"])satisfied++;
             if([@[@"issue",@"partial"] containsObject:check[@"status"]])problems++;
-            [checks addObject:check];
+            NSMutableDictionary *display=check.mutableCopy;
+            if(item[@"quote"]){display[@"requirementSource"]=item;display[@"condition"]=item[@"condition"] ?: @"";}
+            [checks addObject:display];
             if(checks.count>=100)break;
         }
         NSDictionary *(^previewEvidence)(NSDictionary *)=^NSDictionary *(NSDictionary *entry){
@@ -535,7 +578,7 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
 #endif
     client.profile=settings;client.deepReview=deep;client.model=client.model ?: settings[@"model"];client.requestLimit=[snapshot[@"requestLimit"] unsignedIntegerValue];self.reviewFailure=nil;self.onlineClient=client;NSString *extraAtStart=self.supplement.string.copy;NSDate *started=NSDate.date;NSUInteger generation=++self.previewGeneration;__weak typeof(self) owner=self;
     if(!self.onlineRequests)self.onlineRequests=NSMutableDictionary.dictionary;self.onlineRequests[requestKey]=client;
-    self.operationID=AMOperationEnqueue(requestKey,@"在线复核",client.model ?: AMOnlineReviewCurrentModel(),@[@"model-service"],100,^(NSString *identifier){client.operationID=identifier;NSError *error=nil;NSURL *folder=AMPreflightFolder(NSUUID.UUID.UUIDString);BOOL (^checkScope)(NSDictionary *,NSError **)=owner.reviewScopeCurrent;
+    self.operationID=AMOperationEnqueue(requestKey,@"在线复核",client.model ?: AMOnlineReviewCurrentModel(),AMModelResourcesForProvider(settings[@"provider"] ?: @"gemini"),100,^(NSString *identifier){client.operationID=identifier;NSError *error=nil;NSURL *folder=AMPreflightFolder(NSUUID.UUID.UUIDString);BOOL (^checkScope)(NSDictionary *,NSError **)=owner.reviewScopeCurrent;
         BOOL current=owner && (!checkScope || checkScope(snapshot,&error));
         NSDictionary *context=current ? AMPreflightExport(report,snapshot,requirements,images,folder,&error):nil;NSDictionary *answer=nil;
         if(!client.cancelled && context && (!checkScope || checkScope(snapshot,&error)) && AMReviewMaterialsCurrent(snapshot,&error) && AMOnlineReviewRegisterWithProfile(context,report,courseID,settings,&error))answer=[client reviewContext:context folder:folder focus:focus progress:^(NSString *stage){dispatch_async(dispatch_get_main_queue(),^{if(owner && owner.previewGeneration==generation && !client.cancelled)owner.validation.stringValue=[stage stringByAppendingFormat:@" · 已用 %.0f 秒",-started.timeIntervalSinceNow];});} error:&error];
@@ -575,3 +618,5 @@ static NSDictionary *PFEffectiveReview(NSString *version){NSDictionary *result=P
     });
 }
 @end
+
+#import "AMEmbeddedSubmission.inc"

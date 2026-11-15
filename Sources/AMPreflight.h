@@ -25,6 +25,7 @@ NSDictionary * _Nullable AMPreflightListFolder(NSURL *folder, BOOL (^ _Nullable 
 NSDictionary *AMPreflightCheckWithProgress(NSDictionary *snapshot,NSString *requirements,NSMutableDictionary *cache,BOOL (^ _Nullable cancelled)(void),void (^ _Nullable progress)(NSUInteger,NSUInteger));
 NSDictionary *AMPreflightCheck(NSDictionary *snapshot, NSString *requirements, NSMutableDictionary *cache, BOOL (^ _Nullable cancelled)(void));
 NSDictionary * _Nullable AMPreflightExport(NSDictionary *report, NSDictionary *snapshot, NSString *requirements, NSArray *images, NSURL *folder, NSError **error);
+NSArray *AMPreflightSemanticRequirements(id raw,NSString *teacher);
 NSDictionary * _Nullable AMPreflightValidateResult(id result, NSDictionary *context, NSError **error);
 NSString *AMPreflightFindingMarkdown(NSDictionary *issue, NSDictionary *snapshot);
 NSDictionary *AMPreflightReviewScope(NSDictionary * _Nullable review);
@@ -43,6 +44,7 @@ NS_ASSUME_NONNULL_END
 NS_ASSUME_NONNULL_BEGIN
 NSDictionary *AMOnlineReviewSettings(void);
 NSDictionary *AMOnlineReviewProfile(void);
+NSDictionary *AMOnlineRecognitionProfile(void);
 NSDictionary *AMOnlineReviewRates(NSDictionary *profile);
 BOOL AMOnlineReviewSaveRates(NSDictionary *profile, NSDictionary *rates, NSError **error);
 NSString *AMOnlineReviewUsageLabel(NSDictionary *profile);
@@ -63,6 +65,10 @@ BOOL AMOnlineReviewRegister(NSDictionary *context,NSDictionary *report,NSString 
 void AMOnlineReviewFailed(NSString *batch);
 void AMOnlineReviewRecordFailure(NSString *batch, NSError * _Nullable error);
 void AMShowOnlineReviewSettings(NSWindow * _Nullable parent);
+void AMShowChatGPTSettings(NSWindow * _Nullable parent);
+#ifdef DDL_TESTING
+NSString *AMSemanticReviewInstruction(void);
+#endif
 @interface AMOnlineReviewClient : NSObject <NSURLSessionTaskDelegate>
 @property(atomic) BOOL cancelled;
 @property BOOL forceCleanup;

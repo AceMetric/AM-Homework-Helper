@@ -1,6 +1,8 @@
+#import "AMChatGPTSettings.inc"
 // Only user actions send synthetic tests or selected coursework.
 @interface AMOnlineSettings:NSWindowController
 @property NSSecureTextField *keyField;
+@property AMChatGPTSettings *chatgptSettings;
 @property NSButton *enabled;
 @property NSButton *consent;
 @property NSTextField *status;
@@ -12,8 +14,10 @@
 @property AMOperationView *progressView;
 @end
 @implementation AMOnlineSettings
+- (void)configureChatGPT:(id)sender{if(!self.chatgptSettings)self.chatgptSettings=AMChatGPTSettings.new;[self.chatgptSettings.window center];[NSApp runModalForWindow:self.chatgptSettings.window];}
 - (void)configureRates:(id)sender {
     NSDictionary *profile=AMOnlineReviewProfile(),*rates=AMOnlineReviewRates(profile);
+    if([profile[@"provider"] isEqual:@"chatgpt"]){self.status.stringValue=AMOnlineReviewUsageLabel(profile);return;}
     NSAlert *alert=NSAlert.new;alert.messageText=@"当前模型的用量与费用";
     alert.informativeText=[NSString stringWithFormat:@"%@\n%@\n填写每百万 token 的单价。估算按填写的输入单价计算，不含缓存折扣。",
         profile[@"model"],AMOnlineReviewUsageLabel(profile)];
@@ -89,6 +93,7 @@
         NSDictionary *active=AMOnlineReviewProfile();
         [stack addArrangedSubview:Text([NSString stringWithFormat:@"在线检查 · %@",active[@"model"]],20,NSFontWeightSemibold,Ink())];
         [stack addArrangedSubview:[NSStackView stackViewWithViews:@[
+            Button(@"使用 ChatGPT 登录…",self,@selector(configureChatGPT:),0),
             Button(@"配置 DeepSeek…",self,@selector(configureDeepSeek:),0),
             Button(@"配置兼容接口…",self,@selector(configureCompatible:),0),
             Button(@"测试当前供应商",self,@selector(testProvider:),0),
@@ -128,3 +133,5 @@
 }
 @end
 void AMShowOnlineReviewSettings(NSWindow *parent){AMOnlineSettings *settings=AMOnlineSettings.new;[settings.window center];[NSApp runModalForWindow:settings.window];[settings.window orderOut:nil];}
+
+void AMShowChatGPTSettings(NSWindow *parent){AMChatGPTSettings *settings=AMChatGPTSettings.new;[parent addChildWindow:settings.window ordered:NSWindowAbove];[settings.window center];[NSApp runModalForWindow:settings.window];[parent removeChildWindow:settings.window];[settings.window orderOut:nil];}

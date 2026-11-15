@@ -29,7 +29,7 @@
     for(NSDictionary *record in previous)if(record[@"onlineRecognitionProfile"]){
         NSDictionary *next=byID[record[@"id"]];
         if(!next || ![next[@"blobSHA"] isEqual:record[@"blobSHA"]])continue;
-        onlineProfile=onlineProfile ?: AMOnlineReviewProfile();
+        onlineProfile=onlineProfile ?: AMOnlineRecognitionProfile();
         if(![record[@"onlineRecognitionProfile"] isEqual:onlineProfile])continue;
         BOOL authorized=NO;
         for(NSDictionary *course in self.courses)if([course[@"upstream"] isEqual:record[@"repository"]] &&

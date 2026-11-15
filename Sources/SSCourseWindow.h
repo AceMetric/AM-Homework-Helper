@@ -9,6 +9,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(readonly) BOOL hasCheckWorkspace;
 @property(readonly) NSSegmentedControl *navigationControl;
 @property(readonly) BOOL assignmentBoardActive;
+@property(readonly) BOOL showingWorkbench;
 @property (copy) NSArray<NSDictionary *> * (^tasksProvider)(void);
 @property (copy) void (^reviewCandidate)(NSDictionary *candidate);
 @property (copy, nullable) void (^restoreTaskNotes)(NSString *identifier);

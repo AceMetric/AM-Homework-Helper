@@ -1,6 +1,7 @@
 #import "AMPrompts.h"
 #import "AMOperation.h"
 #import "SSRecognition.h"
+#import "AMChatGPT.h"
 #import "SSAssignments.h"
 #import "SSLocalData.h"
 #import "SSSecurity.h"
@@ -68,12 +69,13 @@ static NSString *TemplateField(NSString *text, NSString *pattern) {
 NSDictionary *SSRecognitionSettings(void) {
     NSMutableDictionary *settings = [@{@"mode":@"rules", @"endpoint":@"http://localhost:11434", @"model":@"", @"automaticImport":@YES, @"dailyLimit":@20, @"localAutomatic":@YES} mutableCopy];
     id saved = SSReadPlist(@"recognition-settings.plist"); if ([saved isKindOfClass:NSDictionary.class]) [settings addEntriesFromDictionary:saved];
+    if([settings[@"mode"] isEqual:@"chatgpt"]){NSDictionary *profile=AMChatGPTProfile(@"recognition");settings[@"model"]=profile[@"model"];settings[@"endpoint"]=profile[@"endpoint"];settings[@"registration"]=profile[@"registration"];}
     return settings;
 }
 BOOL SSValidateRecognitionSettings(NSDictionary *settings, NSError **error) {
     NSString *mode = settings[@"mode"];
-    if (![@[@"rules",@"local",@"cloud"] containsObject:mode]) { if(error)*error=RError(@"请选择有效的识别方式。"); return NO; }
-    if ([mode isEqual:@"rules"]) return YES;
+    if (![@[@"rules",@"local",@"cloud",@"chatgpt"] containsObject:mode]) { if(error)*error=RError(@"请选择有效的识别方式。"); return NO; }
+    if ([mode isEqual:@"rules"] || [mode isEqual:@"chatgpt"]) return YES;
     NSURL *url = [NSURL URLWithString:settings[@"endpoint"] ?: @""];
     BOOL local = [mode isEqual:@"local"];
     BOOL loopback = [@[@"localhost",@"127.0.0.1",@"::1",@"[::1]"] containsObject:url.host.lowercaseString];
@@ -102,8 +104,9 @@ NSArray *SSAttachLinkedDocuments(NSArray *records, NSArray *documents) {
 }
 NSDictionary *SSCourseRecognitionSettings(NSDictionary *settings, NSDictionary *course) {
     NSMutableDictionary *copy=settings.mutableCopy;
-    if ([copy[@"mode"] isEqual:@"cloud"] && (![copy[@"cloudCourses"] isKindOfClass:NSArray.class] || ![copy[@"cloudCourses"] containsObject:course[@"fork"]])) copy[@"mode"]=@"rules";
-    if([copy[@"mode"] isEqual:@"cloud"] && ![copy[@"manualCloud"] boolValue])copy[@"mode"]=@"rules";
+    if([copy[@"mode"] isEqual:@"chatgpt"] && ![copy[@"authorizedRegistration"] isEqual:copy[@"registration"]])copy[@"mode"]=@"rules";
+    if ([@[@"cloud",@"chatgpt"] containsObject:copy[@"mode"]] && (![copy[@"cloudCourses"] isKindOfClass:NSArray.class] || ![copy[@"cloudCourses"] containsObject:course[@"fork"]])) copy[@"mode"]=@"rules";
+    if([@[@"cloud",@"chatgpt"] containsObject:copy[@"mode"]] && ![copy[@"manualCloud"] boolValue])copy[@"mode"]=@"rules";
     if([copy[@"mode"] isEqual:@"local"] && [copy[@"localAutomatic"] isEqual:@NO] && ![copy[@"manualLocal"] boolValue])copy[@"mode"]=@"rules";
     if ([course[@"recognitionTemplate"] isKindOfClass:NSDictionary.class]) copy[@"courseTemplate"]=course[@"recognitionTemplate"];
     return copy;
@@ -297,7 +300,16 @@ NSDictionary *SSModelValidationReport(id results, NSString *text, NSString *repo
         NSMutableDictionary *fieldEvidence=[record[@"fieldEvidence"] mutableCopy];
         for(NSArray *pair in @[@[@"summary",@"summaryEvidence"],@[@"submissionRequirements",@"requirementsEvidence"]])if([record[pair[0]] length]){
             NSString *support=item[pair[1]];BOOL validSupport=support.length && block && [block[@"raw"] rangeOfString:support options:NSLiteralSearch].location!=NSNotFound;
-            if(validSupport)fieldEvidence[pair[1]]=support;
+            if(validSupport){
+                // Preserve the model's narrow excerpt, but display original span
+                // context when a paraphrase combines adjacent delivery/optional clauses.
+                // Clamp to this activity: a model span cannot borrow a peer's text.
+                NSUInteger start=MAX([block[@"line"] unsignedIntegerValue],[item[@"startLine"] unsignedIntegerValue] ?: [block[@"line"] unsignedIntegerValue]);
+                NSUInteger end=MIN([block[@"endLine"] unsignedIntegerValue],[item[@"endLine"] unsignedIntegerValue] ?: [block[@"endLine"] unsignedIntegerValue]);
+                NSString *context=nil;if(start>0 && end>=start && end-start<16 && end<=lines.count)context=[[lines subarrayWithRange:NSMakeRange(start-1,end-start+1)] componentsJoinedByString:@"\n"];
+                fieldEvidence[[pair[1] stringByAppendingString:@"Excerpt"]]=support;
+                fieldEvidence[pair[1]]=context.length<=1200 && [context containsString:support] ? context:support;
+            }
             else {reject(pair[1],@"field-evidence",@"字段缺少本活动的原文依据");record[pair[0]]=@"";record[@"modelOnly"]=@YES;record[@"requiresReview"]=@YES;NSMutableArray *warnings=[record[@"contentWarnings"] mutableCopy] ?: NSMutableArray.array;[warnings addObject:@"模型概括或提交要求缺少本活动的字段依据，请对照原文审核。"];record[@"contentWarnings"]=warnings;}
         }
         record[@"fieldEvidence"]=fieldEvidence;
@@ -351,6 +363,12 @@ NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repositor
     if(AMCurrentOperationCancelled() || [settings[@"requestDeadline"] timeIntervalSinceNow]<=0){if(error)*error=[NSError errorWithDomain:@"AMRecognition" code:AMCurrentOperationCancelled() ? NSUserCancelledError:NSURLErrorTimedOut userInfo:@{NSLocalizedDescriptionKey:AMCurrentOperationCancelled() ? @"识别已取消":@"识别超时"}];return nil;}
     if (!SSValidateRecognitionSettings(settings,error) || [settings[@"mode"] isEqual:@"rules"]) return nil;
     if (text.length > 48000 || SSContainsSecret([text dataUsingEncoding:NSUTF8StringEncoding])) { if(error)*error=RError(@"文档过长或含疑似凭据，仅使用本机规则。"); return nil; }
+    if([settings[@"mode"] isEqual:@"chatgpt"]){
+        if(![settings[@"cloudConsent"] boolValue]){if(error)*error=RError(@"请先确认发送课程原文用于识别。");return nil;}
+        NSMutableArray *lines=NSMutableArray.array;NSUInteger line=[settings[@"lineOffset"] unsignedIntegerValue];for(NSString *value in [RCanonicalText(text) componentsSeparatedByString:@"\n"])[lines addObject:@{@"line":@(++line),@"text":value}];
+        NSDictionary *result=AMChatGPTGenerate(@{@"lines":lines,@"sourcePath":settings[@"sourcePath"] ?: @"",@"sourceScopes":SSSourceAnalysis(text,settings[@"sourcePath"] ?: @"")[@"activities"] ?: @[]},AMCoursePrompt(),@[],@"recognition",^BOOL{return AMCurrentOperationCancelled();},error);
+        return result && [result[@"activities"] isKindOfClass:NSArray.class] ? result[@"activities"]:nil;
+    }
     BOOL cloud=[settings[@"mode"] isEqual:@"cloud"];
     if (cloud && ![settings[@"cloudConsent"] boolValue]) { if(error)*error=RError(@"请先在设置确认发送课程原文的范围，仅使用规则。"); return nil; }
     NSString *key=cloud ? [self cloudKeyForEndpoint:settings[@"endpoint"]] : nil;
@@ -425,7 +443,7 @@ NSArray *SSValidatedModelResults(id results, NSString *text, NSString *repositor
 @end
 NSString *SSRecognitionCacheKey(NSString *repository,NSString *path,NSString *blob,NSCalendar *calendar,NSDictionary *settings) {
     NSMutableDictionary *cacheSettings=NSMutableDictionary.dictionary;
-    NSArray *fields=[settings[@"mode"] isEqual:@"rules"] ? @[@"mode",@"courseTemplate"]:@[@"mode",@"endpoint",@"model",@"modelDigest",@"courseTemplate"];
+    NSArray *fields=[settings[@"mode"] isEqual:@"rules"] ? @[@"mode",@"courseTemplate"]:@[@"mode",@"endpoint",@"model",@"modelDigest",@"registration",@"courseTemplate"];
     for(NSString *field in fields)if(settings[field])cacheSettings[field]=settings[field];
     NSString *configuration=[[NSJSONSerialization dataWithJSONObject:cacheSettings options:NSJSONWritingSortedKeys error:NULL] base64EncodedStringWithOptions:0];
     return [NSString stringWithFormat:@"recognition-v10|%@|%@|%@|%@|%@|%@|%@",repository.lowercaseString,path,blob,calendar.timeZone.name,RHash(configuration ?: @""),[settings[@"mode"] isEqual:@"rules"] ? @"rules-v9":AMCoursePromptVersion(),AMCourseValidationVersion()];
@@ -518,4 +536,5 @@ NSArray *SSRecognizeDocumentWithClient(NSString *text, NSString *repository, NSS
 
 #include "AMPreflight.inc"
 
+#include "AMChatGPT.inc"
 #include "AMOnlineReview.inc"

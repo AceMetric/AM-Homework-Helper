@@ -42,8 +42,12 @@ private struct WorkspaceExpandedSection<Content:View>:View {
 }
 // Use the system glass button implementations; older OS/SDK lanes retain native controls.
 private extension View {
-    func amPrimaryAction()->some View {self.buttonStyle(.borderedProminent)}
-    func amSecondaryActions()->some View {self.buttonStyle(.bordered)}
+    @ViewBuilder func amPrimaryAction()->some View {
+        if #available(macOS 26.0,*) {self.buttonStyle(.glassProminent)} else {self.buttonStyle(.borderedProminent)}
+    }
+    @ViewBuilder func amSecondaryActions()->some View {
+        if #available(macOS 26.0,*) {self.buttonStyle(.glass)} else {self.buttonStyle(.bordered)}
+    }
     func amGlassChrome()->some View {modifier(WorkspaceGlassChrome())}
 }
 // Glass belongs to the operation layer. Reading surfaces remain opaque; the
@@ -57,6 +61,34 @@ private struct WorkspaceGlassChrome:ViewModifier {
         #else
         content.background(Color(nsColor:AMAppearance.surface),in:RoundedRectangle(cornerRadius:12))
         #endif
+    }
+}
+// AppKit owns capsule geometry and OS-specific tab behavior for all workspace selectors.
+private struct WorkspaceSegments:NSViewRepresentable {
+    let labels:[String]
+    @Binding var selection:Int
+    var navigation=true
+    final class Target:NSObject {
+        var change:((Int)->Void)?
+        @objc func choose(_ sender:NSSegmentedControl){change?(sender.selectedSegment)}
+    }
+    func makeCoordinator()->Target{Target()}
+    func makeNSView(context:Context)->NSSegmentedControl {
+        let control=NSSegmentedControl(labels:labels,trackingMode:.selectOne,target:context.coordinator,action:#selector(Target.choose(_:)))
+        control.segmentStyle = .automatic;control.segmentDistribution = .fit
+        if #available(macOS 26.0,*) {control.borderShape = .capsule}
+        #if compiler(>=6.3)
+        if #available(macOS 27.0,*) {control.role = navigation ? .tabs:.valueSelection}
+        #endif
+        return control
+    }
+    func updateNSView(_ control:NSSegmentedControl,context:Context){
+        context.coordinator.change={selection=$0};control.selectedSegment=selection
+    }
+    func sizeThatFits(_ proposal:ProposedViewSize,nsView:NSSegmentedControl,context:Context)->CGSize? {
+        // Navigation labels keep their native fitting width instead of stretching
+        // the glass capsule across the inspector's reading column.
+        nsView.fittingSize
     }
 }
 private struct WorkspaceSection<Content:View>:View {
@@ -451,7 +483,7 @@ private struct WorkspaceButton:NSViewRepresentable {
         context.coordinator.action=action;button.title=title;button.isEnabled=enabled
         button.bezelStyle = .rounded
         #if compiler(>=6.2)
-        if #available(macOS 26.0,*) {button.bezelStyle = .rounded}
+        if #available(macOS 26.0,*) {button.bezelStyle = .glass}
         #endif
         button.bezelColor=prominent ? .controlAccentColor:nil
         button.setAccessibilityIdentifier(identity)
@@ -622,7 +654,7 @@ private struct ReviewBatchPreview:View {
     private var savedValues:NSDictionary {
         var values:[String:Any]=["mode":mode,"automatic":automatic,"autoCompleteSubmittedAssignments":autoCompleteSubmittedAssignments]
         if mode != "rules" {values["endpoint"]=endpoint.trimmingCharacters(in:.whitespacesAndNewlines);values["model"]=model.trimmingCharacters(in:.whitespacesAndNewlines)}
-        if mode == "cloud" {values["courses"]=cloudCourses.sorted()}
+        if mode == "cloud" || mode == "chatgpt" {values["courses"]=cloudCourses.sorted()}
         if mode == "local" {values["localAutomatic"]=localAutomatic}
         return values as NSDictionary
     }
@@ -673,7 +705,7 @@ private struct SettingsWorkspace:View {
                         Section("日历"){Button("设置休息日／工作日…"){state.action?("calendar-overrides")}}
                     case "作业识别":
                         Section("识别方式") {
-                            Picker("使用",selection:binding(\.mode)){Text("免费规则").tag("rules");Text("本地模型").tag("local");Text("云端 API").tag("cloud")}
+                            Picker("使用",selection:binding(\.mode)){Text("免费规则").tag("rules");Text("本地模型").tag("local");Text("云端 API").tag("cloud");Text("ChatGPT 套餐").tag("chatgpt")}
                             Toggle("自动加入日期明确的新作业",isOn:binding(\.automatic))
                             if state.mode=="local" {
                                 LabeledContent("服务地址"){TextField("http://localhost:11434",text:binding(\.endpoint))}
@@ -684,16 +716,17 @@ private struct SettingsWorkspace:View {
                                 if state.localBusy {ProgressView().controlSize(.small)}
                                 if !state.localStatus.isEmpty {HStack(alignment:.top){Text(state.localStatus).font(.caption).textSelection(.enabled);Spacer();Button{state.localStatus=""}label:{Image(systemName:"xmark")}.buttonStyle(.plain).accessibilityLabel("关闭检测提示")}}
                             }
+                            if state.mode=="chatgpt" {Button("ChatGPT 登录与模型…"){state.action?("chatgpt")};Text("识别默认 Luna；使用自己的 ChatGPT 套餐，并遵守下方课程授权。").font(.caption).foregroundStyle(.secondary)}
                             if state.mode=="cloud" {
                                 LabeledContent("服务地址"){TextField("https://服务地址/v1",text:binding(\.endpoint))}
                                 LabeledContent("模型名称"){TextField("模型名称",text:binding(\.model))}
                                 LabeledContent("API 密钥"){SecureField("留空保留原值",text:binding(\.key))}
                             }
                         }
-                        if state.mode=="cloud" {Section("允许发送的课程") {
+                        if state.mode=="cloud" || state.mode=="chatgpt" {Section("允许发送的课程") {
                             ForEach(state.availableCourses,id:\.self){course in Toggle(course,isOn:Binding(get:{state.cloudCourses.contains(course)},set:{if $0{state.cloudCourses.insert(course)}else{state.cloudCourses.remove(course)}}))}
                             if state.availableCourses.isEmpty {Text("尚未添加课程").foregroundStyle(.secondary)}
-                            Text("仅发送确认材料，不发送个人任务或凭据。每天最多20次请求（含失败），可能产生费用。").font(.caption).foregroundStyle(.secondary)
+                            Text(state.mode=="chatgpt" ? "仅发送已授权的老师原文。默认每小时60次，官方套餐额度另外生效。":"仅发送确认材料，不发送个人任务或凭据。每天最多20次请求（含失败），可能产生费用。").font(.caption).foregroundStyle(.secondary)
                         }}
                         Section("助手识别") {
                             Button("准备识别材料…"){state.action?("skill-export")}
@@ -741,6 +774,8 @@ private struct SettingsWorkspace:View {
     @Published var workbenchStatus:[String:String]=[:]
     @Published var workbenchActive:String?
     @Published var workbenchReview=false
+    @Published var workbenchFiles=true
+    @Published var embeddedSubmissions:[String:NSView]=[:]
     var workbenchPaths:[String:String]=[:]
     var workbenchEvidence:String?
     var loadWorkbench:((String,String,String,@escaping (NSDictionary,NSView?)->Void)->Void)?
@@ -841,8 +876,12 @@ private struct AssignmentBoard: View {
         let suggested = string(row,"suggestedTitle")
         return suggested.isEmpty || flag(row,"confirmed") ? string(row,"title") : suggested
     }
+    private func normalizedChecks(_ row:NSDictionary)->[NSDictionary] {state.workbenchReports[identifier(row)]?["checks"] as? [NSDictionary] ?? []}
+    private func normalizedRequirementCount(_ row:NSDictionary)->Int {let checks=normalizedChecks(row);if !checks.isEmpty{return checks.count};return (row["requirementItems"] as? [NSDictionary] ?? []).filter{string($0,"origin")=="llm"}.count}
     private func requirements(_ row: NSDictionary) -> String {
-        if let items=row["requirementItems"] as? [NSDictionary], !items.isEmpty {return items.map{string($0,"text")}.joined(separator:"\n\n")}
+        let checks=normalizedChecks(row)
+        if !checks.isEmpty {return checks.map{string($0,"requirement")}.joined(separator:"\n\n")}
+        if let items=row["requirementItems"] as? [NSDictionary], !items.isEmpty {return items.map{item in let condition=string(item,"condition");return string(item,"text")+(condition.isEmpty ? "":"（\(condition)）")}.joined(separator:"\n\n")}
         let saved = string(row,"sourceRequirements")
         return saved.isEmpty ? string(row,"submissionRequirements") : saved
     }
@@ -853,6 +892,7 @@ private struct AssignmentBoard: View {
         state.workbenchEvidence = evidence
         state.workbenchReview = false
         state.showingDetail = true
+        state.action?("workbench-navigation",id)
     }
     private func toggleHidden(_ id: String) {
         var next = hidden
@@ -892,7 +932,7 @@ private struct AssignmentBoard: View {
                     Button(hidden.contains(id) ? "恢复显示":"隐藏作业"){toggleHidden(id)}
                 } label:{Image(systemName:"ellipsis").accessibilityLabel("作业选项")}.menuStyle(.borderlessButton).fixedSize()}.frame(height:18)
                 Spacer().frame(height:92)
-                WorkspaceButton(title:"作业要求 · \((row["requirementItems"] as? [NSDictionary])?.count ?? 0) 条",identity:"assignment-requirements-"+id) { ui.expanded.insert(id) }.fixedSize()
+                WorkspaceButton(title:normalizedRequirementCount(row)==0 ? "查看老师要求":"作业要求 · \(normalizedRequirementCount(row)) 条",identity:"assignment-requirements-"+id) { ui.expanded.insert(id) }.fixedSize()
                     .popover(isPresented:Binding(get:{ui.expanded.contains(id)},set:{if !$0{ui.expanded.remove(id)}})) {
                         ScrollView {VStack(alignment:.leading,spacing:12) {
                             Text("作业要求").font(.headline)
@@ -925,13 +965,11 @@ private struct AssignmentBoard: View {
                     Text("全部课程").tag("")
                     ForEach(courses,id:\.self){Text($0).tag($0)}
                 }.labelsHidden().fixedSize()
-                WorkspaceButton(title:"课程管理",enabled:true,prominent:false,identity:"assignment-course-management"){state.managingCourses=true}.fixedSize()
+                WorkspaceButton(title:"课程管理",enabled:true,prominent:false,identity:"assignment-course-management"){state.managingCourses=true;state.action?("workbench-navigation","")}.fixedSize()
                 Button { state.action?("new-assignment","") } label: { Label("添加作业",systemImage:"plus") }
-            }.padding(8).amGlassChrome()
+            }.padding(.vertical,4)
             HStack {
-                Picker("作业状态",selection:$ui.history) {
-                    Text("进行中").tag(false); Text("历史").tag(true)
-                }.pickerStyle(.segmented).labelsHidden().frame(width:180)
+                WorkspaceSegments(labels:["进行中","历史"],selection:Binding(get:{ui.history ? 1:0},set:{ui.history=$0==1})).frame(width:180,height:28)
                 Spacer()
                 Toggle("显示隐藏作业",isOn:$ui.showHidden).toggleStyle(.checkbox)
             }
@@ -966,6 +1004,26 @@ private struct AssignmentBoard: View {
     @Published var selection: String = ""
     @Published var teacher: Bool = true
 }
+private struct WorkbenchSplitAnchor:NSViewRepresentable {
+    final class Anchor:NSView {
+        override func viewDidMoveToWindow(){
+            super.viewDidMoveToWindow()
+            DispatchQueue.main.async{[weak self] in
+                var parent=self?.superview
+                while let view=parent {
+                    if let split=view as? NSSplitView {
+                        // Separate configurations avoid restoring three-column coordinates into two panes.
+                        split.autosaveName="AMAssignmentWorkbench-\(split.subviews.count)"
+                        break
+                    }
+                    parent=view.superview
+                }
+            }
+        }
+    }
+    func makeNSView(context:Context)->NSView{Anchor()}
+    func updateNSView(_ view:NSView,context:Context){}
+}
 private struct AssignmentWorkbench: View {
     @StateObject private var ui = AssignmentWorkbenchState()
     @ObservedObject var state: CourseState
@@ -978,7 +1036,7 @@ private struct AssignmentWorkbench: View {
         let request = UUID()
         ui.generation = request
         ui.selection = path
-        ui.teacher = mode == "teacher" || mode == "evidence" || mode == "teacher-requirements"
+        ui.teacher = mode == "teacher" || mode == "evidence" || mode == "teacher-requirements" || mode.hasPrefix("teacher-quote:")
         state.workbenchPaths[id] = ui.teacher ? "" : path
         ui.previewError = ""
         state.loadWorkbench?(id,path,mode) { result, view in
@@ -1050,12 +1108,16 @@ private struct AssignmentWorkbench: View {
             } else { ProgressView().controlSize(.small).frame(maxWidth:.infinity,maxHeight:.infinity) }
         }
     }
-    private var inspector: some View {
-        VStack(alignment:.leading,spacing:12) {
-            Picker("作业操作",selection:$ui.tab) {
-                Text("提交").tag(0);Text("AI 检查").tag(1);Text("历史").tag(2)
-            }.pickerStyle(.segmented).labelsHidden()
-            if ui.tab==0 {
+    private var submissionContent:some View {VStack(alignment:.leading,spacing:12){
+            if let pane=state.embeddedSubmissions[id] {
+                VStack(alignment:.leading,spacing:4){
+                    Text(flag(record,"completed") ? "任务已完成":"任务进行中").font(.headline)
+                    Text(string(record,"remoteVerification").isEmpty ? "尚无远端核验记录":string(record,"remoteVerification")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(string(record,"localProgress")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    if !string(record,"pushAction").isEmpty {Button(string(record,"pushAction")=="retry-task-push" ? "重试推送":"核验推送"){state.action?(string(record,"pushAction"),id)}}
+                }.frame(maxWidth:.infinity,alignment:.leading).frame(height:88,alignment:.topLeading)
+                TaskNativeSupplement(content:pane).frame(maxWidth:.infinity,maxHeight:.infinity)
+            } else {
                 Text(flag(record,"completed") ? "任务已完成":"任务进行中").font(.headline)
                 if flag(record,"gitCourse") {
                     Text("远端核验").font(.headline)
@@ -1070,7 +1132,9 @@ private struct AssignmentWorkbench: View {
                         state.action?(action.isEmpty ? "submit-task":action,id)
                     }.buttonStyle(.borderedProminent).disabled(state.paused)
                 }
-            } else if ui.tab==1 {
+            }
+    }.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)}
+    private var checkContent:some View {VStack(alignment:.leading,spacing:12){
                 if let report=state.workbenchReports[id] {
                     if let changed=state.workbenchStale[id], !changed.isEmpty {Text(changed.contains("*") ? "老师要求已更新，旧结果仅供参考。":"部分文件已变化，对应检查结果需要更新。").font(.caption).foregroundStyle(.orange)}
                     ScrollView { checkReport(report).frame(maxWidth:.infinity,alignment:.topLeading).padding(.top,4) }.id(id+"-report")
@@ -1092,7 +1156,8 @@ private struct AssignmentWorkbench: View {
 
                 }
                 }.frame(height:88,alignment:.bottomLeading)
-            } else {
+    }.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)}
+    private var historyContent:some View {
                 ScrollView {
                     VStack(alignment:.leading,spacing:10) {
                         historyGroup("个人提交",key:"personalHistory",title:"message")
@@ -1100,8 +1165,18 @@ private struct AssignmentWorkbench: View {
                         historyGroup("老师发布",key:"teacherHistory",title:"title")
                     }.frame(maxWidth:.infinity,alignment:.leading)
                 }
-            }
-        }.padding(12)
+    }
+    private var inspector:some View {
+        VStack(alignment:.leading,spacing:12){
+            WorkspaceSegments(labels:["提交","AI 检查","历史"],selection:$ui.tab).fixedSize().frame(maxWidth:.infinity,alignment:.center).frame(height:28)
+            // Keep each pane mounted. Tabs change visibility only, preserving
+            // native scroll positions and a constant layout negotiation.
+            ZStack(alignment:.topLeading){
+                submissionContent.opacity(ui.tab==0 ? 1:0).allowsHitTesting(ui.tab==0).disabled(ui.tab != 0).accessibilityHidden(ui.tab != 0)
+                checkContent.opacity(ui.tab==1 ? 1:0).allowsHitTesting(ui.tab==1).disabled(ui.tab != 1).accessibilityHidden(ui.tab != 1)
+                historyContent.opacity(ui.tab==2 ? 1:0).allowsHitTesting(ui.tab==2).disabled(ui.tab != 2).accessibilityHidden(ui.tab != 2)
+            }.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading)
+        }.frame(maxWidth:.infinity,maxHeight:.infinity,alignment:.topLeading).padding(12).transaction{$0.animation=nil}
     }
     private func evidence(_ row:NSDictionary) -> some View {
         let path=string(row,"viewPath").isEmpty ? string(row,"path"):string(row,"viewPath")
@@ -1136,7 +1211,7 @@ private struct AssignmentWorkbench: View {
                 if !string(report,"failure").isEmpty { Text(string(report,"failure")).font(.caption) }
             }.padding(10).frame(maxWidth:.infinity,alignment:.leading)
                 .background((string(report,"tone")=="warning" ? Color.orange:Color.accentColor).opacity(0.12),in:RoundedRectangle(cornerRadius:8))
-            Text("逐条对照作业要求").font(.headline)
+            Text((report["checks"] as? [NSDictionary] ?? []).isEmpty ? "文件检查":"逐条对照作业要求").font(.headline)
             if let checks=report["checks"] as? [NSDictionary], !checks.isEmpty {
                 ForEach(workspaceRows(checks,key:"requirementID")) { row in
                     let status=string(row.record,"status")
@@ -1144,12 +1219,16 @@ private struct AssignmentWorkbench: View {
                         Text(["checked":"已核对","partial":"部分满足","issue":"发现问题","missing-material":"材料不足","unchecked":"尚未检查"][status] ?? "尚未检查")
                             .font(.caption.weight(.semibold)).foregroundStyle(status=="checked" ? Color.green:Color.orange)
                         Text(.init(string(row.record,"requirement"))).fontWeight(.medium)
+                        if !string(row.record,"condition").isEmpty {Text("适用条件："+string(row.record,"condition")).font(.caption).foregroundStyle(.secondary)}
                         Text(string(row.record,"reason")).foregroundStyle(.secondary)
+                        if let source=row.record["requirementSource"] as? NSDictionary {
+                            DisclosureGroup("老师原文依据"){Text(string(source,"quote")).font(.caption).textSelection(.enabled);Button("查看老师要求"){open(self.source,mode:"teacher-quote:"+Data(string(source,"quote").utf8).base64EncodedString())}}
+                        }
                         evidence(row.record)
                     }
                     Divider()
                 }
-            } else { Text("缺少可核对的老师要求。").foregroundStyle(.secondary) }
+            } else { Text("文件检查不判断作答内容。可确认材料后运行 AI 检查，提炼并逐条核对老师要求。").foregroundStyle(.secondary) }
             if let issues=report["issues"] as? [NSDictionary], !issues.isEmpty {
                 Text("优先修改").font(.headline)
                 ForEach(workspaceRows(issues)) { row in
@@ -1180,13 +1259,9 @@ private struct AssignmentWorkbench: View {
         }
     }
     var body: some View {
-        let narrow=width<1100
+        let narrow=width<1040
         VStack(alignment:.leading,spacing:0) {
             HStack {
-                WorkspaceButton(title:"返回",identity:"assignment-back"){if state.review.resolve(){state.showingDetail=false}}.fixedSize().accessibilityLabel("返回作业看板")
-                Button { ui.showFiles.toggle(); if narrow && ui.showFiles { ui.showInspector=false } } label: {
-                    Label("文件",systemImage:"sidebar.left")
-                }.help("显示或收起文件树")
                 VStack(alignment:.leading,spacing:3) {
                     Text(string(record,"title")).font(.headline).lineLimit(1)
                     if let due=record["due"] as? Date {
@@ -1195,32 +1270,53 @@ private struct AssignmentWorkbench: View {
                     }
                 }
                 Spacer()
-                if !flag(record,"confirmed") || flag(record,"sourceUpdate") {
+                if width<1000 {
+                    Menu {
+                        if !flag(record,"confirmed") || flag(record,"sourceUpdate") {
+                            Button("审核作业") {state.workbenchReview=true}
+                        } else {Button("编辑任务"){state.action?("edit-task",id)}}
+                        if flag(record,"gitCourse") {
+                            Button("评语"){state.action?("feedback-task",id)}
+                            Button("同学作业"){state.action?("peer-task",id)}
+                        }
+                    } label:{Image(systemName:"ellipsis")}.help("作业操作")
+                } else if !flag(record,"confirmed") || flag(record,"sourceUpdate") {
                     Button(flag(record,"sourceUpdate") ? "审核更新":"审核作业") { state.workbenchReview=true }
                         .buttonStyle(.borderedProminent)
                 } else { Button("编辑任务") { state.action?("edit-task",id) } }
-                if flag(record,"gitCourse") {
+                if width>=1000 && flag(record,"gitCourse") {
                     Button("评语") { state.action?("feedback-task",id) }
                     Button("同学作业") { state.action?("peer-task",id) }
                 }
-                Button { ui.showInspector.toggle(); if narrow && ui.showInspector { ui.showFiles=false } } label: {
+                Button { ui.showInspector.toggle(); if narrow && ui.showInspector { state.workbenchFiles=false } } label: {
                     Label("提交与检查",systemImage:"sidebar.right")
-                }.help("显示或收起提交、检查和历史")
-            }.padding(.horizontal,12).frame(height:56).amGlassChrome()
+                }.labelStyle(.iconOnly).help("显示或收起提交、检查和历史")
+            }.amSecondaryActions().padding(.horizontal,12).frame(height:44)
             Divider()
-            HSplitView {
-                if ui.showFiles { filePane.frame(minWidth:155,idealWidth:195,maxWidth:270) }
-                readingPane.frame(minWidth:240,maxWidth:.infinity,maxHeight:.infinity)
-                if ui.showInspector && (!narrow || !ui.showFiles) { inspector.frame(minWidth:210,idealWidth:260,maxWidth:340) }
+            if width<800 {
+                // Compact windows navigate between panes instead of squeezing the document.
+                if ui.showInspector {inspector}
+                else if state.workbenchFiles {filePane}
+                else {readingPane}
+            } else {
+                HSplitView {
+                    if state.workbenchFiles { filePane.frame(minWidth:180,idealWidth:220,maxWidth:280) }
+                    readingPane.frame(minWidth:480,maxWidth:.infinity,maxHeight:.infinity)
+                    if ui.showInspector && (!narrow || !state.workbenchFiles) { inspector.frame(minWidth:280,idealWidth:320,maxWidth:400) }
+                }.background(WorkbenchSplitAnchor())
             }
         }.onAppear {
-            ui.showFiles = !narrow
-            if !flag(record,"gitCourse"){ui.loaded=true;ui.showFiles=false;return}
+            state.workbenchFiles = !narrow
+            if width<800 {ui.showInspector=false}
+            if !flag(record,"gitCourse"){ui.loaded=true;state.workbenchFiles=false;return}
+            state.action?("workbench-enter",id)
             refresh()
             let path=state.workbenchPaths[id] ?? ""
             if let evidence=state.workbenchEvidence { state.workbenchEvidence=nil;open(source,mode:evidence) }
             else { open(path.isEmpty ? source:path,mode:path.isEmpty ? "teacher":"working") }
-        }.onChange(of:string(record,"teacherVersion")) { _ in
+        }.onChange(of:width<1040){small in if small{state.workbenchFiles=false}}
+        .onChange(of:width<800){small in if small{ui.showInspector=false}}
+        .onChange(of:string(record,"teacherVersion")) { _ in
             if state.workbenchReports[id] != nil {state.workbenchStale[id,default:[]].insert("*")}
             refresh()
             if ui.teacher { open(source,mode:"teacher") }
@@ -1313,10 +1409,7 @@ private struct CourseWorkspace:View {
     var body:some View {
         GeometryReader { geometry in
             if state.assignmentBoard && state.managingCourses {
-                VStack(alignment:.leading,spacing:0) {
-                    Button("返回作业看板"){state.managingCourses=false}.buttonStyle(.link).padding(12)
-                    summaries
-                }
+                summaries
             }
             else if state.assignmentBoard {
                 ZStack {
@@ -1364,6 +1457,11 @@ private struct CourseWorkspace:View {
         get { state.loadWorkbench }
         set { state.loadWorkbench=newValue }
     }
+    @objc public func setEmbeddedSubmission(_ view:NSView,forAssignment id:String){state.embeddedSubmissions[id]=view}
+    @objc public var showingWorkbench:Bool {state.showingDetail && state.current != nil}
+    @objc public var showingCourseManagement:Bool {state.assignmentBoard && state.managingCourses}
+    @objc public func toggleWorkbenchFiles(){state.workbenchFiles.toggle()}
+    @objc public func returnToBoard(){if state.review.resolve(){state.showingDetail=false;state.managingCourses=false;state.action?("workbench-back",state.selected ?? "")}}
     @objc public func setWorkbenchActive(_ id:String?) {state.workbenchActive=id}
     @objc public func setWorkbenchStatus(_ message:String, forAssignment id:String) {state.workbenchStatus[id]=message}
     @objc public func setWorkbenchReport(_ report:NSDictionary, forAssignment id:String) {
@@ -1803,14 +1901,23 @@ private struct QuickEntryView:View {
             }
         }else{Text("未选择作业").foregroundStyle(.secondary)}}.formStyle(.grouped).controlSize(.regular).textFieldStyle(.roundedBorder).environment(\.timeZone,TimeZone(identifier:state.current.map{string($0,"timeZone")} ?? "") ?? .current)
     }
-    var body:some View {GeometryReader{geo in VStack(alignment:.leading,spacing:12){
-        HStack{Text("从文字或截图录入").font(.title2.bold());Spacer();Button("保存草稿并关闭"){state.send("close")}.keyboardShortcut(.cancelAction)}
-
-        HStack(alignment:.top,spacing:8){CaptureTextEditor(text:$state.text).frame(height:state.ocrImage == nil ? 90:150).overlay(RoundedRectangle(cornerRadius:6).stroke(Color(nsColor:.separatorColor)));if let image=state.ocrImage{VStack(alignment:.leading,spacing:4){Image(nsImage:image).resizable().scaledToFit().frame(maxHeight:100).accessibilityLabel("录入截图原图");ScrollView{Text(state.ocrWarnings).font(.caption).foregroundStyle(.orange).textSelection(.enabled)}.frame(height:40);HStack{Button("放大原图…"){state.ocrBoxes=[];state.showingOriginal=true};Button("关闭"){state.ocrImage=nil}.accessibilityLabel("关闭截图对照")}}.frame(width:min(260,geo.size.width * 0.36))}}.onChange(of:state.text){_ in state.send("draft")}.task(id:state.text){let value=state.text;try? await Task.sleep(nanoseconds:450_000_000);if !Task.isCancelled && !state.busy && !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && state.parsedText != value{state.send("source-changed")}}
+    @ViewBuilder private func inputContent(_ size:CGSize,compact:Bool)->some View {
+        VStack(alignment:.leading,spacing:12){
+        HStack(alignment:.top,spacing:8){CaptureTextEditor(text:$state.text).frame(height:state.ocrImage == nil ? 90:150).overlay(RoundedRectangle(cornerRadius:6).stroke(Color(nsColor:.separatorColor)));if let image=state.ocrImage{VStack(alignment:.leading,spacing:4){Image(nsImage:image).resizable().scaledToFit().frame(maxHeight:100).accessibilityLabel("录入截图原图");ScrollView{Text(state.ocrWarnings).font(.caption).foregroundStyle(.orange).textSelection(.enabled)}.frame(height:40);HStack{Button("放大原图…"){state.ocrBoxes=[];state.showingOriginal=true};Button("关闭"){state.ocrImage=nil}.accessibilityLabel("关闭截图对照")}}.frame(width:min(260,size.width * 0.36))}}.onChange(of:state.text){_ in state.send("draft")}.task(id:state.text){let value=state.text;try? await Task.sleep(nanoseconds:450_000_000);if !Task.isCancelled && !state.busy && !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && state.parsedText != value{state.send("source-changed")}}
         HStack{Button("粘贴"){state.send("paste")};Button("选择截图…"){state.send("image")};WorkspaceButton(title:"空白创建…",identity:"quick-manual"){state.send("manual")};WorkspaceButton(title:"重新识别",enabled:!state.busy,prominent:false,identity:"quick-parse"){state.send("parse")}.fixedSize();Button("助手识别…"){state.send("skill")};Spacer();if state.busy{ProgressView().progressViewStyle(.linear).frame(width:160)}}
         HStack{Toggle("指定消息日期",isOn:$state.explicitReference).onChange(of:state.explicitReference){_ in state.send("draft")};if state.explicitReference{DatePicker("",selection:$state.reference).labelsHidden().onChange(of:state.reference){_ in state.send("draft")}};Spacer()}
         HStack{Button("全选"){for i in state.entries.indices{let copy=state.entries[i].mutableCopy() as! NSMutableDictionary;copy["selected"]=true;state.entries[i]=copy};state.send("draft")};Button("取消选择"){for i in state.entries.indices{let copy=state.entries[i].mutableCopy() as! NSMutableDictionary;copy["selected"]=false;state.entries[i]=copy};state.send("draft")};Text("已选 \(state.entries.filter{flag($0,"selected")}.count) / \(state.entries.count)").foregroundStyle(.secondary);Spacer()}
-        if geo.size.width<760{VStack(spacing:0){rows.frame(height:150);Divider();details}}else{HStack(spacing:0){rows.frame(width:260);Divider();details}}
+        Group{if size.width<760{VStack(spacing:0){rows.frame(height:110);Divider();details}}else{HStack(spacing:0){rows.frame(width:260);Divider();details}}}.frame(height:compact ? 340:nil)
+        }
+    }
+    var body:some View {GeometryReader{geo in VStack(alignment:.leading,spacing:12){
+        HStack{Text("从文字或截图录入").font(.title2.bold());Spacer();Button("保存草稿并关闭"){state.send("close")}.keyboardShortcut(.cancelAction)}
+
+        // Keep dismissal and Save outside the scrolling region. Fixed minimum
+        // form heights must not expand a compact sheet beyond its parent window.
+        if geo.size.height<650 {
+            ScrollView{inputContent(geo.size,compact:true)}.frame(minHeight:0,maxHeight:.infinity)
+        } else {inputContent(geo.size,compact:false).frame(minHeight:0,maxHeight:.infinity)}
         if !state.notice.isEmpty {HStack(alignment:.top){Text(state.notice).font(.callout).textSelection(.enabled).accessibilityIdentifier("quick-status");Spacer();Button{state.dismissNotice()}label:{Image(systemName:"xmark")}.buttonStyle(.plain).accessibilityLabel("关闭提示")}}
         HStack{Button("手动导入助手结果…"){state.send("import")};Spacer();WorkspaceButton(title:"保存选中作业",enabled:!state.busy && state.entries.contains{flag($0,"selected")},prominent:true,identity:"quick-save",saveShortcut:true){state.send("save")}.fixedSize()}
     }.padding(16).font(.system(size:13)).background(Color(nsColor:AMAppearance.canvas)).tint(Color(nsColor:AMAppearance.accent)).amSecondaryActions().accessibilityElement(children:.contain)

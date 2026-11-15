@@ -149,13 +149,11 @@ NSToolbarItem *PopupToolbarItem(NSString *identifier,NSString *label,NSPopUpButt
 @implementation ThemeSegmentedControl
 - (void)chooseToolbarSegment:(NSMenuItem *)sender {NSInteger index=sender.tag;if(index<0 || index>=self.segmentCount)return;self.selectedSegment=index;[NSApp sendAction:self.action to:self.target from:self];}
 - (BOOL)validateMenuItem:(NSMenuItem *)item {item.state=self.selectedSegment==item.tag ? NSControlStateValueOn:NSControlStateValueOff;return self.enabled;}
-- (void)drawRect:(NSRect)dirtyRect { [super drawRect:dirtyRect]; }
-- (void)mouseDown:(NSEvent *)event { [super mouseDown:event]; self.needsDisplay = YES; }
-- (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay = YES; }
 @end
 static ThemeSegmentedControl *AMSegments(NSArray<NSString *> *labels,id target,SEL action,BOOL navigation) {
-    ThemeSegmentedControl *control=[[ThemeSegmentedControl alloc] initWithFrame:NSZeroRect];control.segmentCount=labels.count;
-    for(NSInteger index=0;index<(NSInteger)labels.count;index++)[control setLabel:labels[index] forSegment:index];
+    // Use the native constructor and rendering lifecycle. No app-level drawing
+    // or mouse tracking override is needed for these system material controls.
+    ThemeSegmentedControl *control=[ThemeSegmentedControl segmentedControlWithLabels:labels trackingMode:NSSegmentSwitchTrackingSelectOne target:target action:action];
     control.segmentStyle=NSSegmentStyleAutomatic;control.controlSize=NSControlSizeRegular;control.segmentDistribution=NSSegmentDistributionFit;
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
     if(@available(macOS 26.0,*))control.borderShape=NSControlBorderShapeCapsule;
@@ -167,11 +165,29 @@ static ThemeSegmentedControl *AMSegments(NSArray<NSString *> *labels,id target,S
 }
 ThemeSegmentedControl *Segments(NSArray<NSString *> *labels,id target,SEL action){return AMSegments(labels,target,action,YES);}
 ThemeSegmentedControl *FilterSegments(NSArray<NSString *> *labels,id target,SEL action){return AMSegments(labels,target,action,NO);}
+@interface AMSegmentToolbarTarget:NSObject<NSToolbarItemValidation>
+@property(weak) NSSegmentedControl *control;
+- (void)choose:(NSToolbarItemGroup *)sender;
+@end
+@implementation AMSegmentToolbarTarget
+- (void)choose:(NSToolbarItemGroup *)sender{NSInteger index=sender.selectedIndex;if(index<0 || index>=self.control.segmentCount)return;self.control.selectedSegment=index;[NSApp sendAction:self.control.action to:self.control.target from:self.control];}
+- (BOOL)validateToolbarItem:(NSToolbarItem *)item{return self.control.enabled;}
+@end
+void AMSyncSegmentToolbarItem(NSToolbarItem *item){
+    AMSegmentToolbarTarget *target=objc_getAssociatedObject(item,@selector(choose:));
+    if([item isKindOfClass:NSToolbarItemGroup.class] && [target isKindOfClass:AMSegmentToolbarTarget.class]){[(NSToolbarItemGroup *)item setSelectedIndex:target.control.selectedSegment];item.enabled=target.control.enabled;}
+}
 NSToolbarItem *SegmentToolbarItem(NSString *identifier,NSString *label,NSSegmentedControl *control){
-    NSToolbarItem *item=[[NSToolbarItem alloc] initWithItemIdentifier:identifier];item.label=label;control.accessibilityLabel=label;[control sizeToFit];item.view=control;
-    NSMenuItem *overflow=[[NSMenuItem alloc] initWithTitle:label action:nil keyEquivalent:@""];NSMenu *menu=[[NSMenu alloc] initWithTitle:label];
-    for(NSInteger index=0;index<control.segmentCount;index++){NSMenuItem *choice=[menu addItemWithTitle:[control labelForSegment:index] action:@selector(chooseToolbarSegment:) keyEquivalent:@""];choice.tag=index;choice.target=control;}
-    overflow.submenu=menu;item.menuFormRepresentation=overflow;return item;
+    // Let AppKit create and own the segmented toolbar representation. A body
+    // segmented control can carry constraints from a different layout engine.
+    NSMutableArray *titles=NSMutableArray.array;for(NSInteger i=0;i<control.segmentCount;i++)[titles addObject:[control labelForSegment:i] ?: @""];
+    AMSegmentToolbarTarget *target=AMSegmentToolbarTarget.new;target.control=control;
+    NSToolbarItemGroup *item=[NSToolbarItemGroup groupWithItemIdentifier:identifier titles:titles selectionMode:NSToolbarItemGroupSelectionModeSelectOne labels:titles target:target action:@selector(choose:)];item.label=label;
+    objc_setAssociatedObject(item,@selector(choose:),target,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 270000
+    if(@available(macOS 27.0,*))item.role=control.role==NSSegmentedControlRoleValueSelection ? NSToolbarItemGroupRoleValueSelection:NSToolbarItemGroupRoleTabs;
+#endif
+    AMSyncSegmentToolbarItem(item);return item;
 }
 #import "AMNativeUI.inc"
 #import "AMProgressUI.inc"

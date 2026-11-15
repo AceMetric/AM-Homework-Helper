@@ -1,0 +1,36 @@
+[
+  {
+    "id": "plain-en-report",
+    "teacher": "Submit one PDF explaining the experiment and the measured units. No separate notebook is needed.",
+    "expectedDeliverables": [
+      "PDF实验说明",
+      "单位"
+    ]
+  },
+  {
+    "id": "optional-simulation",
+    "teacher": "# Lab submission\nComplete the sensor calibration and hand in a short report.\nOptional: animate the results; skipping animation does not reduce credit.",
+    "expectedDeliverables": [
+      "校准",
+      "报告"
+    ]
+  },
+  {
+    "id": "tool-boundary",
+    "teacher": "# Practice\nThe toolkit already loads audio and draws the waveform.\nImplement your own frequency estimator and explain its error.\nDo not submit the toolkit or environment folders.",
+    "expectedDeliverables": [
+      "频率估计",
+      "误差说明",
+      "提交范围"
+    ]
+  },
+  {
+    "id": "shared-date-pair",
+    "teacher": "All work below is due 12/03; time is not specified.\nReading: Chapter 4, write a reading note.\nPractice: implement insertion sort and explain complexity.\nThe classroom demo is tomorrow.",
+    "expectedDeliverables": [
+      "阅读笔记",
+      "排序实践",
+      "共享日期与缺时刻"
+    ]
+  }
+]

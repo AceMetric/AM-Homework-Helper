@@ -1,0 +1,32 @@
+[
+  {
+    "id": "conditional-en",
+    "teacher": "You may skip familiar exercises only if you identify them and include an equally substantial original investigation.",
+    "expectedDeliverables": [
+      "条件性跳题与探索"
+    ]
+  },
+  {
+    "id": "report-media",
+    "teacher": "交一份 PDF 报告，包含实验方法、结果和两张测量图片；不要求上传原始全部数据。",
+    "expectedDeliverables": [
+      "PDF 报告",
+      "方法结果和图片"
+    ]
+  },
+  {
+    "id": "schedule",
+    "teacher": "First practice session tomorrow. Homework: implement three sorting algorithms, due 11/10.",
+    "expectedDeliverables": [
+      "三个排序算法"
+    ]
+  },
+  {
+    "id": "provided-code",
+    "teacher": "starter.py 已实现文件读取。请完成 analyze() 并比较两种数值积分方法的误差，不要修改输入数据。",
+    "expectedDeliverables": [
+      "分析方法与误差比较",
+      "输入数据约束"
+    ]
+  }
+]

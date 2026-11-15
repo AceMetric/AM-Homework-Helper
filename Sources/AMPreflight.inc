@@ -279,6 +279,28 @@ static BOOL PFValidRegion(id value){
         [region[0] doubleValue]+[region[2] doubleValue]<=1 && [region[1] doubleValue]+[region[3] doubleValue]<=1;
 }
 
+// Model-written labels are accepted through verbatim teacher-source anchors,
+// never by treating their paraphrase as an original line or trusting answer text.
+static NSArray *PFValidatedSemanticRequirements(id raw,NSDictionary *context){
+    NSArray *lines=[(context[@"requirements"] ?: @"") componentsSeparatedByString:@"\n"];
+    NSString *version=AMPreflightHash([(context[@"requirements"] ?: @"") dataUsingEncoding:NSUTF8StringEncoding]);
+    NSMutableArray *items=NSMutableArray.array;NSMutableSet *seen=NSMutableSet.set;
+    for(id candidate in [raw isKindOfClass:NSArray.class] ? raw:@[]){
+        if(![candidate isKindOfClass:NSDictionary.class])continue;
+        NSString *text=[candidate[@"text"] isKindOfClass:NSString.class] ? RTrim(candidate[@"text"]):@"";
+        NSString *quote=[candidate[@"quote"] isKindOfClass:NSString.class] ? candidate[@"quote"]:@"";
+        NSString *condition=[candidate[@"condition"] isKindOfClass:NSString.class] ? candidate[@"condition"]:@"";
+        NSNumber *number=candidate[@"line"];
+        if(!text.length || text.length>400 || !quote.length || quote.length>1200 || condition.length>400 || ![number isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)number)==CFBooleanGetTypeID() || number.doubleValue!=floor(number.doubleValue) || number.integerValue<1 || number.unsignedIntegerValue>lines.count)continue;
+        NSUInteger start=number.unsignedIntegerValue-1,count=[quote componentsSeparatedByString:@"\n"].count;
+        if(count>16 || start+count>lines.count)continue;
+        NSString *window=[[lines subarrayWithRange:NSMakeRange(start,count)] componentsJoinedByString:@"\n"];
+        if(![window containsString:quote] || [seen containsObject:text])continue;
+        [seen addObject:text];NSString *identifier=AMPreflightHash([[NSString stringWithFormat:@"%@|%@|%@|%@",version,number,quote,text] dataUsingEncoding:NSUTF8StringEncoding]);
+        [items addObject:@{@"id":identifier,@"text":text,@"condition":condition,@"line":number,@"quote":quote,@"sourceVersion":version,@"origin":@"llm"}];if(items.count>=40)break;
+    }return items;
+}
+NSArray *AMPreflightSemanticRequirements(id raw,NSString *teacher){return PFValidatedSemanticRequirements(raw,@{@"requirements":teacher ?: @""});}
 NSDictionary *AMPreflightValidateResult(id result,NSDictionary *context,NSError **error){
     if(![result isKindOfClass:NSDictionary.class] || ![result[@"format"] isEqual:@"am-preflight-results-v1"] || ![result[@"batchID"] isEqual:context[@"batchID"]] || ![result[@"reportVersion"] isEqual:context[@"reportVersion"]] || ![result[@"findings"] isKindOfClass:NSArray.class] || [result[@"findings"] count]>1000 || ![result[@"checked"] isKindOfClass:NSArray.class] || ![result[@"unverified"] isKindOfClass:NSArray.class] || [result[@"checked"] count]>1000 || [result[@"unverified"] count]>1000){if(error)*error=RError(@"复核结果格式或版本不匹配。");return nil;}
     NSMutableDictionary *sources=NSMutableDictionary.dictionary;for(NSDictionary *d in context[@"documents"])sources[d[@"path"]]=d;for(NSDictionary *d in context[@"images"])sources[d[@"path"]]=d;
@@ -299,7 +321,8 @@ NSDictionary *AMPreflightValidateResult(id result,NSDictionary *context,NSError 
     for(id reason in result[@"unverified"])if([reason isKindOfClass:NSString.class] && [reason length]<1000 && !SSContainsSecret([reason dataUsingEncoding:NSUTF8StringEncoding]))[unverified addObject:reason];
     for(NSString *path in [[sources allKeys] sortedArrayUsingSelector:@selector(compare:)])if(![checked containsObject:path]){BOOL explained=NO;for(NSString *reason in unverified)if([reason hasPrefix:[path stringByAppendingString:@"："]] || [reason hasPrefix:[path stringByAppendingString:@":"]]){explained=YES;break;}if(!explained)[unverified addObject:[NSString stringWithFormat:@"%@：未返回检查结果",path]];}
     if(context[@"imageOccurrences"] && ![context[@"questionLinks"] count] && ![context[@"verifiedTextRequirements"] count])[unverified addObject:@"未关联实际题目，尚未核对解答对应关系与要求完整性。"];
-    NSArray *requirementItems=context[@"requirementItems"] ?: SSRequirementItems(context[@"requirements"] ?: @"",@"",context[@"snapshotVersion"] ?: @"");
+    NSArray *semantic=PFValidatedSemanticRequirements(result[@"semanticRequirements"],context);
+    NSArray *requirementItems=result[@"semanticRequirements"] ? semantic:(context[@"requirementItems"] ?: SSRequirementItems(context[@"requirements"] ?: @"",@"",context[@"snapshotVersion"] ?: @""));
     NSSet *requirementTexts=[NSSet setWithArray:[requirementItems valueForKey:@"text"]];
     NSMutableArray *requirementChecks=NSMutableArray.array;
     for(id check in [result[@"requirementChecks"] isKindOfClass:NSArray.class] ? result[@"requirementChecks"]:@[]){
@@ -322,11 +345,21 @@ NSDictionary *AMPreflightValidateResult(id result,NSDictionary *context,NSError 
         // 要求覆盖必须同时具备实际题目与同版本依据，模型声称“通过”本身不能打勾。
         BOOL hasQuestion=[context[@"questionLinks"] count] ||
             ([context[@"verifiedTextRequirements"] isKindOfClass:NSArray.class] && [context[@"verifiedTextRequirements"] containsObject:check[@"requirement"]]);
+        if(!hasQuestion && semantic.count){
+            // A normalized label is a paraphrase: establish trust through its
+            // validated teacher quote, rather than requiring literal label equality.
+            NSString *verified=[[context[@"verifiedTextRequirements"] isKindOfClass:NSArray.class] ? context[@"verifiedTextRequirements"]:@[] componentsJoinedByString:@"\n"];
+            for(NSDictionary *item in semantic)if([item[@"text"] isEqual:check[@"requirement"]]){
+                NSString *quote=item[@"quote"];hasQuestion=quote.length && [verified containsString:quote];
+                if(!hasQuestion)for(NSDictionary *document in context[@"documents"])if([@[@"requirements",@"question"] containsObject:document[@"role"] ?: @""] && [document[@"text"] isKindOfClass:NSString.class] && [document[@"text"] containsString:quote]){hasQuestion=YES;break;}
+                break;
+            }
+        }
         if((!hasQuestion || !grounded || [context[@"uncovered"] count]) && [@[@"checked",@"partial",@"issue"] containsObject:copy[@"status"]])copy[@"status"]=@"unchecked";
         if(grounded)for(NSString *key in @[@"path",@"version",@"line",@"evidence",@"region"])if(check[key])copy[key]=check[key];
         if(!SSContainsSecret([NSJSONSerialization dataWithJSONObject:copy options:0 error:NULL]))[requirementChecks addObject:copy];
     }
-    [unverified addObjectsFromArray:invalid];return @{@"requirementChecks":requirementChecks,@"issues":issues,@"unverified":unverified.array,@"excluded":excluded.array,@"checked":[checked.allObjects sortedArrayUsingSelector:@selector(compare:)],@"partial":@(unverified.count>0),@"reportVersion":context[@"reportVersion"]};
+    [unverified addObjectsFromArray:invalid];return @{@"semanticRequirements":semantic,@"requirementChecks":requirementChecks,@"issues":issues,@"unverified":unverified.array,@"excluded":excluded.array,@"checked":[checked.allObjects sortedArrayUsingSelector:@selector(compare:)],@"partial":@(unverified.count>0),@"reportVersion":context[@"reportVersion"]};
 }
 #include "AMReportMarkdown.inc"
 static NSData *PFRead(NSURL *url,NSUInteger limit){

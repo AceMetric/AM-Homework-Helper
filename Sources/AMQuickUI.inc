@@ -30,9 +30,23 @@
     [self loadQuick];if(self.page==4 && self.courseWindow.selectedCourseID.length)self.quickState[@"defaultCourseID"]=self.courseWindow.selectedCourseID;else [self.quickState removeObjectForKey:@"defaultCourseID"];if(!self.quickState){[self render];return;}
     self.quickController=AMQuickEntryController.new;__weak typeof(self) owner=self;
     self.quickController.actionHandler=^(NSString *action,NSDictionary *payload){[owner quickAction:action payload:payload];};
-    self.quickWindow=[[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,1000,760) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];self.quickWindow.title=@"从文字或截图录入";self.quickWindow.contentMinSize=NSMakeSize(650,640);self.quickWindow.delegate=self;self.quickWindow.releasedWhenClosed=NO;self.quickWindow.contentViewController=self.quickController;[self.quickWindow setContentSize:NSMakeSize(1000,760)];
+    self.quickWindow=[[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,1000,760) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];self.quickWindow.title=@"从文字或截图录入";self.quickWindow.delegate=self;self.quickWindow.releasedWhenClosed=NO;self.quickWindow.contentViewController=self.quickController;[self fitQuickWindow];
     [self refreshQuick:nil];[(self.editor && !self.editor.embedded ? self.editor.window:self.window) beginSheet:self.quickWindow completionHandler:nil];
 }
+- (void)fitQuickWindow {
+    if(!self.quickWindow)return;
+    NSWindow *parent=self.quickWindow.sheetParent ?: (self.editor && !self.editor.embedded ? self.editor.window:self.window);
+    NSScreen *screen=parent.screen ?: NSScreen.mainScreen;NSRect visible=screen ? screen.visibleFrame:parent.frame;NSSize parentSize=parent.contentLayoutRect.size;
+    // A sheet must fit the host's reading area as well as the physical display.
+    // Lower the minimum first so AppKit cannot force an oversized old frame back.
+    NSSize limit=NSMakeSize(MAX(1,MIN(parentSize.width-40,visible.size.width-40)),MAX(1,MIN(parentSize.height-48,visible.size.height-100)));
+    self.quickWindow.contentMinSize=NSMakeSize(MIN(650,limit.width),MIN(420,limit.height));
+    self.quickWindow.contentMaxSize=limit;
+    NSSize current=[self.quickWindow contentRectForFrameRect:self.quickWindow.frame].size;
+    [self.quickWindow setContentSize:NSMakeSize(MAX(self.quickWindow.contentMinSize.width,MIN(MIN(current.width,1000),limit.width)),MAX(self.quickWindow.contentMinSize.height,MIN(MIN(current.height,760),limit.height)))];
+}
+- (void)windowDidResize:(NSNotification *)notification {if(notification.object==self.window || notification.object==self.quickWindow.sheetParent)[self fitQuickWindow];}
+- (void)windowDidChangeScreen:(NSNotification *)notification {if(notification.object==self.window)[self fitQuickWindow];}
 - (void)closeQuick {
     self.quickParseGeneration++;[self.quickParseQueue cancelAllOperations];
     [self.quickPersistTimer invalidate];self.quickPersistTimer=nil;
@@ -92,7 +106,7 @@
     if(!text.length || text.length>14000 || SSContainsSecret([text dataUsingEncoding:NSUTF8StringEncoding])){
         [self refreshQuick:@"当前截图文字过长或含疑似凭据，请先修正文字范围。"];return;
     }
-    NSDictionary *profile=AMOnlineReviewProfile();
+    NSDictionary *profile=AMOnlineRecognitionProfile();
     if(![profile[@"enabled"] boolValue]){
         [self refreshQuick:@"请先在设置里配置并启用在线检查供应商。"];return;
     }

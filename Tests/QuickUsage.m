@@ -8,8 +8,8 @@
 static NSUInteger checks;
 static void Check(BOOL ok,NSString *label){checks++;if(!ok){fprintf(stderr,"FAIL: %s\n",label.UTF8String);exit(1);}}
 static void AwaitParse(AppDelegate *app){NSDate *limit=[NSDate dateWithTimeIntervalSinceNow:4];while(app.quickParseQueue.operationCount && limit.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.05]];Check(app.quickParseQueue.operationCount==0,@"background parse finishes within the bounded UI wait");}
-#ifdef AM_FOREGROUND_TEST
 static id CaptureElement(id root,NSString *identity){NSMutableArray *pending=[NSMutableArray arrayWithObject:root];NSHashTable *seen=[NSHashTable hashTableWithOptions:NSPointerFunctionsObjectPointerPersonality];while(pending.count){id object=pending.lastObject;[pending removeLastObject];if([seen containsObject:object])continue;[seen addObject:object];if([object respondsToSelector:@selector(accessibilityIdentifier)] && [[object accessibilityIdentifier] isEqual:identity])return object;if([object respondsToSelector:@selector(accessibilityChildren)])[pending addObjectsFromArray:[object accessibilityChildren] ?: @[]];if([object isKindOfClass:NSView.class])[pending addObjectsFromArray:[object subviews]];if([object isKindOfClass:NSWindow.class])[pending addObject:[object contentView]];}return nil;}
+#ifdef AM_FOREGROUND_TEST
 static void CaptureView(NSView *view,NSString *name){(void)name;[view layoutSubtreeIfNeeded];Check(!NSIsEmptyRect(view.bounds),@"synthetic layout verified without image capture");}
 #endif
 @interface CaptureApp:AppDelegate @end
@@ -26,6 +26,13 @@ int main(void){@autoreleasepool{
 #endif
     CaptureApp *app=CaptureApp.new;NSApp.delegate=app;[app applicationDidFinishLaunching:[NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification object:NSApp]];
     [app quickEntry:nil];Check(app.quickController && app.quickWindow.sheetParent==app.window,@"capture opens without GitHub");
+    for(NSValue *size in @[[NSValue valueWithSize:NSMakeSize(960,640)],[NSValue valueWithSize:NSMakeSize(1280,840)]]){
+        [app.window setContentSize:size.sizeValue];[app fitQuickWindow];[app.quickController.view layoutSubtreeIfNeeded];
+        NSSize actual=app.quickWindow.contentView.bounds.size,available=app.window.contentLayoutRect.size;
+        Check(actual.width<=available.width-39 && actual.height<=available.height-47,@"capture sheet fits the host window including its toolbar");
+        Check(app.quickWindow.contentMinSize.height<=actual.height && app.quickWindow.contentMinSize.width<=actual.width,@"sheet minimum cannot force an oversized frame");
+        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.1]];id save=CaptureElement(app.quickController.view,@"quick-save");Check([save isKindOfClass:NSView.class],@"capture save button remains reachable");NSView *button=save;NSRect frame=[button convertRect:button.bounds toView:app.quickController.view];Check(NSContainsRect(app.quickController.view.bounds,frame),@"save action stays within the compact sheet instead of overflowing below it");
+    }
 #ifdef AM_FOREGROUND_TEST
     [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.3]];
     CaptureView(app.quickController.view,@"build/qa/capture-probe.png");

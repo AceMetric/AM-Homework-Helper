@@ -24,6 +24,8 @@ int main(){@autoreleasepool{
     [controller loadAssignmentWorkbench:@"task-cache" path:@"assignment-1/README.md" mode:@"working" completion:^(NSDictionary *value,NSView *view){newResult=value;newView=view;}];
     NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:8];while((!oldResult || !newResult) && deadline.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
     Check([oldResult[@"cancelled"] boolValue] && !oldView && newResult && newView,@"superseded reads never create or install another preview");
+    __block NSDictionary *quotedResult=nil;__block AMDocumentView *quotedView=nil;NSString *quoteMode=[@"teacher-quote:" stringByAppendingString:[[@"Submit report.md." dataUsingEncoding:NSUTF8StringEncoding] base64EncodedStringWithOptions:0]];
+    [controller loadAssignmentWorkbench:@"task-cache" path:@"assignment-1/README.md" mode:quoteMode completion:^(NSDictionary *value,NSView *view){quotedResult=value;quotedView=(id)view;}];deadline=[NSDate dateWithTimeIntervalSinceNow:8];while(!quotedResult && deadline.timeIntervalSinceNow>0)[NSRunLoop.mainRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:.01]];Check(quotedView && !quotedResult[@"error"] && [quotedView.markdown containsString:@"Submit report.md."] && ![quotedView.markdown containsString:@"explain the result"],@"teacher quotation opens verified template instead of edited working copy");
     Check([Git(root,@[@"rev-parse",@"HEAD"]) isEqual:head],@"preview never writes a commit or changes the branch");
     printf("PASS: %lu workbench version and preview reuse assertions\n",(unsigned long)checks);
 }}

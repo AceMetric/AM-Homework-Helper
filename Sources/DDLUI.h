@@ -58,6 +58,7 @@ Surface *Box(NSColor *fill, CGFloat radius);
 Surface *GradientBox(NSColor *start, NSColor *end, CGFloat radius);
 NSToolbarItem *PopupToolbarItem(NSString *identifier, NSString *label, NSPopUpButton *control);
 NSToolbarItem *SegmentToolbarItem(NSString *identifier, NSString *label, NSSegmentedControl *control);
+void AMSyncSegmentToolbarItem(NSToolbarItem *item);
 ThemeSegmentedControl *FilterSegments(NSArray<NSString *> *labels, id target, SEL action);
 ThemeSegmentedControl *Segments(NSArray<NSString *> *labels, id target, SEL action);
 @interface AMOperationView : NSView

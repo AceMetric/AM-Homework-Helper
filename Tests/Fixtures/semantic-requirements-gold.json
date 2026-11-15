@@ -1,0 +1,92 @@
+[
+  {
+    "id": "notes",
+    "teacher": "完成课程学习笔记，并提交一份实验报告。",
+    "expectedDeliverables": [
+      "学习笔记",
+      "实验报告"
+    ]
+  },
+  {
+    "id": "sort",
+    "teacher": "Implement quick sort and merge sort. Submit the code and a short complexity analysis.",
+    "expectedDeliverables": [
+      "排序实现",
+      "复杂度分析"
+    ]
+  },
+  {
+    "id": "grid",
+    "teacher": "框架已经处理窗口、键盘输入循环和绘图。学生只需实现 submission/my_game.py 中的游戏状态、移动、碰撞与胜负判断，并提交用到的 PNG。",
+    "expectedDeliverables": [
+      "游戏逻辑",
+      "PNG 素材"
+    ]
+  },
+  {
+    "id": "skip",
+    "teacher": "熟练的习题可以跳过，但必须注明跳过的题目，并补充不少于跳过习题内容量的自主探索。",
+    "expectedDeliverables": [
+      "跳题说明及补充探索条件"
+    ]
+  },
+  {
+    "id": "proof",
+    "teacher": "证明给定函数连续，写出定义与完整推导。背景：连续性在工程中很常见。",
+    "expectedDeliverables": [
+      "连续性证明"
+    ]
+  },
+  {
+    "id": "notebook",
+    "teacher": "在 Notebook 中分析 data.csv，说明单位，绘制速度与位移随时间的曲线，并解释结果。",
+    "expectedDeliverables": [
+      "Notebook 数据分析",
+      "两种曲线",
+      "单位与解释"
+    ]
+  },
+  {
+    "id": "shared",
+    "teacher": "本周作业统一周日21点提交。任务：完成阅读笔记和三道算法实践。明天上课讲解框架。",
+    "expectedDeliverables": [
+      "阅读笔记",
+      "算法实践"
+    ]
+  },
+  {
+    "id": "naming",
+    "teacher": "提交单个 Markdown 文件，命名为 assignment-08.md；必要图片放在相对路径 assets/ 下。",
+    "expectedDeliverables": [
+      "文件数量命名",
+      "图片相对路径"
+    ]
+  },
+  {
+    "id": "attachment",
+    "teacher": "完成附件中的刚体转动作业，并撰写费曼学习笔记。附件未提供时不能判断答题完整性。",
+    "expectedDeliverables": [
+      "附件作业",
+      "学习笔记"
+    ]
+  },
+  {
+    "id": "png",
+    "teacher": "提交游戏使用的真实 PNG。推荐16×16或32×32；框架会自动缩放图片，不要求固定尺寸。",
+    "expectedDeliverables": [
+      "有效 PNG"
+    ]
+  },
+  {
+    "id": "framework",
+    "teacher": "框架反复处理按键输入，将棋盘显示到窗口，然后进入下一轮。这些功能已经提供，不需要学生重写。",
+    "expectedDeliverables": []
+  },
+  {
+    "id": "api",
+    "teacher": "API 背景：colors 可设置 water 的颜色，默认值见 reference/api.py。任务：设计并实现自己的格子游戏。",
+    "expectedDeliverables": [
+      "格子游戏"
+    ]
+  }
+]
