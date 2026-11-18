@@ -8,12 +8,18 @@
 }
 - (void)showCheckWorkspace {if(self.checkScopeWindow)[self.checkScopeWindow makeKeyAndOrderFront:nil];else [self status:@"还没有打开的检查工作区；请选择任务，再点击“检查作业文件…”。"];}
 - (void)checkTask:(NSString *)identifier {[self checkTask:identifier forWorkbench:nil];}
+- (void)checkTask:(NSString *)identifier fromTaskEditor:(NSWindow *)editor {
+    [self checkTask:identifier forWorkbench:nil allowingEditor:editor];
+}
 - (void)checkTask:(NSString *)identifier forWorkbench:(NSString *)assignment {
+    [self checkTask:identifier forWorkbench:assignment allowingEditor:nil];
+}
+- (void)checkTask:(NSString *)identifier forWorkbench:(NSString *)assignment allowingEditor:(NSWindow *)editor {
     if(self.checkScopeWindow){[self showCheckWorkspace];return;}
     if(assignment.length && self.workbenchCheck.checking){
         [self showTaskCheckProblem:@"另一份检查正在后台运行。可以在活动中查看或停止。"];return;
     }
-    NSString *blocked=[self taskCheckBlockReason];if(blocked){[self showTaskCheckProblem:blocked];return;}
+    NSString *blocked=[self taskCheckBlockReasonAllowingEditor:editor];if(blocked){[self showTaskCheckProblem:blocked];return;}
     NSDictionary *task=nil,*linked=nil;for(NSDictionary *row in self.tasksProvider ? self.tasksProvider():@[])if([row[@"id"] isEqual:identifier])task=row.copy;
     if(!task){[self showTaskCheckProblem:@"这项任务已不存在，请重新选择任务。"];return;}
     for(NSDictionary *row in self.courses)if(AMTaskBelongsToCourse(task,row)){if(linked){linked=nil;break;}linked=row.copy;}
@@ -25,9 +31,9 @@
         NSString *otherSource=other[@"sourcePath"],*otherScope=otherSource.stringByDeletingLastPathComponent;
         if(AMPeerInScope(otherScope,scope) || AMPeerInScope(scope,otherScope)){automatic=NO;break;}
     }
-    [self prepareCheckScopeForTask:task course:linked scope:automatic ? scope:nil reason:@"无法自动确定独立的作业目录，请确认范围。" workbench:assignment];
+    [self prepareCheckScopeForTask:task course:linked scope:automatic ? scope:nil reason:@"无法自动确定独立的作业目录，请确认范围。" workbench:assignment allowingEditor:editor];
 }
-- (void)prepareCheckScopeForTask:(NSDictionary *)task course:(NSDictionary *)linked scope:(NSString *)assignmentScope reason:(NSString *)reason workbench:(NSString *)assignment {
+- (void)prepareCheckScopeForTask:(NSDictionary *)task course:(NSDictionary *)linked scope:(NSString *)assignmentScope reason:(NSString *)reason workbench:(NSString *)assignment allowingEditor:(NSWindow *)editor {
     NSString *identifier=task[@"id"];
     BOOL automaticallyStart=assignment.length && assignmentScope.length;
     NSArray<NSURL *> *urls=nil;
@@ -44,7 +50,7 @@
     // Common parent is an explicit local boundary, independent of Git configuration.
     NSString *root=folder ? urls.firstObject.path.stringByStandardizingPath:urls.firstObject.path.stringByDeletingLastPathComponent.stringByStandardizingPath;
     if(!folder)for(NSURL *url in urls){NSString *parent=url.path.stringByDeletingLastPathComponent.stringByStandardizingPath;while(![parent isEqual:root] && ![parent hasPrefix:[root stringByAppendingString:@"/"]] && ![root isEqual:@"/"])root=root.stringByDeletingLastPathComponent;}
-    NSString *blocked=[self taskCheckBlockReason];if(blocked){[self showTaskCheckProblem:blocked];return;}
+    NSString *blocked=[self taskCheckBlockReasonAllowingEditor:editor];if(blocked){[self showTaskCheckProblem:blocked];return;}
     NSMutableDictionary *course=linked.mutableCopy ?: NSMutableDictionary.dictionary;course[@"path"]=assignmentScope ? root.stringByResolvingSymlinksInPath:root;course[@"preflightMode"]=@"working";course[@"preflightLocal"]=@YES;
     self.checkScopeWorkbenchAssignment=assignment;
     self.checkScope=AMCheckScopeController.new;self.checkScopeWindow=AMMakeCheckWorkspace(self.window);self.checkScopeWindow.title=@"检查整份作业 · 文件范围";self.checkScopeWindow.contentViewController=self.checkScope;
@@ -157,7 +163,7 @@
         dispatch_async(dispatch_get_main_queue(),^{if(!owner || owner.checkScopeGeneration!=generation)return;
             if(assignmentScope && !binding){
                 [owner closeCheckScope];
-                [owner prepareCheckScopeForTask:task course:linked scope:nil reason:[NSString stringWithFormat:@"%@ 请手动确认文件范围。",error.localizedDescription ?: @"未能自动确定作业范围。"] workbench:assignment];
+                [owner prepareCheckScopeForTask:task course:linked scope:nil reason:[NSString stringWithFormat:@"%@ 请手动确认文件范围。",error.localizedDescription ?: @"未能自动确定作业范围。"] workbench:assignment allowingEditor:editor];
                 return;
             }
             if(binding)course[@"assignmentCheckScope"]=binding;

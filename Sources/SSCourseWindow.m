@@ -1666,9 +1666,12 @@ static NSArray *AMAssignmentProgressKey(NSDictionary *course){
         },error);
     };
 }
-- (NSString *)taskCheckBlockReason {
+- (NSString *)taskCheckBlockReasonAllowingEditor:(NSWindow *)editor {
     if(self.operationsPaused)return @"正在准备退出或安装更新。取消退出或稍后更新后，即可检查作业。";
-    if(self.window.attachedSheet)return [NSString stringWithFormat:@"“%@”窗口尚未关闭。请先完成或取消该窗口，再检查作业。",self.window.attachedSheet.title.length ? self.window.attachedSheet.title:@"当前编辑"];
+    NSWindow *sheet=self.window.attachedSheet;
+    // In a compact window the same task form is a sheet. Its own read-only
+    // check can open independently while the user's draft remains in place.
+    if(sheet && sheet!=editor)return [NSString stringWithFormat:@"“%@”窗口尚未关闭。请先完成或取消该窗口，再检查作业。",sheet.title.length ? sheet.title:@"当前编辑"];
 
     return nil;
 }

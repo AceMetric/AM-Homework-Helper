@@ -34,13 +34,16 @@ int main(void) { @autoreleasepool {
     [courses.courses addObjectsFromArray:@[course, other]]; [courses selectCourseID:course[@"fork"]]; courses.connected = YES; [courses refreshCourses];
     Check([courses.setupButton.title isEqual:@"关联文件夹…"] && !courses.syncButton.enabled && !courses.scanButton.enabled, @"unlinked course provides folder setup and blocks Git actions");
     // Exercise the real task-detail button, not only the course controller method.
+    // Quiet CI displays can be narrower than the desktop that runs this suite.
+    // Set the regular width explicitly, then exercise the compact sheet below.
+    [app.window setContentSize:NSMakeSize(1280,800)];
     NSArray *tasksBeforeCheck=app.snapshot;NSUInteger pageBeforeCheck=app.page;
     NSMutableDictionary *checkTask=[tasksBeforeCheck.firstObject mutableCopy];
     checkTask[@"id"]=@"task-check-route";checkTask[@"courseRepository"]=course[@"fork"];
     [app.tasks addObject:checkTask];Route(app,2);app.selectedTaskID=checkTask[@"id"];[app render];
     NSButton *checkButton=NSButton.new;checkButton.identifier=checkTask[@"id"];checkButton.target=app;checkButton.action=@selector(checkSelectedTask:);
     Check(app.editor.sharedForm.actionHandler!=nil,@"shared task form exposes its contextual file check action");
-    courses.busy=YES;courses.operationPhase=@"正在推送个人仓库";Check([courses taskCheckBlockReason]==nil,@"Git writes no longer block opening a check workspace; reads queue at the write barrier");courses.busy=NO;
+    courses.busy=YES;courses.operationPhase=@"正在推送个人仓库";Check([courses taskCheckBlockReasonAllowingEditor:nil]==nil,@"Git writes no longer block opening a check workspace; reads queue at the write barrier");courses.busy=NO;
     // File chooser adapter supplies only synthetic files; the production check service still runs.
     NSString *checkRoot=[NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"] stringByAppendingPathComponent:@"task-check-fixture"];
     [NSFileManager.defaultManager createDirectoryAtPath:checkRoot withIntermediateDirectories:YES attributes:nil error:NULL];
@@ -56,6 +59,16 @@ int main(void) { @autoreleasepool {
     AMQuietReplace(NSOpenPanel.class,@selector(URL),imp_implementationWithBlock(^NSURL *(NSOpenPanel *panel){return panel.canChooseDirectories ? [NSURL fileURLWithPath:checkRoot]:reportURL;}));
     [checkTask removeObjectForKey:@"courseRepository"];[checkTask removeObjectForKey:@"sourceRepository"];
     Route(app,2);app.selectedTaskID=checkTask[@"id"];[app render];
+    [app.window setContentSize:NSMakeSize(960,700)];[app.window.contentView layoutSubtreeIfNeeded];[app render];
+    NSWindow *editorSheet=app.editor.window;
+    Check(editorSheet && app.window.attachedSheet==editorSheet && [courses taskCheckBlockReasonAllowingEditor:nil]!=nil,
+          @"compact task editor remains a sheet and blocks unrelated check launches");
+    cancelPicker=YES;
+    app.editor.sharedForm.actionHandler(@"check",app.editor.sharedForm.snapshot);
+    Check(foldersPicked==1 && !courses.checkScopeWindow && app.window.attachedSheet==editorSheet,
+          @"compact editor opens its own file chooser and preserves the sheet on cancel");
+    foldersPicked=0;cancelPicker=NO;
+    [app.window setContentSize:NSMakeSize(1280,800)];[app.window.contentView layoutSubtreeIfNeeded];[app render];
     // Keep a real activity identity throughout the check; busy is derived from contexts.
     NSString *scanActivity=AMOperationBegin(@"模拟老师扫描",course[@"fork"],NO,nil);AMCourseOperationContext *scanContext=AMCourseOperationContext.new;scanContext.owner=courses;scanContext.identifier=scanActivity;scanContext.course=course;scanContext.kind=AMCourseWorkScan;scanContext.enqueued=NSDate.date;if(!courses.workflowContexts)courses.workflowContexts=NSMutableDictionary.dictionary;courses.workflowContexts[scanActivity]=scanContext;courses.busy=YES;courses.git.readsCancellable=YES;courses.operationPhase=@"正在扫描老师文档";
     checkTask[@"completed"]=@YES;app.filter=3;[app render];
@@ -82,7 +95,7 @@ int main(void) { @autoreleasepool {
     courses.submission=nil;scanContext.finished=YES;[courses.workflowContexts removeObjectForKey:scanActivity];AMOperationFinish(scanActivity,@"success",@"done");courses.busy=NO;courses.git.readsCancellable=NO;
     courses.operationsPaused=YES;
     checkButton.identifier=checkTask[@"id"];Check(checkButton!=nil,@"task check remains available for an actionable pause explanation");[AMQuietDialogChoices addObject:@(NSAlertFirstButtonReturn)];if(app.editor.sharedForm)app.editor.sharedForm.actionHandler(@"check",app.editor.sharedForm.snapshot);else [checkButton performClick:nil];
-    Check(!courses.submission && [[courses taskCheckBlockReason] containsString:@"更新"] && AMQuietDialogChoices.count==0,@"exit or update still prevents a new check and explains why");courses.operationsPaused=NO;
+    Check(!courses.submission && [[courses taskCheckBlockReasonAllowingEditor:nil] containsString:@"更新"] && AMQuietDialogChoices.count==0,@"exit or update still prevents a new check and explains why");courses.operationsPaused=NO;
     cancelPicker=YES;Route(app,2);app.selectedTaskID=checkTask[@"id"];[app render];
     checkButton.identifier=checkTask[@"id"];if(app.editor.sharedForm)app.editor.sharedForm.actionHandler(@"check",app.editor.sharedForm.snapshot);else [checkButton performClick:nil];
     Check(!courses.submission && !app.window.attachedSheet,@"cancelled task file selection opens no check or submission");

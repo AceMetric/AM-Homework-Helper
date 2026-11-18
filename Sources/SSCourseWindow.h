@@ -42,6 +42,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)discoverExternalSubmissions:(BOOL)loadMore;
 - (void)showCheckWorkspace;
 - (void)checkTask:(NSString *)identifier;
+- (void)checkTask:(NSString *)identifier fromTaskEditor:(NSWindow *)editor;
 - (void)submitTask:(NSString *)identifier;
 - (void)showSubmissionHistory:(nullable NSString *)identifier;
 - (void)showSkillJobs:(nullable id)sender;

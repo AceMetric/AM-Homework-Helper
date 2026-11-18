@@ -58,7 +58,10 @@
 - (void)checkSelectedTask:(id)sender {
     // Keep the task and its inspector visible; local review does not navigate or edit a course.
     NSString *identifier=[[self identifierForSender:sender] copy];
-    [self.courseWindow checkTask:identifier];
+    EditorController *editor=self.editor;
+    if(editor.embedded && editor.window.sheetParent==self.window && [editor.task[@"id"] isEqual:identifier])
+        [self.courseWindow checkTask:identifier fromTaskEditor:editor.window];
+    else [self.courseWindow checkTask:identifier];
 }
 - (NSURL *)quickFolder:(NSString *)batch {
     if(![[NSUUID alloc] initWithUUIDString:batch])return nil;NSURL *folder=[[SSDataDirectory().URLByResolvingSymlinksInPath URLByAppendingPathComponent:@"AssistantExchange"] URLByAppendingPathComponent:batch];return [folder.path isEqual:folder.URLByResolvingSymlinksInPath.path] ? folder:nil;
