@@ -19,6 +19,11 @@ int main(void){@autoreleasepool{
     Check(NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"].length>0,@"quality UI isolated storage");
     [NSApplication sharedApplication];[NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];NSDate *start=NSDate.date;QualityApp *app=QualityApp.new;[app applicationDidFinishLaunching:[NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification object:NSApp]];NSTimeInterval startup=-start.timeIntervalSinceNow;
     Check(app.tasks.count==2000,@"two thousand task startup fixture");Check(startup<2,@"offline usable startup below two seconds");Check(app.nativeTasks.table.numberOfRows>=2000 && app.nativeTasks.table.subviews.count<80,@"native overview keeps row views bounded for two thousand tasks");
+    // Benchmark the reusable wide-window inspector on any CI display.
+    // The compact layout still has its own selection assertion below.
+    [app.window setContentSize:NSMakeSize(1280,840)];
+    [app.window.contentView layoutSubtreeIfNeeded];
+    [app layout];
     NSMutableArray *courses=NSMutableArray.array;for(NSUInteger i=0;i<20;i++)[courses addObject:@{@"fork":[NSString stringWithFormat:@"student/course-%lu",(unsigned long)i],@"upstream":[NSString stringWithFormat:@"teacher/course-%lu",(unsigned long)i]}];app.courseWindow.courses=courses;
     NSButton *route=NSButton.new;route.tag=2;[app navigate:route];start=NSDate.date;[app renderContent];NSTimeInterval render=-start.timeIntervalSinceNow;Check(render<0.1,@"task page render below one hundred milliseconds");Check(app.nativeTasks.table.numberOfRows==2000 && app.nativeTasks.table.subviews.count<80,@"native task list row creation bounded");
     [app.nativeTasks.view layoutSubtreeIfNeeded];[app.nativeTasks.scroll.contentView scrollToPoint:NSMakePoint(0,40000)];[app.nativeTasks.scroll reflectScrolledClipView:app.nativeTasks.scroll.contentView];[app.nativeTasks.table layoutSubtreeIfNeeded];NSRange visible=[app.nativeTasks.table rowsInRect:app.nativeTasks.scroll.contentView.bounds];Check(visible.location>100 && visible.length>0 && visible.length<40 && app.nativeTasks.table.numberOfRows==2000,@"native table tracks the scrolled viewport and retains all task identities");

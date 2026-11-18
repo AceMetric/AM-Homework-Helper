@@ -9,7 +9,10 @@ static void Drain(void){[NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTime
 static NSView *Find(NSView *view,Class kind){if([view isKindOfClass:kind])return view;for(NSView *child in view.subviews){NSView *match=Find(child,kind);if(match)return match;}return nil;}
 int main(){@autoreleasepool{
     Check(NSProcessInfo.processInfo.environment[@"AM_TEST_DATA"]!=nil,@"promotion test requires isolated data");[NSApplication sharedApplication];[NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];AppDelegate *app=AppDelegate.new;NSApp.delegate=app;[app applicationDidFinishLaunching:[NSNotification notificationWithName:NSApplicationDidFinishLaunchingNotification object:NSApp]];
-    NSSegmentedControl *mode=(id)[app.window.toolbar.items.firstObject view];mode.selectedSegment=0;[NSApp sendAction:mode.action to:mode.target from:mode];[app layout];[app.root layoutSubtreeIfNeeded];NSTableView *table=app.nativeTasks.table;
+    // The row assertion targets the inline details pane, which uses a sheet at small widths.
+    [app.window setContentSize:NSMakeSize(1280,840)];
+    [app.window.contentView layoutSubtreeIfNeeded];
+    [app layout];[app.root layoutSubtreeIfNeeded];NSTableView *table=app.nativeTasks.table;
     Check(!app.nativeTasks.view.hidden && table.numberOfRows>0,@"today overview uses the same native task list");Check([table.delegate tableView:table isGroupRow:0],@"overview presents native group headers");Check(![table.delegate tableView:table shouldSelectRow:0],@"group headings do not select a nonexistent task");
     [table selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO];NSString *selected=app.selectedTaskID;Check(selected.length && !app.taskDetails.hidden,@"overview native row opens task detail");[app render];Check([selected isEqual:app.selectedTaskID],@"overview refresh retains stable selection");
     [app openCalendar:nil];[app layout];[app.root layoutSubtreeIfNeeded];Check(NSHeight(app.calendarStatus.frame)>=app.calendarStatus.intrinsicContentSize.height,@"calendar segments use their system natural height");
