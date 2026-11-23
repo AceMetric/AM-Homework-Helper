@@ -49,6 +49,11 @@ int main(void){@autoreleasepool{
     NSArray *before=app.snapshot;Check([app applyPlanning:@"delete" task:@"planning-task" subtask:second value:@""],@"delete child");[app undo:nil];Check([app.snapshot isEqual:before],@"child delete undo restores complete task");
     Check([SSLoadTasks(NULL) isEqual:app.snapshot],@"all UI changes reload exactly from disk");
     NSURL *store=[SSDataDirectory() URLByAppendingPathComponent:@"tasks.plist"];NSData *saved=[NSData dataWithContentsOfURL:store];[NSFileManager.defaultManager removeItemAtURL:store error:NULL];[NSFileManager.defaultManager createDirectoryAtURL:store withIntermediateDirectories:NO attributes:nil error:NULL];before=app.snapshot;Check(![app applyPlanning:@"edit" task:@"planning-task" subtask:first value:@"不应保存"],@"storage failure blocks step modification");Check([app.snapshot isEqual:before],@"failed save preserves prior task and steps");[NSFileManager.defaultManager removeItemAtURL:store error:NULL];[saved writeToURL:store atomically:YES];Check([app applyPlanning:@"edit" task:@"planning-task" subtask:first value:@"核对实验数据"],@"retry succeeds after storage restoration");
+    // This assertion exercises the inline inspector. On smaller screens the
+    // editor is a sheet, so selecting a weekly item does not expose this pane.
+    [app.window setContentSize:NSMakeSize(1280,840)];
+    [app.window.contentView layoutSubtreeIfNeeded];
+    [app layout];
     [app planningAction:@"select" task:@"planning-task" subtask:first value:@""];Drain();Check(app.selectedTaskID.length && app.taskPlanningController,@"weekly item selects parent inspector");
     [app.taskDetailsScroll.contentView scrollToPoint:NSZeroPoint];Drain();Capture(app.taskPlanningController.view,@"build/qa/planning-controls-light.png");Check(Element(app.taskPlanningController.view,@"subtask-add")!=nil && Element(app.taskPlanningController.view,@"task-plan")!=nil,@"planning controls exposed to accessibility");
 #ifdef AM_FOREGROUND_TEST
