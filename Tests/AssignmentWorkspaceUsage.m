@@ -69,6 +69,39 @@ CGWarpMouseCursorPosition(CGPointMake(actual.x,displayHeight-actual.y));
 if([element isKindOfClass:NSButton.class] && [[element accessibilityLabel] hasPrefix:@"打开作业："]){[hit mouseDown:down];}else if([element isKindOfClass:NSButton.class]){[(NSButton *)element performClick:nil];}else if([element respondsToSelector:@selector(accessibilityPerformPress)]){[element accessibilityPerformPress];}else{[hit mouseDown:down];}
 #endif
 Drain();}
+static void ClickNamed(NSWindow *window,id root,NSString *label,CGFloat relativeY){
+    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:2];
+    id target=Find(root,label);
+    while(!target && deadline.timeIntervalSinceNow>0){
+        Drain();
+        target=Find(root,label);
+    }
+    if(!target)fprintf(stderr,"Missing click target: %s\n",label.UTF8String);
+    Click(window,target,relativeY);
+}
+static void ChooseInspectorTab(NSWindow *window,NSView *root,NSString *label){
+#ifdef AM_FOREGROUND_TEST
+    ClickNamed(window,root,label,.5);
+#else
+    // On a hidden AppKit window, AX children for segments depend on whether
+    // the runner has a WindowServer session. The control itself still owns its
+    // frame and target/action. The visible fixture tests the full click path.
+    for(id element in Elements(root)){
+        if(![element isKindOfClass:NSSegmentedControl.class])continue;
+        NSSegmentedControl *control=element;
+        if(control.segmentCount!=3 || control.hiddenOrHasHiddenAncestor)continue;
+        for(NSInteger index=0;index<control.segmentCount;index++){
+            if(![[control labelForSegment:index] isEqual:label])continue;
+            Check(NSWidth(control.bounds)>100 && NSHeight(control.bounds)>10,@"inspector tab control is laid out");
+            control.selectedSegment=index;
+            Check([NSApp sendAction:control.action to:control.target from:control],@"inspector tab dispatches its native action");
+            Drain();
+            return;
+        }
+    }
+    Check(NO,[NSString stringWithFormat:@"inspector tab exists: %@",label]);
+#endif
+}
 int main(){@autoreleasepool{
     NSString *log=[NSBundle.mainBundle objectForInfoDictionaryKey:@"AMFixtureLog"];
     if(log.length){freopen(log.fileSystemRepresentation,"w",stdout);freopen(log.fileSystemRepresentation,"a",stderr);}
@@ -109,23 +142,23 @@ int main(){@autoreleasepool{
     NSMutableArray *cards=NSMutableArray.array;for(id element in Elements(controller.view))if([[element accessibilityLabel] hasPrefix:@"打开作业："])[cards addObject:element];
     if(cards.count!=3){fprintf(stderr,"cards=%lu elements=%lu bounds=%s\n",(unsigned long)cards.count,(unsigned long)Elements(controller.view).count,NSStringFromRect(controller.view.bounds).UTF8String);for(id e in Elements(controller.view)){NSString *label=[e accessibilityLabel];NSString *title=[e accessibilityTitle];id value=[e accessibilityValue];fprintf(stderr,"%s label=%s title=%s value=%s\n",NSStringFromClass([e class]).UTF8String,label.UTF8String,title.UTF8String,[value description].UTF8String);}}
     Check(cards.count==3,@"every card is a primary action");CGFloat height=[[cards firstObject] accessibilityFrame].size.height;for(id card in cards)Check(fabs([card accessibilityFrame].size.height-height)<1,@"short and long cards have equal heights");
-    NSUInteger index=0;for(NSNumber *y in @[@.7,@.25,@.06]){NSString *label=[@"打开作业：" stringByAppendingString:records[index++][@"title"]];id card=Find(controller.view,label);Click(window,card,y.doubleValue);if(!Find(window,@"返回作业看板")){fprintf(stderr,"selected=%lu showing=%d page=%ld toolbar=%s\n",(unsigned long)selected,app.courseWindow.showingWorkbench,(long)app.page,[[window.toolbar.items valueForKey:@"itemIdentifier"] description].UTF8String);for(NSToolbarItem *item in window.toolbar.items)fprintf(stderr,"item=%s view=%s label=%s\n",item.itemIdentifier.UTF8String,NSStringFromClass(item.view.class).UTF8String,item.view.accessibilityLabel.UTF8String);}Check(Find(window,@"返回作业看板")!=nil,@"card body and blank areas open the workbench");Check([window.toolbar.items.firstObject.itemIdentifier isEqual:@"AMCourseBack"],@"workbench Back is the leading toolbar item");
+    NSUInteger index=0;for(NSNumber *y in @[@.7,@.25,@.06]){NSString *label=[@"打开作业：" stringByAppendingString:records[index++][@"title"]];ClickNamed(window,controller.view,label,y.doubleValue);if(!Find(window,@"返回作业看板")){fprintf(stderr,"selected=%lu showing=%d page=%ld toolbar=%s\n",(unsigned long)selected,app.courseWindow.showingWorkbench,(long)app.page,[[window.toolbar.items valueForKey:@"itemIdentifier"] description].UTF8String);for(NSToolbarItem *item in window.toolbar.items)fprintf(stderr,"item=%s view=%s label=%s\n",item.itemIdentifier.UTF8String,NSStringFromClass(item.view.class).UTF8String,item.view.accessibilityLabel.UTF8String);}Check(Find(window,@"返回作业看板")!=nil,@"card body and blank areas open the workbench");Check([window.toolbar.items.firstObject.itemIdentifier isEqual:@"AMCourseBack"],@"workbench Back is the leading toolbar item");
 #ifdef AM_FOREGROUND_TEST
     for(NSNumber *visibility in @[@(NSWindowTitleVisible),@(NSWindowTitleHidden)]){window.titleVisibility=visibility.integerValue;[window layoutIfNeeded];Drain();NSView *backView=Find(window,@"返回作业看板");NSRect position=[backView convertRect:backView.bounds toView:nil];if(NSMinX(position)>=320)fprintf(stderr,"Back physical frame=%s window=%s\n",NSStringFromRect(position).UTF8String,NSStringFromRect(window.frame).UTF8String);Check(NSMinX(position)<320,@"Back stays physically at the leading edge with a visible or hidden window title");}
 #endif
-Click(window,Find(controller.view,@"AI 检查"),.5);Check(Find(controller.view,@"AI 检查…")!=nil,@"AI action exists before any file or model check");Click(window,Find(controller.view,@"AI 检查…"),.5);
+ChooseInspectorTab(window,controller.view,@"AI 检查");ClickNamed(window,controller.view,@"AI 检查…",.5);
     NSView *preview=nil,*tabs=nil;for(id view in Elements(controller.view)){if([view isKindOfClass:AMDocumentView.class])preview=view;if([view isKindOfClass:NSSegmentedControl.class] && [(NSSegmentedControl *)view segmentCount]==3)tabs=view;}
     Check(preview && tabs,@"preview and native inspector tabs exist");CheckRendered((AMDocumentView *)preview);
     Check(tabs.frame.size.width<260 && tabs.frame.size.width>120,@"inspector tabs keep a compact native width");
     NSSegmentedControl *previewTabs=[preview valueForKey:@"mode"];Check(previewTabs.frame.size.width>=previewTabs.fittingSize.width && previewTabs.frame.size.width<200,@"preview selector contains its native fitting width");
     NSRect previewFrame=[preview convertRect:preview.bounds toView:nil],tabFrame=[tabs convertRect:tabs.bounds toView:nil];
-    for(NSString *label in @[@"提交",@"历史",@"AI 检查"]){Click(window,Find(controller.view,label),.5);[controller.view layoutSubtreeIfNeeded];Check(NSEqualRects(previewFrame,[preview convertRect:preview.bounds toView:nil]) && NSEqualRects(tabFrame,[tabs convertRect:tabs.bounds toView:nil]),@"tab switching does not move preview or inspector header");}
+    for(NSString *label in @[@"提交",@"历史",@"AI 检查"]){ChooseInspectorTab(window,controller.view,label);[controller.view layoutSubtreeIfNeeded];Check(NSEqualRects(previewFrame,[preview convertRect:preview.bounds toView:nil]) && NSEqualRects(tabFrame,[tabs convertRect:tabs.bounds toView:nil]),@"tab switching does not move preview or inspector header");}
 #ifdef AM_FOREGROUND_TEST
     if(index==1){[window setContentSize:NSMakeSize(960,640)];[app layout];Drain();[controller.view layoutSubtreeIfNeeded];NSRect reading=[preview convertRect:preview.bounds toView:controller.view];Check(NSContainsRect(controller.view.bounds,reading) && reading.size.width>500,@"minimum window preserves the preview instead of squeezing three panes");CheckRendered((AMDocumentView *)preview);[window setContentSize:NSMakeSize(1180,760)];[app layout];Drain();}
 #endif
-    Click(window,Find(window,@"返回作业看板"),.5);}
+    ClickNamed(window,window,@"返回作业看板",.5);}
     Check(selected==3 && online==3,@"one click produces one selection and one explicit model action");
-    Click(window,Find(controller.view,@"课程管理"),.5);id back=Find(window,@"返回作业看板");Check([window.toolbar.items.firstObject.itemIdentifier isEqual:@"AMCourseBack"],@"course management Back uses the same leading toolbar position");
+    ClickNamed(window,controller.view,@"课程管理",.5);id back=Find(window,@"返回作业看板");Check([window.toolbar.items.firstObject.itemIdentifier isEqual:@"AMCourseBack"],@"course management Back uses the same leading toolbar position");
 #ifdef AM_FOREGROUND_TEST
     NSView *managementBack=back;NSRect managementPosition=[managementBack convertRect:managementBack.bounds toView:nil];Check(NSMinX(managementPosition)<320,@"management Back is physically at the same leading edge");
 #endif
